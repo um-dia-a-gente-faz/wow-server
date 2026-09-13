@@ -1,0 +1,56 @@
+services:
+  trinitycore-wowserver:
+    image: danielsilvestre37/trinitycore-docker:3.3.5
+    container_name: trinitycore-wowserver
+    restart: unless-stopped
+    environment:
+      - PUBLIC_IP_ADDRESS=192.168.1.60
+      - REALM_NAME=Pandora
+      # Web UI credentials (optional)
+      - ACCESS_USERNAME=admin
+      - ACCESS_PASSWORD=admin
+      # Rate tuning (uncomment to customize)
+      # - TC_WORLD__Rate__XP__Kill=3
+      # - TC_WORLD__Rate__Drop__Money=2
+      # - TC_WORLD__PlayerLimit=50
+      # - TC_WORLD__Motd="Welcome to Pandora"
+    volumes:
+      - server_data:/app/server/data
+      - server_logs:/app/server/logs
+      - ./client:/app/client          # WoW 3.3.5a client files
+      - type: tmpfs
+        target: /app/tmp
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "8085:8085"   # World server
+      - "3724:3724"   # Auth server (logon)
+      - "3000:3000"   # Web UI
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: "8g"
+        reservations:
+          cpus: "2.0"
+          memory: "4g"
+
+  database:
+    image: mysql:8.4.4
+    container_name: trinitycore-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: trinityroot
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ptrinityroot"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+
+volumes:
+  db_data:
+  server_data:
+  server_logs:

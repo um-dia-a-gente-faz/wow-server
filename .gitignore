@@ -1,0 +1,11 @@
+# WoW client files (user-supplied, never committed)
+client/
+
+# Docker volumes (runtime data)
+db_data/
+server_data/
+server_logs/
+
+# OS junk
+.DS_Store
+Thumbs.db
