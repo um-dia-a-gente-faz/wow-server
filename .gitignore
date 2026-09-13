@@ -14,3 +14,7 @@ server_logs/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Extracted client DBCs (game data — regenerate with TrinityCore's mapextractor)
+tools/wowmap/*.dbc
+*.dbc

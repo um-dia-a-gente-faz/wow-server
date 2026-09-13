@@ -82,8 +82,11 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
 | `docs/ARCHITECTURE.md` | Component and network layout |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
+| `docs/LIVE-MAP.md` | Design for a live "who is online and where" map (coordinate transform proven) |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
 | `tdb/README.md` | Which TDB version to use and why |
+| `SESSION.md` | Hermes session id for this build-out, and what it covered |
+| `tools/wowmap/` | World-coordinate → map-image transform (reads the extracted DBCs) |
 
 ## Monitoring
 
