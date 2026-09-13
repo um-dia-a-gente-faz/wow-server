@@ -4,20 +4,28 @@ services:
     container_name: trinitycore-wowserver
     restart: unless-stopped
     environment:
-      - PUBLIC_IP_ADDRESS=192.168.1.60
+      # Must be the IP clients connect to (LAN IP of this VM). Written into
+      # auth.realmlist at bootstrap — change it if you move the VM.
+      - PUBLIC_IP_ADDRESS=192.168.1.64
       - REALM_NAME=Pandora
-      # Web UI credentials (optional)
+      # Web UI credentials (port 3000)
       - ACCESS_USERNAME=admin
       - ACCESS_PASSWORD=admin
-      # Rate tuning (uncomment to customize)
+      # Rate tuning (uncomment to customize) — TC_WORLD__ prefix maps to
+      # worldserver.conf, "." becomes "__".
       # - TC_WORLD__Rate__XP__Kill=3
       # - TC_WORLD__Rate__Drop__Money=2
       # - TC_WORLD__PlayerLimit=50
-      # - TC_WORLD__Motd="Welcome to Pandora"
+      # - TC_WORLD__Motd=Welcome to Pandora
     volumes:
       - server_data:/app/server/data
       - server_logs:/app/server/logs
-      - ./client:/app/client          # WoW 3.3.5a client files
+      - ./client:/app/client          # WoW 3.3.5a client files (read for map extraction)
+      # REQUIRED. The image downloads the *newest* TDB release, but the bundled
+      # worldserver binary is compiled expecting one specific filename. Without
+      # this mount, bootstrap fails at "Updating application database" and the
+      # container restart-loops. See docs/DEPLOYMENT.md.
+      - ./tdb/TDB_full_world_335.25101_2025_10_21.sql:/app/server/bin/TDB_full_world_335.25101_2025_10_21.sql
       - type: tmpfs
         target: /app/tmp
     depends_on:
@@ -29,12 +37,14 @@ services:
       - "3000:3000"   # Web UI
     deploy:
       resources:
+        # Must fit the VM's TOTAL RAM. 6 GB VM: 5g limit / 3g reservation here
+        # + 1g for MySQL. An 8g limit on a 6 GB VM is unsatisfiable.
         limits:
           cpus: "4.0"
-          memory: "8g"
+          memory: "5g"
         reservations:
           cpus: "2.0"
-          memory: "4g"
+          memory: "3g"
 
   database:
     image: mysql:8.4.4
@@ -44,6 +54,10 @@ services:
       MYSQL_ROOT_PASSWORD: trinityroot
     volumes:
       - db_data:/var/lib/mysql
+    deploy:
+      resources:
+        limits:
+          memory: "1g"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ptrinityroot"]
       interval: 10s

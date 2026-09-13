@@ -1,64 +1,106 @@
 # World of Warcraft — Wrath of the Lich King (3.3.5a) Private Server
 
-TrinityCore-based WoW server, Dockerized for single-command deployment on the
-pandora Proxmox host (VM 201, docker-stack).
+TrinityCore-based WoW server, Dockerized, running on a dedicated Proxmox VM.
 
-## Quick Start (on pandora)
+**Status: live** at `192.168.1.64` (realm **Pandora**, build 12340), LAN-only.
+
+## Quick start
 
 ```bash
-# 1. Clone this repo on the docker-stack VM
-git clone git@github.com:Cividati/wow-server.git /opt/wow-server
-cd /opt/wow-server
+# On the wow-server VM (192.168.1.64)
+ssh root@192.168.1.64
+mkdir -p /opt/wow-server && cd /opt/wow-server
+git clone git@github.com:Cividati/wow-server.git .
 
-# 2. Place your 3.3.5a client in ./client/
-#    Copy the full WoW directory (Data/, Wow.exe, etc.) into ./client/
-
-# 3. Start everything
+# 1. Place your WoW 3.3.5a client in ./client/  (Data/*.MPQ, ~17 GB)
+# 2. Fetch the TDB world dump into ./tdb/        (see tdb/README.md)
+# 3. Start
 docker compose up -d
 
-# 4. Watch bootstrap progress in the web UI
-#    http://192.168.1.60:3000
+# 4. Watch bootstrap in the web UI (or the logs)
+#    http://192.168.1.64:3000
 ```
 
-First boot extracts maps (dbc, maps, vmaps, mmaps) from the client — this takes
-30-60 minutes depending on CPU. The web UI shows live progress.
+| Port | Service |
+|------|---------|
+| 8085 | World server |
+| 3724 | Auth server (logon) |
+| 3000 | Web UI |
 
-Once complete:
-- World server: `192.168.1.60:8085`
-- Auth server:  `192.168.1.60:3724`
-- Web UI:      `http://192.168.1.60:3000`
+First boot applies the TDB and extracts maps from the client — **~30 minutes on
+4 vCPU** (mmaps alone ~29 min). The web UI shows live progress.
 
-## Connecting
+## Connecting a client
 
-Edit `Data/enUS/realmlist.wtf` in your 3.3.5a client:
+Edit `Data/<locale>/realmlist.wtf` in a WoW 3.3.5a (**build 12340**) client:
 
 ```
-set realmlist 192.168.1.60
+set realmlist 192.168.1.64
+set patchlist 192.168.1.64
 ```
 
-Create an account via the worldserver console:
+Launch **`Wow.exe` directly** — not the launcher (it tries to patch and breaks
+TrinityCore compatibility).
+
+Create an account server-side:
 
 ```bash
 docker attach trinitycore-wowserver
-# (press Enter for the `TC>` prompt)
+# Enter for the TC> prompt
 account create <username> <password>
 account set gmlevel <username> 3 -1
-# Ctrl+P, Ctrl+Q to detach
+# Ctrl-P Ctrl-Q to detach
 ```
 
-Or use the web UI at `http://192.168.1.60:3000`.
+Or, without a TTY: `python3 scripts/wow_console.py 'account create <user> <pass>'`
+(see `scripts/`).
+
+## Two bugs in the upstream image (both fixed here)
+
+The `danielsilvestre37/trinitycore-docker:3.3.5` image is usable but its bootstrap has
+defects that make a naive `docker compose up` fail in a restart loop:
+
+1. **`Database.containsData()` only checks the `auth` database.** If `auth` has tables
+   while `world` is empty, it skips the TDB download and `worldserver -u` then fails
+   to populate an empty world DB.
+2. **It downloads the *newest* TDB release**, but the bundled `worldserver` binary is
+   compiled expecting **one specific filename**. Mismatch ⇒ `Could not populate the
+   World database` ⇒ exit 1 ⇒ container restart loop.
+
+Both are worked around by bind-mounting the exact TDB `.sql` into `/app/server/bin`
+(see `docker-compose.yml` and `tdb/README.md`).
+
+Also worth knowing: the bootstrap swallows worldserver's stdout, so `docker logs`
+never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the bootstrap".
+
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| `docs/REPRODUCE-PROMPT.md` | Self-contained prompt to rebuild the whole environment from scratch on Proxmox (agent-ready) |
+| `docs/DEPLOYMENT.md` | Actual deployment, gotchas, debugging, troubleshooting table |
+| `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
+| `docs/ARCHITECTURE.md` | Component and network layout |
+| `docs/GM-COMMANDS.md` | Useful in-game GM commands |
+| `tdb/README.md` | Which TDB version to use and why |
+
+## Monitoring
+
+Host + container metrics are scraped by the Prometheus/Grafana stack on the
+docker-stack VM:
+
+- Prometheus: http://192.168.1.60:9091
+- Grafana: http://192.168.1.60:3001 — dashboard **"Wow Server — Host & Containers"**
+
+Setup recipe: `monitoring/docker-compose.yml`.
 
 ## Architecture
 
 ```
-pandora (Proxmox pv1)
-└── VM 201 (docker-stack @ 192.168.1.60)
-    └── /opt/wow-server/
-        ├── docker-compose.yml
-        ├── client/          ← WoW 3.3.5a client (user-supplied)
-        ├── server_data/     ← extracted maps (Docker volume)
-        ├── server_logs/     ← TrinityCore logs
-        └── db_data/         ← MySQL data
+pv1 (Proxmox @ 192.168.1.75)
+└── VM 100 wow-server @ 192.168.1.64   (4 vCPU, 6 GB, 50 GB)
+    ├── /opt/wow-server/   trinitycore-wowserver + trinitycore-db
+    └── /opt/monitoring/   node-exporter + cadvisor
 ```
 
 ## Requirements
@@ -68,7 +110,8 @@ pandora (Proxmox pv1)
 | TrinityCore 3.3.5a binaries | `danielsilvestre37/trinitycore-docker:3.3.5` |
 | MySQL 8.4 | Docker service |
 | Web UI | Built into the image (port 3000) |
-| WoW 3.3.5a client | **User must supply** (map extraction) |
+| WoW 3.3.5a client | **User must supply** (build 12340, for map extraction) |
+| TDB world dump | **User must supply** (see `tdb/README.md`) |
 
 ## Resources
 

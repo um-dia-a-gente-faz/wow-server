@@ -1,7 +1,12 @@
-# WoW client files (user-supplied, never committed)
+# WoW client files (user-supplied, ~17 GB, never committed)
 client/
 
-# Docker volumes (runtime data)
+# TDB base world dump (downloaded asset, ~280 MB extracted). See tdb/README.md
+tdb/*.sql
+tdb/*.7z
+tdb/*.zip
+
+# Docker volumes / runtime data (bind-mounted dirs)
 db_data/
 server_data/
 server_logs/

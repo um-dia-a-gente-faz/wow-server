@@ -1,0 +1,57 @@
+# Host + container monitoring for this VM, scraped by the external Prometheus
+# on the docker-stack VM (192.168.1.60:9091) / Grafana (192.168.1.60:3001).
+#
+# Runs as a SEPARATE compose project from the game stack so it survives
+# `docker compose down -v` on /opt/wow-server.
+#
+#   mkdir -p /opt/monitoring && cp monitoring/docker-compose.yml /opt/monitoring/
+#   cd /opt/monitoring && docker compose up -d
+#
+# Exposes: node-exporter on :9100 (host metrics), cadvisor on :8080 (per-container).
+# Then add these jobs to prometheus.yml on the docker-stack VM:
+#
+#   - job_name: "node_wow"
+#     scrape_interval: 15s
+#     static_configs:
+#       - targets: ["192.168.1.64:9100"]
+#         labels: {host: "wow-server"}
+#   - job_name: "cadvisor_wow"
+#     scrape_interval: 30s
+#     static_configs:
+#       - targets: ["192.168.1.64:8080"]
+#         labels: {host: "wow-server"}
+#
+# and `docker compose restart prometheus` (SIGHUP does NOT re-read the config).
+
+services:
+  node-exporter:
+    container_name: node-exporter
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    network_mode: host          # binds the VM's own :9100
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+
+  cadvisor:
+    container_name: cadvisor
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
