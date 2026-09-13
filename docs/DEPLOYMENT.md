@@ -132,16 +132,33 @@ docker exec trinitycore-db mysql -uroot -ptrinityroot -e "SELECT * FROM auth.acc
 ## Monitoring
 
 Host + container metrics are exported to the existing Prometheus/Grafana on the
-docker-stack VM. See `monitoring/docker-compose.yml` for the full recipe.
+docker-stack VM. See `monitoring/docker-compose.yml` for the full recipe and
+`exporters/README.md` for the custom game exporter.
 
-- Prometheus: http://192.168.1.60:9091 — jobs `node_wow`, `cadvisor_wow`
-- Grafana: http://192.168.1.60:3001 — dashboard `wow-server-host`
-  ("Wow Server — Host & Containers")
+Three scrape targets on this VM:
 
-Managed by dropping a raw dashboard JSON into
-`/opt/pandora/grafana/dashboards/` on the docker-stack VM (file provisioning, ~30s
+| Port | Exporter | Data |
+|---|---|---|
+| 9100 | node-exporter | host CPU / RAM / disk / net |
+| 8080 | cadvisor | per-container resources |
+| 9300 | wow-exporter (custom) | game metrics: players online, characters, activity, economy |
+
+Prometheus jobs: `node_wow`, `cadvisor_wow`, `wow_game` (all labelled
+`host="wow-server"`).
+
+- Prometheus: http://192.168.1.60:9091
+- Grafana: http://192.168.1.60:3001
+  - **WoW — Jogadores & Atividade** (`wow-players`)
+  - **WoW — Saúde do Realm** (`wow-realm-health`)
+  - **Wow Server — Host & Containers** (`wow-server-host`)
+
+Dashboards are managed by dropping a raw dashboard JSON into
+`/opt/pandora/grafana/dashboards/` on the docker-stack VM (file provisioning, ~30 s
 reload). The Grafana admin password is **not** `admin:admin` — it was rotated after
-first boot.
+first boot, and the write API rejects basic auth; the file path needs no auth at all.
+
+Validate every panel expression against Prometheus (`/api/v1/query_range`) before
+committing a dashboard — an empty result almost always means a wrong label matcher.
 
 ## Management
 

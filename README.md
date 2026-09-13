@@ -82,17 +82,34 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
 | `docs/ARCHITECTURE.md` | Component and network layout |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
+| `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
 | `tdb/README.md` | Which TDB version to use and why |
 
 ## Monitoring
 
-Host + container metrics are scraped by the Prometheus/Grafana stack on the
-docker-stack VM:
+Metrics are scraped by the Prometheus/Grafana stack on the docker-stack VM:
 
 - Prometheus: http://192.168.1.60:9091
-- Grafana: http://192.168.1.60:3001 — dashboard **"Wow Server — Host & Containers"**
+- Grafana: http://192.168.1.60:3001
 
-Setup recipe: `monitoring/docker-compose.yml`.
+| Dashboard | What it shows |
+|---|---|
+| **WoW — Jogadores & Atividade** (`wow-players`) | players/accounts online over time, peak, level/class/race distribution, players by zone, most-played characters, economy |
+| **WoW — Saúde do Realm** (`wow-realm-health`) | realm uptime + start time, DB sizes, MySQL connections, container resources, account security (failed logins, locked) |
+| **Wow Server — Host & Containers** (`wow-server-host`) | host CPU/RAM/disk/net + per-container resources |
+
+Three scrape targets, all on the wow-server VM:
+
+| Port | Exporter | Data |
+|---|---|---|
+| 9100 | node-exporter | host metrics |
+| 8080 | cadvisor | per-container metrics |
+| 9300 | **wow-exporter** (custom) | game metrics — players, characters, activity |
+
+Setup recipe: `monitoring/docker-compose.yml`. The custom game exporter lives in
+`exporters/wow-exporter/` — see `exporters/README.md` for its metric catalog and the
+gotchas (MySQL 8.4 `caching_sha2_password` needs `cryptography`; `SUM()` returns
+`Decimal`; `auth.uptime.starttime` is an int epoch).
 
 ## Architecture
 

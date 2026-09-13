@@ -122,8 +122,34 @@ Reinicie o Prometheus (SIGHUP NÃO relê o config) e confirme health `up`:
     ssh root@192.168.1.60 'cd /opt/pandora && docker compose restart prometheus'
     ssh root@192.168.1.60 'curl -s "http://localhost:9091/api/v1/targets?state=active" | grep -o "wow" | head'
 
-Dashboard do Grafana: coloque o JSON em /opt/pandora/grafana/dashboards/ (arquivo
-cru, sem wrapper). O Grafana importa em ~30s. NÃO tente a API — veja Armadilha 4.
+### 6b. Métricas do JOGO (jogadores, personagens, atividade)
+
+Além do host, existe um exporter custom (exporters/wow-exporter no repo) que lê os
+bancos auth/characters/world e expõe ~48 métricas de jogo em :9300. Ele é construído
+pelo monitoring/docker-compose.yml (que já referencia ./wow-exporter) e precisa entrar
+na rede do stack do jogo, porque o MySQL não publica porta no host:
+
+    # a rede wow-server_default precisa existir (subir o stack do jogo antes)
+    cd /opt/monitoring && docker compose up -d --build
+
+Adicione também ao prometheus.yml na VM201:
+
+      - job_name: "wow_game"
+        scrape_interval: 15s
+        static_configs:
+          - targets: ["192.168.1.64:9300"]
+            labels: {host: "wow-server"}
+
+e reinicie o Prometheus de novo. Confirme `wow_exporter_up == 1`.
+
+ATENÇÃO: a imagem do exporter precisa de `cryptography` no requirements.txt. O MySQL
+8.4 usa caching_sha2_password e o PyMySQL só autentica sem esse pacote enquanto o cache
+de auth do servidor estiver quente — depois disso toda coleta falha com
+"'cryptography' package is required". Parece intermitente; mantenha a dependência.
+
+Dashboards do Grafana: coloque os JSONs de monitoring/ (arquivo cru, sem wrapper) em
+/opt/pandora/grafana/dashboards/. O Grafana importa em ~30s. NÃO tente a API — veja
+Armadilha 4.
 
 ### 7. Criar conta e verificar
 

@@ -1,13 +1,17 @@
-# Host + container monitoring for this VM, scraped by the external Prometheus
-# on the docker-stack VM (192.168.1.60:9091) / Grafana (192.168.1.60:3001).
+# Monitoring for the wow-server VM, scraped by the external Prometheus on the
+# docker-stack VM (192.168.1.60:9091) / Grafana (192.168.1.60:3001).
 #
 # Runs as a SEPARATE compose project from the game stack so it survives
 # `docker compose down -v` on /opt/wow-server.
 #
-#   mkdir -p /opt/monitoring && cp monitoring/docker-compose.yml /opt/monitoring/
-#   cd /opt/monitoring && docker compose up -d
+#   mkdir -p /opt/monitoring && cp -r monitoring/. /opt/monitoring/
+#   cd /opt/monitoring && docker compose up -d --build
 #
-# Exposes: node-exporter on :9100 (host metrics), cadvisor on :8080 (per-container).
+# Exposes:
+#   :9100  node-exporter   host CPU / RAM / disk / net
+#   :8080  cadvisor        per-container CPU / RAM / net
+#   :9300  wow-exporter    GAME metrics (players online, characters, activity...)
+#
 # Then add these jobs to prometheus.yml on the docker-stack VM:
 #
 #   - job_name: "node_wow"
@@ -19,6 +23,11 @@
 #     scrape_interval: 30s
 #     static_configs:
 #       - targets: ["192.168.1.64:8080"]
+#         labels: {host: "wow-server"}
+#   - job_name: "wow_game"
+#     scrape_interval: 15s
+#     static_configs:
+#       - targets: ["192.168.1.64:9300"]
 #         labels: {host: "wow-server"}
 #
 # and `docker compose restart prometheus` (SIGHUP does NOT re-read the config).
@@ -55,3 +64,26 @@ services:
       - /dev/disk/:/dev/disk:ro
     devices:
       - /dev/kmsg
+
+  wow-exporter:
+    container_name: wow-exporter
+    build: ./wow-exporter
+    restart: unless-stopped
+    environment:
+      - MYSQL_HOST=trinitycore-db
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=trinityroot
+      - LISTEN_PORT=9300
+      - TOP_PLAYED=20
+    ports:
+      - "9300:9300"
+    networks:
+      # Needs to reach trinitycore-db, which is only on the game stack's network
+      # (MySQL publishes no host port). Declared external below.
+      - wow-game
+
+networks:
+  wow-game:
+    external: true
+    name: wow-server_default
