@@ -49,6 +49,7 @@ LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
 )
+MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -254,6 +255,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length > MAX_CALIBRATION_PAYLOAD_BYTES:
+                return self._send(413, {"error": "payload too large"})
             payload = json.loads(self.rfile.read(length))
             area_id = int(payload["area_id"])
             dx, dy = float(payload["dx"]), float(payload["dy"])
