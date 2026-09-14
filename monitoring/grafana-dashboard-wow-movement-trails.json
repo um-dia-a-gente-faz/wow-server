@@ -29,14 +29,14 @@
       "targets": [
         {
           "refId": "X",
-          "expr": "wow_player_position_x{character=\"$character\"}",
+          "expr": "max by (character) (wow_player_position_x{character=\"$character\"})",
           "legendFormat": "X",
           "range": true,
           "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
         },
         {
           "refId": "Y",
-          "expr": "wow_player_position_y{character=\"$character\"}",
+          "expr": "max by (character) (wow_player_position_y{character=\"$character\"})",
           "legendFormat": "Y",
           "range": true,
           "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
@@ -47,9 +47,9 @@
         {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"X": 0, "Y": 1}, "renameByName": {}}}
       ],
       "options": {
-        "xField": "X",
-        "yField": "Y",
-        "series": [{"frame": {"matcher": {"id": "byIndex", "options": 0}}, "x": "X", "y": "Y", "size": ""}],
+        "xField": "Y",
+        "yField": "X",
+        "series": [{"frame": {"matcher": {"id": "byIndex", "options": 0}}, "x": "Y", "y": "X", "size": ""}],
         "show": "points",
         "pointSize": 4
       },
