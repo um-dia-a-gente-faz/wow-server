@@ -27,7 +27,8 @@ instead of lingering as stale data.
 - **Activity** — `wow_accounts_created{window}`, `wow_accounts_active{window}`,
   `wow_accounts_ever_logged_in`, `wow_playtime_seconds_total`
 - **Per character** — `wow_character_playtime_seconds{character}`,
-  `wow_character_level{character}` (top N by playtime)
+  `wow_character_level{character}`, `wow_character_quests_completed{character}`
+  (top N by playtime; the last is quests currently ready to turn in)
 - **Guilds** — `wow_guild_members{guild}`
 - **Economy** — `wow_money_gold_total`, `wow_money_copper_total`
 - **Realm** — `wow_realm_uptime_seconds`, `wow_realm_start_time_seconds`,
