@@ -1,0 +1,61 @@
+# Five independent agent containers — one per character.
+# Each has its own account, password, and character.
+# Communication is in-game only (chat, party).
+# Uncomment agents as you need them.
+
+x-agent: &agent-defaults
+  build: .
+  image: wow-agent:latest
+  restart: unless-stopped
+  environment: &env-defaults
+    WOW_HOST: 192.168.1.64
+    WOW_AUTH_PORT: 3724
+    WOW_PASSWORD: ${AGENT_PASSWORD:-hunter123}
+    AGENT_THINK_INTERVAL_S: 5
+    LOG_LEVEL: INFO
+
+services:
+  agent-luaprata:
+    <<: *agent-defaults
+    container_name: wow-agent-luaprata
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT01
+      WOW_CHARACTER: Luaprata
+      AGENT_NAME: Luaprata
+
+  agent-farstrider:
+    <<: *agent-defaults
+    container_name: wow-agent-farstrider
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT02
+      WOW_CHARACTER: Farstrider
+      AGENT_NAME: Farstrider
+
+  agent-shadowblade:
+    <<: *agent-defaults
+    container_name: wow-agent-shadowblade
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT03
+      WOW_CHARACTER: Shadowblade
+      AGENT_NAME: Shadowblade
+
+  agent-sunspeaker:
+    <<: *agent-defaults
+    container_name: wow-agent-sunspeaker
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT04
+      WOW_CHARACTER: Sunspeaker
+      AGENT_NAME: Sunspeaker
+
+  agent-spellweaver:
+    <<: *agent-defaults
+    container_name: wow-agent-spellweaver
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT05
+      WOW_CHARACTER: Spellweaver
+      AGENT_NAME: Spellweaver

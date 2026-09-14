@@ -12,8 +12,8 @@ The login screen shows version in the bottom-left corner.
 Edit `Data/enUS/realmlist.wtf` (or `Data/<locale>/realmlist.wtf`):
 
 ```
-set realmlist 192.168.1.60
-set patchlist 192.168.1.60
+set realmlist 192.168.1.64
+set patchlist 192.168.1.64
 ```
 
 If the file doesn't exist, create it.
@@ -44,7 +44,7 @@ account set gmlevel myuser 3 -1
 
 ### Via web UI
 
-Open `http://192.168.1.60:3000` in a browser — use the account management panel.
+Open `http://192.168.1.64:3000` in a browser — use the account management panel.
 
 GM level 3 = Administrator (all commands).
 
@@ -59,7 +59,7 @@ GM level 3 = Administrator (all commands).
 
 | Symptom | Fix |
 |---------|-----|
-| "Unable to connect" | Check realmlist.wtf points to 192.168.1.60 |
+| "Unable to connect" | Check realmlist.wtf points to 192.168.1.64 |
 | "Login server down" | Check docker compose is running: `docker compose ps` |
 | "Disconnected from server" | Check worldserver is healthy: `docker logs trinitycore-wowserver` |
 | "Wrong client version" | Must be 3.3.5a.12340 exactly |

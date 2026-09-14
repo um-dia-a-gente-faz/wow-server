@@ -1,0 +1,30 @@
+# Git
+.git/
+.gitignore
+
+# Agent runtime (Node.js MCP — not needed in container)
+agent-runtime/
+node_modules/
+
+# Environment files (secrets)
+.env
+.env.agents
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Debug / test scripts (not needed in the image)
+test_*.py
+debug_*.py
+
+# Documentation / plans
+docs/
+README.md
+
+# Docker compose (not needed in the image)
+docker-compose*.yml
+
+# Misc / OS
+.DS_Store
+Thumbs.db
