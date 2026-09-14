@@ -145,7 +145,9 @@ class Handler(BaseHTTPRequestHandler):
         log.debug("%s - %s", self.address_string(), fmt % args)
 
     def _send(self, code, body, ctype="application/json", cache=None):
-        if isinstance(body, str):
+        if isinstance(body, (dict, list)):
+            body = json.dumps(body).encode()
+        elif isinstance(body, str):
             body = body.encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
