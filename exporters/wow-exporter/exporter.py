@@ -260,6 +260,25 @@ class WowCollector(Collector):
             y.add_metric([name], level)
         yield y
 
+        y = GaugeMetricFamily("wow_character_quests_completed_total",
+                              "Lifetime quests completed per character (top N by playtime)",
+                              labels=["character"])
+        quest_rows = q(cur, fr"""
+            SELECT c.name, COUNT(qsr.quest)
+            FROM (
+                SELECT guid, name
+                FROM characters.characters
+                ORDER BY totaltime DESC
+                LIMIT {TOP_PLAYED}
+            ) c
+            LEFT JOIN characters.character_queststatus_rewarded qsr
+                ON qsr.guid = c.guid
+            GROUP BY c.guid, c.name
+        """)
+        for name, completed in quest_rows:
+            y.add_metric([name], completed)
+        yield y
+
         # ---------- guild sizes ----------
         y = GaugeMetricFamily("wow_guild_members", "Members per guild", labels=["guild"])
         for name, count in q(cur, "SELECT g.name, COUNT(gm.guid) FROM characters.guild g "
