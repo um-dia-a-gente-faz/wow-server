@@ -4,6 +4,7 @@
 Serves:
     GET /                     the map page (single file, no build step)
     GET /api/players          online players with world + normalised coords
+    GET /api/character/<name> one character's state, inventory and progression
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
     POST /api/calibrate       save a per-zone pixel offset
     GET /maps/<file>          extracted zone map images (static)
@@ -26,7 +27,7 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
@@ -184,6 +185,97 @@ def zones_in_use():
         return [{"zone": z, "map": m} for z, m in cur.fetchall()]
 
 
+def best_effort(cur, sql, args, label):
+    """Run an optional character-detail query without failing the whole response."""
+    try:
+        cur.execute(sql, args)
+        return cur.fetchall()
+    except Exception as e:  # noqa: BLE001
+        log.warning("character %s query failed: %s", label, e)
+        return []
+
+
+def fetch_character(name):
+    """Fetch one character and optional detail tables using one DB connection."""
+    character_sql = """
+        SELECT guid, name, level, race, class, gender, zone, map,
+               position_x, position_y, position_z, orientation, money,
+               totaltime, logout_time
+        FROM characters.characters
+        WHERE name = %s
+        LIMIT 1
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(character_sql, (name,))
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        (guid, char_name, level, race, cls, gender, zone, cmap, x, y, z, orient,
+         money, totaltime, logout_time) = row
+
+        inventory = best_effort(cur, """
+            SELECT ci.bag, ci.slot, COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
+            FROM characters.character_inventory ci
+            JOIN characters.item_instance ii ON ci.item = ii.guid
+            LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
+            WHERE ci.guid = %s
+            ORDER BY ci.bag, ci.slot
+        """, (guid,), "inventory")
+        talents = best_effort(cur, """
+            SELECT spell, talentGroup
+            FROM characters.character_talent
+            WHERE guid = %s
+            ORDER BY talentGroup, spell
+        """, (guid,), "talents")
+        reputation = best_effort(cur, """
+            SELECT faction, standing
+            FROM characters.character_reputation
+            WHERE guid = %s
+            ORDER BY faction
+        """, (guid,), "reputation")
+        achievements = best_effort(cur, """
+            SELECT achievement, date
+            FROM characters.character_achievement
+            WHERE guid = %s
+            ORDER BY date DESC, achievement
+        """, (guid,), "achievements")
+
+    t = tables()
+    return {
+        "name": char_name,
+        "level": level,
+        "race": race,
+        "race_name": RACES.get(race, str(race)),
+        "class": cls,
+        "class_name": CLASSES.get(cls, str(cls)),
+        "gender": gender,
+        "zone": zone,
+        "zone_name": t.zone_name(zone) if zone else "Unknown",
+        "map": cmap,
+        "position_x": round(float(x), 2),
+        "position_y": round(float(y), 2),
+        "position_z": round(float(z), 2),
+        "orientation": round(float(orient), 3),
+        "money_gold": float(money) / 10000.0,
+        "totaltime": totaltime,
+        "logout_time": logout_time,
+        "inventory": [
+            {"bag": bag, "slot": slot, "item_name": item_name, "count": count}
+            for bag, slot, item_name, count in inventory
+        ],
+        "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
+        "reputation": [
+            {"faction": faction, "standing": standing}
+            for faction, standing in reputation
+        ],
+        "achievements": [
+            {"achievement": achievement, "date": date}
+            for achievement, date in achievements
+        ],
+    }
+
+
 # ---------------------------------------------------------------- HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "wowmap/1.0"
@@ -216,6 +308,15 @@ class Handler(BaseHTTPRequestHandler):
                     "server_time": int(time.time()),
                     "players": fetch_players(),
                 })
+
+            if path.startswith("/api/character/"):
+                name = unquote(path[len("/api/character/"):])
+                if not name:
+                    return self._send(404, {"error": "character not found"})
+                character = fetch_character(name)
+                if character is None:
+                    return self._send(404, {"error": "character not found"})
+                return self._send(200, character)
 
             if path == "/api/areas":
                 mid = qs.get("map", [None])[0]
