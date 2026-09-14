@@ -100,6 +100,7 @@ Metrics are scraped by the Prometheus/Grafana stack on the docker-stack VM:
 | Dashboard | Folder | What it shows |
 |---|---|---|
 | **WoW — Mapa ao Vivo** (`wow-live-map`) | WoW Server | link to the live map page + online stats + XY scatter of player positions |
+| **WoW — Trilhas de Movimento** (`wow-movement-trails`) | WoW Server | selectable character trail (X/Y over the chosen time range) and coarse per-zone position-density heatmap |
 | **WoW — Jogadores & Atividade** (`wow-players`) | WoW Server | players/accounts online over time, peak, level/class/race distribution, players by zone, most-played characters, economy |
 | **WoW — Saúde do Realm** (`wow-realm-health`) | WoW Server | realm uptime + start time, DB sizes, MySQL connections, container resources, account security (failed logins, locked) |
 | **Wow Server — Host & Containers** (`wow-server-host`) | WoW Server | host CPU/RAM/disk/net + per-container resources |

@@ -24,6 +24,11 @@ instead of lingering as stale data.
   `wow_accounts_total`, `wow_guilds_total`
 - **Distributions** — `wow_characters_by_level`, `wow_characters_by_class`,
   `wow_characters_by_race`, `wow_players_by_zone`, `wow_players_by_map`
+- **Movement** — `wow_player_position_x/y/z{character,map,zone}` and
+  `wow_player_orientation{character,map,zone}` for online characters;
+  `wow_player_position_bucket{zone,cell_x,cell_y}` is their current coarse
+  per-zone occupancy (20 × 20 cells across the `[-20000, 20000]` world-coordinate
+  span).
 - **Activity** — `wow_accounts_created{window}`, `wow_accounts_active{window}`,
   `wow_accounts_ever_logged_in`, `wow_playtime_seconds_total`
 - **Per character** — `wow_character_playtime_seconds{character}`,
@@ -67,6 +72,9 @@ cd /opt/monitoring && docker compose up -d --build wow-exporter
    exceptions and returns `[]`, but anything raised in `_collect()` after the first
    `yield` aborts the remaining metric families. Always sanity-check `wow_exporter_up`
    after changing a query.
+6. **Movement trails reflect saved positions.** The position metrics work without
+   configuration changes, but finer trails need `TC_WORLD__PlayerSaveInterval=5000`
+   (the roadmap's save-interval tuning step) instead of the 90-second default.
 
 ### Why not read the worldserver console?
 
