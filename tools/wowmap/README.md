@@ -32,7 +32,7 @@ the character's base state.
   "money_gold": 123.45,
   "totaltime": 86400,
   "logout_time": 1710000000,
-  "inventory": [{"slot": 0, "item_name": "Example Item", "count": 1}],
+  "inventory": [{"bag": 0, "slot": 0, "item_name": "Example Item", "count": 1}],
   "talents": [{"spell": 12345, "spec": 0}],
   "reputation": [{"faction": 72, "standing": 42000}],
   "achievements": [{"achievement": 6, "date": 1710000000}]

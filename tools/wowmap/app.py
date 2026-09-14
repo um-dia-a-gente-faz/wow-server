@@ -168,7 +168,7 @@ def fetch_character(name):
          money, totaltime, logout_time) = row
 
         inventory = best_effort(cur, """
-            SELECT ci.slot, COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
+            SELECT ci.bag, ci.slot, COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
@@ -214,8 +214,8 @@ def fetch_character(name):
         "totaltime": totaltime,
         "logout_time": logout_time,
         "inventory": [
-            {"slot": slot, "item_name": item_name, "count": count}
-            for slot, item_name, count in inventory
+            {"bag": bag, "slot": slot, "item_name": item_name, "count": count}
+            for bag, slot, item_name, count in inventory
         ],
         "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
         "reputation": [
