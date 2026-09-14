@@ -1,0 +1,42 @@
+---
+title: "PR: <brief summary>"
+labels: []
+assignees: []
+---
+
+## What
+
+<!-- What does this PR do? One or two sentences. -->
+
+## Why
+
+<!-- Why is this change needed? Link to an issue or discussion if applicable. -->
+
+## How to test
+
+<!-- Step-by-step instructions to verify the change works as intended. -->
+<!-- Include commands, expected output, endpoints to curl, dashboards to check. -->
+
+1.
+2.
+3.
+
+## Screenshots / logs (if UI or service change)
+
+<!-- Paste relevant output here. -->
+
+## Checklist
+
+- [ ] Tested on the live VM (192.168.1.64)
+- [ ] All Prometheus targets still healthy (`/api/v1/targets`)
+- [ ] Grafana dashboards load without errors
+- [ ] No new secrets or credentials committed
+- [ ] `.gitignore` covers any generated or large files
+- [ ] Docs updated if this changes a documented workflow
+
+## Conventional commit type for the merge message
+
+<!-- e.g. feat, fix, docs, chore, refactor, perf -->
+
+Type: ``
+Scope (optional): ``

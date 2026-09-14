@@ -119,6 +119,12 @@ Setup recipe: `monitoring/docker-compose.yml`. The custom game exporter lives in
 gotchas (MySQL 8.4 `caching_sha2_password` needs `cryptography`; `SUM()` returns
 `Decimal`; `auth.uptime.starttime` is an int epoch).
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventional commit standard, PR template, code style, and how to test against the live VMs.
+
+This repo follows [Conventional Commits](https://www.conventionalcommits.org/) — every commit message is `<type>(<scope>): <description>` (e.g. `feat(exporter): add position metrics`). PRs use the template at `.github/PULL_REQUEST_TEMPLATE.md`.
+
 ## Architecture
 
 ```
