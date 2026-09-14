@@ -160,12 +160,152 @@ Phase 1 + enough of Phase 2 land to make an action loop meaningful:
    second concurrent agent before this works — multi-agent coordination will
    just multiply whatever's still broken in the single-agent loop.
 
+## Operator dashboard panel
+
+A single console for a human watching the server: live chat, click a
+character to inspect it — stats, health/power bars, inventory, and beyond.
+Independent of the AI-agent work above (this is for a human operator, not the
+agent's own perception) and doesn't block or get blocked by it, though Phase
+2's spellbook parsing (`SMSG_INITIAL_SPELLS`) and this panel's talent/spell
+name lookups would end up wanting the same spell-name data — worth sharing if
+both get built.
+
+**Recommendation: extend `tools/wowmap` rather than stand up a new service.**
+It already serves the player list, the live map, and
+`GET /api/character/<name>`; the console is a natural evolution of what's
+there (sidebar list → click → inspect drawer) instead of a fourth port to
+deploy and keep in sync.
+
+**Baseline — what already exists:**
+- `GET /api/character/<name>` (added in #4) already returns level, race,
+  class, gender, zone, map, position, gold, playtime, inventory (bag/slot/
+  name/count), talents (spell id/spec), reputation (faction id/standing),
+  achievements (id/date) — but nothing in the frontend calls it. It's an API
+  with no UI yet.
+- `tools/chat-feed` (added in #8) streams chat over SSE on port 9500, tested,
+  but per `tools/chat-feed/README.md` its "Browser consumer" is a code
+  snippet in the docs, not a page anyone loads.
+- Health/power are **not** in the inspect payload yet, and only *current*
+  values exist anywhere: `characters.characters.health` and `.power1`-`.power7`
+  are real columns (confirmed against the live schema), refreshed every 5s
+  (the `PlayerSaveInterval` tuned in #2) — but there is **no persisted max
+  health/max power column anywhere**. Max values are computed by the
+  worldserver at runtime from level + class + gear and never written to the
+  DB. This is the one real open question in this plan — see Phase B.
+
+### Phase A — wire up character inspect (no backend gaps)
+
+Everything needed already exists in the API response; this is pure frontend:
+
+1. Click a name in the existing sidebar list (`tools/wowmap/app.py`'s
+   `#list`) or a map marker → open a drawer/panel that calls
+   `/api/character/<name>` and renders name/level/race/class/zone/gold/
+   playtime — data already there, just not displayed.
+2. Inventory list: bag/slot/name/count already returned: render as
+   equipped slots (0-18) separate from bags (23+, plus extra-bag GUIDs) using
+   the `bag`/`slot` convention documented in `tools/wowmap/README.md`
+   (from #4's review fix). No item icons yet (see Phase D) — text rows with
+   count are enough for v1.
+3. Auto-refresh the drawer on the same interval as the player list, so a
+   pinned character stays current while you watch it.
+
+**Effort:** low — this is the highest-value-per-effort item in the whole
+dashboard plan, since the data's already flowing.
+
+### Phase B — health/power bars (needs a decision, not just code)
+
+Add `health, power1, power2, power3, power4, power5, power6, power7` to
+`fetch_character()`'s `SELECT` — cheap, do it alongside Phase A. The hard
+part is max values, since nothing persists them. Options, roughly in order
+of effort:
+
+1. **Show current value only, no bar** (e.g. "Health: 4,231") — ships with
+   Phase A, zero extra work, just not as visually useful as a bar.
+2. **Spike the TrinityCore RA console** (already enabled — `Ra.Enable=1`,
+   port 3443, added while deploying this session) or GM commands via
+   `scripts/wow_console.py` for something like `.pinfo`/`.character info` —
+   check whether any built-in command actually reports max health/power for
+   an arbitrary *online* character, not just your own. Unknown until tried;
+   spike it the same way `docs/CHAT_FEED_SPIKE.md` de-risked the chat feed
+   before building #8, and write up the findings the same way.
+3. **Approximate from formulas** (base health/mana by class+level, WotLK
+   tables) — doable but ignores gear entirely, so it'll be visibly wrong for
+   anyone not freshly leveled. Lowest recommended priority.
+4. **Piggyback on agent perception** (this doc's Phase 1) once it parses
+   `UNIT_FIELD_MAXHEALTH`/`UNIT_FIELD_MAXPOWER1-7` from live
+   `SMSG_UPDATE_OBJECT` data — exact numbers, but only for characters an
+   agent is actually near (perception is range-limited), not arbitrary
+   offline/distant characters. A good long-term source, not a v1 plan.
+
+**Recommendation:** ship option 1 with Phase A, spike option 2 as a short,
+separate task before committing to a bar UI.
+
+### Phase C — talent / reputation / achievement names
+
+The inspect API already returns talent spell IDs, faction IDs, and
+achievement IDs — but IDs, not names, since nothing in this repo maps them
+yet (unlike zones, which have a small hardcoded `ZONES` dict in
+`exporters/wow-exporter/exporter.py`). Two options:
+
+1. **Small hardcoded dicts**, same pattern as `ZONES`/`RACES`/`CLASSES` in
+   the exporter — cheap, but only covers whatever's manually added, same
+   maintenance burden as the existing zone dict already has.
+2. **Parse the relevant client DBCs** (`Talent.dbc`, `Spell.dbc`,
+   `Faction.dbc`, `Achievement.dbc`) once at wowmap startup, the same way
+   `tools/wowmap/transform.py` already parses `WorldMapArea.dbc`/
+   `AreaTable.dbc`/`Map.dbc` for the live map. More complete, reuses a
+   pattern that already exists in this codebase, and the spell-name lookup
+   would double as what the agent's future spellbook/`cast_spell` work
+   (Phase 2 of the agent plan) needs too.
+
+**Recommendation:** option 2, once Phase A/B prove the panel is worth the
+investment — don't build the DBC parser before there's a UI to put names in.
+
+### Phase D — live chat panel
+
+Give `tools/chat-feed`'s SSE stream an actual viewer:
+
+1. A chat panel in the same page as the map/inspect drawer (or a toggleable
+   tab) consuming `EventSource('http://<host>:9500/api/chat/stream')` per
+   the snippet already in `tools/chat-feed/README.md`, styled by `kind`
+   (say/yell/channel), auto-scrolling, reconnect-safe (the server already
+   replays from `Last-Event-ID` — no extra backend work needed for that part).
+2. **Cross-origin gap, confirmed:** wowmap serves from :9400, chat-feed from
+   :9500, and `tools/chat-feed/app.py` sends no CORS headers at all today —
+   a page served from wowmap can't `EventSource()` chat-feed's stream as-is.
+   Either add `Access-Control-Allow-Origin` to chat-feed's response headers,
+   or reverse-proxy both through one origin (simpler long-term if Phase E
+   consolidates onto one page anyway).
+
+### Phase E — consolidate into one console
+
+Once A/B/D exist as working pieces: one page — sidebar (player list + chat
+toggle), center (live map, unchanged), right-side drawer (inspect panel,
+opens on click, closes on click-away). This is what makes it "a dashboard
+panel" rather than three separate features bolted together.
+
+### Item icons — deliberately out of scope for now
+
+Rendering actual item icons would need extracting icon art from the client
+MPQs (same category of work as the map-art extraction in
+`tools/wowmap/extract_maps.py`, applied to `Interface/ICONS/*.blp` instead of
+world map tiles) plus a `displayid`→icon mapping from `item_template`/DBCs.
+Real, but large enough to be its own task — text-only inventory rows (Phase A)
+are the pragmatic v1.
+
+### Pickup order for this panel
+
+1. Phase A (inspect UI) — ships immediately, no backend unknowns, highest
+   value per effort in this whole plan.
+2. Phase B step 1 (current-value-only health/power) — ships alongside A.
+   Spike step 2 (RA/GM console) as a short side task once A is live.
+3. Phase D (chat panel) — independent of A/B, can happen in parallel.
+4. Phase C (name lookups) — only once A/B prove the panel gets used; needs
+   the DBC-parsing investment to be worth it.
+5. Phase E (consolidation) — the finishing pass once A/B/D exist separately.
+
 ## Observability polish (small, optional, not blocking the agent work)
 
-- **Chat feed has no viewer.** The SSE backend (port 9500) works and is
-  tested, but nobody's watching it — `tools/chat-feed/README.md`'s "Browser
-  consumer" is a code snippet, not a page. A small static page (same style as
-  wowmap) or a panel in the live-map page would make it actually useful.
 - **README.md is stale.** The architecture diagram still shows a separate
   `/opt/monitoring/` and doesn't mention `tools/wowmap`, `tools/chat-feed`,
   `agent/`, or that the VM is now a git checkout deployed via
@@ -184,7 +324,7 @@ multi-agent coordination and PvP (`docs/AI-AGENT-SPEC.md` Phases 4-5).
 Deliberately not planned in detail yet — depends entirely on what Phase 2/3
 reveal about what's hard.
 
-## How to pick up from here
+## Pickup order for the agent track
 
 1. Perception (`agent/session.py` + `agent/perception.py`), steps 1-8 above —
    single highest-leverage task, fully speced, no dependencies.
