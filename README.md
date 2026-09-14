@@ -98,9 +98,12 @@ Metrics are scraped by the Prometheus/Grafana stack on the docker-stack VM:
 
 | Dashboard | Folder | What it shows |
 |---|---|---|
+| **WoW — Mapa ao Vivo** (`wow-live-map`) | WoW Server | link to the live map page + online stats + XY scatter of player positions |
 | **WoW — Jogadores & Atividade** (`wow-players`) | WoW Server | players/accounts online over time, peak, level/class/race distribution, players by zone, most-played characters, economy |
 | **WoW — Saúde do Realm** (`wow-realm-health`) | WoW Server | realm uptime + start time, DB sizes, MySQL connections, container resources, account security (failed logins, locked) |
 | **Wow Server — Host & Containers** (`wow-server-host`) | WoW Server | host CPU/RAM/disk/net + per-container resources |
+
+**Live map:** http://192.168.1.64:9400 — interactive zone map with per-player markers (class-coloured), zone picker, and an auto-refreshing player list.
 
 Three scrape targets, all on the wow-server VM:
 

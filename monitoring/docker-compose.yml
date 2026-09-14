@@ -1,43 +1,34 @@
-# Monitoring for the wow-server VM, scraped by the external Prometheus on the
-# docker-stack VM (192.168.1.60:9091) / Grafana (192.168.1.60:3001).
+# Monitoring compose for the wow-server VM (192.168.1.64), scraped by the external
+# Prometheus/Grafana on the docker-stack VM (192.168.1.60).
 #
 # Runs as a SEPARATE compose project from the game stack so it survives
 # `docker compose down -v` on /opt/wow-server.
 #
-#   mkdir -p /opt/monitoring && cp -r monitoring/. /opt/monitoring/
+#   mkdir -p /opt/monitoring && cp monitoring/docker-compose.yml /opt/monitoring/
+#   # Copy wowmap source: cp -r tools/wowmap /opt/monitoring/..  (or /opt/wowmap)
 #   cd /opt/monitoring && docker compose up -d --build
 #
 # Exposes:
-#   :9100  node-exporter   host CPU / RAM / disk / net
-#   :8080  cadvisor        per-container CPU / RAM / net
-#   :9300  wow-exporter    GAME metrics (players online, characters, activity...)
+#   :9100  node-exporter     host CPU / RAM / disk / net
+#   :8080  cadvisor          per-container CPU / RAM / net
+#   :9300  wow-exporter      GAME metrics (players online, characters, activity...)
+#   :9400  wowmap            live map page + JSON API + map art
 #
-# Then add these jobs to prometheus.yml on the docker-stack VM:
+# Prometheus jobs (add to /opt/pandora/prometheus/prometheus.yml on VM201):
 #
-#   - job_name: "node_wow"
-#     scrape_interval: 15s
-#     static_configs:
-#       - targets: ["192.168.1.64:9100"]
-#         labels: {host: "wow-server"}
-#   - job_name: "cadvisor_wow"
-#     scrape_interval: 30s
-#     static_configs:
-#       - targets: ["192.168.1.64:8080"]
-#         labels: {host: "wow-server"}
-#   - job_name: "wow_game"
-#     scrape_interval: 15s
-#     static_configs:
-#       - targets: ["192.168.1.64:9300"]
-#         labels: {host: "wow-server"}
+#   - job_name: "node_wow"      targets: ["192.168.1.64:9100"]  labels: {host: "wow-server"}
+#   - job_name: "cadvisor_wow"  targets: ["192.168.1.64:8080"]  labels: {host: "wow-server"}
+#   - job_name: "wow_game"      targets: ["192.168.1.64:9300"]  labels: {host: "wow-server"}
 #
-# and `docker compose restart prometheus` (SIGHUP does NOT re-read the config).
+# Grafana dashboards are file-provisioned, see grafana/provisioning/dashboards.yaml.
+# Drop raw dashboard JSONs into /opt/pandora/grafana/dashboards-wow/.
 
 services:
   node-exporter:
     container_name: node-exporter
     image: prom/node-exporter:latest
     restart: unless-stopped
-    network_mode: host          # binds the VM's own :9100
+    network_mode: host
     pid: host
     volumes:
       - /proc:/host/proc:ro
@@ -79,8 +70,26 @@ services:
     ports:
       - "9300:9300"
     networks:
-      # Needs to reach trinitycore-db, which is only on the game stack's network
-      # (MySQL publishes no host port). Declared external below.
+      - wow-game
+
+  wowmap:
+    container_name: wowmap
+    build: /opt/wowmap
+    restart: unless-stopped
+    environment:
+      - MYSQL_HOST=trinitycore-db
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=trinityroot
+      - DBC_DIR=/dbc
+      - MAPS_DIR=/maps
+      - LISTEN_PORT=9400
+    ports:
+      - "9400:9400"
+    volumes:
+      - /opt/wowmap-data/dbc:/dbc:ro
+      - /opt/wowmap-data/maps:/maps:ro
+    networks:
       - wow-game
 
 networks:
