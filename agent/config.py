@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Agent configuration — everything comes from environment variables.
+
+One container = one agent. No shared state between agents; they only
+interact through the game server (chat, party, trade).
+"""
+
+import os
+from dataclasses import dataclass, field
+
+
+def _env_str(name: str, default: str = "") -> str:
+    return os.environ.get(name, default).strip()
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return int(raw)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return float(raw)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+@dataclass
+class Config:
+    # ── Server ────────────────────────────────────────────────
+    wow_host: str = field(default_factory=lambda: _env_str("WOW_HOST", "192.168.1.64"))
+    wow_auth_port: int = field(default_factory=lambda: _env_int("WOW_AUTH_PORT", 3724))
+    wow_build: int = field(default_factory=lambda: _env_int("WOW_BUILD", 12340))
+
+    # ── Account ───────────────────────────────────────────────
+    account: str = field(default_factory=lambda: _env_str("WOW_ACCOUNT"))
+    password: str = field(default_factory=lambda: _env_str("WOW_PASSWORD"))
+
+    # ── Character ─────────────────────────────────────────────
+    # Either a name (preferred, human-readable) or a numeric GUID.
+    character: str = field(default_factory=lambda: _env_str("WOW_CHARACTER"))
+    char_guid: int = field(default_factory=lambda: _env_int("WOW_CHAR_GUID", 0))
+
+    # ── Agent identity / behaviour ────────────────────────────
+    agent_name: str = field(default_factory=lambda: _env_str("AGENT_NAME", "Agent"))
+    think_interval: float = field(default_factory=lambda: _env_float("AGENT_THINK_INTERVAL_S", 3.0))
+    run_duration: float = field(default_factory=lambda: _env_float("AGENT_RUN_DURATION_S", 0.0))  # 0 = forever
+    persona: str = field(default_factory=lambda: _env_str("AGENT_PERSONA", ""))
+
+    # ── LLM (layer 3, unused until the brain lands) ────────────
+    llm_base_url: str = field(default_factory=lambda: _env_str("LLM_BASE_URL", ""))
+    llm_api_key: str = field(default_factory=lambda: _env_str("LLM_API_KEY"))
+    llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", ""))
+
+    # ── Logging ───────────────────────────────────────────────
+    log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
+    verbose_packets: bool = field(default_factory=lambda: _env_bool("VERBOSE_PACKETS", False))
+
+    def validate(self, require_character: bool = True) -> list[str]:
+        """Return a list of configuration problems (empty = OK)."""
+        problems = []
+        if not self.account:
+            problems.append("WOW_ACCOUNT is required")
+        if not self.password:
+            problems.append("WOW_PASSWORD is required")
+        if require_character and not self.character and not self.char_guid:
+            problems.append("either WOW_CHARACTER (name) or WOW_CHAR_GUID is required")
+        if self.wow_auth_port <= 0 or self.wow_auth_port > 65535:
+            problems.append(f"WOW_AUTH_PORT out of range: {self.wow_auth_port}")
+        return problems
+
+    def redacted(self) -> dict:
+        """Config for logging — password and API key masked."""
+        return {
+            "wow_host": self.wow_host,
+            "wow_auth_port": self.wow_auth_port,
+            "account": self.account,
+            "password": "***" if self.password else "(unset)",
+            "character": self.character or f"guid:{self.char_guid}",
+            "agent_name": self.agent_name,
+            "think_interval": self.think_interval,
+            "run_duration": self.run_duration or "forever",
+            "llm_model": self.llm_model or "(unset)",
+            "log_level": self.log_level,
+        }
+
+
+def load_config() -> Config:
+    cfg = Config()
+    return cfg

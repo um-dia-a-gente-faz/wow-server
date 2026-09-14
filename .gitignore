@@ -18,4 +18,6 @@ Thumbs.db
 # Extracted client DBCs (game data — regenerate with TrinityCore's mapextractor)
 tools/wowmap/*.dbc
 *.dbc
+__pycache__/
 artifs/
+node_modules/
