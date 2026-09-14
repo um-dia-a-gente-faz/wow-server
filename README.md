@@ -84,6 +84,7 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
 | `docs/LIVE-MAP.md` | Design for a live "who is online and where" map (coordinate transform proven) |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
+| `grafana/` | Dashboard provisioning config — the file-based loading that replaced API auth |
 | `tdb/README.md` | Which TDB version to use and why |
 | `SESSION.md` | Hermes session id for this build-out, and what it covered |
 | `tools/wowmap/` | World-coordinate → map-image transform (reads the extracted DBCs) |
@@ -95,11 +96,11 @@ Metrics are scraped by the Prometheus/Grafana stack on the docker-stack VM:
 - Prometheus: http://192.168.1.60:9091
 - Grafana: http://192.168.1.60:3001
 
-| Dashboard | What it shows |
-|---|---|
-| **WoW — Jogadores & Atividade** (`wow-players`) | players/accounts online over time, peak, level/class/race distribution, players by zone, most-played characters, economy |
-| **WoW — Saúde do Realm** (`wow-realm-health`) | realm uptime + start time, DB sizes, MySQL connections, container resources, account security (failed logins, locked) |
-| **Wow Server — Host & Containers** (`wow-server-host`) | host CPU/RAM/disk/net + per-container resources |
+| Dashboard | Folder | What it shows |
+|---|---|---|
+| **WoW — Jogadores & Atividade** (`wow-players`) | WoW Server | players/accounts online over time, peak, level/class/race distribution, players by zone, most-played characters, economy |
+| **WoW — Saúde do Realm** (`wow-realm-health`) | WoW Server | realm uptime + start time, DB sizes, MySQL connections, container resources, account security (failed logins, locked) |
+| **Wow Server — Host & Containers** (`wow-server-host`) | WoW Server | host CPU/RAM/disk/net + per-container resources |
 
 Three scrape targets, all on the wow-server VM:
 

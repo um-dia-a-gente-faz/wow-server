@@ -177,6 +177,37 @@ class WowCollector(Collector):
             y.add_metric([str(mapid)], count)
         yield y
 
+        # ---------- online player positions ----------
+        # Only ONLINE players, so cardinality stays bounded and series vanish on
+        # logout. Raw world coordinates; the map app converts them to pixels with
+        # the DBC rects (see tools/wowmap/transform.py).
+        pos_rows = q(cur, "SELECT c.name, c.map, c.zone, c.position_x, c.position_y, "
+                          "c.position_z, c.orientation, c.instance_id, c.level, c.class "
+                          "FROM characters.characters c WHERE c.online = 1")
+        for metric, idx in (("wow_player_position_x", 3),
+                            ("wow_player_position_y", 4),
+                            ("wow_player_position_z", 5),
+                            ("wow_player_orientation", 6)):
+            y = GaugeMetricFamily(metric, "World position of an online player",
+                                  labels=["character", "map", "zone"])
+            for r in pos_rows:
+                y.add_metric([r[0], str(r[1]), str(r[2])], float(r[idx]))
+            yield y
+
+        y = GaugeMetricFamily("wow_online_player_info",
+                              "1 per online player, carrying map/zone/instance/level/class",
+                              labels=["character", "map", "zone", "instance", "level", "class"])
+        for r in pos_rows:
+            y.add_metric([r[0], str(r[1]), str(r[2]),
+                          "world" if not r[7] else str(r[7]), str(r[8]), str(r[9])], 1.0)
+        yield y
+
+        rows = q(cur, "SELECT COUNT(*) FROM characters.characters "
+                      "WHERE online = 1 AND instance_id != 0")
+        yield GaugeMetricFamily("wow_players_in_instances",
+                                "Online players inside a dungeon/raid instance",
+                                value=rows[0][0] if rows else 0)
+
         # ---------- playtime / economy ----------
         rows = q(cur, "SELECT COALESCE(SUM(totaltime),0) FROM characters.characters")
         yield GaugeMetricFamily("wow_playtime_seconds_total",

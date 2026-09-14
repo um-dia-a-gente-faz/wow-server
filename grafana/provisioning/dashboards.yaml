@@ -1,0 +1,24 @@
+apiVersion: 1
+
+providers:
+  - name: "pandora-dashboards"
+    orgId: 1
+    folder: "Pandora"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
+
+  - name: "wow-dashboards"
+    orgId: 1
+    folder: "WoW Server"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards-wow
+      foldersFromFilesStructure: false

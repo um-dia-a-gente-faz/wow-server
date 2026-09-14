@@ -52,16 +52,16 @@ class DbcTables:
         self._area, self._area_str = self._read(os.path.join(dbc_dir, "AreaTable.dbc"))
         self._map, self._map_str = self._read(os.path.join(dbc_dir, "Map.dbc"))
 
-        # area_id -> (xmin, xmax, ymin, ymax) in world coordinates
-        # NOTE the field order: Y extent is fields 4/5, X extent is fields 6/7.
+        # area_id -> (left, right, top, bottom) in world coordinates, taken from the
+        # RAW field order. Do NOT normalise with min()/max() — that destroys the
+        # orientation, and in this DBC left > right (the image X axis runs opposite to
+        # world X), so min/max silently mirrors every marker horizontally.
         self.rects = {}
         for r in self._wm:
             if r[3] == 0:
                 continue
-            y_a, y_b = self._f(r[4]), self._f(r[5])
-            x_a, x_b = self._f(r[6]), self._f(r[7])
-            self.rects[r[2]] = (min(x_a, x_b), max(x_a, x_b),
-                                min(y_a, y_b), max(y_a, y_b))
+            self.rects[r[2]] = (self._f(r[6]), self._f(r[7]),   # left, right
+                                self._f(r[4]), self._f(r[5]))   # top, bottom
 
         self.area_names = {r[0]: self._s(self._area_str, r[11]) for r in self._area
                            if len(r) > 11}
@@ -105,11 +105,11 @@ class DbcTables:
         rect = self.rects.get(area_id)
         if not rect:
             return None
-        xmin, xmax, ymin, ymax = rect
-        if xmax == xmin or ymax == ymin:
+        left, right, top, bottom = rect
+        if right == left or top == bottom:
             return None
-        nx = (world_x - xmin) / (xmax - xmin)
-        ny = (ymax - world_y) / (ymax - ymin)   # world Y grows up, image Y grows down
+        nx = (world_x - left) / (right - left)
+        ny = (top - world_y) / (top - bottom)   # world Y grows up, image Y grows down
         return nx, ny
 
     def to_pixel(self, area_id, world_x, world_y, width, height):
