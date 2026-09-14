@@ -85,6 +85,7 @@ class ChatFeed:
             self.chat_candidates += 1
             if event["kind"] == "unknown":
                 self.parse_errors += 1
+                return
             elif event["kind"] not in self.public_kinds:
                 return
             self.events.append(event)
@@ -135,6 +136,10 @@ def tail_log(feed, path):
             line_start = position
             line = handle.readline()
             if line:
+                if not line.endswith("\n"):
+                    handle.seek(line_start)
+                    time.sleep(0.25)
+                    continue
                 position = handle.tell()
                 feed.publish_line(line, f"{inode[1]}:{line_start}")
             else:
