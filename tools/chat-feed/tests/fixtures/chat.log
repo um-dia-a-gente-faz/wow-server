@@ -1,0 +1,5 @@
+2026-09-14 12:34:56 DEBUG Player Alice says (language 0): Hello: world
+2026-09-14 12:34:57 DEBUG Player Bob yells (language 0): Help!
+2026-09-14 12:34:58 DEBUG Player Cara tells guild Night Watch: Ready: now
+2026-09-14 12:34:59 DEBUG Player Dax tells channel world: LFG: RFC
+2026-09-14 12:35:00 DEBUG Player Eve performs an unknown chat shape: hidden

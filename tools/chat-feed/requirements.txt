@@ -1,0 +1,1 @@
+# Deliberately empty: the tailer and SSE server use only Python's standard library.
