@@ -194,6 +194,28 @@ class WowCollector(Collector):
                 y.add_metric([r[0], str(r[1]), str(r[2])], float(r[idx]))
             yield y
 
+        # Zones do not have a shared, readily available coordinate bounding box in
+        # the characters DB. Use the normal WoW world-coordinate span
+        # [-20,000, 20,000] on each axis, split into 20 cells (2,000 units each),
+        # and clamp outliers to the edge cells. This gives stable coarse per-zone
+        # occupancy cells without adding a DBC dependency; it is intentionally a
+        # density groundwork metric rather than map-image pixel coordinates.
+        cell_size = 2_000.0
+        cells_per_axis = 20
+        bucket_counts = {}
+        for r in pos_rows:
+            cell_x = max(0, min(cells_per_axis - 1, int((float(r[3]) + 20_000) / cell_size)))
+            cell_y = max(0, min(cells_per_axis - 1, int((float(r[4]) + 20_000) / cell_size)))
+            key = (str(r[2]), str(cell_x), str(cell_y))
+            bucket_counts[key] = bucket_counts.get(key, 0) + 1
+
+        y = GaugeMetricFamily("wow_player_position_bucket",
+                              "Online players in a coarse world-coordinate grid cell",
+                              labels=["zone", "cell_x", "cell_y"])
+        for labels, count in bucket_counts.items():
+            y.add_metric(list(labels), count)
+        yield y
+
         y = GaugeMetricFamily("wow_online_player_info",
                               "1 per online player, carrying map/zone/instance/level/class",
                               labels=["character", "map", "zone", "instance", "level", "class"])
@@ -238,23 +260,19 @@ class WowCollector(Collector):
             y.add_metric([name], level)
         yield y
 
-        # In the 3.3.5a schema, status 1 is QUEST_STATUS_COMPLETE: the quest
-        # is currently ready to turn in. Rewarded quests are stored separately
-        # in character_queststatus_rewarded, so this is deliberately not a
-        # lifetime quest-completion count.
-        y = GaugeMetricFamily("wow_character_quests_completed",
-                              "Quests currently complete and ready to turn in per character (top N by playtime)",
+        y = GaugeMetricFamily("wow_character_quests_completed_total",
+                              "Lifetime quests completed per character (top N by playtime)",
                               labels=["character"])
         quest_rows = q(cur, fr"""
-            SELECT c.name, COUNT(qs.quest)
+            SELECT c.name, COUNT(qsr.quest)
             FROM (
                 SELECT guid, name
                 FROM characters.characters
                 ORDER BY totaltime DESC
                 LIMIT {TOP_PLAYED}
             ) c
-            LEFT JOIN characters.character_queststatus qs
-                ON qs.guid = c.guid AND qs.status = 1
+            LEFT JOIN characters.character_queststatus_rewarded qsr
+                ON qsr.guid = c.guid
             GROUP BY c.guid, c.name
         """)
         for name, completed in quest_rows:

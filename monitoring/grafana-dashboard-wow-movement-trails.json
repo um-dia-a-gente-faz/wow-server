@@ -1,0 +1,123 @@
+{
+  "uid": "wow-movement-trails",
+  "title": "WoW — Trilhas de Movimento",
+  "tags": ["wow", "wow-server", "trinitycore", "movement"],
+  "timezone": "browser",
+  "refresh": "15s",
+  "editable": true,
+  "time": {"from": "now-6h", "to": "now"},
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Como ler esta vista",
+      "gridPos": {"h": 3, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "Selecione um personagem e um intervalo de tempo: cada ponto no gráfico XY é uma posição salva, e a sequência mostra a trilha. As posições são coletadas apenas enquanto o personagem está online. Funciona sem ajustes, mas `TC_WORLD__PlayerSaveInterval=5000` (ROADMAP item 1) produz trilhas muito mais detalhadas que o padrão de 90 s.\n\nA densidade é uma base de heatmap: cada série representa uma célula 20 × 20 de coordenadas mundiais por zona; a cor/valor é o número atual de jogadores online na célula."
+      }
+    },
+    {
+      "id": 2,
+      "type": "xychart",
+      "title": "Trilha XY — $character",
+      "description": "X e Y de posições salvas para o personagem selecionado no intervalo escolhido.",
+      "gridPos": {"h": 14, "w": 14, "x": 0, "y": 3},
+      "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"},
+      "targets": [
+        {
+          "refId": "X",
+          "expr": "max by (character) (wow_player_position_x{character=\"$character\"})",
+          "legendFormat": "X",
+          "range": true,
+          "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
+        },
+        {
+          "refId": "Y",
+          "expr": "max by (character) (wow_player_position_y{character=\"$character\"})",
+          "legendFormat": "Y",
+          "range": true,
+          "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
+        }
+      ],
+      "transformations": [
+        {"id": "joinByField", "options": {"byField": "Time", "mode": "outer"}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"X": 0, "Y": 1}, "renameByName": {}}}
+      ],
+      "options": {
+        "xField": "Y",
+        "yField": "X",
+        "series": [{"frame": {"matcher": {"id": "byIndex", "options": 0}}, "x": "Y", "y": "X", "size": ""}],
+        "show": "points",
+        "pointSize": 4
+      },
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 3,
+      "type": "heatmap",
+      "title": "Densidade atual por célula — zona $zone",
+      "description": "Base para heatmap espacial: cada série é uma célula cell_x/cell_y na grade de 20 × 20; o valor é a contagem atual de jogadores online.",
+      "gridPos": {"h": 14, "w": 10, "x": 14, "y": 3},
+      "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (zone, cell_x, cell_y) (wow_player_position_bucket{zone=~\"$zone\"})",
+          "legendFormat": "zone {{zone}}, cell {{cell_x}},{{cell_y}}",
+          "range": true,
+          "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {"mode": "scheme", "scheme": "Oranges", "steps": 64},
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "showValue": "never",
+        "tooltip": {"show": true, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false, "unit": "short"},
+        "yBucketBound": "auto",
+        "yBucketNumber": 10,
+        "yBucketSize": "auto"
+      },
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "character",
+        "label": "Personagem",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"},
+        "definition": "label_values(wow_player_position_x, character)",
+        "query": {"query": "label_values(wow_player_position_x, character)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {"selected": false, "text": "", "value": ""}
+      },
+      {
+        "name": "zone",
+        "label": "Zona",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "efnf4d4t8vsw0a"},
+        "definition": "label_values(wow_player_position_bucket, zone)",
+        "query": {"query": "label_values(wow_player_position_bucket, zone)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 1,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "current": {"selected": true, "text": "All", "value": "$__all"}
+      }
+    ]
+  }
+}

@@ -84,11 +84,13 @@ services:
       - DBC_DIR=/dbc
       - MAPS_DIR=/maps
       - LISTEN_PORT=9400
+      - CALIBRATION_FILE=/app/calibration.json
     ports:
       - "9400:9400"
     volumes:
       - /opt/wowmap-data/dbc:/dbc:ro
       - /opt/wowmap-data/maps:/maps:ro
+      - /opt/wowmap-data/calibration.json:/app/calibration.json
     networks:
       - wow-game
 

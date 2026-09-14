@@ -15,3 +15,11 @@ grafana/
 
 The actual dashboard JSONs live in `monitoring/` in the repo and are deployed to
 `/opt/pandora/grafana/dashboards-wow/` on the docker-stack VM.
+
+## Agent and player behaviour dashboard
+
+`monitoring/grafana-dashboard-wow-agent-behaviour.json` provides the **WoW —
+Agent & Player Behaviour** dashboard. It tracks online players over time,
+per-character playtime, the current online distribution by zone, and historical
+level progression. It is automatically discovered by the existing `wow-dashboards`
+provider when deployed to `/opt/pandora/grafana/dashboards-wow/`.

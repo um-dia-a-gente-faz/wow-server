@@ -26,7 +26,7 @@ Show where a player has been over time.
 
 **Data available:**
 - `wow_player_position_x/y{character}` — already exported to Prometheus as time series (15 s scrape interval)
-- `characters.characters.position_x/y` — updated every `PlayerSaveInterval` (90 s default, tunable)
+- `characters.characters.position_x/y` — updated every `PlayerSaveInterval` (configured to 5 s for observability)
 
 **How:**
 - Trails: Grafana timeseries with the position metrics. A scatter plot of `position_x` vs `position_y` over a time range shows the path.
@@ -34,7 +34,7 @@ Show where a player has been over time.
 
 **Effort:** low for trails (already works with XY scatter + time range). Medium for heatmap (needs a new exporter metric bucketing positions into a coarse grid).
 
-**Prerequisite:** set `TC_WORLD__PlayerSaveInterval=5000` for finer movement (5 s saves instead of 90 s).
+**Prerequisite:** `TC_WORLD__PlayerSaveInterval=5000` is configured for finer movement (5 s saves instead of the 90 s default).
 
 ## 3. Agent behaviour panel
 

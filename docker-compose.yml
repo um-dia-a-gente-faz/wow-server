@@ -15,6 +15,8 @@ services:
       # worldserver.conf, "." becomes "__".
       # - TC_WORLD__Rate__XP__Kill=3
       # - TC_WORLD__Rate__Drop__Money=2
+      # Improve movement-metric freshness for the observability stack (5 s saves).
+      - TC_WORLD__PlayerSaveInterval=5000
       # - TC_WORLD__PlayerLimit=50
       # - TC_WORLD__Motd=Welcome to Pandora
       # ChatLogScript needs Logger.chat.log=3,Console Server. This image maps

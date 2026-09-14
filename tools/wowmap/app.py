@@ -4,7 +4,9 @@
 Serves:
     GET /                     the map page (single file, no build step)
     GET /api/players          online players with world + normalised coords
+    GET /api/character/<name> one character's state, inventory and progression
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
+    POST /api/calibrate       save a per-zone pixel offset
     GET /maps/<file>          extracted zone map images (static)
     GET /healthz              liveness
 
@@ -20,10 +22,12 @@ Env:
 """
 import json
 import logging
+import math
 import os
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
@@ -43,6 +47,10 @@ MYSQL: dict = dict(
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
+CALIBRATION_FILE = os.environ.get(
+    "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
+)
+MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -54,6 +62,45 @@ RACES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: "Taur
          7: "Gnome", 8: "Troll", 10: "Blood Elf", 11: "Draenei"}
 
 _tables = None
+_calibration_lock = threading.Lock()
+
+
+def load_calibrations():
+    """Load the small operator-maintained per-zone pixel-offset store."""
+    try:
+        with open(CALIBRATION_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("top-level value must be an object")
+        return {
+            str(area_id): {"dx": float(value.get("dx", 0)), "dy": float(value.get("dy", 0))}
+            for area_id, value in data.items()
+            if isinstance(value, dict)
+        }
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        log.warning("could not load calibration store %s: %s", CALIBRATION_FILE, exc)
+        return {}
+
+
+calibrations = load_calibrations()
+
+
+def save_calibration(area_id, dx, dy):
+    """Read-modify-write one zone's offset; callers receive the saved value."""
+    value = {"dx": round(dx, 2), "dy": round(dy, 2)}
+    with _calibration_lock:
+        calibrations[str(area_id)] = value
+        directory = os.path.dirname(CALIBRATION_FILE)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        temporary = f"{CALIBRATION_FILE}.tmp"
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump(calibrations, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(temporary, CALIBRATION_FILE)
+    return value
 
 
 def tables():
@@ -125,6 +172,7 @@ def fetch_areas(map_id=None):
             "xmin": round(xmin, 1), "xmax": round(xmax, 1),
             "ymin": round(ymin, 1), "ymax": round(ymax, 1),
             "image": img, "has_image": os.path.exists(os.path.join(MAPS_DIR, img)),
+            "calibration": calibrations.get(str(area_id), {"dx": 0, "dy": 0}),
         })
     rows.sort(key=lambda a: a["name"])
     return rows
@@ -135,6 +183,97 @@ def zones_in_use():
     with db() as conn, conn.cursor() as cur:
         cur.execute("SELECT DISTINCT zone, map FROM characters.characters WHERE online = 1")
         return [{"zone": z, "map": m} for z, m in cur.fetchall()]
+
+
+def best_effort(cur, sql, args, label):
+    """Run an optional character-detail query without failing the whole response."""
+    try:
+        cur.execute(sql, args)
+        return cur.fetchall()
+    except Exception as e:  # noqa: BLE001
+        log.warning("character %s query failed: %s", label, e)
+        return []
+
+
+def fetch_character(name):
+    """Fetch one character and optional detail tables using one DB connection."""
+    character_sql = """
+        SELECT guid, name, level, race, class, gender, zone, map,
+               position_x, position_y, position_z, orientation, money,
+               totaltime, logout_time
+        FROM characters.characters
+        WHERE name = %s
+        LIMIT 1
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(character_sql, (name,))
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        (guid, char_name, level, race, cls, gender, zone, cmap, x, y, z, orient,
+         money, totaltime, logout_time) = row
+
+        inventory = best_effort(cur, """
+            SELECT ci.bag, ci.slot, COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
+            FROM characters.character_inventory ci
+            JOIN characters.item_instance ii ON ci.item = ii.guid
+            LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
+            WHERE ci.guid = %s
+            ORDER BY ci.bag, ci.slot
+        """, (guid,), "inventory")
+        talents = best_effort(cur, """
+            SELECT spell, talentGroup
+            FROM characters.character_talent
+            WHERE guid = %s
+            ORDER BY talentGroup, spell
+        """, (guid,), "talents")
+        reputation = best_effort(cur, """
+            SELECT faction, standing
+            FROM characters.character_reputation
+            WHERE guid = %s
+            ORDER BY faction
+        """, (guid,), "reputation")
+        achievements = best_effort(cur, """
+            SELECT achievement, date
+            FROM characters.character_achievement
+            WHERE guid = %s
+            ORDER BY date DESC, achievement
+        """, (guid,), "achievements")
+
+    t = tables()
+    return {
+        "name": char_name,
+        "level": level,
+        "race": race,
+        "race_name": RACES.get(race, str(race)),
+        "class": cls,
+        "class_name": CLASSES.get(cls, str(cls)),
+        "gender": gender,
+        "zone": zone,
+        "zone_name": t.zone_name(zone) if zone else "Unknown",
+        "map": cmap,
+        "position_x": round(float(x), 2),
+        "position_y": round(float(y), 2),
+        "position_z": round(float(z), 2),
+        "orientation": round(float(orient), 3),
+        "money_gold": float(money) / 10000.0,
+        "totaltime": totaltime,
+        "logout_time": logout_time,
+        "inventory": [
+            {"bag": bag, "slot": slot, "item_name": item_name, "count": count}
+            for bag, slot, item_name, count in inventory
+        ],
+        "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
+        "reputation": [
+            {"faction": faction, "standing": standing}
+            for faction, standing in reputation
+        ],
+        "achievements": [
+            {"achievement": achievement, "date": date}
+            for achievement, date in achievements
+        ],
+    }
 
 
 # ---------------------------------------------------------------- HTTP
@@ -170,6 +309,15 @@ class Handler(BaseHTTPRequestHandler):
                     "players": fetch_players(),
                 })
 
+            if path.startswith("/api/character/"):
+                name = unquote(path[len("/api/character/"):])
+                if not name:
+                    return self._send(404, {"error": "character not found"})
+                character = fetch_character(name)
+                if character is None:
+                    return self._send(404, {"error": "character not found"})
+                return self._send(200, character)
+
             if path == "/api/areas":
                 mid = qs.get("map", [None])[0]
                 return self._send(200, {
@@ -202,6 +350,27 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             log.exception("request failed")
             return self._send(500, {"error": str(e)})
+
+    def do_POST(self):  # noqa: N802
+        if urlparse(self.path).path != "/api/calibrate":
+            return self._send(404, {"error": "not found"})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > MAX_CALIBRATION_PAYLOAD_BYTES:
+                return self._send(413, {"error": "payload too large"})
+            payload = json.loads(self.rfile.read(length))
+            area_id = int(payload["area_id"])
+            dx, dy = float(payload["dx"]), float(payload["dy"])
+            if area_id <= 0 or not math.isfinite(dx) or not math.isfinite(dy):
+                raise ValueError("area_id must be positive and offsets must be finite")
+            value = save_calibration(area_id, dx, dy)
+            log.info("saved calibration for area %d: dx=%s dy=%s", area_id, value["dx"], value["dy"])
+            return self._send(200, {"area_id": area_id, **value})
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            return self._send(400, {"error": str(exc)})
+        except OSError as exc:
+            log.exception("could not persist calibration")
+            return self._send(500, {"error": str(exc)})
 
 
 PAGE = r"""<!doctype html>
@@ -240,6 +409,7 @@ PAGE = r"""<!doctype html>
   button:hover { border-color:#3d4a63; }
   .tabs { display:flex; gap:6px; margin-left:auto; }
   .tabs button.on { background:#2b3550; border-color:#46557a; }
+  button.on { background:#2b3550; border-color:#46557a; }
   .stage { flex:1; position:relative; overflow:auto; }
   .stagewrap { position:relative; margin:auto; }
   #mapimg { display:block; max-width:none; pointer-events:none; }
@@ -257,6 +427,13 @@ PAGE = r"""<!doctype html>
   footer { padding:8px 14px; border-top:1px solid var(--line); color:var(--dim);
            font-size:12px; background:var(--panel); display:flex; gap:14px; }
   .pill { border:1px solid var(--line); border-radius:999px; padding:2px 9px; }
+  .calibration-marker { position:absolute; width:18px; height:18px; transform:translate(-50%,-50%);
+                        border:2px solid #f3b84b; border-radius:50%; pointer-events:none;
+                        box-shadow:0 0 0 2px rgba(0,0,0,.5); }
+  .calibration-marker::before, .calibration-marker::after { content:""; position:absolute; background:#f3b84b; }
+  .calibration-marker::before { width:2px; height:28px; left:6px; top:-7px; }
+  .calibration-marker::after { height:2px; width:28px; left:-7px; top:6px; }
+  .stagewrap.calibrating { cursor:crosshair; }
 </style></head>
 <body>
 <aside>
@@ -274,6 +451,8 @@ PAGE = r"""<!doctype html>
     <label>Zona <select id="zone"></select></label>
     <button id="fit">Ajustar</button>
     <button id="tglTrail" title="Mostra o rastro recente (requer histórico ligado)">Rastro: off</button>
+    <button id="calibrate" title="Clique num ponto de referência e arraste para ajustar os marcadores">Calibrar: off</button>
+    <button id="saveCalibration" hidden>Salvar calibração</button>
     <div class="tabs">
       <button id="follow" title="Centraliza no personagem selecionado">Seguir: off</button>
     </div>
@@ -297,6 +476,7 @@ const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
 let areas = [], players = [], selected = null, follow = false, showTrail = false;
 let currentArea = null, imgW = 1002, imgH = 668;
+let calibrating = false, draftCalibration = null, calibrationReference = null, calibrationDrag = null;
 
 function setImgSize(a) {
   if (!a || !a.has_image) { imgW = 1002; imgH = 668; }
@@ -320,7 +500,7 @@ async function loadAreas() {
   const inuse = new Set((d.in_use || []).map(z => z.zone));
   const pick = list.find(a => inuse.has(a.area_id)) || list[0];
   if (pick) { sel.value = pick.area_id; currentArea = pick; }
-  sel.onchange = () => { currentArea = list.find(a => String(a.area_id) === sel.value); draw(); };
+  sel.onchange = () => { currentArea = list.find(a => String(a.area_id) === sel.value); resetCalibration(); draw(); };
 }
 
 function areaFor(zone) { return areas.find(a => a.area_id === zone); }
@@ -345,7 +525,21 @@ function draw() {
   place();
 }
 
-function px(p) { return [p.norm_x * imgW, p.norm_y * imgH]; }
+function calibration() {
+  if (calibrating && draftCalibration) return draftCalibration;
+  return (currentArea && currentArea.calibration) || {dx: 0, dy: 0};
+}
+
+// Keep calibration at the final world->normalised->pixel step: offsets are image pixels.
+function px(p) {
+  const c = calibration();
+  return [p.norm_x * imgW + c.dx, p.norm_y * imgH + c.dy];
+}
+
+function resetCalibration() {
+  draftCalibration = currentArea ? {...(currentArea.calibration || {dx: 0, dy: 0})} : null;
+  calibrationReference = null;
+}
 
 function place() {
   const a = currentArea;
@@ -376,6 +570,16 @@ function place() {
     m.appendChild(d);
     if (p.name === selected && follow) $('stage').scrollTo({left: x - 300, top: y - 200, behavior:'smooth'});
   }
+  if (calibrating && calibrationReference) {
+    const c = calibration();
+    const ref = document.createElement('div');
+    ref.className = 'calibration-marker';
+    ref.style.left = (calibrationReference.x + c.dx) + 'px';
+    ref.style.top = (calibrationReference.y + c.dy) + 'px';
+    ref.title = 'Ponto de referência — arraste para ajustar';
+    m.appendChild(ref);
+  }
+  wrap.classList.toggle('calibrating', calibrating);
   $('f-note').textContent = `${here.length} nesta zona`;
 }
 
@@ -424,6 +628,48 @@ $('follow').onclick = (e) => {
   follow = !follow;
   e.target.textContent = 'Seguir: ' + (follow ? 'on' : 'off');
   e.target.classList.toggle('on', follow);
+  place();
+};
+$('calibrate').onclick = (e) => {
+  calibrating = !calibrating;
+  if (calibrating) resetCalibration();
+  e.target.textContent = 'Calibrar: ' + (calibrating ? 'on' : 'off');
+  e.target.classList.toggle('on', calibrating);
+  $('saveCalibration').hidden = !calibrating;
+  place();
+};
+$('wrap').addEventListener('pointerdown', (e) => {
+  if (!calibrating || !currentArea) return;
+  const box = $('wrap').getBoundingClientRect();
+  const point = {x: (e.clientX - box.left) * imgW / box.width,
+                 y: (e.clientY - box.top) * imgH / box.height};
+  const c = calibration();
+  calibrationReference = {x: point.x - c.dx, y: point.y - c.dy};
+  calibrationDrag = {x: point.x, y: point.y, dx: c.dx, dy: c.dy};
+  $('wrap').setPointerCapture(e.pointerId);
+  place();
+});
+$('wrap').addEventListener('pointermove', (e) => {
+  if (!calibrationDrag || !draftCalibration) return;
+  const box = $('wrap').getBoundingClientRect();
+  const x = (e.clientX - box.left) * imgW / box.width;
+  const y = (e.clientY - box.top) * imgH / box.height;
+  draftCalibration.dx = Math.round((calibrationDrag.dx + x - calibrationDrag.x) * 100) / 100;
+  draftCalibration.dy = Math.round((calibrationDrag.dy + y - calibrationDrag.y) * 100) / 100;
+  place();
+});
+for (const event of ['pointerup', 'pointercancel']) {
+  $('wrap').addEventListener(event, () => { calibrationDrag = null; });
+}
+$('saveCalibration').onclick = async () => {
+  if (!currentArea || !draftCalibration) return;
+  const r = await fetch('/api/calibrate', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({area_id: currentArea.area_id, ...draftCalibration})});
+  const saved = await r.json();
+  if (!r.ok) { $('f-note').textContent = 'erro ao salvar: ' + saved.error; return; }
+  currentArea.calibration = {dx: saved.dx, dy: saved.dy};
+  draftCalibration = {...currentArea.calibration};
+  $('f-note').textContent = `calibração salva: ${saved.dx}px, ${saved.dy}px`;
   place();
 };
 addEventListener('resize', () => place());
