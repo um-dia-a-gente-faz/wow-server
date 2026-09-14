@@ -19,6 +19,11 @@ services:
       - TC_WORLD__PlayerSaveInterval=5000
       # - TC_WORLD__PlayerLimit=50
       # - TC_WORLD__Motd=Welcome to Pandora
+      # ChatLogScript needs Logger.chat.log=3,Console Server. This image maps
+      # dots to __ for ordinary keys, but this logger key contains a dot itself;
+      # verify TC_WORLD__Logger__chat__log against the generated worldserver.conf
+      # on the target image before relying on this override (see chat-feed README).
+      - TC_WORLD__Logger__chat__log=3,Console Server
     volumes:
       - server_data:/app/server/data
       - server_logs:/app/server/logs
@@ -47,6 +52,23 @@ services:
         reservations:
           cpus: "2.0"
           memory: "3g"
+
+  chat-feed:
+    build: ./tools/chat-feed
+    container_name: chat-feed
+    restart: unless-stopped
+    environment:
+      - LOG_PATH=/logs/Server.log
+      - REPLAY_BUFFER_SIZE=200
+      - LISTEN_PORT=9500
+      - CHAT_FEED_CHANNELS=say,yell,channel
+    volumes:
+      - server_logs:/logs:ro
+    depends_on:
+      trinitycore-wowserver:
+        condition: service_started
+    ports:
+      - "9500:9500"
 
   database:
     image: mysql:8.4.4
