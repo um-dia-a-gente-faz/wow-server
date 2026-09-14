@@ -82,7 +82,8 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
 | `docs/ARCHITECTURE.md` | Component and network layout |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
-| `docs/LIVE-MAP.md` | Design for a live "who is online and where" map (coordinate transform proven) |
+| `docs/LIVE-MAP.md` | Live map: how it was built, DBC field order, extraction, alignment notes |
+| `docs/ROADMAP.md` | Next features: agent panel, chat, inspect, trails, calibration |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
 | `grafana/` | Dashboard provisioning config — the file-based loading that replaced API auth |
 | `tdb/README.md` | Which TDB version to use and why |
