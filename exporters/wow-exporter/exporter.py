@@ -238,23 +238,19 @@ class WowCollector(Collector):
             y.add_metric([name], level)
         yield y
 
-        # In the 3.3.5a schema, status 1 is QUEST_STATUS_COMPLETE: the quest
-        # is currently ready to turn in. Rewarded quests are stored separately
-        # in character_queststatus_rewarded, so this is deliberately not a
-        # lifetime quest-completion count.
-        y = GaugeMetricFamily("wow_character_quests_completed",
-                              "Quests currently complete and ready to turn in per character (top N by playtime)",
+        y = GaugeMetricFamily("wow_character_quests_completed_total",
+                              "Lifetime quests completed per character (top N by playtime)",
                               labels=["character"])
         quest_rows = q(cur, fr"""
-            SELECT c.name, COUNT(qs.quest)
+            SELECT c.name, COUNT(qsr.quest)
             FROM (
                 SELECT guid, name
                 FROM characters.characters
                 ORDER BY totaltime DESC
                 LIMIT {TOP_PLAYED}
             ) c
-            LEFT JOIN characters.character_queststatus qs
-                ON qs.guid = c.guid AND qs.status = 1
+            LEFT JOIN characters.character_queststatus_rewarded qsr
+                ON qsr.guid = c.guid
             GROUP BY c.guid, c.name
         """)
         for name, completed in quest_rows:
