@@ -160,6 +160,39 @@ first boot, and the write API rejects basic auth; the file path needs no auth at
 Validate every panel expression against Prometheus (`/api/v1/query_range`) before
 committing a dashboard — an empty result almost always means a wrong label matcher.
 
+## Updating
+
+`/opt/wow-server` on the VM is a real clone of this repo (not a copy) and both
+the game stack (`docker-compose.yml`) and the monitoring stack
+(`monitoring/docker-compose.yml`, including `wow-exporter`, `wowmap`, and their
+`../tools` / `../exporters` build contexts) run straight out of it as two
+separate compose projects. To ship changes from `main`:
+
+```bash
+ssh root@192.168.1.64 '/opt/wow-server/scripts/deploy.sh'
+```
+
+This fast-forwards the checkout to `origin/main` and runs `docker compose up -d
+--build` for both projects, which only recreates containers whose image, build
+context, or compose file actually changed. Env-only changes to
+`TC_WORLD__*` still require the `trinitycore-wowserver` container to be
+recreated (not just restarted) for `ConfigurationWriter.js` to regenerate
+`worldserver.conf` — `up -d` does this automatically when the compose file
+changed.
+
+Grafana dashboard JSONs (`monitoring/grafana-dashboard-*.json`) are provisioned
+on the *separate* docker-stack VM (192.168.1.60), not this one:
+
+```bash
+./scripts/deploy-dashboards.sh   # run from a machine with SSH to 192.168.1.60
+```
+
+Local-only config that isn't meant to go through git (the DB root password,
+etc.) doesn't exist yet — everything currently running is tracked in
+`docker-compose.yml`. If you add a one-off env var or port directly on the VM,
+fold it back into the repo (with a comment explaining why) instead of leaving
+it untracked, or the next `deploy.sh` will silently drop it.
+
 ## Management
 
 ```bash

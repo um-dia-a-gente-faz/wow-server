@@ -24,6 +24,11 @@ services:
       # verify TC_WORLD__Logger__chat__log against the generated worldserver.conf
       # on the target image before relying on this override (see chat-feed README).
       - TC_WORLD__Logger__chat__log=3,Console Server
+      # Telnet remote-admin console on port 3443 (Ra.Port default) — scripted
+      # GM/account commands without a TTY, alongside scripts/wow_console.py's
+      # web UI socket.io route. Enabled directly on the VM; tracked here so a
+      # redeploy doesn't silently disable it.
+      - TC_WORLD__Ra.Enable=1
     volumes:
       - server_data:/app/server/data
       - server_logs:/app/server/logs
@@ -42,6 +47,7 @@ services:
       - "8085:8085"   # World server
       - "3724:3724"   # Auth server (logon)
       - "3000:3000"   # Web UI
+      - "3443:3443"   # Telnet remote-admin console (Ra.Enable above)
     deploy:
       resources:
         # Must fit the VM's TOTAL RAM. 6 GB VM: 5g limit / 3g reservation here
@@ -78,6 +84,8 @@ services:
       MYSQL_ROOT_PASSWORD: trinityroot
     volumes:
       - db_data:/var/lib/mysql
+    ports:
+      - "3306:3306"   # Direct DB access for ad-hoc queries / review verification
     deploy:
       resources:
         limits:

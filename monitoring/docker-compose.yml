@@ -1,12 +1,13 @@
 # Monitoring compose for the wow-server VM (192.168.1.64), scraped by the external
 # Prometheus/Grafana on the docker-stack VM (192.168.1.60).
 #
-# Runs as a SEPARATE compose project from the game stack so it survives
-# `docker compose down -v` on /opt/wow-server.
+# Runs as a SEPARATE compose project (name "monitoring", from this directory's
+# basename) from the game stack, so it survives `docker compose down -v` in the
+# repo root even though both live in the same git checkout.
 #
-#   mkdir -p /opt/monitoring && cp monitoring/docker-compose.yml /opt/monitoring/
-#   # Copy wowmap source: cp -r tools/wowmap /opt/monitoring/..  (or /opt/wowmap)
-#   cd /opt/monitoring && docker compose up -d --build
+# Build contexts are relative to this file (../exporters/wow-exporter,
+# ../tools/wowmap), so this runs straight from the repo checkout — no more
+# copying source into /opt/monitoring or /opt/wowmap. See scripts/deploy.sh.
 #
 # Exposes:
 #   :9100  node-exporter     host CPU / RAM / disk / net
@@ -58,7 +59,7 @@ services:
 
   wow-exporter:
     container_name: wow-exporter
-    build: ./wow-exporter
+    build: ../exporters/wow-exporter
     restart: unless-stopped
     environment:
       - MYSQL_HOST=trinitycore-db
@@ -74,7 +75,7 @@ services:
 
   wowmap:
     container_name: wowmap
-    build: /opt/wowmap
+    build: ../tools/wowmap
     restart: unless-stopped
     environment:
       - MYSQL_HOST=trinitycore-db
