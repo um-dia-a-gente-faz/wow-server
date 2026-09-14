@@ -1,93 +1,103 @@
-# Roadmap — WoW Server Observability
+# Roadmap
 
-Ideas discussed, ordered by readiness (most doable first).
+## Shipped
 
-## 1. Character inspect panel
+The original observability roadmap (character inspect, movement trails,
+agent-behaviour panel, live map calibration, chat feed spike) is done and
+deployed to the live VM as of 2026-09-14:
 
-A page or Grafana dashboard showing a single character's full state.
+| Item | PR | Notes |
+|---|---|---|
+| Player save interval tuning | #2 | 5 s saves for fresher position metrics |
+| Agent behaviour dashboard | #3 | Grafana: online pop, playtime, zone, level |
+| Character inspect API | #4 | `GET /api/character/<name>` on wowmap |
+| Movement trails + density heatmap | #5 | Grafana dashboard + `wow_player_position_bucket` |
+| Quest completion + chat feed spike | #6 | `wow_character_quests_completed_total`; `docs/CHAT_FEED_SPIKE.md` |
+| Live map calibration mode | #7 | Per-zone pixel offset, persisted, operator UI |
+| Chat feed SSE sidecar | #8 | `tools/chat-feed`, port 9500, bounded replay |
+| Deploy tooling | — | `/opt/wow-server` is now a real git checkout; `scripts/deploy.sh` |
 
-**Data available (already in the exporter or DB):**
-- `wow_character_level`, `wow_character_playtime_seconds` — exporters/metrics
-- `characters.characters`: level, race, class, gender, zone, map, position, money, totaltime, logout_time — accessible via the game DB
+All 8 dashboards/services are live on 192.168.1.64 and 192.168.1.60. See
+`docs/DEPLOYMENT.md` → "Updating" for the redeploy flow.
 
-**Data missing (would need new queries):**
-- Inventory (`character_inventory` → `item_instance` → `item_template` for names)
-- Talents (`character_talent` / `character_action`)
-- Reputation (`character_reputation`)
-- Achievements
+## Now: AI agent perception (Phase 1 completion)
 
-**Effort:** medium. New exporter metrics or a small `/api/character/<name>` endpoint on the wowmap service. Could also be a Grafana table panel if metrics have low cardinality, but per-character data is better as an API.
+This is the actual point of the repo (`docs/AI-AGENT-SPEC.md`) and the
+highest-leverage next task — everything else is scaffolding around it. The
+protocol client (`agent/`) already does SRP6 auth, world handshake, login,
+keepalive, chat, and target actions end to end against the live server. The
+one missing piece is **perception**: `agent/perception.py::WorldState`
+currently only records that a GUID exists, with no position/health/name data.
 
-**Dependencies:** none — the DB schemas exist, the exporter has MySQL access.
+**Task:** parse `SMSG_UPDATE_OBJECT` / `SMSG_COMPRESSED_UPDATE_OBJECT` in
+`agent/session.py::_parse_update_object()` — block types, packed GUIDs, the
+update-mask bitfield, and the movement block for `UPDATEFLAG_LIVING`. Fully
+speced byte-by-byte, including which `UNIT_FIELD_*` indices to extract, in
+`docs/NEXT-AGENT-HANDOFF.md` (still accurate; only its "checkout
+feat/agent-client-protocol" setup line is stale — that branch is merged, work
+straight from `main`).
 
-## 2. Movement trails / heatmap
+**Definition of done** (from the handoff doc):
+1. `python3 -m agent --dry-run` logs "perception: N objects tracked" with N > 0
+2. `session.player_position` updates when the character moves (teleport via
+   `.go xyz` from the web UI console and confirm the change)
+3. Nearby NPCs show up in the object list with entry IDs
 
-Show where a player has been over time.
+**Effort:** medium — the hard crypto/protocol plumbing is already done; this
+is careful binary parsing against a documented wire format.
 
-**Data available:**
-- `wow_player_position_x/y{character}` — already exported to Prometheus as time series (15 s scrape interval)
-- `characters.characters.position_x/y` — updated every `PlayerSaveInterval` (configured to 5 s for observability)
+## Next: Phase 2 — basic actions
 
-**How:**
-- Trails: Grafana timeseries with the position metrics. A scatter plot of `position_x` vs `position_y` over a time range shows the path.
-- Heatmap: a Grafana heatmap panel on `wow_player_position_x` bucketed by zone, or a custom exporter metric counting position occurence per grid cell.
+Once perception works, `agent/actions.py` currently only has chat, party
+invite, and target. In spec order (`docs/AI-AGENT-SPEC.md` Phase 2):
 
-**Effort:** low for trails (already works with XY scatter + time range). Medium for heatmap (needs a new exporter metric bucketing positions into a coarse grid).
+1. **Movement** — pathfind and walk (`move_to`); the server has mmaps built
+   already (see `docs/DEPLOYMENT.md`), so navigation should route through
+   them rather than straight-line walking into walls.
+2. **NPC interaction** — gossip, vendor buy/sell, quest accept/turn-in.
+3. **Combat** — auto-attack, cast_spell, loot.
+4. **Inventory** — equip/unequip, use_item.
 
-**Prerequisite:** `TC_WORLD__PlayerSaveInterval=5000` is configured for finer movement (5 s saves instead of the 90 s default).
+**Dependency:** all of these need perception (to know where NPCs/mobs are,
+what quests are offered, what's lootable) — build perception first.
 
-## 3. Agent behaviour panel
+## Then: Phase 3 — think loop + LLM integration
 
-A dashboard tracking what autonomous agents/players are doing.
+`agent/__main__.py` has a `--once` mode described as "one full think cycle
+(perceive → act)" but no LLM call yet — the decision step is still a stub or
+hardcoded. Once Phase 1+2 land: wire an actual LLM call (system prompt +
+state + perception → next action), start with a single agent leveling 1→10
+per the spec's Phase 3 exit criterion, before touching memory or multi-agent.
 
-**Data available:**
-- `wow_online_player_info` — 1 per online player, with map/zone/instance/level/class labels
-- `wow_character_level`, `wow_character_playtime_seconds`
-- Position, zone, map per player (already in Prometheus)
+## Observability polish (small, optional, not blocking the agent work)
 
-**Possible panels:**
-- Player online status over time (from `wow_players_online` — already working)
-- Playtime per character (bar gauge, already in wow-players dashboard)
-- Zone changes (rate of `wow_player_pos_x` changing zone label — PromQL `count by (zone)`)
-- Level progression (when a `wow_character_level` increases)
+- **Chat feed has no viewer.** The SSE backend (port 9500) works and is
+  tested, but nobody's watching it — `tools/chat-feed/README.md`'s "Browser
+  consumer" is a code snippet, not a page. A small static page (same style as
+  wowmap) or a panel in the live-map page would make it actually useful.
+- **README.md is stale.** The architecture diagram still shows a separate
+  `/opt/monitoring/` and doesn't mention `tools/wowmap`, `tools/chat-feed`,
+  `agent/`, or that the VM is now a git checkout deployed via
+  `scripts/deploy.sh`. Worth a pass so a fresh reader isn't misled.
+- **Chat feed is explicitly a prototype** (`tools/chat-feed/README.md` →
+  "Prototype limitations"): no auth, no durable history, no metrics/alerts,
+  rotation handling untested against every runtime. Fine for a single-viewer
+  homelab; revisit if it's ever exposed beyond LAN or feeds the agent's
+  perception (a bot reading its own chat feed would want reconnect
+  guarantees this doesn't promise yet).
 
-**Missing:**
-- Quest completion tracking — would need `character_queststatus` table metrics
-- Chat activity — not in any DB table (TrinityCore chat is in-memory; could log to a file and tail it)
-- Aggression / combat — no built-in counter; could come from server logs
+## Later: Phase 4/5 — full autonomy, multi-agent
 
-**Effort:** low-moderate. Most of the data already flows; the panel is UI work.
+Talent builds, profession leveling, dungeon navigation, 1→80 leveling,
+multi-agent coordination and PvP (`docs/AI-AGENT-SPEC.md` Phases 4-5).
+Deliberately not planned in detail yet — depends entirely on what Phase 2/3
+reveal about what's hard.
 
-## 4. Global chat feed
+## How to pick up from here
 
-A live feed of `/say`, `/yell`, `/world`, `/guild` chat messages.
-
-**Data source:** TrinityCore's worldserver stdout includes chat lines when certain log levels are enabled. `/world` chat is a custom channel handled by a C++ script. The worldserver console socket.io (`worldserver_state`) already streams server output.
-
-**Possible approach:**
-- A dedicated log-watcher process that tails the container's worldserver stdout, parses chat patterns, and exposes them as an SSE (Server-Sent Events) endpoint or WebSocket.
-- Or: expose a `/stream` endpoint on the wowmap service that the frontend subscribes to.
-
-**Effort:** high. Requires parsing unstructured server output and building a streaming endpoint.
-
-**Alternative:** the client-side addon approach (an in-game addon writes chat to a shared channel/file). Even harder — needs server-side mod.
-
-## 5. Live map — alignment calibration
-
-The WorldMapArea rect does not linearly cover the full 1024×768 tile sheet (the art has decorative borders and sea beyond the rect). Positions are in the right zone but may be off by a constant translation per zone.
-
-**How to fix:**
-- **Calibration scrim:** add a "calibrate" mode to the map page where you can drag the marker to the correct spot and the offset is saved per zone (a small JSON file).
-- **Reference points:** use known in-game positions (your own `.gps` output, or world.creature spawns) and dial in the rect offset.
-
-**Effort:** low. The map page already has the coordinate pipeline; an offset is just `px += delta`.
-
-**Alternative:** render terrain from `maps/*.map` files instead of Blizzard art — guaranteed alignment but a larger build (needs a terrain renderer for TrinityCore's binary map format).
-
-## How to pick what to build next
-
-1. Set `TC_WORLD__PlayerSaveInterval=5000` (5 s saves) — immediately improves all observability.
-2. Character inspect API — the most "missing" piece, enables agent tools.
-3. Agent panel dashboard — visualises what the exporter already has.
-4. Movement trails — enabled by step 1 + position metrics already flowing.
-5. Chat feed — biggest effort, save for later.
+1. Perception parsing (`agent/session.py`) — single highest-leverage task,
+   fully speced, no dependencies.
+2. Movement + pathfinding — first action that needs perception to be useful.
+3. NPC interaction + combat — round out Phase 2.
+4. LLM think loop — the first genuinely autonomous agent.
+5. Observability polish — pick up opportunistically, none of it blocks 1-4.
