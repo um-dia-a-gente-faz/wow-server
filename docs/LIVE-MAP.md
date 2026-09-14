@@ -29,18 +29,16 @@ See the module docstring for the full layout.
 
 | What | Where | Freshness |
 |---|---|---|
-| position | `characters.characters.position_x/y/z`, `orientation` | `PlayerSaveInterval`, default **90000 ms (90 s)** |
+| position | `characters.characters.position_x/y/z`, `orientation` | `PlayerSaveInterval`, configured to **5000 ms (5 s)** |
 | current map / zone | same row — `map`, `zone` | as above |
 | instance | `instance_id` (non-zero = in a dungeon/raid) | as above |
 | online flag | `characters.characters.online`, `auth.account.online` | on login/logout |
 | zone names | `AreaTable.dbc` — **not in the DB**, the TDB has no `areatable` table | static |
 | zone rects | `WorldMapArea.dbc` | static |
 
-**Sampling resolution is the main knob.** At the 90 s default, a running player moves
-~600 yards between samples — enough to see *which area* someone is in, useless as a path.
-Setting `TC_WORLD__PlayerSaveInterval=5000` (5 s) in `docker-compose.yml` gives real
-movement traces. Trade-off: one DB write per online player per interval; 5 s is fine for
-a small realm, 1 s would work but is wasteful.
+**Sampling resolution is the main knob.** With the configured 5 s interval, movement
+samples are fresh enough for usable traces. Trade-off: one DB write per online player per
+interval; 5 s is fine for a small realm, while 1 s would be wasteful.
 
 ## Rendering options
 
@@ -201,8 +199,8 @@ Dashboard `wow-live-map` in the `WoW Server` Grafana folder:
 
 ### Decisions made
 
-- **Sampling interval** — kept at 90 s default. Reduce with
-  `TC_WORLD__PlayerSaveInterval=5000` when movement trails are built.
+- **Sampling interval** — set to 5 s with `TC_WORLD__PlayerSaveInterval=5000` for
+  movement-trail and heatmap observability.
 - **Map art** — extracted from the client MPQs (option 1, no third-party assets).
 - **Home** — standalone page at :9400, **not** embedded in Grafana (Grafana
   HTML panels with sanitisation disabled could embed it, but the page is richer
