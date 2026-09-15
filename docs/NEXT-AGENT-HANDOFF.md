@@ -28,7 +28,7 @@ WHAT EXISTS
     docker-compose.agents.yml — one container per agent
 
   Test (proves auth+login works):
-    export WOW_ACCOUNT=AGENT01 WOW_PASSWORD=hunter123 WOW_CHARACTER=Luaprata
+    export WOW_ACCOUNT=AGENT01 WOW_PASSWORD='<see .env>' WOW_CHARACTER=Luaprata
     python3 -m agent --dry-run   # logs in for 30s, says hello, exits
 
   Live server: 192.168.1.64:3724 (auth), 8085 (world), 3000 (web UI)
@@ -118,17 +118,17 @@ REFERENCE MATERIAL
   Python agent/ package IS the real client.
 
   If you need to look at DB data, the MySQL at 192.168.1.64:3306 has:
-    user trinity, pass trinity, databases characters/world/auth.
+    user trinity, pass <see .env> (TRINITY_DB_PASSWORD), databases characters/world/auth.
   SSH to 192.168.1.64 as root (key at ~/.ssh/id_ed25519).
 
 DOCKER (already working)
   docker build -t wow-agent .
-  docker run --rm -e WOW_ACCOUNT=AGENT01 -e WOW_PASSWORD=hunter123 \
+  docker run --rm -e WOW_ACCOUNT=AGENT01 -e WOW_PASSWORD='<see .env>' \
       -e WOW_CHARACTER=Luaprata wow-agent:latest --dry-run
   # docker-compose.agents.yml has 5-agent template (currently only
   # agent-luaprata is uncommented — Farstrider/Shadowblade/Sunspeaker/
   # Spellweaver exist as chars on accounts AGENT02..AGENT05 with the
-  # same password 'hunter123')
+  # same password: AGENT_PASSWORD in .env)
 
 VERIFY YOUR WORK BY
   1. Running python3 -m agent --dry-run — should log in and print

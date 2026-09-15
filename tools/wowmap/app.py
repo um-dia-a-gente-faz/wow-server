@@ -40,7 +40,7 @@ MYSQL: dict = dict(
     host=os.environ.get("MYSQL_HOST", "trinitycore-db"),
     port=int(os.environ.get("MYSQL_PORT", "3306")),
     user=os.environ.get("MYSQL_USER", "root"),
-    password=os.environ.get("MYSQL_PASSWORD", "trinityroot"),
+    password=os.environ.get("MYSQL_PASSWORD", ""),
     charset="utf8mb4",
     autocommit=True,
 )

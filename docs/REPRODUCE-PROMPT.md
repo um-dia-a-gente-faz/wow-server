@@ -161,10 +161,10 @@ Contas são criadas no servidor. Sem TTY, use o socket.io do web UI
 Verifique: "TC> Account created: <usuario>" e "Security level of account <USUARIO> changed to 3."
 Confirme no banco:
 
-    ssh root@192.168.1.64 'docker exec trinitycore-db mysql -uroot -ptrinityroot \
-      -e "SELECT id,username,expansion FROM auth.account;"'
-    ssh root@192.168.1.64 'docker exec trinitycore-db mysql -uroot -ptrinityroot \
-      -e "SELECT * FROM auth.account_access;"'
+    ssh root@192.168.1.64 'docker exec trinitycore-db sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" \
+      -e \"SELECT id,username,expansion FROM auth.account;\""'
+    ssh root@192.168.1.64 'docker exec trinitycore-db sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" \
+      -e \"SELECT * FROM auth.account_access;\""'
 
 (usuários são gravados em MAIÚSCULO; expansion 2 = WotLK; account_access usa
 SecurityLevel, não gmlevel)
@@ -203,7 +203,7 @@ e abre Wow.exe DIRETO (nunca o launcher — ele tenta patch e quebra a compatibi
          -v /opt/wow-server/client:/app/client -e PUBLIC_IP_ADDRESS=192.168.1.64 \
          --entrypoint /bin/sh danielsilvestre37/trinitycore-docker:3.3.5 -c "sleep infinity"
        docker exec wow-debug sh -c 'sed -e "s|<DATABASE_HOST>|database|g" -e "s|<DATABASE_PORT>|3306|g" \
-         -e "s|<DATABASE_USER>|trinity|g" -e "s|<DATABASE_PASSWORD>|trinity|g" \
+         -e "s|<DATABASE_USER>|trinity|g" -e "s|<DATABASE_PASSWORD>|<see .env: TRINITY_DB_PASSWORD>|g" \
          /app/backend/resources/worldserver.335.conf.dist > /app/server/etc/worldserver.conf'
        # (suba o banco antes) então:
        docker exec wow-debug sh -c 'cd /app/server/bin && ./worldserver -u 2>&1 | head -20'

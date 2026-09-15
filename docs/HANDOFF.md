@@ -13,9 +13,9 @@
   - World: 8085, Auth: 3724, Web UI: 3000, RA: 3443
   - Docker Compose at `/opt/wow-server/docker-compose.yml` on pandora
   - RA enabled via env override: `TC_WORLD__Ra.Enable=1`
-  - MySQL exposed on 3306 (user: `trinity` / pass: `trinity`)
+  - MySQL exposed on 3306 (user: `trinity` / pass: `<see .env>`, `TRINITY_DB_PASSWORD`)
 - **FreeLLMAPI:** running on `192.168.1.60:3002` — proxies free LLM models
-  - API key: `freellmapi-bde9c92b869fd6b9b456c6b3f42f48f641f98f1ffa8ebeeb`
+  - API key: `LLM_API_KEY` in your gitignored `.env` (see `.env.example`); never paste it into docs
   - Model `auto` routes to best available free model
   - Models list: `GET /v1/models`
   - Endpoint: `POST /v1/chat/completions` (OpenAI-compatible)
@@ -24,11 +24,11 @@
 | Account ID | Username | Password | Char GUID | Name | Class |
 |-----------|----------|----------|-----------|------|-------|
 | 1 | GITHUBENS | (user's) | 1 | Rubens | Paladin |
-| 2 | AGENT01 | hunter123 | 2 | Silvermoon | Paladin |
-| 3 | AGENT02 | hunter123 | 3 | Farstrider | Hunter |
-| 4 | AGENT03 | hunter123 | 4 | Shadowblade | Rogue |
-| 5 | AGENT04 | hunter123 | 5 | Sunspeaker | Priest |
-| 6 | AGENT05 | hunter123 | 6 | Spellweaver | Mage |
+| 2 | AGENT01 | `<see .env>` | 2 | Silvermoon | Paladin |
+| 3 | AGENT02 | `<see .env>` | 3 | Farstrider | Hunter |
+| 4 | AGENT03 | `<see .env>` | 4 | Shadowblade | Rogue |
+| 5 | AGENT04 | `<see .env>` | 5 | Sunspeaker | Priest |
+| 6 | AGENT05 | `<see .env>` | 6 | Spellweaver | Mage |
 
 All have GM level 3. Health values set per class.
 
@@ -114,14 +114,14 @@ Add Google API key to FreeLLMAPI dashboard for `gemini-2.5-flash`.
 nc -zv 192.168.1.64 8085 && nc -zv 192.168.1.64 3724
 
 # MySQL direct access
-ssh root@192.168.1.64 'docker exec trinitycore-db mysql -u trinity -ptrinity characters -e "SELECT guid, name, online, position_x, position_y FROM characters;"'
+ssh root@192.168.1.64 'docker exec trinitycore-db mysql -u trinity -p"<see .env>" characters -e "SELECT guid, name, online, position_x, position_y FROM characters;"'
 
 # Restart WoW server
 ssh root@192.168.1.64 'docker compose -f /opt/wow-server/docker-compose.yml restart trinitycore-wowserver'
 
-# FreeLLMAPI models
-curl -s http://192.168.1.60:3002/v1/models -H "Authorization: Bearer freellmapi-bde9c92b869fd6b9b456c6b3f42f48f641f98f1ffa8ebeeb"
+# FreeLLMAPI models (LLM_API_KEY from .env: `set -a; . ./.env; set +a`)
+curl -s http://192.168.1.60:3002/v1/models -H "Authorization: Bearer $LLM_API_KEY"
 
 # Move offline character
-ssh root@192.168.1.64 'docker exec trinitycore-db mysql -u trinity -ptrinity characters -e "UPDATE characters SET position_x=X, position_y=Y, position_z=Z WHERE guid=N;"'
+ssh root@192.168.1.64 'docker exec trinitycore-db mysql -u trinity -p"<see .env>" characters -e "UPDATE characters SET position_x=X, position_y=Y, position_z=Z WHERE guid=N;"'
 ```

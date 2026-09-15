@@ -14,7 +14,7 @@ instead of lingering as stale data.
 | `MYSQL_HOST` | `trinitycore-db` | game DB host |
 | `MYSQL_PORT` | `3306` | |
 | `MYSQL_USER` | `root` | |
-| `MYSQL_PASSWORD` | `trinityroot` | |
+| `MYSQL_PASSWORD` | — | required; compose passes `MYSQL_ROOT_PASSWORD` from the root `.env` |
 | `LISTEN_PORT` | `9300` | |
 | `TOP_PLAYED` | `20` | how many characters to expose per-character playtime for |
 
