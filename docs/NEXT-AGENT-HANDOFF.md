@@ -77,9 +77,9 @@ REFERENCE MATERIAL
   The docker image on the server is danielsilvestre37/trinitycore-docker:3.3.5
   (rev 2ac2d9055061, 2026-05-29, Linux x86_64, RelWithDebInfo, static).
 
-  The existing MCP runtime is in agent-runtime/ (Node.js) — ignore it.
-  It was the pre-protocol fake layer using MySQL + GM commands.  The new
-  Python agent/ package IS the real client.
+  The old Node.js MCP runtime (agent-runtime/, a pre-protocol fake layer
+  using MySQL + GM commands) has been removed; it lives only in git
+  history.  The Python agent/ package IS the real client.
 
   If you need to look at DB data, the MySQL at 192.168.1.64:3306 has:
     user trinity, pass <see .env> (TRINITY_DB_PASSWORD), databases characters/world/auth.

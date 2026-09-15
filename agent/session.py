@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """WoW session manager — login, keepalive, packet dispatch.
-Wraps the low-level wow_client protocol in a background recv loop."""
+Wraps the low-level world protocol in a background recv loop."""
 
 import socket
 import struct

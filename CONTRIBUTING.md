@@ -36,7 +36,7 @@ Optional, lowercased, dash-separated. Examples:
 | `dashboard` | Grafana dashboard JSONs |
 | `monitoring` | `monitoring/` compose, Prometheus config |
 | `docker` | `docker-compose.yml` or container changes |
-| `agent` | `agent-runtime/` (AI agent code) |
+| `agent` | `agent/` (Python protocol-level AI agent) |
 | `transform` | `tools/wowmap/transform.py` (DBC → pixel math) |
 | `docs` | any `.md` file |
 
@@ -89,19 +89,25 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 
 Most changes affect the running services on `wow-server` (192.168.1.64) or `docker-stack` (192.168.1.60).
 
-```bash
-# Deploy exporter changes
-cat exporters/wow-exporter/exporter.py | ssh root@192.168.1.64 \
-  'cat > /opt/monitoring/wow-exporter/exporter.py'
-ssh root@192.168.1.64 'cd /opt/monitoring && docker compose up -d --build wow-exporter'
+The VM's `/opt/wow-server` is a git checkout of this repo, and both the game
+stack and the monitoring stack (`wow-exporter`, `wowmap`, …) run out of it.
+Deploys ship whatever is on `origin/main` via `scripts/deploy.sh` — never copy
+files onto the VM by hand. See `docs/DEPLOYMENT.md` → *Updating*.
 
-# Deploy wowmap changes
-cd tools/wowmap && tar czf - . | ssh root@192.168.1.64 \
-  'rm -rf /opt/wowmap/* && tar xzf - -C /opt/wowmap'
-ssh root@192.168.1.64 'cd /opt/monitoring && docker compose up -d --build wowmap'
+```bash
+# Deploy (fast-forwards /opt/wow-server to origin/main, rebuilds changed containers)
+ssh root@192.168.1.64 '/opt/wow-server/scripts/deploy.sh'
 
 # Verify
-ssh root@192.168.1.64 'docker compose -f /opt/monitoring/docker-compose.yml ps'
+ssh root@192.168.1.64 'cd /opt/wow-server && docker compose ps && docker compose -f monitoring/docker-compose.yml ps'
 ssh root@192.168.1.64 'curl -s localhost:9400/healthz'
 ssh root@192.168.1.60 'curl -s http://localhost:9091/api/v1/targets | grep -c "\\"health\\":\\"up\\""'
+```
+
+The AI agent (`agent/`) is not part of the deployed stacks; test it from any
+machine that can reach the server:
+
+```bash
+python3 -m agent --list-chars
+docker build -t wow-agent .
 ```
