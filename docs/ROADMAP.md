@@ -188,10 +188,11 @@ deploy and keep in sync.
 - Health/power are **not** in the inspect payload yet, and only *current*
   values exist anywhere: `characters.characters.health` and `.power1`-`.power7`
   are real columns (confirmed against the live schema), refreshed every 5s
-  (the `PlayerSaveInterval` tuned in #2) — but there is **no persisted max
-  health/max power column anywhere**. Max values are computed by the
-  worldserver at runtime from level + class + gear and never written to the
-  DB. This is the one real open question in this plan — see Phase B.
+  (the `PlayerSaveInterval` tuned in #2). Max values are computed by the
+  worldserver at runtime from level + class + gear. Stock TrinityCore *can*
+  persist them to `characters.character_stats`, but that is disabled by
+  default and the table is empty on this realm. See Phase B and
+  `docs/HP_POWER_SPIKE.md`.
 
 ### Phase A — wire up character inspect (no backend gaps)
 
@@ -239,6 +240,14 @@ of effort:
 
 **Recommendation:** ship option 1 with Phase A, spike option 2 as a short,
 separate task before committing to a bar UI.
+
+**Spike result (UM-46, `docs/HP_POWER_SPIKE.md`):** option 2 is a no-go,
+because no console-usable GM command prints a player's max health/power. A
+fifth, config-only option works instead: set
+`PlayerSave.Stats.MinLevel=1` and `PlayerSave.Stats.SaveOnlyOnLogout=0` so
+the worldserver writes `maxhealth`/`maxpower1-7` to
+`characters.character_stats` on every 5 s save, then `LEFT JOIN` it in
+`fetch_character()`. Roughly 1 day, no core change.
 
 ### Phase C — talent / reputation / achievement names
 
