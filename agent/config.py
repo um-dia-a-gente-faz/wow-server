@@ -64,6 +64,8 @@ class Config:
     # ── Logging ───────────────────────────────────────────────
     log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
     verbose_packets: bool = field(default_factory=lambda: _env_bool("VERBOSE_PACKETS", False))
+    # Directory to dump raw (decrypted, inflated) SMSG_UPDATE_OBJECT payloads into.
+    dump_packets_dir: str = field(default_factory=lambda: _env_str("AGENT_DUMP_PACKETS"))
 
     def validate(self, require_character: bool = True) -> list[str]:
         """Return a list of configuration problems (empty = OK)."""
@@ -91,6 +93,7 @@ class Config:
             "run_duration": self.run_duration or "forever",
             "llm_model": self.llm_model or "(unset)",
             "log_level": self.log_level,
+            "dump_packets": self.dump_packets_dir or "(off)",
         }
 
 

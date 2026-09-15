@@ -63,7 +63,9 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # World connect
     # ═══════════════════════════════════════════════════════════
-    sess = WoWSession(world_host, world_port, account, session_key, r['id'])
+    sess = WoWSession(world_host, world_port, account, session_key, r['id'],
+                      verbose_packets=cfg.verbose_packets,
+                      dump_packets_dir=cfg.dump_packets_dir)
     sess.connect()
     chars = sess.enum_characters()
 
@@ -89,7 +91,7 @@ def main():
 
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
     sess.login_character(choice['guid'])
-    log.info("online — position %s", sess.player_position)
+    log.info("online — guid %d, position %s", sess.player_guid, sess.player_position)
 
     # ═══════════════════════════════════════════════════════════
     # Run
@@ -101,6 +103,10 @@ def main():
     if args.dry_run:
         log.info("dry-run: sleeping %s s ...", duration)
         time.sleep(duration)
+        log.info("dry-run: %d objects tracked, recv thread %s, %d packets dropped",
+                 len(sess.world_state.get_objects()),
+                 "alive" if sess.recv_thread_alive() else "DEAD",
+                 sess.dropped_packets)
         sess.logout()
         log.info("dry-run complete.")
         return
