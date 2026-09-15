@@ -1,5 +1,9 @@
 # Roadmap
 
+> **Linear is the tracker of record.** Issues live in the Linear team *Um Dia a Gente
+> Faz* (`UM-*`), project *Wow Server*. This file holds background and design notes.
+> When scope or status changes, update Linear first, so the two don't drift.
+
 ## Shipped
 
 The original observability roadmap (character inspect, movement trails,
@@ -33,12 +37,13 @@ currently only records that a GUID exists, with no position/health/name data,
 and `agent/session.py::_parse_update_object()` deliberately stops after
 reading each block's GUID.
 
-Reading the current stub closely surfaces two things the handoff doc doesn't
-call out, both worth fixing as part of this work, not after:
+Reading the current stub closely surfaces a few things the handoff doc doesn't
+call out, all worth fixing as part of this work, not after:
 
 - **Byte-offset desync risk.** `_parse_update_object` never consumes the
-  update-flags/mask/values/movement bytes after a VALUES/CREATE_OBJECT block,
-  so `off` doesn't advance past them. With more than one block per packet
+  bytes after a block's GUID (the values update for VALUES, and objectTypeId +
+  movement update + values update for CREATE_OBJECT, per
+  `docs/PROTOCOL-NOTES.md`), so `off` doesn't advance past them. With more than one block per packet
   (the common case once nearby entities exist), every block after the first
   gets parsed from the wrong offset. This has to be fixed *while* adding
   field parsing, not as a follow-up — a partially-correct version that reads
@@ -48,6 +53,10 @@ call out, both worth fixing as part of this work, not after:
   handled but wrong: the real format is `uint32 count` followed by `count`
   packed GUIDs (objects that left range), not one packed GUID guarded by a
   reused `mask` variable.
+- **`SMSG_UPDATE_OBJECT` opcode is wrong.** `agent/session.py` defines it as
+  `0x1F7`, which is `SMSG_PLAY_SPELL_IMPACT`. The correct value is `0x0A9`
+  (`Opcodes.h`). The server sends small update packets (≤ 100 bytes)
+  uncompressed, so those are currently missed.
 - **`self.player_guid` is declared in `WoWSession.__init__` but never
   assigned.** `login_character(self, guid)` receives the GUID and never
   stores it. Perception needs to know its own GUID (to distinguish "my
@@ -78,7 +87,7 @@ Steps, in order:
    `uint32` per set bit, in bit order. Store as a raw `{field_index: value}`
    dict on the block for now — don't hand-map every field yet.
 5. **Map the raw fields dict to `ObjectInfo`** for the field indices already
-   listed in `docs/NEXT-AGENT-HANDOFF.md` (`OBJECT_FIELD_ENTRY`,
+   listed in `docs/PROTOCOL-NOTES.md` (`OBJECT_FIELD_ENTRY`,
    `UNIT_FIELD_HEALTH`/`MAXHEALTH`/`LEVEL`/`FACTIONTEMPLATE`,
    `UNIT_NPC_FLAGS`, `PLAYER_FLAGS`). Extend `ObjectInfo.__slots__`
    (`agent/perception.py`) with `entry_id`, `max_health`, `faction`,
@@ -306,10 +315,8 @@ are the pragmatic v1.
 
 ## Observability polish (small, optional, not blocking the agent work)
 
-- **README.md is stale.** The architecture diagram still shows a separate
-  `/opt/monitoring/` and doesn't mention `tools/wowmap`, `tools/chat-feed`,
-  `agent/`, or that the VM is now a git checkout deployed via
-  `scripts/deploy.sh`. Worth a pass so a fresh reader isn't misled.
+- ~~**README.md is stale.**~~ Done (UM-28): README, `docs/ARCHITECTURE.md` and
+  the handoff docs now match the compose files and `scripts/deploy.sh`.
 - **Chat feed is explicitly a prototype** (`tools/chat-feed/README.md` →
   "Prototype limitations"): no auth, no durable history, no metrics/alerts,
   rotation handling untested against every runtime. Fine for a single-viewer

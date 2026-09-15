@@ -28,6 +28,12 @@ docker compose up -d
 | 8085 | World server |
 | 3724 | Auth server (logon) |
 | 3000 | Web UI |
+| 3443 | Remote-admin (RA) telnet console |
+| 3306 | MySQL (`trinitycore-db`) |
+| 9500 | Chat feed SSE (`chat-feed`) |
+
+The monitoring stack (`monitoring/docker-compose.yml`) adds :9100, :8080, :9300
+and :9400 (see [Monitoring](#monitoring)).
 
 First boot applies the TDB and extracts maps from the client — **~30 minutes on
 4 vCPU** (mmaps alone ~29 min). The web UI shows live progress.
@@ -80,17 +86,24 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | Doc | Contents |
 |---|---|
 | `docs/REPRODUCE-PROMPT.md` | Self-contained prompt to rebuild the whole environment from scratch on Proxmox (agent-ready) |
-| `docs/DEPLOYMENT.md` | Actual deployment, gotchas, debugging, troubleshooting table |
+| `docs/DEPLOYMENT.md` | Actual deployment, redeploying via `scripts/deploy.sh`, gotchas, debugging, troubleshooting table |
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
-| `docs/ARCHITECTURE.md` | Component and network layout |
+| `docs/ARCHITECTURE.md` | Components, compose projects, volumes and the full port table |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
 | `docs/LIVE-MAP.md` | Live map: how it was built, DBC field order, extraction, alignment notes |
-| `docs/ROADMAP.md` | Next features: agent panel, chat, inspect, trails, calibration |
+| `docs/ROADMAP.md` | What shipped, the agent perception dev plan, the operator dashboard plan |
+| `docs/AI-AGENT-SPEC.md` | Spec for autonomous AI agents playing on the server |
+| `docs/NEXT-AGENT-HANDOFF.md` | Handoff for the `agent/` protocol client: what works, how to run it |
+| `docs/PROTOCOL-NOTES.md` | 3.3.5a wire-format notes (update-object layout, field indices), each checked against TrinityCore source |
+| `docs/HANDOFF.md` | Historical handoff for the deprecated `agent-runtime/` MCP prototype |
+| `docs/CHAT_FEED_SPIKE.md` | Why the chat feed tails `Server.log` instead of polling the DB |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
 | `grafana/` | Dashboard provisioning config — the file-based loading that replaced API auth |
 | `tdb/README.md` | Which TDB version to use and why |
 | `SESSION.md` | Hermes session id for this build-out, and what it covered |
-| `tools/wowmap/` | World-coordinate → map-image transform (reads the extracted DBCs) |
+| `tools/wowmap/README.md` | Live map service (:9400): map page, character inspect API, calibration |
+| `tools/chat-feed/README.md` | Chat feed SSE sidecar (:9500): API, config, prototype limitations |
+| `CONTRIBUTING.md` | Conventional commits, PR template, code style, testing on the live VMs |
 
 ## Monitoring
 
@@ -132,10 +145,33 @@ This repo follows [Conventional Commits](https://www.conventionalcommits.org/) �
 
 ```
 pv1 (Proxmox @ 192.168.1.75)
-└── VM 100 wow-server @ 192.168.1.64   (4 vCPU, 6 GB, 50 GB)
-    ├── /opt/wow-server/   trinitycore-wowserver + trinitycore-db
-    └── /opt/monitoring/   node-exporter + cadvisor
+├── VM 100 wow-server @ 192.168.1.64   (4 vCPU, 6 GB, 50 GB)
+│   └── /opt/wow-server/   git checkout of this repo, redeployed by scripts/deploy.sh
+│       ├── docker-compose.yml             compose project "wow-server"
+│       │   ├── trinitycore-wowserver      :8085 world  :3724 auth  :3000 web UI  :3443 RA
+│       │   ├── trinitycore-db             :3306 MySQL 8.4.4
+│       │   └── chat-feed                  :9500 SSE chat stream   (tools/chat-feed)
+│       └── monitoring/docker-compose.yml  compose project "monitoring"
+│           ├── node-exporter              :9100 (host network)
+│           ├── cadvisor                   :8080
+│           ├── wow-exporter               :9300 game metrics      (exporters/wow-exporter)
+│           └── wowmap                     :9400 live map + API    (tools/wowmap)
+└── VM 201 docker-stack @ 192.168.1.60    (not managed by this repo)
+    └── Prometheus :9091 → Grafana :3001   scrapes .64:9100, :8080, :9300
 ```
+
+- **Deploys:** `/opt/wow-server` is a real clone, not a copy. `scripts/deploy.sh`
+  fast-forwards it to `origin/main` and runs `docker compose up -d --build` for
+  both compose projects. See `docs/DEPLOYMENT.md` → "Updating".
+- **AI agents:** `agent/` is the Python 3.3.5a protocol client (SRP6 auth, world
+  login, chat/target actions). `Dockerfile` + `docker-compose.agents.yml` run one
+  container per agent character. Agents are outbound clients of :3724/:8085 and
+  expose no ports. They aren't part of `scripts/deploy.sh`. See
+  `docs/AI-AGENT-SPEC.md` and `docs/ROADMAP.md`.
+- `agent-runtime/` (Node.js MCP over MySQL + GM commands) is the deprecated
+  pre-protocol runtime. It isn't in any compose file.
+
+Full component and port reference: `docs/ARCHITECTURE.md`.
 
 ## Requirements
 

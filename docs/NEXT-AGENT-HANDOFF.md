@@ -4,11 +4,11 @@ update-object packets to give the agent perception.
 SETUP
   git clone git@github.com:Cividati/wow-server.git
   cd wow-server
-  git checkout feat/agent-client-protocol
+  # Work from main. The protocol client branch is already merged.
   # Python 3.10+, pure stdlib — zero pip installs needed
 
 WHAT EXISTS
-  Branch feat/agent-client-protocol. Protocol client works end-to-end:
+  On main, the protocol client works end-to-end:
     - SRP6 auth (LE wire format, uppercase password, skip-interleave)
     - World handshake with HMAC-SHA1-RC4 crypto (TrinityCore WorldPacketCrypt)
     - Character login (Luaprata guid 2, blood-elf paladin lvl 1)
@@ -40,52 +40,12 @@ WHAT NEEDS TO BE DONE — Layer 1: Perception
   can see its own position, nearby creatures, and nearby players.
   Currently _parse_update_object() in session.py only tracks GUIDs.
 
-  Compressed packet (already decompressed in _handle_compressed):
-    payload = uint32 uncompressed_size + zlib-compressed data
-    decompressed = zlib.decompress(payload[4:])
-
-  Decompressed layout (SMSG_UPDATE_OBJECT, opcode 0x1F7 after inflation):
-
-    uint32 block_count    — number of object update blocks
-
-    Each block:
-      uint8 update_type
-        0 = VALUES         — update existing object (has mask + fields)
-        1 = MOVEMENT       — movement data only
-        2 = CREATE_OBJECT  — new object with full mask + movement
-        3 = CREATE_OBJECT2 — alternate create
-
-      packed GUID (use agent.packets.unpack_packed_guid):
-        uint8 mask, then up to 8 data bytes (one per set bit)
-
-      IF update_type in (VALUES, CREATE_OBJECT, CREATE_OBJECT2):
-        uint32 update_flags (bitmask — see GUID documents below)
-        IF flags & 0x00000010 (UPDATEFLAG_LIVING): movement block
-          uint32 movement_flags
-          // ... movement fields (position, orientation, speeds, etc.)
-          float x, y, z
-          float orientation
-          IF flags & UPDATEFLAG_HAS_POSITION: float pos_x, pos_y, pos_z
-        uint32 mask_length (byte) — if mask_length < 128, that's the byte count
-        uint32[mask_length] mask_words (little-endian)
-        uint8[mask_length * 4] mask (reinterpret as little-endian bitmask)
-        uint32 values[masked_bits] — one uint32 per set bit in the mask
-
-  Object field indices to extract (from the mask, low bits are low field IDs):
-    OBJECT_FIELD_GUID          0x0000
-    OBJECT_FIELD_TYPE          0x0001
-    OBJECT_FIELD_ENTRY         0x0002
-    OBJECT_FIELD_SCALE_X       0x0004
-    UNIT_FIELD_HEALTH          0x0021
-    UNIT_FIELD_MAXHEALTH       0x0024
-    UNIT_FIELD_LEVEL           0x002B
-    UNIT_FIELD_FACTIONTEMPLATE 0x002C
-    UNIT_NPC_FLAGS             0x0039
-    PLAYER_FLAGS               0x004E
-
-  The mask is a variable-length bitfield. Read mask_length bytes,
-  re-assemble as little-endian uint32 words, then iterate bits.
-  For each set bit N, read one uint32 as the value for field index N.
+  Packet layout, update flags and field indices: see docs/PROTOCOL-NOTES.md.
+  Every entry there was checked against TrinityCore 3.3.5 source. The work
+  itself is split into Linear UM-32 (block framing + movement block) and
+  UM-33 (VALUES_UPDATE mask + field mapping). Don't parse from memory: the
+  3.3.5a layout differs from older write-ups in several places. For example,
+  VALUES blocks carry no update flags, and update flags are uint16.
 
   Target: after parsing, _parse_update_object should populate
   perception.WorldState.objects with entries that carry:
@@ -104,6 +64,10 @@ WHAT NEEDS TO BE DONE — Layer 1: Perception
 REFERENCE MATERIAL
   TrinityCore 3.3.5 source is on GitHub (branch 3.3.5).  Key files:
     src/server/game/Server/Protocol/Opcodes.cpp    — opcode mapping
+    src/server/game/Entities/Object/Object.cpp     — BuildCreateUpdateBlockForPlayer,
+                                                     BuildMovementUpdate, BuildValuesUpdate
+    src/server/game/Entities/Object/Updates/UpdateData.cpp — packet framing, compression
+    src/server/game/Entities/Object/Updates/UpdateFields.h — field indices
     src/server/game/Entities/Object/ObjectGuid.cpp — packed-GUID operator>>
     src/server/game/Server/WorldSocket.cpp         — crypto setup
     src/server/game/Server/Packets/AuthenticationPackets.cpp
