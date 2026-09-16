@@ -93,6 +93,7 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/LIVE-MAP.md` | Live map: how it was built, DBC field order, extraction, alignment notes |
 | `docs/ROADMAP.md` | What shipped, the agent perception dev plan, the operator dashboard plan |
 | `docs/AI-AGENT-SPEC.md` | Spec for autonomous AI agents playing on the server |
+| `docs/AGENT-DIRECTION.md` | Owner decisions for the agents (autonomy, free models, in-game-only chat, milestones); overrides the spec where they differ |
 | `docs/NEXT-AGENT-HANDOFF.md` | Handoff for the `agent/` protocol client: what works, how to run it |
 | `docs/PROTOCOL-NOTES.md` | 3.3.5a wire-format notes (update-object layout, field indices), each checked against TrinityCore source |
 | `docs/CHAT_FEED_SPIKE.md` | Why the chat feed tails `Server.log` instead of polling the DB |
