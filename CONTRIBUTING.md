@@ -55,6 +55,9 @@ refactor(wowmap): extract DbcTables into its own module
 Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 
 - Is a single logical change.
+- Has CI green (`.github/workflows/ci.yml`: py_compile, unit tests, compose
+  and dashboard validation, gitleaks, agent image build) before merging.
+  CI cannot reach the LAN VMs, so it does not replace live testing.
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 - References an issue if one exists.

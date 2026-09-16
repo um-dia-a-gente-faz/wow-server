@@ -1,5 +1,7 @@
 # World of Warcraft — Wrath of the Lich King (3.3.5a) Private Server
 
+[![CI](https://github.com/Cividati/wow-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Cividati/wow-server/actions/workflows/ci.yml)
+
 TrinityCore-based WoW server, Dockerized, running on a dedicated Proxmox VM.
 
 **Status: live** at `192.168.1.64` (realm **Pandora**, build 12340), LAN-only.

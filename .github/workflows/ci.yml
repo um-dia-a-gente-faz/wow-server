@@ -1,0 +1,105 @@
+# Pre-merge safety net: syntax, unit tests, compose/dashboard validation,
+# secret scan and the agent image build. No access to the LAN VMs from here;
+# live verification on 192.168.1.64 stays manual (see CONTRIBUTING.md).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python (compile + unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: py_compile
+        run: |
+          find agent tools exporters scripts -name '*.py' -print0 \
+            | xargs -0 python -m py_compile wow_client.py
+
+      # tools/chat-feed is stdlib-only (its requirements.txt is intentionally
+      # empty). If a tool's tests ever need deps, install that tool's
+      # requirements.txt here, never for agent/ (stdlib only).
+      - name: chat-feed unit tests
+        run: python -m unittest discover -s tools/chat-feed/tests -v
+
+      - name: agent unit tests
+        run: |
+          if [ -d agent/tests ]; then
+            python -m unittest discover -s agent/tests -v
+          else
+            echo "agent/tests not present yet, skipping"
+          fi
+
+  compose:
+    name: compose config
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      # Compose reads .env from the project directory; seed it from the
+      # example (dummy values) once one exists so interpolation resolves.
+      - name: Dummy env file
+        run: if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+      - name: Validate compose files
+        run: |
+          for f in docker-compose.yml monitoring/docker-compose.yml docker-compose.agents.yml; do
+            echo "::group::$f"
+            docker compose -f "$f" config -q
+            echo "::endgroup::"
+          done
+
+  dashboards:
+    name: grafana dashboards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate dashboard JSON
+        run: |
+          rc=0
+          for f in monitoring/grafana-dashboard-*.json; do
+            python3 -m json.tool "$f" > /dev/null || { echo "::error file=$f::invalid JSON"; rc=1; }
+          done
+          exit $rc
+
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read  # the action lists the PR's commits via the API
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # On pull_request / push the action scans only the new commits, so the
+      # known historical leak tracked in UM-26 does not fail every run.
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+
+  docker-build:
+    name: docker build (agent image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build (no push)
+        run: docker build -t wow-agent:ci .
