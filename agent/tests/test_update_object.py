@@ -1,9 +1,7 @@
 """Regression tests against real captured SMSG_UPDATE_OBJECT payloads.
 
 See agent/tests/fixtures/update_object/README.md for how these were captured
-and what's known about each one. `agent/update_object.py` (the real parser)
-doesn't exist yet — these are block-count placeholders per UM-31; UM-32/33
-turn the expectedFailure/skip markers below into real assertions.
+and what's known about each one.
 
 Run from the repo root: python3 -m unittest discover -s agent/tests
 """
@@ -12,7 +10,14 @@ import pathlib
 import struct
 import unittest
 
+from agent import update_object as uo
+
 FIXTURES_DIR = pathlib.Path(__file__).parent / "fixtures" / "update_object"
+
+# login_self_create.bin's block, decoded, should be within this many yards of
+# session.player_position at the same login (from SMSG_LOGIN_VERIFY_WORLD) —
+# see the fixtures README.
+LOGIN_VERIFY_WORLD_POS = (10344.900390625, -6354.1201171875, 32.60350036621094, 0.0)
 
 # file -> expected uint32 block_count (first 4 bytes), per the fixtures README.
 EXPECTED_BLOCK_COUNTS = {
@@ -50,43 +55,52 @@ class BlockCountTest(unittest.TestCase):
                 self.assertEqual(block_count, expected)
 
 
-class FutureParserTest(unittest.TestCase):
-    """Placeholders for UM-32 (framing) and UM-33 (values/fields).
+# login_sunstrider.bin's block 3 has MOVEMENTFLAG_SPLINE_ENABLED set (a real
+# creature actively pathing at capture time) — spline data isn't implemented,
+# so parsing this one fixture is expected to raise UnhandledMovementFlags
+# partway through rather than consume the whole payload. Every other fixture
+# has no spline blocks and should fully round-trip.
+EXPECT_SPLINE_RAISE = "login_sunstrider.bin"
 
-    Turn these green by importing the real parser once it exists, e.g.:
-        from agent import update_object as uo
-        blocks = uo.parse_update_object(data)
-    """
 
-    @unittest.skip("agent/update_object.py doesn't exist yet (UM-32)")
-    def test_every_fixture_consumes_exactly_its_length(self):
-        # For every fixture: parsing consumes exactly len(payload) bytes,
-        # each block's update_type is in 0-5 (UM-32 acceptance criterion).
+class FramingTest(unittest.TestCase):
+    """UM-32 acceptance criteria against the real fixtures."""
+
+    def test_every_other_fixture_consumes_exactly_its_length(self):
         for name in EXPECTED_BLOCK_COUNTS:
+            if name == EXPECT_SPLINE_RAISE:
+                continue
             with self.subTest(fixture=name):
-                self.fail("pending agent.update_object.parse_update_object")
+                data = load_fixture(name)
+                blocks = uo.parse_update_object(data)
+                self.assertEqual(len(blocks), EXPECTED_BLOCK_COUNTS[name])
+                for block in blocks:
+                    self.assertIn(block.update_type, range(6))
 
-    @unittest.skip("agent/update_object.py doesn't exist yet (UM-32)")
+    def test_login_sunstrider_spline_block_raises(self):
+        data = load_fixture(EXPECT_SPLINE_RAISE)
+        with self.assertRaises(uo.UnhandledMovementFlags) as ctx:
+            uo.parse_update_object(data)
+        self.assertTrue(ctx.exception.move_flags & uo.MOVEMENTFLAG_SPLINE_ENABLED)
+
     def test_self_position_matches_login_verify_world(self):
-        # login_self_create.bin's block should decode to a LIVING position
-        # within 0.1 yd of (10344.900390625, -6354.1201171875,
-        # 32.60350036621094, 0.0) — see fixtures README.
-        self.fail("pending agent.update_object.parse_update_object")
+        data = load_fixture("login_self_create.bin")
+        blocks = uo.parse_update_object(data)
+        self.assertEqual(len(blocks), 1)
+        movement = blocks[0].movement
+        for actual, expected in zip((movement["x"], movement["y"], movement["z"], movement["o"]),
+                                     LOGIN_VERIFY_WORLD_POS):
+            self.assertAlmostEqual(actual, expected, delta=0.1)
 
-    @unittest.skip("agent/update_fields.py doesn't exist yet (UM-33)")
+
+@unittest.skip("agent/update_fields.py doesn't exist yet (UM-33)")
+class FieldMappingTest(unittest.TestCase):
     def test_expected_entries_present(self):
         # login_sunstrider.bin should decode a "Cat" critter (entry 6368,
         # level 1, health 1); busy_zone.bin should decode "[DND] Shaker"
         # (entry 37543, level 60) and gameobject entries 182323-182326/
         # 182623/182624 — see fixtures README for the full table.
         self.fail("pending agent.update_fields.decode_fields")
-
-    @unittest.skip("agent/update_object.py doesn't exist yet (UM-32)")
-    def test_login_sunstrider_spline_block_raises(self):
-        # Block 3 of login_sunstrider.bin has MOVEMENTFLAG_SPLINE_ENABLED
-        # set; until spline parsing is implemented this should raise
-        # UnhandledMovementFlags, not silently desync the offset.
-        self.fail("pending agent.update_object.UnhandledMovementFlags")
 
 
 if __name__ == '__main__':
