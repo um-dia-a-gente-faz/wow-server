@@ -3,8 +3,8 @@
 (WoW 3.3.5a, build 12340).
 
 No I/O, no WorldState — agent/session.py wires the result into WorldState
-(UM-34). Field mapping of VALUES_UPDATE (uint32 slot -> named unit/object
-field) is UM-33; here it's only skipped/captured as a raw byte range.
+(UM-34). VALUES_UPDATE parses into a raw {field_index: uint32} dict here;
+mapping that to named, typed unit/object fields is agent/update_fields.py.
 
 Every constant below is copied from TrinityCore branch `3.3.5` and cited by
 file. Verify against that source, not against docs/NEXT-AGENT-HANDOFF.md
@@ -96,7 +96,7 @@ class UpdateBlock:
     guid: int = 0
     object_type: int | None = None             # TYPEID_*; only CREATE_OBJECT[2]
     movement: dict | None = None                # only MOVEMENT / CREATE_OBJECT[2]
-    values_raw: tuple[int, int] | None = None   # (start, end) byte range of the VALUES_UPDATE within `data`; only VALUES / CREATE_OBJECT[2]
+    fields: dict | None = None                  # {field_index: uint32}; only VALUES / CREATE_OBJECT[2] — see agent/update_fields.py to decode
     guids: list = field(default_factory=list)   # only OUT_OF_RANGE_OBJECTS / NEAR_OBJECTS
 
 
@@ -129,9 +129,8 @@ def parse_update_object(data: bytes) -> list[UpdateBlock]:
 
         if update_type == UPDATETYPE_VALUES:
             guid, off = pk.unpack_packed_guid(data, off)
-            start = off
-            off = _skip_values_update(data, off)
-            blocks.append(UpdateBlock(update_type=update_type, guid=guid, values_raw=(start, off)))
+            fields, off = _parse_values_update(data, off)
+            blocks.append(UpdateBlock(update_type=update_type, guid=guid, fields=fields))
             continue
 
         if update_type == UPDATETYPE_MOVEMENT:
@@ -146,10 +145,9 @@ def parse_update_object(data: bytes) -> list[UpdateBlock]:
             guid, off = pk.unpack_packed_guid(data, off)
             object_type = data[off]; off += 1
             movement, off = _parse_movement_update(data, off)
-            start = off
-            off = _skip_values_update(data, off)
+            fields, off = _parse_values_update(data, off)
             blocks.append(UpdateBlock(update_type=update_type, guid=guid, object_type=object_type,
-                                       movement=movement, values_raw=(start, off)))
+                                       movement=movement, fields=fields))
             continue
 
         raise ValueError(f"unknown update_type {update_type} at offset {off - 1}")
@@ -257,16 +255,28 @@ def _parse_movement_update(data: bytes, off: int) -> tuple[dict, int]:
     return info, off
 
 
-def _skip_values_update(data: bytes, off: int) -> int:
-    """Skip a VALUES_UPDATE without mapping fields (UM-33 does that):
-    uint8 mask_block_count, mask_block_count little-endian uint32 mask words,
-    then one uint32 per set bit in ascending bit order.
-    (UpdateMask.h::UpdateMaskPacketBuilder::AppendToPacket, Object.cpp::BuildValuesUpdate)
+def _parse_values_update(data: bytes, off: int) -> tuple[dict, int]:
+    """A VALUES_UPDATE: uint8 mask_block_count, then mask_block_count
+    little-endian uint32 mask words *all together*, then one raw uint32 per
+    set bit (ascending field index) *all together* — the values are NOT
+    interleaved per mask word. UpdateMaskPacketBuilder::AppendToPacket
+    (UpdateMask.h) writes only the header+mask; Object::BuildValuesUpdate
+    (Object.cpp) builds the per-field values into a separate ByteBuffer first
+    and appends it after the whole mask.
+
+    Returns {field_index: raw_uint32}. Values are the raw wire slot — float
+    fields need reinterpreting and GUID fields span two slots; see
+    agent/update_fields.py::decode_fields for that mapping.
     """
     mask_block_count = data[off]; off += 1
-    popcount = 0
-    for _ in range(mask_block_count):
+    set_bits = []
+    for word_index in range(mask_block_count):
         word = pk.u32(data, off); off += 4
-        popcount += bin(word).count('1')
-    off += 4 * popcount
-    return off
+        base = word_index * 32
+        for bit in range(32):
+            if word & (1 << bit):
+                set_bits.append(base + bit)
+    fields = {}
+    for index in set_bits:
+        fields[index] = pk.u32(data, off); off += 4
+    return fields, off

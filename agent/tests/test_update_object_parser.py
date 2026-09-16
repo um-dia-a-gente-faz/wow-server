@@ -154,23 +154,26 @@ class MovementFramingTest(unittest.TestCase):
         self.assertEqual(info['target_guid'], target_guid)
 
 
-class ValuesSkipTest(unittest.TestCase):
+class ValuesParseTest(unittest.TestCase):
     def test_single_word_mask(self):
         body = values_body({0x03: 6368, 0x18: 1})
-        off = uo._skip_values_update(body, 0)
+        fields, off = uo._parse_values_update(body, 0)
         self.assertEqual(off, len(body))
+        self.assertEqual(fields, {0x03: 6368, 0x18: 1})
 
     def test_multi_word_mask(self):
         # Field 0x25 (37) lives in the second mask word.
         body = values_body({0x03: 100, 0x25: 42})
-        off = uo._skip_values_update(body, 0)
+        fields, off = uo._parse_values_update(body, 0)
         self.assertEqual(off, len(body))
+        self.assertEqual(fields, {0x03: 100, 0x25: 42})
 
     def test_no_fields_set(self):
         body = values_body({})
         self.assertEqual(body, b'\x00')
-        off = uo._skip_values_update(body, 0)
+        fields, off = uo._parse_values_update(body, 0)
         self.assertEqual(off, 1)
+        self.assertEqual(fields, {})
 
 
 class ParseUpdateObjectTest(unittest.TestCase):
@@ -187,8 +190,7 @@ class ParseUpdateObjectTest(unittest.TestCase):
         self.assertEqual(b.guid, 5)
         self.assertEqual(b.object_type, uo.TYPEID_GAMEOBJECT)
         self.assertEqual((b.movement['x'], b.movement['y'], b.movement['z']), (1, 2, 3))
-        start, end = b.values_raw
-        self.assertEqual(data[start:end], values)
+        self.assertEqual(b.fields, {0x03: 999})
 
     def test_out_of_range_and_near_objects(self):
         oor = bytes([uo.UPDATETYPE_OUT_OF_RANGE_OBJECTS]) + struct.pack('<I', 2) + \
