@@ -1,8 +1,12 @@
 ---
-title: "PR: <brief summary>"
+title: "UM-<number>: <brief summary>"
 labels: []
 assignees: []
 ---
+
+<!-- PR title must follow: UM-<number>: <brief summary>  (e.g. "UM-123: Add auto-deploy poller") -->
+
+Issue: UM-<number>
 
 ## What
 
@@ -10,7 +14,7 @@ assignees: []
 
 ## Why
 
-<!-- Why is this change needed? Link to an issue or discussion if applicable. -->
+<!-- Why is this change needed? Add context beyond the linked Linear issue if useful. -->
 
 ## How to test
 
@@ -27,6 +31,8 @@ assignees: []
 
 ## Checklist
 
+- [ ] PR title follows `UM-<number>: <brief summary>`
+- [ ] Linear issue linked above (`Issue: UM-<number>`)
 - [ ] Tested on the live VM (192.168.1.64)
 - [ ] All Prometheus targets still healthy (`/api/v1/targets`)
 - [ ] Grafana dashboards load without errors
