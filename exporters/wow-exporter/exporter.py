@@ -9,7 +9,7 @@ Env:
     MYSQL_HOST      default: trinitycore-db
     MYSQL_PORT      default: 3306
     MYSQL_USER      default: root
-    MYSQL_PASSWORD  default: trinityroot
+    MYSQL_PASSWORD  required (no default; compose passes MYSQL_ROOT_PASSWORD from .env)
     LISTEN_PORT     default: 9300
     TOP_PLAYED      default: 20   (how many characters to expose playtime for)
 """
@@ -28,7 +28,7 @@ log = logging.getLogger("wow-exporter")
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "trinitycore-db")
 MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
 MYSQL_USER = os.environ.get("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "trinityroot")
+MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9300"))
 TOP_PLAYED = int(os.environ.get("TOP_PLAYED", "20"))
 

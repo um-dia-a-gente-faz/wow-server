@@ -8,9 +8,10 @@ services:
       # auth.realmlist at bootstrap — change it if you move the VM.
       - PUBLIC_IP_ADDRESS=192.168.1.64
       - REALM_NAME=Pandora
-      # Web UI credentials (port 3000)
+      # Web UI credentials (port 3000). The password comes from the root .env
+      # (gitignored, see .env.example); compose refuses to start without it.
       - ACCESS_USERNAME=admin
-      - ACCESS_PASSWORD=admin
+      - ACCESS_PASSWORD=${ACCESS_PASSWORD:?set ACCESS_PASSWORD in .env (see .env.example)}
       # Rate tuning (uncomment to customize) — TC_WORLD__ prefix maps to
       # worldserver.conf, "." becomes "__".
       # - TC_WORLD__Rate__XP__Kill=3
@@ -81,7 +82,9 @@ services:
     container_name: trinitycore-db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: trinityroot
+      # From the root .env. Only applied when db_data is first initialised —
+      # changing it later does NOT change the live root password.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env (see .env.example)}
     volumes:
       - db_data:/var/lib/mysql
     ports:
@@ -91,7 +94,7 @@ services:
         limits:
           memory: "1g"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-ptrinityroot"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}"]
       interval: 10s
       timeout: 30s
       retries: 3

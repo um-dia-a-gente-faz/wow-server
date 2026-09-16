@@ -9,6 +9,11 @@
 # ../tools/wowmap), so this runs straight from the repo checkout — no more
 # copying source into /opt/monitoring or /opt/wowmap. See scripts/deploy.sh.
 #
+# MYSQL_PASSWORD is interpolated from the repo-root .env. Compose only auto-loads
+# .env from the project directory (monitoring/), so always pass it explicitly:
+#
+#   docker compose --env-file .env -f monitoring/docker-compose.yml up -d --build
+#
 # Exposes:
 #   :9100  node-exporter     host CPU / RAM / disk / net
 #   :8080  cadvisor          per-container CPU / RAM / net
@@ -65,7 +70,7 @@ services:
       - MYSQL_HOST=trinitycore-db
       - MYSQL_PORT=3306
       - MYSQL_USER=root
-      - MYSQL_PASSWORD=trinityroot
+      - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in the repo-root .env}
       - LISTEN_PORT=9300
       - TOP_PLAYED=20
     ports:
@@ -81,7 +86,7 @@ services:
       - MYSQL_HOST=trinitycore-db
       - MYSQL_PORT=3306
       - MYSQL_USER=root
-      - MYSQL_PASSWORD=trinityroot
+      - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in the repo-root .env}
       - DBC_DIR=/dbc
       - MAPS_DIR=/maps
       - LISTEN_PORT=9400

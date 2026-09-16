@@ -46,7 +46,10 @@ git clone git@github.com:Cividati/wow-server.git .
 
 # 4. Adjust PUBLIC_IP_ADDRESS in docker-compose.yml if the VM IP differs
 
-# 5. Start
+# 5. Secrets — gitignored .env next to docker-compose.yml (see "Updating")
+cp .env.example .env && chmod 600 .env && $EDITOR .env
+
+# 6. Start
 docker compose up -d
 docker compose logs -f trinitycore-wowserver
 ```
@@ -81,7 +84,7 @@ docker run -d --name wow-debug --network wow-server_default \
 
 docker exec wow-debug sh -c 'sed -e "s|<DATABASE_HOST>|database|g" \
   -e "s|<DATABASE_PORT>|3306|g" -e "s|<DATABASE_USER>|trinity|g" \
-  -e "s|<DATABASE_PASSWORD>|trinity|g" \
+  -e "s|<DATABASE_PASSWORD>|<see .env: TRINITY_DB_PASSWORD>|g" \
   /app/backend/resources/worldserver.335.conf.dist > /app/server/etc/worldserver.conf'
 
 docker compose start database && sleep 12
@@ -125,8 +128,9 @@ Verify in the DB (usernames are stored UPPERCASE; `expansion` 2 = WotLK;
 `account_access` uses **`SecurityLevel`**, not `gmlevel`):
 
 ```bash
-docker exec trinitycore-db mysql -uroot -ptrinityroot -e "SELECT id,username,expansion FROM auth.account;"
-docker exec trinitycore-db mysql -uroot -ptrinityroot -e "SELECT * FROM auth.account_access;"
+# MYSQL_ROOT_PASSWORD is already in the DB container's env (from .env)
+docker exec trinitycore-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SELECT id,username,expansion FROM auth.account;"'
+docker exec trinitycore-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SELECT * FROM auth.account_access;"'
 ```
 
 ## Monitoring
@@ -187,11 +191,42 @@ on the *separate* docker-stack VM (192.168.1.60), not this one:
 ./scripts/deploy-dashboards.sh   # run from a machine with SSH to 192.168.1.60
 ```
 
-Local-only config that isn't meant to go through git (the DB root password,
-etc.) doesn't exist yet — everything currently running is tracked in
-`docker-compose.yml`. If you add a one-off env var or port directly on the VM,
-fold it back into the repo (with a comment explaining why) instead of leaving
-it untracked, or the next `deploy.sh` will silently drop it.
+### Required: `/opt/wow-server/.env`
+
+Secrets are **not** tracked. The compose files interpolate them from a
+gitignored `.env` in the checkout root, using `${VAR:?}` so a missing value
+fails loudly instead of starting with an empty password. `deploy.sh` refuses
+to run without the file, and `git reset --hard` leaves it alone (it's ignored).
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `MYSQL_ROOT_PASSWORD` | `database` (+ healthcheck), `wow-exporter`, `wowmap` | Only applied when `db_data` is first initialised. On the existing VM, set it to the password the DB **already** uses — changing it here does not change MySQL. |
+| `ACCESS_PASSWORD` | `trinitycore-wowserver` web UI (:3000) | Username stays `admin`. |
+| `AGENT_PASSWORD` | `docker-compose.agents.yml` | Shared password of AGENT01..AGENT05. |
+| `LLM_API_KEY` | agents (future LLM layer) | FreeLLMAPI key; never paste it into docs. |
+
+One-time setup on the VM:
+
+```bash
+cd /opt/wow-server
+cp .env.example .env && chmod 600 .env
+$EDITOR .env                      # fill in the real values
+
+docker compose config -q && echo game ok
+docker compose --env-file .env -f monitoring/docker-compose.yml config -q && echo monitoring ok
+```
+
+The monitoring stack is its own compose project rooted at `monitoring/`, so
+compose won't auto-load the root `.env` for it — always pass `--env-file .env`
+(as `deploy.sh` does) when running it by hand.
+
+Avoid `$` in secret values (compose interpolates it), or single-quote the value
+in `.env`.
+
+Apart from `.env`, everything running is tracked in the compose files. If you
+add a one-off env var or port directly on the VM, fold it back into the repo
+(secrets via `.env` + `.env.example`, the rest with a comment explaining why)
+instead of leaving it untracked, or the next `deploy.sh` will silently drop it.
 
 ## Management
 
