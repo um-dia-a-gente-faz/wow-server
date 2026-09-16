@@ -400,7 +400,12 @@ INSPECT_CSS = r"""
             transform:translateX(100%); visibility:hidden;
             transition:transform .18s ease, visibility 0s linear .18s; }
   .drawer.open { transform:none; visibility:visible; transition:transform .18s ease; }
-  @media (max-width: 600px) { .drawer { width:100%; border-left:0; } }
+  /* Make room for the drawer instead of painting over the toolbar and the map. */
+  body.inspect-open main { margin-right:380px; }
+  @media (max-width: 600px) {
+    .drawer { width:100%; border-left:0; }
+    body.inspect-open main { margin-right:0; }
+  }
   .drawer-head { display:flex; gap:10px; align-items:flex-start; padding:14px 14px 12px 16px;
                  border-bottom:1px solid var(--line); }
   .drawer-head .dh-main { flex:1; min-width:0; }
@@ -649,6 +654,9 @@ const Inspect = (() => {
     }
     drawer.classList.add('open');
     drawer.setAttribute('aria-hidden', 'false');
+    // The page re-fits the map on resize; reuse that after the layout shifts.
+    document.body.classList.add('inspect-open');
+    dispatchEvent(new Event('resize'));
     markSelected();
     return refresh();
   }
@@ -660,6 +668,8 @@ const Inspect = (() => {
     seq++;
     drawer.classList.remove('open');
     drawer.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('inspect-open');
+    dispatchEvent(new Event('resize'));
     markSelected();
   }
 
@@ -671,8 +681,13 @@ const Inspect = (() => {
     if (name && !e.target.closest('#inspect, #list, .marker, .bar')) close();
   });
   // Deep link: /#inspect=<name> opens the drawer, handy for offline characters.
-  const m = location.hash.match(/^#inspect=(.+)$/);
-  if (m) open(decodeURIComponent(m[1]));
+  // A malformed hash must not take the rest of the page down with it.
+  try {
+    const m = location.hash.match(/^#inspect=(.+)$/);
+    if (m) open(decodeURIComponent(m[1]));
+  } catch (e) {
+    console.warn('hash de inspeção inválido:', e);
+  }
 
   return {open, close, refresh, current: () => name};
 })();
@@ -927,7 +942,7 @@ function renderList() {
     e.append(dot, nm, meta);
     e.onclick = () => {
       selected = p.name;
-      Inspect.open(p.name);
+      if (!calibrating) Inspect.open(p.name);
       if (p.in_world) {
         const a = areaFor(p.zone);
         if (a) { currentArea = a; $('zone').value = a.area_id; draw(); }
