@@ -2,6 +2,7 @@
 """WoW session manager — login, keepalive, packet dispatch.
 Wraps the low-level world protocol in a background recv loop."""
 
+import collections
 import logging
 import os
 import socket
@@ -39,6 +40,22 @@ SMSG_LOGOUT_COMPLETE    = 0x04D
 SMSG_MONSTER_MOVE       = 0x0DD
 SMSG_STANDSTATE_UPDATE  = 0x29D
 
+SMSG_GROUP_INVITE       = 0x06F
+SMSG_MESSAGECHAT        = 0x096
+SMSG_GM_MESSAGECHAT     = 0x3B3
+
+# ChatMsg values this parser understands by name (SharedDefines.h); anything
+# else is kept as "type_<n>" rather than dropped.
+CHAT_KIND_NAMES = {
+    0x00: "system", 0x01: "say", 0x02: "party", 0x03: "raid", 0x04: "guild",
+    0x05: "officer", 0x06: "yell", 0x07: "whisper", 0x08: "whisper_foreign",
+    0x09: "whisper_inform", 0x0A: "emote", 0x0B: "text_emote", 0x11: "channel",
+}
+CHAT_MSG_CHANNEL = 0x11
+
+# Bounded so a chatty channel can't grow this without limit.
+CHAT_INBOX_MAXLEN = 50
+
 # OBJECT_UPDATE_TYPE (TrinityCore 3.3.5 UpdateData.h)
 UPDATETYPE_VALUES               = 0
 UPDATETYPE_MOVEMENT             = 1
@@ -52,6 +69,17 @@ UPDATETYPE_NEAR_OBJECTS         = 5
 MID_PACKET_TIMEOUT_S = 30.0
 # Handler errors are logged at most once per opcode per this many seconds.
 ERROR_LOG_INTERVAL_S = 30.0
+
+
+def _read_len_string(data: bytes, off: int) -> tuple[str, int]:
+    """A uint32-length-prefixed string (length includes the trailing null),
+    as ChatPackets.cpp writes SenderName/ChatText — distinct from
+    agent.packets.cstring's null-scan, which is for the plain cstrings used
+    elsewhere in the same packet (e.g. channel name)."""
+    length = struct.unpack_from('<I', data, off)[0]; off += 4
+    s = data[off:off + length - 1].decode('utf-8', 'replace') if length > 0 else ""
+    off += length
+    return s, off
 
 
 class _ErrorThrottle:
@@ -101,8 +129,11 @@ class WoWSession:
         self.player_name = ""
         self.player_position = None  # (map_id, x, y, z, orient)
         self.level = 0
+        self.race = 0  # ChrRaces.dbc ID; set by callers (e.g. __main__.py) from enum_characters()
         self.world_state = per.WorldState()  # nearby objects, players, etc.
         self.on_update_object = None  # callback(update_type, guid, fields)
+        self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
+        self.pending_invite = None  # {"inviter_name": str} or None
 
     def connect(self):
         """Connect to world server and authenticate."""
@@ -245,10 +276,12 @@ class WoWSession:
         self.sock.close()
         self.sock = None
 
-    def send_chat(self, message: str, channel: str = "say"):
-        """Send a chat message. Channel: 'say', 'yell', 'whisper'."""
+    def send_chat(self, message: str, channel: str = "say", target: str | None = None):
+        """Send a chat message. Channel: 'say', 'yell', 'whisper' (needs
+        `target`), 'emote'. Prefer agent.actions.say/yell/whisper/emote
+        directly in new code."""
         from . import actions
-        actions.send_chat_message(self, message, channel)
+        actions.send_chat_message(self, message, channel, target=target)
 
     # ── Internal ──────────────────────────────────────────────
 
@@ -317,6 +350,48 @@ class WoWSession:
             raise per.PerceptionParseError(
                 f"truncated update-object payload ({len(data)} B): {e}") from e
 
+    def _handle_messagechat(self, opcode: int, payload: bytes):
+        """SMSG_MESSAGECHAT / SMSG_GM_MESSAGECHAT (WorldPackets::Chat::Chat::Write,
+        ChatPackets.cpp) — the "default" branch (covers say/yell/whisper/
+        party/guild/officer/emote/channel; the MONSTER_*/BG_SYSTEM_*/
+        ACHIEVEMENT branches use a different layout and aren't parsed here —
+        a parse error just drops that one message via _dispatch_guarded).
+
+        Layout: uint8 type, int32 language, uint64 sender_guid, uint32 flags,
+        [only on SMSG_GM_MESSAGECHAT: uint32 name_len + name], [only for
+        CHAT_MSG_CHANNEL: cstring channel], uint64 target_guid,
+        uint32 text_len + text, uint8 chat_tag.
+        """
+        off = 0
+        slash_cmd = payload[off]; off += 1
+        off += 4  # language (int32) — not needed by callers yet
+        sender_guid = pk.u64(payload, off); off += 8
+        off += 4  # flags (uint32), always 0 in 3.3.5
+        sender_name = ""
+        if opcode == SMSG_GM_MESSAGECHAT:
+            sender_name, off = _read_len_string(payload, off)
+        channel = None
+        if slash_cmd == CHAT_MSG_CHANNEL:
+            channel, off = pk.cstring(payload, off)
+        off += 8  # target_guid — not needed by callers yet
+        text, off = _read_len_string(payload, off)
+
+        self.chat_inbox.append({
+            "kind": CHAT_KIND_NAMES.get(slash_cmd, f"type_{slash_cmd}"),
+            "sender_guid": sender_guid,
+            "sender_name": sender_name,
+            "channel": channel,
+            "text": text,
+        })
+
+    def _handle_group_invite(self, payload: bytes):
+        # PartyInvite::Write (PartyPackets.cpp): uint8 can_accept, cstring
+        # inviter_name, uint32 proposed_roles, ... (LFG fields, ignored).
+        off = 1  # skip can_accept
+        inviter_name, off = pk.cstring(payload, off)
+        self.pending_invite = {"inviter_name": inviter_name}
+        log.info("group invite from %s", inviter_name)
+
     def _send_sync(self, payload):
         counter = struct.unpack_from('<I', payload, 0)[0]
         self._send_packet(CMSG_TIME_SYNC_RESP, struct.pack('<II', counter, 0))
@@ -327,6 +402,10 @@ class WoWSession:
             self._send_sync(payload)
         elif opcode in (SMSG_COMPRESSED_UPDATE_OBJECT, SMSG_UPDATE_OBJECT):
             self._handle_update_object(opcode, payload)
+        elif opcode in (SMSG_MESSAGECHAT, SMSG_GM_MESSAGECHAT):
+            self._handle_messagechat(opcode, payload)
+        elif opcode == SMSG_GROUP_INVITE:
+            self._handle_group_invite(payload)
         elif opcode in (SMSG_PONG, SMSG_MONSTER_MOVE, SMSG_STANDSTATE_UPDATE):
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
