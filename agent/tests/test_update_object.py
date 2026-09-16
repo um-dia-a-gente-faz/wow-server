@@ -10,6 +10,7 @@ import pathlib
 import struct
 import unittest
 
+from agent import update_fields as uf
 from agent import update_object as uo
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / "fixtures" / "update_object"
@@ -93,14 +94,50 @@ class FramingTest(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, delta=0.1)
 
 
-@unittest.skip("agent/update_fields.py doesn't exist yet (UM-33)")
 class FieldMappingTest(unittest.TestCase):
-    def test_expected_entries_present(self):
-        # login_sunstrider.bin should decode a "Cat" critter (entry 6368,
-        # level 1, health 1); busy_zone.bin should decode "[DND] Shaker"
-        # (entry 37543, level 60) and gameobject entries 182323-182326/
-        # 182623/182624 — see fixtures README for the full table.
-        self.fail("pending agent.update_fields.decode_fields")
+    """UM-33: decode_fields() against fixtures cross-checked against
+    world.creature_template / world.gameobject_template (see the README).
+
+    login_sunstrider.bin isn't used here even though its "Cat" critter
+    (entry 6368) is the README's headline example: that fixture raises
+    UnhandledMovementFlags partway through (the spline block), so
+    parse_update_object never returns blocks for it. busy_zone.bin and
+    gameobject_cluster.bin fully round-trip and carry the same real data.
+    """
+
+    def test_creature_entries_and_stats(self):
+        data = load_fixture("gameobject_cluster.bin")
+        blocks = uo.parse_update_object(data)
+        decoded = [uf.decode_fields(b.object_type, b.fields) for b in blocks]
+        # All 6 blocks are "[DND] Shaker" / "Shaker - Small" (entry 37543 /
+        # 37574), level 60, health == max_health == 3052.
+        self.assertEqual({d["entry"] for d in decoded}, {37543, 37574})
+        for d in decoded:
+            self.assertEqual(d["level"], 60)
+            self.assertEqual(d["health"], d["max_health"])
+            self.assertGreater(d["health"], 0)
+
+    def test_named_mobs_and_gameobjects_in_busy_zone(self):
+        data = load_fixture("busy_zone.bin")
+        blocks = uo.parse_update_object(data)
+        decoded = {}
+        for b in blocks:
+            fields = uf.decode_fields(b.object_type, b.fields)
+            decoded[fields.get("entry")] = (b.object_type, fields)
+
+        # "Bergrisst" and "Chief Thunder-Skins", level 70.
+        for entry in (25148, 25149):
+            self.assertIn(entry, decoded)
+            object_type, fields = decoded[entry]
+            self.assertEqual(object_type, uo.TYPEID_UNIT)
+            self.assertEqual(fields["level"], 70)
+
+        # Zone signage gameobjects: "The Royal Exchange", "Court of the Sun",
+        # "Farstrider Square", "The Bazaar", two "Chair"s.
+        for entry in (182323, 182324, 182325, 182326, 182623, 182624):
+            self.assertIn(entry, decoded)
+            object_type, _fields = decoded[entry]
+            self.assertEqual(object_type, uo.TYPEID_GAMEOBJECT)
 
 
 if __name__ == '__main__':

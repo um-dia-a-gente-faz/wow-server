@@ -31,10 +31,17 @@ UPDATETYPE_NAMES = {
 
 
 def _dump_with_real_parser(data: bytes, parse_update_object) -> None:
+    try:
+        from .. import update_fields as uf  # UM-33+
+    except ImportError:
+        uf = None
+
     blocks = parse_update_object(data)
     print(f"  {len(blocks)} block(s), fully parsed:")
     for i, b in enumerate(blocks):
         print(f"  [{i}] {b}")
+        if uf is not None and b.fields is not None:
+            print(f"       decoded: {uf.decode_fields(b.object_type, b.fields)}")
 
 
 def _dump_best_effort(data: bytes) -> None:
