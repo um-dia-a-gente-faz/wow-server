@@ -16,11 +16,13 @@ Appender.Console=1,3,0
 Appender.Server=2,2,0,Server.log,w
 
 # Enable chat payloads at debug level and send them to stdout and Server.log.
-Logger.chat.log=3,Console Server
+Logger.chat.log=2,Console Server
 ```
 
-Restart `worldserver` after changing logging configuration. `3` is Debug, which
-is necessary because the script uses `TC_LOG_DEBUG`. `Appender.Server` writes
+Restart `worldserver` after changing logging configuration. `2` is Debug
+(`LogLevel` in `LogCommon.h`: 1 trace, 2 debug, 3 info), which is necessary because
+the script uses `TC_LOG_DEBUG`. An earlier version of this note said `3`, which
+is Info and drops every chat line. `Appender.Server` writes
 `Server.log` beneath `LogsDir` (or the process working directory if `LogsDir` is
 empty); in this repository's container image, `/app/server/logs` is a named volume.
 The image's own generated configuration should be inspected before editing: a
@@ -69,7 +71,7 @@ party, raid, officer, and whispers should be a deliberate privacy decision.
 
 ## Recommended implementation
 
-1. Enable `Logger.chat.log=3,Console Server` and test `/say`, `/yell`, guild,
+1. Enable `Logger.chat.log=2,Console Server` and test `/say`, `/yell`, guild,
    and the custom `/world` channel against the exact deployed `Server.log`.
 2. Add a small `chat-feed` sidecar that reads the mounted `server_logs` volume,
    tails `Server.log`, parses the known payloads, and keeps the last 100--500

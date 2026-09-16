@@ -20,11 +20,12 @@ services:
       - TC_WORLD__PlayerSaveInterval=5000
       # - TC_WORLD__PlayerLimit=50
       # - TC_WORLD__Motd=Welcome to Pandora
-      # ChatLogScript needs Logger.chat.log=3,Console Server. This image maps
-      # dots to __ for ordinary keys, but this logger key contains a dot itself;
-      # verify TC_WORLD__Logger__chat__log against the generated worldserver.conf
-      # on the target image before relying on this override (see chat-feed README).
-      - TC_WORLD__Logger__chat__log=3,Console Server
+      # Player chat reaches Server.log (tailed by tools/chat-feed) only through
+      # ChatLogScript (scripts/World/chat_log.cpp), which logs at DEBUG. Level
+      # 2 = debug; level 3 (info) silently drops every chat line. Verified on
+      # the live image: this override lands as `Logger.chat.log = ...` in
+      # worldserver.conf.
+      - TC_WORLD__Logger__chat__log=2,Console Server
       # Telnet remote-admin console on port 3443 (Ra.Port default) — scripted
       # GM/account commands without a TTY, alongside scripts/wow_console.py's
       # web UI socket.io route. Enabled directly on the VM; tracked here so a
