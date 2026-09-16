@@ -178,6 +178,21 @@ separate compose projects. To ship changes from `main`:
 ssh root@192.168.1.64 '/opt/wow-server/scripts/deploy.sh'
 ```
 
+### Automatic deploys (cron poller)
+
+The VM redeploys itself: a cron job runs `scripts/auto-deploy.sh` every 5
+minutes, which fetches `origin/main` and calls `deploy.sh` only when the
+remote moved (polling, because GitHub webhooks cannot reach a LAN IP; flock
+prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
+
+```
+*/5 * * * * root /opt/wow-server/scripts/auto-deploy.sh >> /var/log/wow-auto-deploy.log 2>&1
+```
+
+Merging a PR to `main` is therefore all it takes to ship — the VM picks it
+up within 5 minutes. Watch `/var/log/wow-auto-deploy.log` on the VM for
+history.
+
 This fast-forwards the checkout to `origin/main` and runs `docker compose up -d
 --build` for both projects, which only recreates containers whose image, build
 context, or compose file actually changed. Env-only changes to
