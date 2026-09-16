@@ -10,6 +10,7 @@ Modes:
 """
 
 import argparse
+import json
 import logging
 import sys
 import time
@@ -32,6 +33,7 @@ def main():
     p.add_argument("--list-chars", action="store_true", help="list characters and exit")
     p.add_argument("--dry-run", action="store_true", help="auth+login, stay 30s, exit")
     p.add_argument("--duration", type=float, default=0.0, help="run for N seconds (0 = forever, env override AGENT_RUN_DURATION_S)")
+    p.add_argument("--perception-dump", action="store_true", help="print snapshot() as JSON once per think cycle")
     args = p.parse_args()
 
     cfg = load_config()
@@ -103,7 +105,7 @@ def main():
     if args.dry_run:
         log.info("dry-run: sleeping %s s ...", duration)
         time.sleep(duration)
-        log.info("dry-run: %d objects tracked, recv thread %s, %d packets dropped",
+        log.info("perception: %d objects tracked (dry-run; recv thread %s, %d packets dropped)",
                  len(sess.world_state.get_objects()),
                  "alive" if sess.recv_thread_alive() else "DEAD",
                  sess.dropped_packets)
@@ -113,7 +115,7 @@ def main():
 
     log.info("entering agent loop (ctrl+c to stop) ...")
     try:
-        _run_loop(sess, cfg, duration)
+        _run_loop(sess, cfg, duration, perception_dump=args.perception_dump)
     except KeyboardInterrupt:
         log.info("interrupted")
     finally:
@@ -121,15 +123,33 @@ def main():
         log.info("done.")
 
 
-def _run_loop(sess, cfg, duration: float | None):
+def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False):
     log = logging.getLogger("agent")
     start = time.monotonic()
 
     while duration is None or time.monotonic() - start < duration:
         # ── perceive ───────────────────────────────────────────
         objects = sess.world_state.get_objects()
-        if len(objects) > 0:
-            log.info("perception: %d objects in world-state", len(objects))
+        units = sum(1 for o in objects.values() if o.object_type == "unit")
+        players = sum(1 for o in objects.values() if o.object_type == "player")
+        gameobjects = sum(1 for o in objects.values() if o.object_type == "gameobject")
+        if objects:
+            log.info("perception: %d objects tracked (%d units, %d players, %d gameobjects)",
+                      len(objects), units, players, gameobjects)
+            if log.isEnabledFor(logging.DEBUG):
+                me = sess.world_state.get_my_object()
+                pos = me.position if me else sess.player_position
+                nearest = sorted(
+                    (o for o in objects.values() if o.guid != sess.player_guid and o.distance_to(pos or ()) is not None),
+                    key=lambda o: o.distance_to(pos),
+                )[:5]
+                for o in nearest:
+                    hp_pct = f"{o.health / o.max_health:.0%}" if o.health is not None and o.max_health else "?"
+                    log.debug("  %5.1fyd  entry=%s level=%s hp=%s  %s",
+                              o.distance_to(pos), o.entry, o.level, hp_pct, o)
+        if perception_dump:
+            snapshot = sess.world_state.snapshot(my_position=sess.player_position)
+            print(json.dumps(snapshot))
 
         # ── think (LLM call — placeholder for now) ─────────────
 

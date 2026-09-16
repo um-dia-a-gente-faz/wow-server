@@ -13,6 +13,7 @@ import zlib
 from . import packets as pk
 from . import crypt as cr
 from . import perception as per
+from . import update_fields as uo_fields
 from . import update_object as uo
 from .update_object import (
     UPDATETYPE_VALUES,
@@ -43,6 +44,7 @@ CMSG_KEEP_ALIVE         = 0x407
 SMSG_TUTORIAL_FLAGS     = 0x0FD
 
 SMSG_UPDATE_OBJECT      = 0x0A9
+SMSG_DESTROY_OBJECT     = 0x0AA
 SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6
 SMSG_LOGOUT_COMPLETE    = 0x04D
 SMSG_MONSTER_MOVE       = 0x0DD
@@ -102,6 +104,9 @@ class WoWSession:
         self.player_name = ""
         self.player_position = None  # (map_id, x, y, z, orient)
         self.level = 0
+        self.xp = None
+        self.next_level_xp = None
+        self.coinage = None
         self.world_state = per.WorldState()  # nearby objects, players, etc.
         self.on_update_object = None  # callback(update_type, guid, fields)
 
@@ -261,6 +266,12 @@ class WoWSession:
         pz = struct.unpack_from('<f', payload, off)[0]; off += 4
         orient = struct.unpack_from('<f', payload, off)[0]
         self.player_position = (map_id, px, py, pz, orient)
+        self.world_state.set_my_map(map_id)
+
+    def _handle_destroy_object(self, payload: bytes):
+        # Object::DestroyForPlayer (Object.cpp): uint64 guid, uint8 onDeath.
+        guid = pk.u64(payload, 0)
+        self.world_state.remove_guids([guid])
 
     def _handle_update_object(self, opcode: int, payload: bytes):
         if opcode == SMSG_COMPRESSED_UPDATE_OBJECT:
@@ -290,9 +301,11 @@ class WoWSession:
         """Parse an (inflated) SMSG_UPDATE_OBJECT payload into world state.
 
         Full block framing + movement parsing lives in agent/update_object.py
-        (pure function, no I/O). This just wires the result into WorldState:
-        for now every non-range block just records its GUID
-        (create/merge/remove into full ObjectInfo is UM-34).
+        (pure function, no I/O); field mapping in agent/update_fields.py. This
+        wires the result into WorldState (create/merge/remove) and, for
+        blocks about our own player, mirrors position and a few stats onto
+        the session directly for cheap access without going through
+        world_state.
 
         Raises PerceptionParseError on truncated or malformed data, or lets
         UnhandledMovementFlags propagate (an unimplemented conditional path,
@@ -307,8 +320,32 @@ class WoWSession:
                 f"malformed update-object payload ({len(data)} B): {e}") from e
         for block in blocks:
             if block.update_type in (UPDATETYPE_OUT_OF_RANGE_OBJECTS, UPDATETYPE_NEAR_OBJECTS):
-                continue  # removal wiring is UM-34
-            self.world_state.record_guid(block.guid, block.update_type)
+                self.world_state.remove_guids(block.guids)
+                continue
+            self.world_state.update_object(block)
+            if block.guid == self.player_guid:
+                self._sync_self_from_block(block)
+
+    def _sync_self_from_block(self, block):
+        """Mirror our own object's position/stats from world_state onto the
+        session for cheap direct access (session.player_position, .level, ...)."""
+        movement = block.movement or {}
+        if "x" in movement:
+            map_id = self.player_position[0] if self.player_position else self.world_state.my_map
+            self.player_position = (map_id, movement["x"], movement["y"], movement["z"], movement.get("o", 0.0))
+        me = self.world_state.get_my_object()
+        if me is not None:
+            if me.level is not None:
+                self.level = me.level
+            xp = me.raw_fields.get(uo_fields.PLAYER_XP)
+            if xp is not None:
+                self.xp = xp
+            next_xp = me.raw_fields.get(uo_fields.PLAYER_NEXT_LEVEL_XP)
+            if next_xp is not None:
+                self.next_level_xp = next_xp
+            coinage = me.raw_fields.get(uo_fields.PLAYER_FIELD_COINAGE)
+            if coinage is not None:
+                self.coinage = coinage
 
     def _send_sync(self, payload):
         counter = struct.unpack_from('<I', payload, 0)[0]
@@ -320,7 +357,13 @@ class WoWSession:
             self._send_sync(payload)
         elif opcode in (SMSG_COMPRESSED_UPDATE_OBJECT, SMSG_UPDATE_OBJECT):
             self._handle_update_object(opcode, payload)
+        elif opcode == SMSG_DESTROY_OBJECT:
+            self._handle_destroy_object(payload)
         elif opcode in (SMSG_PONG, SMSG_MONSTER_MOVE, SMSG_STANDSTATE_UPDATE):
+            # SMSG_MONSTER_MOVE (NPC destinations) and MSG_MOVE_* heartbeats
+            # (other players' positions) aren't parsed — see docs/ROADMAP.md.
+            # Nearby objects still get position updates from their own
+            # periodic update-object blocks, just not every movement tick.
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
             self._in_world = False

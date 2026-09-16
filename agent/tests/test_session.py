@@ -146,12 +146,19 @@ class ParseUpdateObjectTest(unittest.TestCase):
         sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
         self.assertEqual(list(sess.world_state.get_objects()), [CREATURE])
 
-    def test_out_of_range_block_is_skipped(self):
+    def test_out_of_range_block_only_removes_listed_guids(self):
         sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, 2)))
         sess._parse_update_object(update_object(
             out_of_range_block(0x10, 0xF130000000000099),
             values_block(2)))
         self.assertEqual(list(sess.world_state.get_objects()), [2])
+
+    def test_values_for_unknown_guid_is_ignored_not_created(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(values_block(2)))
+        self.assertEqual(list(sess.world_state.get_objects()), [])
+        self.assertEqual(sess.world_state.unknown_field_updates, 1)
 
     def test_truncated_raises_parse_error(self):
         sess = make_session()
