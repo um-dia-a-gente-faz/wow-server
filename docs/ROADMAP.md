@@ -3,6 +3,9 @@
 > **Linear is the tracker of record.** Issues live in the Linear team *Um Dia a Gente
 > Faz* (`UM-*`), project *Wow Server*. This file holds background and design notes.
 > When scope or status changes, update Linear first, so the two don't drift.
+>
+> **Agent direction** (goal, milestones, model and chat rules) is in
+> `docs/AGENT-DIRECTION.md` and overrides the agent plan below where they differ.
 
 ## Shipped
 
