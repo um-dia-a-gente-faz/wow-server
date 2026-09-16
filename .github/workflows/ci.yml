@@ -29,7 +29,7 @@ jobs:
       - name: py_compile
         run: |
           find agent tools exporters scripts -name '*.py' -print0 \
-            | xargs -0 python -m py_compile wow_client.py
+            | xargs -0 python -m py_compile
 
       # tools/chat-feed is stdlib-only (its requirements.txt is intentionally
       # empty). If a tool's tests ever need deps, install that tool's
