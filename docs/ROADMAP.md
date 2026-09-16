@@ -26,7 +26,24 @@ All 8 dashboards/services are live on 192.168.1.64 and 192.168.1.60. See
 
 ## Development plan
 
-### Phase 1 — perception (do this first)
+### Phase 1 — perception — SHIPPED 2026-09-16
+
+Landed as UM-31 (fixtures + harness), UM-32 (block framing + movement),
+UM-33 (VALUES field mapping), UM-34 (WorldState wiring + snapshot API) —
+PRs #16-#19. See "Definition of done" below for what was and wasn't
+live-verified, and `agent/tests/fixtures/update_object/README.md` for a
+documented gap (no live `OUT_OF_RANGE_OBJECTS`/standalone `MOVEMENT` capture
+— same-map `.go` GM teleports don't trigger TrinityCore's live visibility
+resync without a `MSG_MOVE_TELEPORT_ACK` this agent doesn't send yet; a
+relogin does, and that's what these PRs used to verify position changes and
+nearby-object detection instead). `SMSG_MONSTER_MOVE`/`MSG_MOVE_*` heartbeats
+(other objects' movement between their own update-object blocks) are also
+not parsed yet — nearby objects still get position updates from their own
+CREATE/MOVEMENT/VALUES blocks, just not every tick. Both are natural
+follow-ups once real character movement (Phase 2, `move_to`) needs a
+teleport ack anyway.
+
+Original plan (kept below for context; superseded by the actual PRs above):
 
 This is the actual point of the repo (`docs/AI-AGENT-SPEC.md`) and the
 highest-leverage next task — everything else is scaffolding around it. The

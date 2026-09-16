@@ -14,6 +14,16 @@ import zlib
 from . import packets as pk
 from . import crypt as cr
 from . import perception as per
+from . import update_fields as uo_fields
+from . import update_object as uo
+from .update_object import (
+    UPDATETYPE_VALUES,
+    UPDATETYPE_MOVEMENT,
+    UPDATETYPE_CREATE_OBJECT,
+    UPDATETYPE_CREATE_OBJECT2,
+    UPDATETYPE_OUT_OF_RANGE_OBJECTS,
+    UPDATETYPE_NEAR_OBJECTS,
+)
 
 log = logging.getLogger("agent.session")
 
@@ -35,6 +45,7 @@ CMSG_KEEP_ALIVE         = 0x407
 SMSG_TUTORIAL_FLAGS     = 0x0FD
 
 SMSG_UPDATE_OBJECT      = 0x0A9
+SMSG_DESTROY_OBJECT     = 0x0AA
 SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6
 SMSG_LOGOUT_COMPLETE    = 0x04D
 SMSG_MONSTER_MOVE       = 0x0DD
@@ -55,14 +66,6 @@ CHAT_MSG_CHANNEL = 0x11
 
 # Bounded so a chatty channel can't grow this without limit.
 CHAT_INBOX_MAXLEN = 50
-
-# OBJECT_UPDATE_TYPE (TrinityCore 3.3.5 UpdateData.h)
-UPDATETYPE_VALUES               = 0
-UPDATETYPE_MOVEMENT             = 1
-UPDATETYPE_CREATE_OBJECT        = 2
-UPDATETYPE_CREATE_OBJECT2       = 3
-UPDATETYPE_OUT_OF_RANGE_OBJECTS = 4
-UPDATETYPE_NEAR_OBJECTS         = 5
 
 # Once a packet's first byte has arrived, the rest must follow within this long.
 # A timeout mid-packet would desync framing and RC4 state, so it ends the session.
@@ -130,6 +133,9 @@ class WoWSession:
         self.player_position = None  # (map_id, x, y, z, orient)
         self.level = 0
         self.race = 0  # ChrRaces.dbc ID; set by callers (e.g. __main__.py) from enum_characters()
+        self.xp = None
+        self.next_level_xp = None
+        self.coinage = None
         self.world_state = per.WorldState()  # nearby objects, players, etc.
         self.on_update_object = None  # callback(update_type, guid, fields)
         self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
@@ -293,6 +299,12 @@ class WoWSession:
         pz = struct.unpack_from('<f', payload, off)[0]; off += 4
         orient = struct.unpack_from('<f', payload, off)[0]
         self.player_position = (map_id, px, py, pz, orient)
+        self.world_state.set_my_map(map_id)
+
+    def _handle_destroy_object(self, payload: bytes):
+        # Object::DestroyForPlayer (Object.cpp): uint64 guid, uint8 onDeath.
+        guid = pk.u64(payload, 0)
+        self.world_state.remove_guids([guid])
 
     def _handle_update_object(self, opcode: int, payload: bytes):
         if opcode == SMSG_COMPRESSED_UPDATE_OBJECT:
@@ -321,34 +333,52 @@ class WoWSession:
     def _parse_update_object(self, data: bytes):
         """Parse an (inflated) SMSG_UPDATE_OBJECT payload into world state.
 
-        Layout: uint32 block_count, then blocks of uint8 update_type + body.
-        Block bodies (movement, update mask, values) aren't parsed yet, so the
-        offset of the block after the first object block is unknown: record
-        that block's GUID and stop. OUT_OF_RANGE / NEAR_OBJECTS blocks are
-        self-delimiting (uint32 count + packed GUIDs) and are skipped.
+        Full block framing + movement parsing lives in agent/update_object.py
+        (pure function, no I/O); field mapping in agent/update_fields.py. This
+        wires the result into WorldState (create/merge/remove) and, for
+        blocks about our own player, mirrors position and a few stats onto
+        the session directly for cheap access without going through
+        world_state.
 
-        Raises PerceptionParseError on truncated or malformed data; the rest
-        of the packet is abandoned, anything already recorded is kept.
+        Raises PerceptionParseError on truncated or malformed data, or lets
+        UnhandledMovementFlags propagate (an unimplemented conditional path,
+        e.g. spline movement) — either way the caller's per-packet safety net
+        (_dispatch_guarded) drops just this packet and keeps the connection.
+        Anything recorded from earlier packets is kept.
         """
         try:
-            off = 0
-            block_count = pk.u32(data, off); off += 4
-            for _ in range(block_count):
-                update_type = data[off]; off += 1
-                if update_type in (UPDATETYPE_OUT_OF_RANGE_OBJECTS, UPDATETYPE_NEAR_OBJECTS):
-                    guid_count = pk.u32(data, off); off += 4
-                    for _ in range(guid_count):
-                        _, off = pk.unpack_packed_guid(data, off)
-                    continue
-                if update_type > UPDATETYPE_CREATE_OBJECT2:
-                    raise per.PerceptionParseError(
-                        f"unknown update type {update_type} at offset {off - 1}")
-                guid, off = pk.unpack_packed_guid(data, off)
-                self.world_state.record_guid(guid, update_type)
-                return
-        except (IndexError, struct.error) as e:
+            blocks = uo.parse_update_object(data)
+        except (IndexError, struct.error, ValueError) as e:
             raise per.PerceptionParseError(
-                f"truncated update-object payload ({len(data)} B): {e}") from e
+                f"malformed update-object payload ({len(data)} B): {e}") from e
+        for block in blocks:
+            if block.update_type in (UPDATETYPE_OUT_OF_RANGE_OBJECTS, UPDATETYPE_NEAR_OBJECTS):
+                self.world_state.remove_guids(block.guids)
+                continue
+            self.world_state.update_object(block)
+            if block.guid == self.player_guid:
+                self._sync_self_from_block(block)
+
+    def _sync_self_from_block(self, block):
+        """Mirror our own object's position/stats from world_state onto the
+        session for cheap direct access (session.player_position, .level, ...)."""
+        movement = block.movement or {}
+        if "x" in movement:
+            map_id = self.player_position[0] if self.player_position else self.world_state.my_map
+            self.player_position = (map_id, movement["x"], movement["y"], movement["z"], movement.get("o", 0.0))
+        me = self.world_state.get_my_object()
+        if me is not None:
+            if me.level is not None:
+                self.level = me.level
+            xp = me.raw_fields.get(uo_fields.PLAYER_XP)
+            if xp is not None:
+                self.xp = xp
+            next_xp = me.raw_fields.get(uo_fields.PLAYER_NEXT_LEVEL_XP)
+            if next_xp is not None:
+                self.next_level_xp = next_xp
+            coinage = me.raw_fields.get(uo_fields.PLAYER_FIELD_COINAGE)
+            if coinage is not None:
+                self.coinage = coinage
 
     def _handle_messagechat(self, opcode: int, payload: bytes):
         """SMSG_MESSAGECHAT / SMSG_GM_MESSAGECHAT (WorldPackets::Chat::Chat::Write,
@@ -406,7 +436,13 @@ class WoWSession:
             self._handle_messagechat(opcode, payload)
         elif opcode == SMSG_GROUP_INVITE:
             self._handle_group_invite(payload)
+        elif opcode == SMSG_DESTROY_OBJECT:
+            self._handle_destroy_object(payload)
         elif opcode in (SMSG_PONG, SMSG_MONSTER_MOVE, SMSG_STANDSTATE_UPDATE):
+            # SMSG_MONSTER_MOVE (NPC destinations) and MSG_MOVE_* heartbeats
+            # (other players' positions) aren't parsed — see docs/ROADMAP.md.
+            # Nearby objects still get position updates from their own
+            # periodic update-object blocks, just not every movement tick.
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
             self._in_world = False

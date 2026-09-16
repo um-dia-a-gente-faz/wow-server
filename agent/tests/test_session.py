@@ -13,6 +13,7 @@ import zlib
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
+from agent import update_object as uo
 from agent.tests.test_packets import tc_server_header
 
 
@@ -58,8 +59,32 @@ def update_object(*blocks: bytes) -> bytes:
     return struct.pack('<I', len(blocks)) + b''.join(blocks)
 
 
-def object_block(update_type: int, guid: int, body: bytes = b'\xDE\xAD\xBE\xEF') -> bytes:
-    return bytes([update_type]) + pk.pack_packed_guid(guid) + body
+def stationary_movement(x=1.0, y=2.0, z=3.0, o=0.5) -> bytes:
+    """A minimal, valid movement sub-block: UPDATEFLAG_STATIONARY_POSITION
+    only (uint16 flags + 4 floats) — the smallest real conditional path."""
+    return struct.pack('<H', uo.UPDATEFLAG_STATIONARY_POSITION) + struct.pack('<4f', x, y, z, o)
+
+
+def no_values() -> bytes:
+    """A VALUES_UPDATE with zero mask words set (nothing changed)."""
+    return b'\x00'
+
+
+def object_block(update_type: int, guid: int, object_type: int = uo.TYPEID_UNIT,
+                  movement: bytes = None, values: bytes = None) -> bytes:
+    """A CREATE_OBJECT[2] block body: packed guid, object type, movement, values."""
+    if movement is None:
+        movement = stationary_movement()
+    if values is None:
+        values = no_values()
+    return bytes([update_type]) + pk.pack_packed_guid(guid) + bytes([object_type]) + movement + values
+
+
+def values_block(guid: int, values: bytes = None) -> bytes:
+    """A VALUES block body: packed guid, values."""
+    if values is None:
+        values = no_values()
+    return bytes([se.UPDATETYPE_VALUES]) + pk.pack_packed_guid(guid) + values
 
 
 def out_of_range_block(*guids: int) -> bytes:
@@ -121,12 +146,19 @@ class ParseUpdateObjectTest(unittest.TestCase):
         sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
         self.assertEqual(list(sess.world_state.get_objects()), [CREATURE])
 
-    def test_out_of_range_block_is_skipped(self):
+    def test_out_of_range_block_only_removes_listed_guids(self):
         sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, 2)))
         sess._parse_update_object(update_object(
             out_of_range_block(0x10, 0xF130000000000099),
-            object_block(se.UPDATETYPE_VALUES, 2)))
+            values_block(2)))
         self.assertEqual(list(sess.world_state.get_objects()), [2])
+
+    def test_values_for_unknown_guid_is_ignored_not_created(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(values_block(2)))
+        self.assertEqual(list(sess.world_state.get_objects()), [])
+        self.assertEqual(sess.world_state.unknown_field_updates, 1)
 
     def test_truncated_raises_parse_error(self):
         sess = make_session()
