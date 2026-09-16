@@ -60,6 +60,9 @@ CLASS_COLORS = {1: "#C79C6E", 2: "#F58CBA", 3: "#ABD473", 4: "#FFF569",
                 9: "#9482C9", 11: "#FF7D0A"}
 RACES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: "Tauren",
          7: "Gnome", 8: "Troll", 10: "Blood Elf", 11: "Draenei"}
+# characters.power1..power7 in TrinityCore `Powers` enum order (SharedDefines.h:
+# POWER_MANA=0 .. POWER_RUNIC_POWER=6; Player::SaveToDB writes GetPower(i) to power<i+1>).
+POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
 
 _tables = None
 _calibration_lock = threading.Lock()
@@ -200,7 +203,8 @@ def fetch_character(name):
     character_sql = """
         SELECT guid, name, level, race, class, gender, zone, map,
                position_x, position_y, position_z, orientation, money,
-               totaltime, logout_time
+               totaltime, logout_time, online,
+               health, power1, power2, power3, power4, power5, power6, power7
         FROM characters.characters
         WHERE name = %s
         LIMIT 1
@@ -212,10 +216,14 @@ def fetch_character(name):
             return None
 
         (guid, char_name, level, race, cls, gender, zone, cmap, x, y, z, orient,
-         money, totaltime, logout_time) = row
+         money, totaltime, logout_time, online, health) = row[:17]
+        powers = row[17:]
 
+        # `bag` is 0 for the character's own slots, otherwise the item_instance guid
+        # of the container holding the item — `item_guid` lets callers resolve it.
         inventory = best_effort(cur, """
-            SELECT ci.bag, ci.slot, COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
+            SELECT ci.bag, ci.slot, ci.item, ii.itemEntry,
+                   COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
@@ -249,20 +257,29 @@ def fetch_character(name):
         "race_name": RACES.get(race, str(race)),
         "class": cls,
         "class_name": CLASSES.get(cls, str(cls)),
+        "class_color": CLASS_COLORS.get(cls, "#888888"),
         "gender": gender,
         "zone": zone,
         "zone_name": t.zone_name(zone) if zone else "Unknown",
         "map": cmap,
+        "map_name": t.map_name(cmap),
         "position_x": round(float(x), 2),
         "position_y": round(float(y), 2),
         "position_z": round(float(z), 2),
         "orientation": round(float(orient), 3),
+        "money": money,
         "money_gold": float(money) / 10000.0,
         "totaltime": totaltime,
         "logout_time": logout_time,
+        "online": bool(online),
+        # Current values only: max health/power are computed by the worldserver
+        # at runtime and never persisted (docs/ROADMAP.md, Phase B option 1).
+        "health": health,
+        "power": dict(zip(POWER_NAMES, powers)),
         "inventory": [
-            {"bag": bag, "slot": slot, "item_name": item_name, "count": count}
-            for bag, slot, item_name, count in inventory
+            {"bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
+             "item_name": item_name, "count": count}
+            for bag, slot, item_guid, item_entry, item_name, count in inventory
         ],
         "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
         "reputation": [
@@ -373,6 +390,310 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": str(exc)})
 
 
+# ---------------------------------------------------------------- page: inspect drawer
+# The page is one embedded document; each panel keeps its CSS/HTML/JS in its own
+# constants and is spliced into PAGE at a named marker, so panels stay independent.
+INSPECT_CSS = r"""
+  .drawer { position:fixed; top:0; right:0; z-index:20; width:380px; max-width:100%; height:100vh;
+            background:var(--panel); border-left:1px solid var(--line); display:flex;
+            flex-direction:column; box-shadow:-8px 0 24px rgba(0,0,0,.35);
+            transform:translateX(100%); visibility:hidden;
+            transition:transform .18s ease, visibility 0s linear .18s; }
+  .drawer.open { transform:none; visibility:visible; transition:transform .18s ease; }
+  /* Make room for the drawer instead of painting over the toolbar and the map. */
+  body.inspect-open main { margin-right:380px; }
+  @media (max-width: 600px) {
+    .drawer { width:100%; border-left:0; }
+    body.inspect-open main { margin-right:0; }
+  }
+  .drawer-head { display:flex; gap:10px; align-items:flex-start; padding:14px 14px 12px 16px;
+                 border-bottom:1px solid var(--line); }
+  .drawer-head .dh-main { flex:1; min-width:0; }
+  .drawer-head h2 { margin:0; font-size:17px; display:flex; align-items:center; gap:8px; }
+  .drawer-head h2 .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drawer-head .line { color:var(--dim); font-size:12px; margin-top:2px; }
+  .drawer-head .badge { font-size:11px; font-weight:normal; border:1px solid var(--line);
+                        border-radius:999px; padding:0 7px; color:var(--dim); }
+  .drawer-head .badge.on { color:#7ddf8a; border-color:#2f6b3a; }
+  .drawer-body { flex:1; overflow:auto; padding:6px 16px 16px; }
+  .drawer-foot { padding:6px 16px; border-top:1px solid var(--line); color:var(--dim); font-size:11px; }
+  .drawer h3 { font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--dim);
+               margin:14px 0 6px; }
+  .drawer h4 { font-size:12px; margin:10px 0 4px; color:var(--fg); font-weight:600; }
+  .drawer .kv, .drawer .item { display:flex; gap:10px; padding:3px 0; border-bottom:1px solid #20263a; }
+  .drawer .kv .k, .drawer .item .k { color:var(--dim); flex:0 0 118px; }
+  .drawer .kv .v, .drawer .item .v { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .drawer .item .n { color:var(--dim); }
+  .drawer .none { color:var(--dim); font-size:12px; padding:3px 0; }
+  .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
+  .drawer details[open] { padding-bottom:8px; }
+  .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
+                    text-transform:uppercase; letter-spacing:.6px; }
+"""
+
+INSPECT_HTML = r"""
+<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspecionar personagem">
+  <div class="drawer-head">
+    <div class="dh-main" id="inspect-head"></div>
+    <button id="inspect-close" title="Fechar (Esc)" aria-label="Fechar">✕</button>
+  </div>
+  <div class="drawer-body" id="inspect-body"></div>
+  <div class="drawer-foot" id="inspect-status"></div>
+</section>
+"""
+
+# Everything from the API is rendered with textContent (never innerHTML): character
+# and item names come straight from the database.
+INSPECT_JS = r"""
+<script>
+const Inspect = (() => {
+  const EQUIP_SLOTS = ['Cabeça', 'Pescoço', 'Ombros', 'Camisa', 'Peito', 'Cintura', 'Pernas',
+    'Pés', 'Pulsos', 'Mãos', 'Dedo 1', 'Dedo 2', 'Berloque 1', 'Berloque 2', 'Costas',
+    'Mão principal', 'Mão secundária', 'À distância', 'Tabardo'];
+  const POWER_LABELS = {mana: 'Mana', rage: 'Raiva', focus: 'Foco', energy: 'Energia',
+    happiness: 'Felicidade', rune: 'Runas', runic_power: 'Poder rúnico'};
+  // The server keeps rage and runic power in tenths (1000 is shown as 100 in game).
+  const POWER_SCALE = {rage: 10, runic_power: 10};
+  const CLASS_POWERS = {1: ['rage'], 2: ['mana'], 3: ['mana'], 4: ['energy'], 5: ['mana'],
+    6: ['runic_power'], 7: ['mana'], 8: ['mana'], 9: ['mana'], 11: ['mana', 'rage', 'energy']};
+  const nf = new Intl.NumberFormat('pt-BR');
+  const drawer = document.getElementById('inspect');
+  const head = document.getElementById('inspect-head');
+  const body = document.getElementById('inspect-body');
+  const status = document.getElementById('inspect-status');
+  const openSections = new Set();
+  let name = null, lastJson = null, seq = 0;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function kv(label, value, cls = 'kv') {
+    const r = el('div', cls);
+    r.append(el('span', 'k', label), el('span', 'v', value));
+    return r;
+  }
+  function money(copper) {
+    const c = Number(copper) || 0;
+    return `${nf.format(Math.floor(c / 10000))}g ${Math.floor(c / 100) % 100}s ${c % 100}c`;
+  }
+  function duration(sec) {
+    const s = Number(sec) || 0;
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+  }
+  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('pt-BR') : 'nunca'; }
+
+  // bag 0 = the character's own slots (TrinityCore Player.h EquipmentSlots, InventorySlots, …);
+  // any other bag value is the item_instance guid of the container holding the item.
+  function groupInventory(items) {
+    const g = {equipped: [], backpack: [], bags: [], bank: [], bankBags: [], keyring: [],
+               currency: [], other: []};
+    const containers = new Map();
+    for (const it of items) {
+      if (it.bag !== 0) continue;
+      const s = it.slot;
+      if (s < 19) g.equipped.push(it);
+      else if (s < 23 || (s >= 67 && s < 74)) {
+        const bank = s >= 67;
+        const c = {label: bank ? `Bolsa do banco ${s - 66}` : `Bolsa ${s - 18}`, bag: it, items: []};
+        (bank ? g.bankBags : g.bags).push(c);
+        containers.set(it.item_guid, c);
+      }
+      else if (s < 39) g.backpack.push(it);
+      else if (s < 67) g.bank.push(it);
+      else if (s >= 86 && s < 118) g.keyring.push(it);
+      else if (s >= 118 && s < 150) g.currency.push(it);
+      else g.other.push(it);
+    }
+    for (const it of items) {
+      if (it.bag === 0) continue;
+      const c = containers.get(it.bag);
+      (c ? c.items : g.other).push(it);
+    }
+    return g;
+  }
+
+  function itemRows(parent, items, label) {
+    if (!items.length) { parent.append(el('div', 'none', 'vazio')); return; }
+    for (const it of items) {
+      const r = el('div', 'item');
+      r.append(el('span', 'k', label(it)));
+      const v = el('span', 'v', it.item_name);
+      v.append(' ', el('span', 'n', '×' + it.count));
+      r.append(v);
+      parent.append(r);
+    }
+  }
+  const slotLabel = (it) => EQUIP_SLOTS[it.slot] || `slot ${it.slot}`;
+  const bagSlotLabel = (it) => `slot ${it.slot + 1}`;
+  const packSlotLabel = (first) => (it) => `slot ${it.slot - first + 1}`;
+
+  function collapsible(key, title) {
+    const d = el('details');
+    d.dataset.key = key;
+    d.open = openSections.has(key);
+    d.append(el('summary', null, title));
+    d.addEventListener('toggle', () => {
+      d.open ? openSections.add(key) : openSections.delete(key);
+    });
+    return d;
+  }
+  function containerList(parent, containers) {
+    for (const c of containers) {
+      parent.append(el('h4', null, `${c.label}: ${c.bag.item_name}`));
+      itemRows(parent, c.items, bagSlotLabel);
+    }
+  }
+
+  function renderHead(c) {
+    const h = el('h2');
+    const dot = el('span', 'dot');
+    dot.style.background = dot.style.color = c.class_color;
+    h.append(dot, el('span', 'nm', c.name),
+             el('span', 'badge' + (c.online ? ' on' : ''), c.online ? 'online' : 'offline'));
+    head.replaceChildren(h,
+      el('div', 'line', `Nível ${c.level} · ${c.race_name} · ${c.class_name}`),
+      el('div', 'line', c.zone_name));
+  }
+
+  function renderBody(c) {
+    const f = document.createDocumentFragment();
+
+    f.append(el('h3', null, 'Status'));
+    f.append(kv('Vida', nf.format(c.health)));
+    const power = c.power || {};
+    for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
+      if (!(key in power)) continue;
+      f.append(kv(POWER_LABELS[key], nf.format(Math.floor(power[key] / (POWER_SCALE[key] || 1)))));
+    }
+    f.append(kv('Ouro', money(c.money)));
+    f.append(kv('Tempo de jogo', duration(c.totaltime)));
+    f.append(kv('Último logout', when(c.logout_time)));
+    f.append(kv('Posição', `${c.map_name} (${c.map}) · ${c.position_x}, ${c.position_y}, ${c.position_z}`));
+
+    const inv = groupInventory(c.inventory || []);
+    f.append(el('h3', null, 'Equipado'));
+    itemRows(f, inv.equipped, slotLabel);
+    f.append(el('h3', null, 'Bolsas'));
+    f.append(el('h4', null, 'Mochila'));
+    itemRows(f, inv.backpack, packSlotLabel(23));
+    containerList(f, inv.bags);
+
+    if (inv.bank.length || inv.bankBags.length) {
+      const d = collapsible('bank', `Banco (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
+      itemRows(d, inv.bank, packSlotLabel(39));
+      containerList(d, inv.bankBags);
+      f.append(d);
+    }
+    for (const [key, title, items] of [['keyring', 'Chaveiro', inv.keyring],
+                                       ['currency', 'Moedas', inv.currency],
+                                       ['other', 'Outros itens', inv.other]]) {
+      if (!items.length) continue;
+      const d = collapsible(key, `${title} (${items.length})`);
+      itemRows(d, items, (it) => `bag ${it.bag} / ${it.slot}`);
+      f.append(d);
+    }
+
+    // Raw ids for now; names need the DBC loader (ROADMAP Phase C).
+    const talents = collapsible('talents', `Talentos (${(c.talents || []).length})`);
+    for (const t of c.talents || []) talents.append(kv(`spec ${t.spec + 1}`, `spell ${t.spell}`));
+    const reps = collapsible('reputation', `Reputação (${(c.reputation || []).length})`);
+    for (const r of c.reputation || []) reps.append(kv(`facção ${r.faction}`, nf.format(r.standing)));
+    const achs = collapsible('achievements', `Conquistas (${(c.achievements || []).length})`);
+    for (const a of c.achievements || []) achs.append(kv(`#${a.achievement}`, when(a.date)));
+    f.append(talents, reps, achs);
+
+    const top = body.scrollTop;
+    body.replaceChildren(f);
+    body.scrollTop = top;
+  }
+
+  function stamp() { status.textContent = 'atualizado ' + new Date().toLocaleTimeString(); }
+
+  function markSelected() {
+    for (const e of document.querySelectorAll('.pl')) e.classList.toggle('sel', e.dataset.name === name);
+  }
+
+  async function refresh() {
+    if (!name) return;
+    const mine = ++seq, who = name;
+    try {
+      const r = await fetch('/api/character/' + encodeURIComponent(who));
+      const text = await r.text();
+      if (mine !== seq || who !== name) return;
+      if (!r.ok) {
+        lastJson = null;
+        head.replaceChildren(el('h2', null, who));
+        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Personagem não encontrado' : 'erro ' + r.status));
+        stamp();
+        return;
+      }
+      if (text !== lastJson) {
+        const c = JSON.parse(text);
+        renderHead(c);
+        renderBody(c);
+        lastJson = text;
+      }
+      stamp();
+    } catch (e) {
+      if (mine === seq) status.textContent = 'erro: ' + e;
+    }
+  }
+
+  function open(who) {
+    if (who !== name) {
+      name = who;
+      lastJson = null;
+      head.replaceChildren(el('h2', null, who));
+      body.replaceChildren(el('div', 'empty', 'carregando…'));
+      body.scrollTop = 0;
+      status.textContent = '';
+    }
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    // The page re-fits the map on resize; reuse that after the layout shifts.
+    document.body.classList.add('inspect-open');
+    dispatchEvent(new Event('resize'));
+    markSelected();
+    return refresh();
+  }
+
+  function close() {
+    if (!name) return;
+    name = null;
+    lastJson = null;
+    seq++;
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('inspect-open');
+    dispatchEvent(new Event('resize'));
+    markSelected();
+  }
+
+  document.getElementById('inspect-close').onclick = close;
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  // Click-away: anything outside the drawer, except the controls that open it
+  // (list, markers) and the map toolbar, closes it.
+  document.addEventListener('click', (e) => {
+    if (name && !e.target.closest('#inspect, #list, .marker, .bar')) close();
+  });
+  // Deep link: /#inspect=<name> opens the drawer, handy for offline characters.
+  // A malformed hash must not take the rest of the page down with it.
+  try {
+    const m = location.hash.match(/^#inspect=(.+)$/);
+    if (m) open(decodeURIComponent(m[1]));
+  } catch (e) {
+    console.warn('hash de inspeção inválido:', e);
+  }
+
+  return {open, close, refresh, current: () => name};
+})();
+</script>
+"""
+
 PAGE = r"""<!doctype html>
 <html lang="pt-BR"><head>
 <meta charset="utf-8"><title>WoW — Mapa ao vivo</title>
@@ -434,6 +755,9 @@ PAGE = r"""<!doctype html>
   .calibration-marker::before { width:2px; height:28px; left:6px; top:-7px; }
   .calibration-marker::after { height:2px; width:28px; left:-7px; top:6px; }
   .stagewrap.calibrating { cursor:crosshair; }
+  .pl.sel { background:#2b3550; }
+  .marker { cursor:pointer; }
+/* @inspect-css */
 </style></head>
 <body>
 <aside>
@@ -471,6 +795,8 @@ PAGE = r"""<!doctype html>
     <span class="pill" id="f-note"></span>
   </footer>
 </main>
+<!-- @inspect-html -->
+<!-- @inspect-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -564,9 +890,22 @@ function place() {
     const d = document.createElement('div');
     d.className = 'marker';
     d.style.left = x + 'px'; d.style.top = y + 'px';
-    d.innerHTML = `<div class="ring" style="background:${p.class_color};color:${p.class_color}"></div>`
-                + `<div class="lbl">${p.name} <span style="opacity:.6">${p.level}</span></div>`;
+    const ring = document.createElement('div');
+    ring.className = 'ring';
+    ring.style.background = ring.style.color = p.class_color;
+    const lbl = document.createElement('div');
+    lbl.className = 'lbl';
+    const lvl = document.createElement('span');
+    lvl.style.opacity = '.6';
+    lvl.textContent = p.level;
+    lbl.append(p.name + ' ', lvl);
+    d.append(ring, lbl);
     d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${p.zone_name}`;
+    d.onclick = () => {
+      if (calibrating) return;
+      selected = p.name;
+      Inspect.open(p.name);
+    };
     m.appendChild(d);
     if (p.name === selected && follow) $('stage').scrollTo({left: x - 300, top: y - 200, behavior:'smooth'});
   }
@@ -589,12 +928,21 @@ function renderList() {
   l.innerHTML = '';
   for (const p of players) {
     const e = document.createElement('div');
-    e.className = 'pl';
-    e.innerHTML = `<span class="dot" style="background:${p.class_color};color:${p.class_color}"></span>`
-      + `<span class="nm">${p.name}</span>`
-      + `<span class="meta">${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instância ' + p.instance}</span>`;
+    e.className = 'pl' + (p.name === Inspect.current() ? ' sel' : '');
+    e.dataset.name = p.name;
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = dot.style.color = p.class_color;
+    const nm = document.createElement('span');
+    nm.className = 'nm';
+    nm.textContent = p.name;
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = `${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instância ' + p.instance}`;
+    e.append(dot, nm, meta);
     e.onclick = () => {
       selected = p.name;
+      if (!calibrating) Inspect.open(p.name);
       if (p.in_world) {
         const a = areaFor(p.zone);
         if (a) { currentArea = a; $('zone').value = a.area_id; draw(); }
@@ -616,6 +964,7 @@ async function tick() {
     $('f-refresh').textContent = 'atualizado ' + new Date().toLocaleTimeString();
     renderList(); place();
   } catch (e) { $('sub').textContent = 'erro: ' + e; }
+  Inspect.refresh();
 }
 
 $('fit').onclick = () => place();
@@ -678,6 +1027,10 @@ setInterval(tick, 5000);
 </script>
 </body></html>
 """
+PAGE = (PAGE
+        .replace("/* @inspect-css */", INSPECT_CSS)
+        .replace("<!-- @inspect-html -->", INSPECT_HTML)
+        .replace("<!-- @inspect-js -->", INSPECT_JS))
 
 
 if __name__ == "__main__":
