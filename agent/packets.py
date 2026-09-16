@@ -57,6 +57,24 @@ def cstring(data: bytes, off: int) -> tuple[str, int]:
     return data[off:end].decode('ascii', errors='replace'), end + 1
 
 
+def parse_server_header(hdr: bytes) -> tuple[int, int]:
+    """Decode a decrypted server->client world packet header.
+
+    Returns (size, opcode); size counts the 2 opcode bytes plus the payload.
+    Layout per TrinityCore 3.3.5 ServerPktHeader:
+      normal (4 B): [size_hi][size_lo][opcode_lo][opcode_hi]
+      large  (5 B, size > 0x7FFF): [0x80|size_hi][size_mid][size_lo][opcode_lo][opcode_hi]
+    """
+    if hdr[0] & 0x80:
+        if len(hdr) != 5:
+            raise ValueError(f"large server header must be 5 bytes, got {len(hdr)}")
+        size = ((hdr[0] & 0x7F) << 16) | (hdr[1] << 8) | hdr[2]
+        return size, hdr[3] | (hdr[4] << 8)
+    if len(hdr) != 4:
+        raise ValueError(f"server header must be 4 bytes, got {len(hdr)}")
+    return (hdr[0] << 8) | hdr[1], hdr[2] | (hdr[3] << 8)
+
+
 def unpack_packed_guid(data: bytes, off: int) -> tuple[int, int]:
     """Read a WoW packed GUID. Returns (guid, new_offset)."""
     mask = data[off]; off += 1

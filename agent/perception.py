@@ -4,8 +4,19 @@
 import threading
 
 
+class PerceptionParseError(Exception):
+    """A server packet could not be parsed into world state.
+
+    Raised for truncated or malformed update-object data. The session drops
+    the offending packet and keeps the connection alive.
+    """
+
+
 class WorldState:
-    """Thread-safe container for perceived game objects."""
+    """Thread-safe container for perceived game objects.
+
+    Every dict is keyed by the 64-bit GUID as an int.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -25,10 +36,10 @@ class WorldState:
             return dict(self.objects)
 
     def set_my_guid(self, guid: int):
+        """Remember which GUID is our own character. Does not create an object;
+        our player shows up through its update-object block like anything else."""
         with self._lock:
             self.my_guid = guid
-            guid_str = f"0x{guid:016x}"
-            self.objects[guid_str] = ObjectInfo(guid=guid, update_type=0)
 
 
 class ObjectInfo:
