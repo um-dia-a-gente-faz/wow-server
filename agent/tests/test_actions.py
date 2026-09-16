@@ -109,10 +109,10 @@ class ChatWireFormatTest(unittest.TestCase):
         ac.text_emote(sess, 66, target_guid=5)
         opcode, payload = sess._sent[0]
         self.assertEqual(opcode, ac.CMSG_TEXT_EMOTE)
-        guid = struct.unpack_from('<Q', payload, 0)[0]
-        emote_id, sound = struct.unpack_from('<ii', payload, 8)
-        self.assertEqual(guid, 5)
+        emote_id, sound, guid = struct.unpack('<iiQ', payload)
         self.assertEqual(emote_id, 66)
+        self.assertEqual(sound, 0)
+        self.assertEqual(guid, 5)
 
 
 class GroupActionsTest(unittest.TestCase):

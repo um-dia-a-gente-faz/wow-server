@@ -99,8 +99,9 @@ def emote(session, text: str):
 
 def text_emote(session, emote_id: int, target_guid: int = 0):
     """A predefined emote (/wave, /dance, ...) by Emotes.dbc ID.
-    CTextEmote::Read (ChatPackets.h): ObjectGuid Target, int32 EmoteID, int32 SoundIndex."""
-    payload = struct.pack("<Q", target_guid) + struct.pack("<ii", emote_id, 0)
+    CTextEmote::Read (ChatPackets.cpp) reads EmoteID, SoundIndex, then Target
+    (the header's member order differs; the Read() order is what's on the wire)."""
+    payload = struct.pack("<iiQ", emote_id, 0, target_guid)
     session._send_packet(CMSG_TEXT_EMOTE, payload)
 
 
