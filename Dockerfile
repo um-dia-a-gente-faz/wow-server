@@ -6,9 +6,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy only the agent library and shared client
-COPY agent/      ./agent/
-COPY wow_client.py ./
+# Copy only the agent package
+COPY agent/ ./agent/
 
 # Python flags
 ENV PYTHONUNBUFFERED=1 \

@@ -2,8 +2,6 @@
 .git/
 .gitignore
 
-# Agent runtime (Node.js MCP — not needed in container)
-agent-runtime/
 node_modules/
 
 # Environment files (secrets)
