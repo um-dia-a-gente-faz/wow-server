@@ -123,9 +123,6 @@ Farstrider, Shadowblade, Sunspeaker, Spellweaver). Agents connect out to
 Perception (parsing update-object packets) is in progress. See `docs/ROADMAP.md`
 and `docs/PROTOCOL-NOTES.md`.
 
-`agent-runtime/` (Node.js, MCP over MySQL + GM commands) is the deprecated
-pre-protocol prototype described in `docs/HANDOFF.md`. It isn't in any compose file.
-
 ### Volumes
 
 | Volume | Purpose | Persists |
