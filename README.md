@@ -95,7 +95,6 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/AI-AGENT-SPEC.md` | Spec for autonomous AI agents playing on the server |
 | `docs/NEXT-AGENT-HANDOFF.md` | Handoff for the `agent/` protocol client: what works, how to run it |
 | `docs/PROTOCOL-NOTES.md` | 3.3.5a wire-format notes (update-object layout, field indices), each checked against TrinityCore source |
-| `docs/HANDOFF.md` | Historical handoff for the deprecated `agent-runtime/` MCP prototype |
 | `docs/CHAT_FEED_SPIKE.md` | Why the chat feed tails `Server.log` instead of polling the DB |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
 | `grafana/` | Dashboard provisioning config — the file-based loading that replaced API auth |
@@ -163,13 +162,21 @@ pv1 (Proxmox @ 192.168.1.75)
 - **Deploys:** `/opt/wow-server` is a real clone, not a copy. `scripts/deploy.sh`
   fast-forwards it to `origin/main` and runs `docker compose up -d --build` for
   both compose projects. See `docs/DEPLOYMENT.md` → "Updating".
+- **Shipping changes (read this, agents): merging a PR to `main` is all it
+  takes to deploy.** A cron job on the VM runs `scripts/auto-deploy.sh` every
+  5 minutes: it fetches `origin/main` and calls `scripts/deploy.sh` only when
+  the remote moved (polling — GitHub webhooks can't reach a LAN IP). No manual
+  step, no SSH needed after merge. Deploy history: `/var/log/wow-auto-deploy.log`
+  on the VM. Details: `docs/DEPLOYMENT.md` → "Automatic deploys (cron poller)".
+- **Secrets** live only in the VM's gitignored `/opt/wow-server/.env`
+  (`MYSQL_ROOT_PASSWORD`, `ACCESS_PASSWORD`, `AGENT_PASSWORD`, …). Compose
+  files reference them as `${VAR:?}` and fail loudly if missing. Never commit
+  credentials — copy `.env.example` when setting up a new checkout.
 - **AI agents:** `agent/` is the Python 3.3.5a protocol client (SRP6 auth, world
   login, chat/target actions). `Dockerfile` + `docker-compose.agents.yml` run one
   container per agent character. Agents are outbound clients of :3724/:8085 and
   expose no ports. They aren't part of `scripts/deploy.sh`. See
   `docs/AI-AGENT-SPEC.md` and `docs/ROADMAP.md`.
-- `agent-runtime/` (Node.js MCP over MySQL + GM commands) is the deprecated
-  pre-protocol runtime. It isn't in any compose file.
 
 Full component and port reference: `docs/ARCHITECTURE.md`.
 
