@@ -92,6 +92,7 @@ def main():
         sys.exit(1)
 
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
+    sess.race = choice['race']
     sess.login_character(choice['guid'])
     log.info("online — guid %d, position %s", sess.player_guid, sess.player_position)
 

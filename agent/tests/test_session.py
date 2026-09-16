@@ -199,6 +199,77 @@ class WorldStateTest(unittest.TestCase):
         self.assertEqual(list(ws.get_objects()), [2])
 
 
+def len_string(s: str) -> bytes:
+    encoded = s.encode('utf-8') + b'\x00'
+    return struct.pack('<I', len(encoded)) + encoded
+
+
+def messagechat_payload(slash_cmd: int, text: str, sender_guid: int = 1,
+                         sender_name: str | None = None, channel: str | None = None) -> bytes:
+    """Builds a payload matching WorldPackets::Chat::Chat::Write's default
+    branch (ChatPackets.cpp) — see agent/session.py::_handle_messagechat."""
+    payload = struct.pack('<Bi', slash_cmd, se.__dict__.get('LANG_ORCISH', 1))
+    payload += struct.pack('<Q', sender_guid)
+    payload += struct.pack('<I', 0)  # flags
+    if sender_name is not None:
+        payload += len_string(sender_name)
+    if channel is not None:
+        payload += channel.encode('utf-8') + b'\x00'
+    payload += struct.pack('<Q', 0)  # target_guid
+    payload += len_string(text)
+    payload += b'\x00'  # chat_tag
+    return payload
+
+
+class ChatParsingTest(unittest.TestCase):
+    def test_gm_messagechat_say(self):
+        sess = make_session()
+        payload = messagechat_payload(0x01, "hello there", sender_guid=1, sender_name="Rubens")
+        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        self.assertEqual(len(sess.chat_inbox), 1)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry, {"kind": "say", "sender_guid": 1, "sender_name": "Rubens",
+                                  "channel": None, "text": "hello there"})
+
+    def test_plain_messagechat_no_sender_name(self):
+        sess = make_session()
+        payload = messagechat_payload(0x07, "psst", sender_guid=2)
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry["kind"], "whisper")
+        self.assertEqual(entry["sender_name"], "")
+        self.assertEqual(entry["text"], "psst")
+
+    def test_channel_message_includes_channel_name(self):
+        sess = make_session()
+        payload = messagechat_payload(0x11, "LFG dungeon", sender_guid=3,
+                                       sender_name="Someone", channel="World")
+        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry["kind"], "channel")
+        self.assertEqual(entry["channel"], "World")
+
+    def test_utf8_accents_round_trip(self):
+        sess = make_session()
+        payload = messagechat_payload(0x01, "Olá, tudo bem?", sender_name="Rubens")
+        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        self.assertEqual(sess.chat_inbox[0]["text"], "Olá, tudo bem?")
+
+    def test_inbox_is_bounded(self):
+        sess = make_session()
+        for i in range(se.CHAT_INBOX_MAXLEN + 10):
+            payload = messagechat_payload(0x01, f"msg {i}", sender_name="X")
+            sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        self.assertEqual(len(sess.chat_inbox), se.CHAT_INBOX_MAXLEN)
+        self.assertEqual(sess.chat_inbox[-1]["text"], f"msg {se.CHAT_INBOX_MAXLEN + 9}")
+
+    def test_group_invite_sets_pending_invite(self):
+        sess = make_session()
+        payload = bytes([1]) + b'Rubens\x00'
+        sess._handle_group_invite(payload)
+        self.assertEqual(sess.pending_invite, {"inviter_name": "Rubens"})
+
+
 class LoginTest(unittest.TestCase):
     def test_login_stores_player_guid(self):
         verify_world = struct.pack('<iffff', 530, 9487.0, -7279.0, 14.3, 0.0)
