@@ -1,7 +1,12 @@
 # WoW AI Agent — Development Handoff
 
+> **Historical.** This is the handoff for the deprecated `agent-runtime/` MCP
+> prototype, which fakes agents over MySQL and GM commands. The real protocol client
+> is the Python `agent/` package on `main`. For current agent work, read
+> `docs/NEXT-AGENT-HANDOFF.md` and `docs/ROADMAP.md`.
+
 **Session date:** 2026-09-13
-**Branch:** `spec/ai-agent-gameplay`
+**Branch:** `spec/ai-agent-gameplay` (merged into `main` in PR #1, don't check it out)
 **Hermes session:** search for "wow-server agent" in session history
 
 ---
@@ -24,7 +29,7 @@
 | Account ID | Username | Password | Char GUID | Name | Class |
 |-----------|----------|----------|-----------|------|-------|
 | 1 | GITHUBENS | (user's) | 1 | Rubens | Paladin |
-| 2 | AGENT01 | `<see .env>` | 2 | Silvermoon | Paladin |
+| 2 | AGENT01 | `<see .env>` | 2 | Luaprata | Paladin |
 | 3 | AGENT02 | `<see .env>` | 3 | Farstrider | Hunter |
 | 4 | AGENT03 | `<see .env>` | 4 | Shadowblade | Rogue |
 | 5 | AGENT04 | `<see .env>` | 5 | Sunspeaker | Priest |
@@ -65,7 +70,7 @@ agent-runtime/
 - MySQL perception: character state, nearby units
 - Socket.IO commands: `.announce`, `.target`, `.damage`
 - MCP tool calling: agent uses native function calling
-- Agent roleplay: Silvermoon greeted Magistrix Erona in-character
+- Agent roleplay: guid 2 (then named "Silvermoon" in `agent-runtime/`, now Luaprata) greeted Magistrix Erona in-character
 - ~50% tool call rate with free models (FreeLLMAPI auto-router)
 
 ### Limitations
@@ -82,7 +87,7 @@ agent-runtime/
 cd /home/rubens/Repos/wow-server/agent-runtime
 
 # Single agent
-node agent-mcp.js 0   # Silvermoon (Paladin)
+node agent-mcp.js 0   # guid 2, Luaprata (Paladin; still "Silvermoon" in agent-runtime/)
 node agent-mcp.js 1   # Farstrider (Hunter)
 node agent-mcp.js 2   # Shadowblade (Rogue)
 node agent-mcp.js 3   # Sunspeaker (Priest)

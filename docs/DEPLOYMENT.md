@@ -13,11 +13,13 @@ self-contained prompt you can hand to an agent with SSH access to the Proxmox ho
 | Proxmox host | `pv1` @ 192.168.1.75 |
 | VM | 100 `wow-server` @ **192.168.1.64** |
 | Specs | 4 vCPU, 6 GB RAM, 50 GB disk, Ubuntu 24.04, Docker 29 |
-| Stack | `/opt/wow-server` (docker compose) |
-| Monitoring | `/opt/monitoring` (separate compose) |
+| Stack | `/opt/wow-server`, a git checkout of this repo (`docker-compose.yml`) |
+| Monitoring | `/opt/wow-server/monitoring/docker-compose.yml` (separate compose project) |
 
-Ports: **8085** world · **3724** auth/logon · **3000** web UI. All LAN-only
-(`192.168.1.0/24`), never exposed to the internet.
+Ports: **8085** world · **3724** auth/logon · **3000** web UI · **3443** RA ·
+**3306** MySQL · **9500** chat feed, plus the monitoring stack's :9100/:8080/:9300/:9400
+(full table in `docs/ARCHITECTURE.md`). All LAN-only (`192.168.1.0/24`), never
+exposed to the internet.
 
 ## Prerequisites
 

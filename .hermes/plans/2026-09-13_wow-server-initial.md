@@ -1,5 +1,9 @@
 # WoW 3.3.5a TrinityCore Server — Implementation Plan
 
+> **Historical, superseded by `docs/DEPLOYMENT.md`.** This plan targeted the
+> docker-stack VM (192.168.1.60). The server was actually deployed on the dedicated
+> wow-server VM at **192.168.1.64**.
+
 > **For Hermes:** Single-prompt deployment on pandora's docker-stack VM.
 
 **Goal:** Deploy a fully functional WoW Wrath of the Lich King (3.3.5a) private
