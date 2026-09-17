@@ -291,3 +291,37 @@ length prefix (`agent/packets.py::cstring`).
 `ObjectGuid::HighGuid` values needed to classify `targetGuid` (`Entities/Object/ObjectGuid.h`,
 top 16 bits of the raw 64-bit guid): `Player = 0x0000`, `Unit = 0xF130`,
 `Pet = 0xF140`, `GameObject = 0xF110`.
+
+## The server does not echo our own position back via update-object during ordinary movement
+
+Found live-verifying UM-38's `move_to`: after sending `MSG_MOVE_START_FORWARD`/
+`MSG_MOVE_HEARTBEAT`, no `SMSG_UPDATE_OBJECT`/`SMSG_COMPRESSED_UPDATE_OBJECT`
+block about our *own* guid arrives reporting the new position — `agent.
+perception.WorldState.my_server_position` sat at our login/spawn position
+for the entire session, confirmed by comparing it against the DB-saved
+`characters.characters` position mid-walk (both matched the *start*
+position, not wherever we currently were).
+
+This makes sense once you read it as: TrinityCore does track our position
+server-side (the periodic save, `characters.characters.position_*`, proves
+that — see `CONTRIBUTING.md`'s "Player save interval tuning"), but a
+player's own client is expected to already know where it is (it sent the
+movement itself), so there's no protocol reason to echo it back via
+`UPDATE_OBJECT`. Only *other* players learn our position that way (and, for
+them, from our broadcast `MSG_MOVE_*` packets, not `UPDATE_OBJECT` either,
+during ordinary walking — `UPDATE_OBJECT` is for state that changes
+independent of movement, or the initial `CREATE`).
+
+Consequence for `agent/movement.py`: comparing our own simulated position
+against `WorldState.my_server_position` on every tick (meant to catch a
+genuine server-side correction — teleport, knockback) will only ever see a
+*stale* value that predates the current move, not a live "does the server
+agree with us" signal. `_simulate` accounts for this: it snapshots
+`my_server_position` at the start of each move and only treats a *later
+change* to it as drift, never a value that was already there (or that
+first becomes known — see the `CMSG_SET_ACTIVE_MOVER`-adjacent race note in
+`agent/movement.py`'s comments) before the move began. In practice this
+makes the drift check a dormant safety net for the rare case something
+external (a real teleport/knockback) does update it — `_simulate`'s
+"no measurable progress over 3 s" check is the one that actually fires
+during ordinary v1 use.
