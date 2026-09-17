@@ -542,7 +542,7 @@ class WorldState:
             return equipment, inventory
 
     def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40,
-                 corpse_position=None) -> dict:
+                 corpse_position=None, pending_invite=None, chat_inbox=None) -> dict:
         """A JSON-serialisable view shaped like docs/AI-AGENT-SPEC.md's
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
         nearby_objects, sorted by distance and capped at `limit` each.
@@ -556,6 +556,11 @@ class WorldState:
         callers (agent/think.py) pass session.corpse_position through so the
         LLM sees it, is_dead, and is_ghost alongside everything else in one
         snapshot.
+
+        `pending_invite` (session.pending_invite) and `chat_inbox`
+        (session.chat_inbox, UM-68) are likewise session-scoped state this
+        class doesn't own — passed through so the LLM has something to
+        react to with the accept_group/say/whisper actions (agent/actions.py).
         """
         with self._lock:
             objects = list(self.objects.values())
@@ -575,6 +580,8 @@ class WorldState:
             "window": window,
             "equipment": equipment,
             "inventory": inventory,
+            "pending_invite": pending_invite,
+            "chat_inbox": list(chat_inbox) if chat_inbox is not None else [],
         }
         if pos is None:
             return out

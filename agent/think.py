@@ -65,7 +65,9 @@ def think_and_act(session, world, llm_client, persona: str = "",
     # of WorldState — pass it through so the snapshot exposes it alongside
     # is_dead/is_ghost. getattr() with a default: harmless if session is a
     # test double without it.
-    snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None))
+    snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None),
+                               pending_invite=getattr(session, "pending_invite", None),
+                               chat_inbox=getattr(session, "chat_inbox", None))
 
     def _audit(action_name=None, params=None, valid=False, ok=False, error=None):
         if audit_logger is None:

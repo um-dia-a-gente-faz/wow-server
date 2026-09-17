@@ -835,6 +835,126 @@ class TrainSpellAction(Action):
         return ActionResult(ok=True, detail=detail)
 
 
+# ── Chat / social (UM-68) ─────────────────────────────────────────────────
+# Wraps the plain say/yell/whisper/emote/invite_to_group/accept_group
+# functions above as Action subclasses so they show up in catalog() — until
+# now they were only reachable by calling the free functions directly, so
+# the LLM (agent/think.py) had no way to invoke them at all.
+
+def _known_player_name(session, world, target_name: str) -> bool:
+    """A whisper target is "resolvable" if its name has shown up either as a
+    currently-perceived object (agent/perception.py's ObjectInfo.name,
+    filled in via agent/names.py's CMSG_NAME_QUERY cache) or as the sender
+    of a recent chat message (session.chat_inbox) — either is enough
+    evidence the name is real and spelled correctly, without requiring the
+    player to be nearby right now (e.g. replying to a whisper from someone
+    out of range)."""
+    lname = target_name.lower()
+    for obj in world.get_objects().values():
+        if obj.name and obj.name.lower() == lname:
+            return True
+    for entry in getattr(session, "chat_inbox", ()):
+        if entry.get("sender_name", "").lower() == lname:
+            return True
+    return False
+
+
+@register
+class SayAction(Action):
+    name = "say"
+    description = "Speak a chat message aloud (/say) — audible to nearby players."
+    params = {
+        "message": {"type": "string", "description": "The message to say."},
+    }
+    required = ("message",)
+
+    def execute(self, session, world, message: str, **_) -> ActionResult:
+        say(session, message)
+        return ActionResult(ok=True, detail={"message": message})
+
+
+@register
+class YellAction(Action):
+    name = "yell"
+    description = "Shout a chat message (/yell) — audible over a much larger radius than say."
+    params = {
+        "message": {"type": "string", "description": "The message to yell."},
+    }
+    required = ("message",)
+
+    def execute(self, session, world, message: str, **_) -> ActionResult:
+        yell(session, message)
+        return ActionResult(ok=True, detail={"message": message})
+
+
+@register
+class WhisperAction(Action):
+    name = "whisper"
+    description = ("Send a private message (/whisper) to a specific player by name. The name "
+                    "must be resolvable — either a currently-perceived player or the sender of "
+                    "a recent chat message (see the snapshot's chat_inbox).")
+    params = {
+        "target_name": {"type": "string", "description": "Exact player name to whisper."},
+        "message": {"type": "string", "description": "The message to send."},
+    }
+    required = ("target_name", "message")
+
+    def check(self, session, world, target_name: str, message: str, **_) -> str | None:
+        if not _known_player_name(session, world, target_name):
+            return f"{target_name!r} is not a known/resolvable player name"
+        return None
+
+    def execute(self, session, world, target_name: str, message: str, **_) -> ActionResult:
+        whisper(session, target_name, message)
+        return ActionResult(ok=True, detail={"target_name": target_name, "message": message})
+
+
+@register
+class EmoteAction(Action):
+    name = "emote"
+    description = "Send a free-text roleplay emote (/emote) — distinct from a predefined animated emote."
+    params = {
+        "text": {"type": "string", "description": "The emote text."},
+    }
+    required = ("text",)
+
+    def execute(self, session, world, text: str, **_) -> ActionResult:
+        emote(session, text)
+        return ActionResult(ok=True, detail={"text": text})
+
+
+@register
+class InviteToGroupAction(Action):
+    name = "invite_to_group"
+    description = "Invite a player to a party/group by name."
+    params = {
+        "name": {"type": "string", "description": "Exact player name to invite."},
+    }
+    required = ("name",)
+
+    def execute(self, session, world, name: str, **_) -> ActionResult:
+        invite_to_group(session, name)
+        return ActionResult(ok=True, detail={"name": name})
+
+
+@register
+class AcceptGroupAction(Action):
+    name = "accept_group"
+    description = "Accept the currently pending party invite (see the snapshot's pending_invite)."
+    params = {}
+    required = ()
+
+    def check(self, session, world, **_) -> str | None:
+        if not getattr(session, "pending_invite", None):
+            return "no pending group invite to accept"
+        return None
+
+    def execute(self, session, world, **_) -> ActionResult:
+        invite = session.pending_invite
+        accept_group(session)
+        return ActionResult(ok=True, detail={"inviter_name": (invite or {}).get("inviter_name")})
+
+
 @register
 class CloseWindowAction(Action):
     name = "close_window"

@@ -888,6 +888,104 @@ class CloseWindowActionTest(unittest.TestCase):
         self.assertFalse(result.detail["was_open"])
 
 
+class SocialActionsRegistrationTest(unittest.TestCase):
+    def test_registry_has_all_social_actions(self):
+        for name in ("say", "yell", "whisper", "emote", "invite_to_group", "accept_group"):
+            self.assertIn(name, ac.REGISTRY)
+
+
+class SayActionTest(unittest.TestCase):
+    def test_execute_sends_say(self):
+        sess = fake_session()
+        result = ac.SayAction().execute(sess, None, message="hello")
+        self.assertTrue(result.ok)
+        opcode, payload = sess._sent[0]
+        self.assertEqual(opcode, ac.CMSG_MESSAGECHAT)
+        slash_cmd = struct.unpack_from('<i', payload, 0)[0]
+        self.assertEqual(slash_cmd, ac.CHAT_MSG_SAY)
+
+
+class YellActionTest(unittest.TestCase):
+    def test_execute_sends_yell(self):
+        sess = fake_session()
+        result = ac.YellAction().execute(sess, None, message="for the horde")
+        self.assertTrue(result.ok)
+        _, payload = sess._sent[0]
+        slash_cmd = struct.unpack_from('<i', payload, 0)[0]
+        self.assertEqual(slash_cmd, ac.CHAT_MSG_YELL)
+
+
+class EmoteActionTest(unittest.TestCase):
+    def test_execute_sends_emote(self):
+        sess = fake_session()
+        result = ac.EmoteAction().execute(sess, None, text="waves")
+        self.assertTrue(result.ok)
+        _, payload = sess._sent[0]
+        slash_cmd = struct.unpack_from('<i', payload, 0)[0]
+        self.assertEqual(slash_cmd, ac.CHAT_MSG_EMOTE)
+
+
+class InviteToGroupActionTest(unittest.TestCase):
+    def test_execute_sends_invite(self):
+        sess = fake_session()
+        result = ac.InviteToGroupAction().execute(sess, None, name="Rubens")
+        self.assertTrue(result.ok)
+        opcode, payload = sess._sent[0]
+        self.assertEqual(opcode, ac.CMSG_GROUP_INVITE)
+
+
+class WhisperActionTest(unittest.TestCase):
+    def test_check_fails_for_unknown_name(self):
+        world = per.WorldState()
+        err = ac.WhisperAction().check(fake_session(), world, target_name="Nobody", message="hi")
+        self.assertIsNotNone(err)
+
+    def test_check_passes_for_perceived_player_name(self):
+        world = per.WorldState()
+        world.update_object(object_at(5, 1.0, 2.0, 3.0, object_type="player"))
+        world.objects[5].name = "Rubens"
+        err = ac.WhisperAction().check(fake_session(), world, target_name="Rubens", message="hi")
+        self.assertIsNone(err)
+
+    def test_check_passes_for_recent_chat_sender(self):
+        world = per.WorldState()
+        sess = fake_session()
+        sess.chat_inbox = [{"sender_name": "Rubens", "text": "hi", "kind": "say"}]
+        err = ac.WhisperAction().check(sess, world, target_name="rubens", message="hi")
+        self.assertIsNone(err)
+
+    def test_execute_sends_whisper(self):
+        world = per.WorldState()
+        sess = fake_session()
+        sess.chat_inbox = [{"sender_name": "Rubens", "text": "hi", "kind": "say"}]
+        result = ac.WhisperAction().run(sess, world, target_name="Rubens", message="hi there")
+        self.assertTrue(result.ok)
+        opcode, payload = sess._sent[0]
+        self.assertEqual(opcode, ac.CMSG_MESSAGECHAT)
+
+
+class AcceptGroupActionTest(unittest.TestCase):
+    def test_check_fails_without_pending_invite(self):
+        sess = fake_session()
+        sess.pending_invite = None
+        err = ac.AcceptGroupAction().check(sess, None)
+        self.assertIsNotNone(err)
+
+    def test_check_passes_with_pending_invite(self):
+        sess = fake_session()
+        err = ac.AcceptGroupAction().check(sess, None)
+        self.assertIsNone(err)
+
+    def test_execute_sends_accept_and_clears_pending_invite(self):
+        sess = fake_session()
+        result = ac.AcceptGroupAction().run(sess, None)
+        self.assertTrue(result.ok)
+        opcode, payload = sess._sent[0]
+        self.assertEqual(opcode, ac.CMSG_GROUP_ACCEPT)
+        self.assertIsNone(sess.pending_invite)
+        self.assertEqual(result.detail["inviter_name"], "Rubens")
+
+
 def lootable_object_at(guid, x, y, z):
     block = object_at(guid, x, y, z)
     ws_block = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=guid,
