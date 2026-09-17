@@ -63,6 +63,7 @@ OBJECT_TYPE_NAMES = {
 
 # MovementFlags (uint32) — only the bits this parser needs to branch on.
 # src/server/game/Entities/Unit/UnitDefines.h
+MOVEMENTFLAG_FORWARD = 0x00000001
 MOVEMENTFLAG_ONTRANSPORT = 0x00000200
 MOVEMENTFLAG_FALLING = 0x00001000
 MOVEMENTFLAG_SWIMMING = 0x00200000

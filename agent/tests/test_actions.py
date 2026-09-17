@@ -332,5 +332,68 @@ class FaceActionTest(unittest.TestCase):
         self.assertEqual(guid, 0x42)
 
 
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def clock(self) -> float:
+        return self.t
+
+    def sleep(self, dt: float):
+        self.t += dt
+
+
+def fast_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
+    """A fake_session pre-wired with a Mover on a FakeClock, so move_to/
+    move_towards/stop_movement actions run instantly in tests instead of
+    sleeping for real between ticks."""
+    sess = fake_session(player_guid=guid, player_position=position)
+    world = per.WorldState()
+    clock = FakeClock()
+    sess._mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
+    return sess, world
+
+
+class MoveToActionTest(unittest.TestCase):
+    def test_check_requires_own_position(self):
+        sess = fake_session(player_position=None)
+        world = per.WorldState()
+        self.assertIsNotNone(ac.MoveToAction().check(sess, world, x=1.0, y=1.0))
+
+    def test_execute_arrives_and_returns_ok(self):
+        sess, world = fast_session(position=(530, 0.0, 0.0, 0.0, 0.0))
+        result = ac.MoveToAction().execute(sess, world, x=5.0, y=0.0, stop_distance=1.0)
+        self.assertTrue(result.ok)
+        opcodes = [op for op, _ in sess._sent]
+        self.assertEqual(opcodes[0], mv.MSG_MOVE_START_FORWARD)
+        self.assertEqual(opcodes[-1], mv.MSG_MOVE_STOP)
+
+    def test_execute_reuses_the_same_mover_as_stop_movement(self):
+        sess, world = fast_session(position=(530, 0.0, 0.0, 0.0, 0.0))
+        ac.MoveToAction().execute(sess, world, x=5.0, y=0.0)
+        self.assertIs(sess._mover, mv.get_mover(sess, world))
+
+
+class MoveTowardsActionTest(unittest.TestCase):
+    def test_check_fails_when_target_has_no_position(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        self.assertIsNotNone(ac.MoveTowardsAction().check(sess, world, guid=99))
+
+    def test_execute_chases_and_arrives(self):
+        sess, world = fast_session(position=(530, 0.0, 0.0, 0.0, 0.0))
+        world.update_object(object_at(5, 5.0, 0.0, 0.0))
+        result = ac.MoveTowardsAction().execute(sess, world, guid=5, stop_distance=1.0)
+        self.assertTrue(result.ok)
+
+
+class StopMovementActionTest(unittest.TestCase):
+    def test_returns_ok_with_was_moving_false_when_idle(self):
+        sess, world = fast_session()
+        result = ac.StopMovementAction().execute(sess, world)
+        self.assertTrue(result.ok)
+        self.assertFalse(result.detail["was_moving"])
+
+
 if __name__ == '__main__':
     unittest.main()

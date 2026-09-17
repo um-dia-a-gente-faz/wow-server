@@ -55,6 +55,7 @@ class ObjectInfo:
     target_guid: int | None = None
     position: tuple | None = None  # (map, x, y, z, o) — map is filled in by WorldState (blocks don't carry it)
     move_flags: int | None = None
+    speeds: tuple | None = None  # 9 floats, UnitMoveType order (UnitDefines.h): walk, run, run_back, swim, swim_back, turn_rate, flight, flight_back, pitch_rate — only present on a LIVING movement block
     last_update: float = 0.0  # time.monotonic() of the last block that touched this object
     raw_fields: dict = field(default_factory=dict)
     spline: dict | None = None  # active spline (UM-64): {start_pos, destination, start_time, duration}
@@ -154,6 +155,13 @@ class WorldState:
         self.my_map = None  # set by session.py from SMSG_LOGIN_VERIFY_WORLD
         self.unknown_field_updates = 0  # debug counter: VALUES for a guid we haven't CREATEd yet
         self.names = nm.NameCache()  # UM-35
+        # UM-38: the last position the SERVER reported for us via a real
+        # update-object block — distinct from ObjectInfo.position, which
+        # update_my_position_from_simulation() also overwrites with our own
+        # simulated guess between real updates. Movement's stuck detection
+        # needs this untouched-by-simulation value to know whether the
+        # server actually agrees with where we think we are.
+        self.my_server_position: tuple | None = None
 
     def set_my_guid(self, guid: int):
         """Remember which GUID is our own character. Does not create an object;
@@ -209,6 +217,8 @@ class WorldState:
                 obj.last_update = time.monotonic()
                 self.objects[block.guid] = obj
                 self._maybe_resolve_name(obj)
+                if block.guid == self.my_guid and block.movement and "x" in block.movement:
+                    self.my_server_position = obj.position
                 return
 
             obj = self.objects.get(block.guid)
@@ -222,6 +232,8 @@ class WorldState:
             elif block.update_type == uo.UPDATETYPE_MOVEMENT:
                 self._apply_movement(obj, block.movement)
             obj.last_update = time.monotonic()
+            if block.guid == self.my_guid and block.movement and "x" in block.movement:
+                self.my_server_position = obj.position
 
     def apply_monster_move(self, info: dict):
         """SMSG_MONSTER_MOVE (agent.update_object.parse_monster_move):
@@ -343,7 +355,8 @@ class WorldState:
             obj.move_flags = movement["move_flags"]
         if "target_guid" in movement:
             obj.target_guid = movement["target_guid"]
-
+        if "speeds" in movement:
+            obj.speeds = movement["speeds"]
         spline = movement.get("spline")
         if spline is not None:
             obj.set_spline(
@@ -358,6 +371,17 @@ class WorldState:
             # STATIONARY_POSITION blocks never carry move_flags at all, so
             # they leave existing spline state alone rather than guess.
             obj.clear_spline()
+
+    def update_my_position_from_simulation(self, position: tuple):
+        """UM-38: agent.movement.Mover simulates our own position between
+        real server updates (client-authoritative movement) — mirror it
+        onto our own ObjectInfo so every perception consumer (distance_to,
+        snapshot) sees it, not just session.player_position. A no-op before
+        our own object exists (there's nowhere to put it yet)."""
+        with self._lock:
+            obj = self.objects.get(self.my_guid)
+            if obj is not None:
+                obj.position = position
 
     def _apply_fields(self, obj: ObjectInfo, object_type: int | None, raw_fields: dict | None):
         if not raw_fields:

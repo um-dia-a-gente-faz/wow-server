@@ -159,14 +159,23 @@ on perception and is a dependency for the next:
    similar shape of work to update-object parsing but far smaller).
 4. **`loot`** — `CMSG_LOOT`/`CMSG_LOOT_ITEM` once `unit_death` / a lootable
    flag is visible in perception (from `UNIT_DYNAMIC_FLAGS`).
-5. **Movement (`move_to`) — the biggest open risk in Phase 2.** The server
-   has mmaps built (`docs/DEPLOYMENT.md`), but nothing in this repo parses
-   TrinityCore's binary `.mmap`/`.mmtile` navmesh format — that's effectively
-   embedding a Recast/Detour navmesh query, a substantial standalone effort.
-   Don't block basic actions on it:
-   - **v1:** straight-line `CMSG_MOVE_START_FORWARD`/`CMSG_MOVE_STOP` toward
-     a target position, good enough for short hops and combat positioning
-     around a single mob, will walk into obstacles on anything longer.
+5. **Movement (`move_to`) — v1 SHIPPED (UM-38), navmesh v2 still open.** The
+   server has mmaps built (`docs/DEPLOYMENT.md`), but nothing in this repo
+   parses TrinityCore's binary `.mmap`/`.mmtile` navmesh format — that's
+   effectively embedding a Recast/Detour navmesh query, a substantial
+   standalone effort. v1 doesn't block on it:
+   - **v1 (`agent/movement.py`, `agent/actions.py`'s `move_to`/
+     `move_towards`/`stop_movement`):** client-authoritative straight-line
+     walking — the agent simulates its own position at a fixed tick rate and
+     reports it via `MSG_MOVE_START_FORWARD`/`HEARTBEAT`/`STOP`/
+     `SET_FACING`, same as the real protocol. No terrain height (z is
+     linearly interpolated start-to-destination) and no obstacle awareness —
+     good for short hops and combat positioning, will walk into obstacles on
+     anything longer, matching the original v1 scope. Live-verified: a 60 yd
+     `move_to` walked gradually (confirmed via `characters.characters`'
+     5 s-interval position saves advancing mid-walk, not jumping) and
+     stopped within `stop_distance`; a 5-minute random-walk soak test saw no
+     disconnects/kicks.
    - **v2 (separate task, only once v1's ceiling is actually hit):**
      real navmesh-backed pathing — likely as a small sidecar service (Python
      bindings around Detour, or a thin wrapper shelling out to a Recast/
@@ -176,6 +185,13 @@ on perception and is a dependency for the next:
      every `MSG_MOVE_*` it sends (including v1's `START_FORWARD`/`STOP`) is
      silently dropped server-side — see `docs/PROTOCOL-NOTES.md`. Already
      wired into `agent/session.py::login_character`.
+   - **UM-38 found a second one:** the server never echoes our own position
+     back via `UPDATE_OBJECT` during ordinary movement (only the periodic
+     DB save reflects it), so a naive "does perception's self-position match
+     my simulation" stuck check would misfire on stale/absent data — see
+     `docs/PROTOCOL-NOTES.md`. `agent/movement.py::_simulate` only treats a
+     *change* to `WorldState.my_server_position` during the current move as
+     real drift.
 
 ### Phase 3 — think loop + LLM integration
 
