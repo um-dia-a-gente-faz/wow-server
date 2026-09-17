@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from . import names as nm
 from . import update_fields as uf
 from . import update_object as uo
 
@@ -38,7 +39,10 @@ class ObjectInfo:
     object_type: str = ""  # uo.OBJECT_TYPE_NAMES value: unit/player/gameobject/... ("" until first CREATE)
     type_id: int | None = None  # uo.TYPEID_* — kept alongside object_type so VALUES-only merges can still decode_fields correctly
     entry: int | None = None
-    name: str = ""  # filled by name resolution (UM-35); always "" for now
+    name: str = ""  # filled by name resolution (UM-35) once a query response arrives
+    subname: str = ""  # creature "title" (e.g. "Guard Captain") — creatures/players only
+    rank: str = ""  # CreatureEliteType name ("elite", "rareelite", "worldboss", "rare") — creatures only, "" = normal
+    creature_type: str | None = None  # CreatureType name ("beast", "humanoid", ...) — creatures only
     level: int | None = None
     health: int | None = None
     max_health: int | None = None
@@ -149,6 +153,7 @@ class WorldState:
         self.my_guid = 0
         self.my_map = None  # set by session.py from SMSG_LOGIN_VERIFY_WORLD
         self.unknown_field_updates = 0  # debug counter: VALUES for a guid we haven't CREATEd yet
+        self.names = nm.NameCache()  # UM-35
 
     def set_my_guid(self, guid: int):
         """Remember which GUID is our own character. Does not create an object;
@@ -203,6 +208,7 @@ class WorldState:
                 self._apply_fields(obj, block.object_type, block.fields)
                 obj.last_update = time.monotonic()
                 self.objects[block.guid] = obj
+                self._maybe_resolve_name(obj)
                 return
 
             obj = self.objects.get(block.guid)
@@ -212,6 +218,7 @@ class WorldState:
 
             if block.update_type == uo.UPDATETYPE_VALUES:
                 self._apply_fields(obj, obj.type_id, block.fields)
+                self._maybe_resolve_name(obj)  # entry (OBJECT_FIELD_ENTRY) may have just arrived
             elif block.update_type == uo.UPDATETYPE_MOVEMENT:
                 self._apply_movement(obj, block.movement)
             obj.last_update = time.monotonic()
@@ -257,6 +264,72 @@ class WorldState:
         with self._lock:
             for guid in guids:
                 self.objects.pop(guid, None)
+
+    def _maybe_resolve_name(self, obj: ObjectInfo):
+        """UM-35: fill obj.name (etc.) from the cache if already known,
+        otherwise enqueue a query. Called with self._lock already held.
+        Skips our own object — we already know our name; nothing queries it."""
+        if obj.guid == self.my_guid:
+            return
+        if obj.object_type == "player":
+            if obj.guid in self.names.players:
+                name = self.names.players[obj.guid]
+                if name is not None:
+                    obj.name = name
+            else:
+                self.names.want_player(obj.guid)
+        elif obj.object_type == "unit" and obj.entry:
+            if obj.entry in self.names.creatures:
+                data = self.names.creatures[obj.entry]
+                if data is not None:
+                    self._apply_creature_name(obj, data)
+            else:
+                self.names.want_creature(obj.entry, obj.guid)
+        elif obj.object_type == "gameobject" and obj.entry:
+            if obj.entry in self.names.gameobjects:
+                data = self.names.gameobjects[obj.entry]
+                if data is not None:
+                    obj.name = data["name"]
+            else:
+                self.names.want_gameobject(obj.entry, obj.guid)
+
+    @staticmethod
+    def _apply_creature_name(obj: ObjectInfo, data: dict):
+        obj.name = data["name"]
+        obj.subname = data.get("subname", "")
+        obj.rank = data.get("rank", "") if data.get("rank") != "normal" else ""
+        obj.creature_type = data.get("creature_type_name")
+
+    def apply_name_query_response(self, data: dict):
+        """SMSG_NAME_QUERY_RESPONSE (agent.names.parse_name_query_response):
+        backfill .name on the matching player object, if it's still around."""
+        with self._lock:
+            self.names.on_name_query_response(data)
+            if data["found"]:
+                obj = self.objects.get(data["guid"])
+                if obj is not None:
+                    obj.name = data["name"]
+
+    def apply_creature_query_response(self, data: dict):
+        """SMSG_CREATURE_QUERY_RESPONSE: backfill every currently-known unit
+        with this entry (there can be several, e.g. six identical "Shaker"
+        NPCs — see agent/tests/fixtures/update_object/README.md)."""
+        with self._lock:
+            self.names.on_creature_query_response(data)
+            if data["found"]:
+                for obj in self.objects.values():
+                    if obj.object_type == "unit" and obj.entry == data["entry"]:
+                        self._apply_creature_name(obj, data)
+
+    def apply_gameobject_query_response(self, data: dict):
+        """SMSG_GAMEOBJECT_QUERY_RESPONSE: backfill every currently-known
+        gameobject with this entry."""
+        with self._lock:
+            self.names.on_gameobject_query_response(data)
+            if data["found"]:
+                for obj in self.objects.values():
+                    if obj.object_type == "gameobject" and obj.entry == data["entry"]:
+                        obj.name = data["name"]
 
     def _apply_movement(self, obj: ObjectInfo, movement: dict | None):
         if not movement:
