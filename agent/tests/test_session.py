@@ -609,6 +609,41 @@ class ChatParsingTest(unittest.TestCase):
         sess._handle_group_invite(payload)
         self.assertEqual(sess.pending_invite, {"inviter_name": "Rubens"})
 
+    def test_chat_player_not_found_records_whisper_failed_event(self):
+        sess = make_session()
+        sess._handle_chat_player_not_found(b'Nobody\x00')
+        self.assertEqual(sess.events[-1]["kind"], "whisper_failed")
+        self.assertEqual(sess.events[-1]["target_name"], "Nobody")
+
+    def test_party_command_result_records_group_invite_failed_on_failure(self):
+        sess = make_session()
+        # uint32 operation (0=invite), cstring member, uint32 result (5=already_in_group), uint32 val
+        payload = struct.pack('<I', 0) + b'Rubens\x00' + struct.pack('<II', 5, 0)
+        sess._handle_party_command_result(payload)
+        self.assertEqual(sess.events[-1]["kind"], "group_invite_failed")
+        self.assertEqual(sess.events[-1]["target_name"], "Rubens")
+        self.assertEqual(sess.events[-1]["result"], 5)
+        self.assertEqual(sess.events[-1]["result_name"], "already_in_group")
+
+    def test_party_command_result_ignored_on_success(self):
+        sess = make_session()
+        # result 0 == ERR_PARTY_RESULT_OK — no event should be recorded.
+        payload = struct.pack('<I', 0) + b'Rubens\x00' + struct.pack('<II', 0, 0)
+        sess._handle_party_command_result(payload)
+        self.assertEqual(len(sess.events), 0)
+
+    def test_chat_player_not_found_dispatch(self):
+        sess = make_session()
+        self.assertTrue(sess._dispatch(se.SMSG_CHAT_PLAYER_NOT_FOUND, b'Nobody\x00'))
+        self.assertEqual(sess.events[-1]["kind"], "whisper_failed")
+
+    def test_party_command_result_dispatch(self):
+        sess = make_session()
+        payload = struct.pack('<I', 0) + b'Rubens\x00' + struct.pack('<II', 1, 0)
+        self.assertTrue(sess._dispatch(se.SMSG_PARTY_COMMAND_RESULT, payload))
+        self.assertEqual(sess.events[-1]["kind"], "group_invite_failed")
+        self.assertEqual(sess.events[-1]["result_name"], "bad_player_name")
+
 
 class LoginTest(unittest.TestCase):
     def test_login_stores_player_guid(self):

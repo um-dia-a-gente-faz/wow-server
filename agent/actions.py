@@ -905,6 +905,8 @@ class WhisperAction(Action):
         "message": {"type": "string", "description": "The message to send."},
     }
     required = ("target_name", "message")
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, target_name: str, message: str, **_) -> str | None:
         if not _known_player_name(session, world, target_name):
@@ -912,8 +914,27 @@ class WhisperAction(Action):
         return None
 
     def execute(self, session, world, target_name: str, message: str, **_) -> ActionResult:
+        sent_at = time.monotonic()
         whisper(session, target_name, message)
-        return ActionResult(ok=True, detail={"target_name": target_name, "message": message})
+
+        # TrinityCore sends SMSG_CHAT_PLAYER_NOT_FOUND only on failure (an
+        # offline/whisper-disabled/ignoring target — see
+        # WorldSession::SendPlayerNotFoundNotice, ChatHandler.cpp); a
+        # successful whisper gets no ack at all. Same fire-and-forget,
+        # wait-for-failure-only pattern as SellItemAction.
+        def find_failure():
+            for e in session.events:
+                if (e.get("t", 0) >= sent_at and e.get("kind") == "whisper_failed"
+                        and e.get("target_name") == target_name):
+                    return e
+            return None
+
+        failure = _wait_for_value(find_failure, timeout=self.confirm_timeout, interval=self.confirm_interval)
+        detail = {"target_name": target_name, "message": message}
+        if failure is not None:
+            detail["failure"] = failure
+            return ActionResult(ok=False, error=f"player {target_name!r} not found", detail=detail)
+        return ActionResult(ok=True, detail=detail)
 
 
 @register
@@ -938,10 +959,32 @@ class InviteToGroupAction(Action):
         "name": {"type": "string", "description": "Exact player name to invite."},
     }
     required = ("name",)
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def execute(self, session, world, name: str, **_) -> ActionResult:
+        sent_at = time.monotonic()
         invite_to_group(session, name)
-        return ActionResult(ok=True, detail={"name": name})
+
+        # HandleGroupInviteOpcode (GroupHandler.cpp) answers with
+        # SMSG_PARTY_COMMAND_RESULT on both success and failure, but
+        # session._handle_party_command_result only records an event for a
+        # non-OK result (see its docstring) — so, like whisper/sell_item,
+        # only a failure event is worth waiting for; a timeout (or a
+        # silently-successful OK) means the invite went through.
+        def find_failure():
+            for e in session.events:
+                if (e.get("t", 0) >= sent_at and e.get("kind") == "group_invite_failed"
+                        and e.get("target_name") == name):
+                    return e
+            return None
+
+        failure = _wait_for_value(find_failure, timeout=self.confirm_timeout, interval=self.confirm_interval)
+        detail = {"name": name}
+        if failure is not None:
+            detail["failure"] = failure
+            return ActionResult(ok=False, error=failure.get("result_name", "invite failed"), detail=detail)
+        return ActionResult(ok=True, detail=detail)
 
 
 @register

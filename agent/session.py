@@ -112,6 +112,30 @@ SMSG_GROUP_INVITE       = 0x06F
 SMSG_MESSAGECHAT        = 0x096
 SMSG_GM_MESSAGECHAT     = 0x3B3
 
+# Whisper/group-invite failure acks (UM-68 bugfix). Verified against
+# TrinityCore branch `3.3.5`:
+#   src/server/game/Server/Protocol/Opcodes.h
+#   src/server/game/Handlers/ChatHandler.cpp (WorldSession::
+#     SendPlayerNotFoundNotice — sent when the whisper target is
+#     offline/unresolvable; payload is just the target name)
+#   src/server/game/Handlers/GroupHandler.cpp (WorldSession::SendPartyResult,
+#     used by HandleGroupInviteOpcode on both success (ERR_PARTY_RESULT_OK)
+#     and failure (e.g. ERR_BAD_PLAYER_NAME_S, ERR_ALREADY_IN_GROUP_S) —
+#     WhisperAction/InviteToGroupAction only treat a non-OK `result` as a
+#     failure, per the SendPartyResult call sites)
+SMSG_CHAT_PLAYER_NOT_FOUND = 0x2A9
+SMSG_PARTY_COMMAND_RESULT  = 0x07F
+
+# PartyResult (Group.h) — only the values SendPartyResult actually uses from
+# HandleGroupInviteOpcode; anything else falls back to f"result_{n}".
+PARTY_RESULT_NAMES = {
+    0: "ok", 1: "bad_player_name", 2: "target_not_in_group",
+    3: "target_not_in_instance", 4: "group_full", 5: "already_in_group",
+    6: "not_in_group", 7: "not_leader", 8: "player_wrong_faction",
+    9: "ignoring_you", 13: "invite_restricted", 19: "invite_in_combat",
+}
+ERR_PARTY_RESULT_OK = 0
+
 # Name resolution (UM-35)
 CMSG_NAME_QUERY               = 0x050
 SMSG_NAME_QUERY_RESPONSE      = 0x051
@@ -1150,6 +1174,36 @@ class WoWSession:
         self.pending_invite = {"inviter_name": inviter_name}
         log.info("group invite from %s", inviter_name)
 
+    def _handle_chat_player_not_found(self, payload: bytes):
+        """SMSG_CHAT_PLAYER_NOT_FOUND (0x2A9): WorldSession::
+        SendPlayerNotFoundNotice (ChatHandler.cpp) — a single cstring, the
+        target name that couldn't be resolved (offline, doesn't exist, or
+        (for whisper) has whispers disabled/is ignoring us). Sent instead of
+        any ack for the CMSG_MESSAGECHAT that triggered it, so
+        WhisperAction.execute() polls session.events for this rather than a
+        direct per-message ack."""
+        target_name, _ = pk.cstring(payload, 0)
+        self._record_event("whisper_failed", target_name=target_name)
+
+    def _handle_party_command_result(self, payload: bytes):
+        """SMSG_PARTY_COMMAND_RESULT (0x07F): WorldSession::SendPartyResult
+        (GroupHandler.cpp) — uint32 operation, cstring member_name, uint32
+        result (PartyResult), uint32 val (LFG-cooldown related, unused
+        here). HandleGroupInviteOpcode sends this on both success
+        (ERR_PARTY_RESULT_OK) and failure (e.g. a bad name or a target
+        already in a group) — only record it as an event on failure, so
+        InviteToGroupAction's timeout-is-success default still applies to
+        the OK case without special-casing it."""
+        off = 0
+        operation = pk.u32(payload, off); off += 4
+        member_name, off = pk.cstring(payload, off)
+        result = pk.u32(payload, off); off += 4
+        if result == ERR_PARTY_RESULT_OK:
+            return
+        self._record_event("group_invite_failed", target_name=member_name,
+                            result=result,
+                            result_name=PARTY_RESULT_NAMES.get(result, f"result_{result}"))
+
     def _handle_initial_spells(self, payload: bytes):
         info = sp.parse_initial_spells(payload)
         self.spellbook = set(info["spell_ids"])
@@ -1215,6 +1269,10 @@ class WoWSession:
             self._handle_messagechat(opcode, payload)
         elif opcode == SMSG_GROUP_INVITE:
             self._handle_group_invite(payload)
+        elif opcode == SMSG_CHAT_PLAYER_NOT_FOUND:
+            self._handle_chat_player_not_found(payload)
+        elif opcode == SMSG_PARTY_COMMAND_RESULT:
+            self._handle_party_command_result(payload)
         elif opcode == SMSG_DESTROY_OBJECT:
             self._handle_destroy_object(payload)
         elif opcode == SMSG_NAME_QUERY_RESPONSE:
