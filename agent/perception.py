@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import names as nm
+from . import npc as npc_mod
 from . import update_fields as uf
 from . import update_object as uo
 
@@ -162,6 +163,11 @@ class WorldState:
         # needs this untouched-by-simulation value to know whether the
         # server actually agrees with where we think we are.
         self.my_server_position: tuple | None = None
+        self.npc_texts = npc_mod.NpcTextCache()  # UM-40: gossip body text, cached like names
+        # UM-40: "which NPC window is open", read by the LLM via snapshot()'s
+        # 'window' key — None (no window), or {"kind": "gossip"|"vendor"|
+        # "trainer", **parsed response}.
+        self.ui_state: dict | None = None
 
     def set_my_guid(self, guid: int):
         """Remember which GUID is our own character. Does not create an object;
@@ -186,6 +192,13 @@ class WorldState:
     def get_my_object(self) -> ObjectInfo | None:
         with self._lock:
             return self.objects.get(self.my_guid) if self.my_guid else None
+
+    def get_ui_state(self) -> dict | None:
+        """Thread-safe read of the currently open gossip/vendor/trainer
+        window (UM-40), for actions.py to check against without racing the
+        recv thread's apply_gossip_message/apply_list_inventory/etc."""
+        with self._lock:
+            return self.ui_state
 
     def record_guid(self, guid: int, update_type: int):
         """Legacy/minimal path: track that a GUID exists, nothing else.
@@ -343,6 +356,58 @@ class WorldState:
                     if obj.object_type == "gameobject" and obj.entry == data["entry"]:
                         obj.name = data["name"]
 
+    # ── NPC interaction / ui_state (UM-40) ────────────────────────────────
+
+    def apply_gossip_message(self, data: dict):
+        """SMSG_GOSSIP_MESSAGE (agent.npc.parse_gossip_message): opens (or
+        replaces) the gossip window. If the npc text for this menu's
+        text_id is already cached, attach its first option's text as
+        `body_text`; otherwise queue a CMSG_NPC_TEXT_QUERY (drained by
+        session.py like the name cache)."""
+        with self._lock:
+            window = {"kind": "gossip", **data}
+            cached = self.npc_texts.texts.get(data["text_id"])
+            if cached:
+                window["body_text"] = _first_npc_text(cached)
+            else:
+                self.npc_texts.want(data["text_id"], data["npc_guid"])
+            self.ui_state = window
+
+    def apply_gossip_complete(self):
+        """SMSG_GOSSIP_COMPLETE: the server closed the gossip window (e.g.
+        after gossip_select on a plain "go away" option)."""
+        with self._lock:
+            self.ui_state = None
+
+    def apply_list_inventory(self, data: dict):
+        """SMSG_LIST_INVENTORY (agent.npc.parse_list_inventory): opens the
+        vendor window."""
+        with self._lock:
+            self.ui_state = {"kind": "vendor", **data}
+
+    def apply_trainer_list(self, data: dict):
+        """SMSG_TRAINER_LIST (agent.npc.parse_trainer_list): opens the
+        trainer window."""
+        with self._lock:
+            self.ui_state = {"kind": "trainer", **data}
+
+    def apply_npc_text_update(self, data: dict):
+        """SMSG_NPC_TEXT_UPDATE (agent.npc.parse_npc_text_update): backfill
+        the currently-open gossip window's body_text if it's still waiting
+        on this text_id."""
+        with self._lock:
+            self.npc_texts.on_response(data)
+            if data["found"] and self.ui_state is not None \
+                    and self.ui_state.get("kind") == "gossip" \
+                    and self.ui_state.get("text_id") == data["text_id"]:
+                self.ui_state["body_text"] = _first_npc_text(data)
+
+    def close_window(self):
+        """Local-only close (the client doesn't need server confirmation to
+        stop showing a window) — used by actions.CloseWindowAction."""
+        with self._lock:
+            self.ui_state = None
+
     def _apply_movement(self, obj: ObjectInfo, movement: dict | None):
         if not movement:
             return
@@ -409,6 +474,7 @@ class WorldState:
         with self._lock:
             objects = list(self.objects.values())
             me = self.objects.get(self.my_guid)
+            window = self.ui_state
 
         pos = my_position or (me.position if me else None)
         out = {
@@ -416,6 +482,7 @@ class WorldState:
             "nearby_units": [],
             "nearby_players": [],
             "nearby_objects": [],
+            "window": window,
         }
         if pos is None:
             return out
@@ -472,3 +539,15 @@ def _object_dict(obj: ObjectInfo, distance: float) -> dict:
         d["target_guid"] = obj.target_guid
     d["in_combat"] = bool(obj.unit_flags and (obj.unit_flags & 0x00080000))  # UNIT_FLAG_IN_COMBAT, UnitDefines.h
     return d
+
+
+def _first_npc_text(data: dict) -> str:
+    """Pick the first non-empty option's text0 out of a parsed
+    SMSG_NPC_TEXT_UPDATE (agent.npc.parse_npc_text_update) — real servers
+    fill option 0 for a plain gossip greeting; the remaining 7 slots
+    (MAX_GOSSIP_TEXT_OPTIONS) are usually empty placeholders for randomized
+    flavor text, which this v1 doesn't attempt to pick between."""
+    for option in data.get("options", []):
+        if option["text0"]:
+            return option["text0"]
+    return ""

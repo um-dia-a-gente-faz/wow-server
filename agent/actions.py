@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import movement
+from . import npc
 from . import spells
 
 CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
@@ -578,3 +579,187 @@ class CastSpellAction(Action):
         if outcome["kind"] == "cast_failed":
             return ActionResult(ok=False, error=outcome["reason_name"], detail=outcome)
         return ActionResult(ok=True, detail=outcome)
+
+
+# ── NPC interaction (UM-40) ───────────────────────────────────────────────
+# Depends on UM-36 (this Action framework) and UM-35 (name cache, which
+# feeds npc_flags detection via agent/perception.py — see ObjectInfo.
+# is_gossip/is_vendor/is_trainer/is_quest_giver). Opcodes/layouts live in
+# agent/npc.py; response parsing lands in agent.perception.WorldState's
+# ui_state, exposed to the LLM as snapshot()'s 'window' key.
+
+@register
+class InteractAction(Action):
+    name = "interact"
+    description = ("Interact with a nearby NPC or gameobject by GUID: opens its gossip, "
+                    "vendor, or trainer window (whichever its flags indicate), or activates "
+                    "it directly if it's a gameobject. Must be within "
+                    f"{npc.INTERACT_RANGE_YD} yd — use move_towards first if not.")
+    params = {
+        "guid": {"type": "integer", "description": "GUID of the NPC or gameobject to interact with."},
+    }
+    required = ("guid",)
+
+    def check(self, session, world, guid: int, **_) -> str | None:
+        target = world.get_object(guid)
+        if target is None:
+            return f"guid {guid:#x} is not currently perceived"
+        if session.player_position is None:
+            return "own position unknown"
+        distance = target.distance_to(session.player_position)
+        if distance is not None and distance > npc.INTERACT_RANGE_YD:
+            return (f"guid {guid:#x} is {distance:.1f} yd away, out of interact range "
+                    f"({npc.INTERACT_RANGE_YD} yd) — try move_towards first")
+        return None
+
+    def execute(self, session, world, guid: int, **_) -> ActionResult:
+        target = world.get_object(guid)
+
+        if target.object_type == "gameobject":
+            session._send_packet(npc.CMSG_GAMEOBJ_USE, npc.build_gameobj_use(guid))
+            return ActionResult(ok=True, detail={"guid": guid, "kind": "gameobject_use"})
+
+        # Gossip/questgiver takes priority — real NPCs with vendor/trainer
+        # flags almost always also have gossip and reach the vendor/trainer
+        # window *through* the gossip menu; only NPCs with just the vendor
+        # or trainer flag (no gossip) skip straight to their own window.
+        if target.is_gossip() or target.is_quest_giver():
+            session._send_packet(npc.CMSG_GOSSIP_HELLO, npc.build_gossip_hello(guid))
+            return ActionResult(ok=True, detail={"guid": guid, "kind": "gossip_hello"})
+        if target.is_vendor():
+            session._send_packet(npc.CMSG_LIST_INVENTORY, npc.build_list_inventory(guid))
+            return ActionResult(ok=True, detail={"guid": guid, "kind": "list_inventory"})
+        if target.is_trainer():
+            session._send_packet(npc.CMSG_TRAINER_LIST, npc.build_trainer_list(guid))
+            return ActionResult(ok=True, detail={"guid": guid, "kind": "trainer_list"})
+        if target.is_lootable():
+            return ActionResult(ok=False, error="lootable corpses are out of scope for interact() (see UM-42)")
+        return ActionResult(ok=False, error="no known interaction for this target "
+                                             "(no gossip/vendor/trainer npc flag, not a gameobject)")
+
+
+@register
+class GossipSelectAction(Action):
+    name = "gossip_select"
+    description = "Select an option in the currently open gossip window by its index."
+    params = {
+        "option_index": {"type": "integer", "description": "The option's `index` from the open gossip window."},
+        "code": {"type": "string", "description": "Text for options that require a text-entry box (rare; "
+                                                    "the window's option marks `coded: true` when needed)."},
+    }
+    required = ("option_index",)
+
+    def check(self, session, world, option_index: int, code: str | None = None, **_) -> str | None:
+        window = world.get_ui_state()
+        if window is None or window.get("kind") != "gossip":
+            return "no gossip window is open"
+        if not any(o["index"] == option_index for o in window.get("options", [])):
+            return f"option_index {option_index} is not present in the open gossip menu"
+        return None
+
+    def execute(self, session, world, option_index: int, code: str | None = None, **_) -> ActionResult:
+        window = world.get_ui_state()
+        guid, menu_id = window["npc_guid"], window["menu_id"]
+        session._send_packet(npc.CMSG_GOSSIP_SELECT_OPTION,
+                              npc.build_gossip_select_option(guid, menu_id, option_index, code=code))
+        return ActionResult(ok=True, detail={"guid": guid, "menu_id": menu_id, "option_index": option_index})
+
+
+def _find_vendor_item(window: dict, slot: int | None, entry: int | None) -> dict | None:
+    for item in window.get("items", []):
+        if slot is not None and item["slot"] == slot:
+            return item
+        if slot is None and entry is not None and item["entry"] == entry:
+            return item
+    return None
+
+
+@register
+class BuyItemAction(Action):
+    name = "buy_item"
+    description = ("Buy an item from the vendor window currently open for vendor_guid, "
+                    "identified by vendor slot or item entry (from the window's items list).")
+    params = {
+        "vendor_guid": {"type": "integer", "description": "GUID of the open vendor."},
+        "slot": {"type": "integer", "description": "Vendor slot from the open window's items list."},
+        "entry": {"type": "integer", "description": "Item entry, as an alternative to slot."},
+        "count": {"type": "integer", "description": "How many to buy. Default 1."},
+    }
+    required = ("vendor_guid",)
+
+    def check(self, session, world, vendor_guid: int, slot: int | None = None,
+              entry: int | None = None, count: int = 1, **_) -> str | None:
+        if slot is None and entry is None:
+            return "buy_item requires slot or entry"
+        window = world.get_ui_state()
+        if window is None or window.get("kind") != "vendor" or window.get("vendor_guid") != vendor_guid:
+            return "no vendor window is open for that guid"
+        if _find_vendor_item(window, slot, entry) is None:
+            return "item not found in the open vendor window (by slot or entry)"
+        return None
+
+    def execute(self, session, world, vendor_guid: int, slot: int | None = None,
+                entry: int | None = None, count: int = 1, **_) -> ActionResult:
+        window = world.get_ui_state()
+        item = _find_vendor_item(window, slot, entry)
+        session._send_packet(npc.CMSG_BUY_ITEM,
+                              npc.build_buy_item(vendor_guid, item["entry"], item["slot"], count))
+        return ActionResult(ok=True, detail={"vendor_guid": vendor_guid, "slot": item["slot"],
+                                              "entry": item["entry"], "count": count})
+
+
+@register
+class SellItemAction(Action):
+    name = "sell_item"
+    description = ("Sell an item to a vendor. NOT YET IMPLEMENTED — TrinityCore's "
+                   "CMSG_SELL_ITEM (ItemPackets.cpp SellItem::Read) needs the item's own "
+                   "GUID, not a bag/slot pair, and this codebase doesn't track inventory "
+                   "item GUIDs yet (that's UM-42's scope). Calling this always returns "
+                   "ok=False; agent.npc.build_sell_item has the verified wire format ready "
+                   "for whenever UM-42 lands item-GUID tracking.")
+    params = {
+        "vendor_guid": {"type": "integer", "description": "GUID of the vendor to sell to."},
+        "bag": {"type": "integer", "description": "Bag slot of the item (reserved; not usable yet)."},
+        "slot": {"type": "integer", "description": "Inventory slot of the item (reserved; not usable yet)."},
+    }
+    required = ("vendor_guid", "bag", "slot")
+
+    def execute(self, session, world, vendor_guid: int, bag: int, slot: int, **_) -> ActionResult:
+        return ActionResult(ok=False, error="sell_item is not implemented yet (needs item GUID "
+                                             "tracking from UM-42) — see agent.npc.build_sell_item")
+
+
+@register
+class TrainSpellAction(Action):
+    name = "train_spell"
+    description = "Learn a spell from the trainer window currently open for trainer_guid."
+    params = {
+        "trainer_guid": {"type": "integer", "description": "GUID of the open trainer."},
+        "spell_id": {"type": "integer", "description": "Spell ID from the open trainer window's spells list."},
+    }
+    required = ("trainer_guid", "spell_id")
+
+    def check(self, session, world, trainer_guid: int, spell_id: int, **_) -> str | None:
+        window = world.get_ui_state()
+        if window is None or window.get("kind") != "trainer" or window.get("trainer_guid") != trainer_guid:
+            return "no trainer window is open for that guid"
+        if not any(s["spell_id"] == spell_id for s in window.get("spells", [])):
+            return f"spell {spell_id} is not offered by the open trainer window"
+        return None
+
+    def execute(self, session, world, trainer_guid: int, spell_id: int, **_) -> ActionResult:
+        session._send_packet(npc.CMSG_TRAINER_BUY_SPELL, npc.build_train_spell(trainer_guid, spell_id))
+        return ActionResult(ok=True, detail={"trainer_guid": trainer_guid, "spell_id": spell_id})
+
+
+@register
+class CloseWindowAction(Action):
+    name = "close_window"
+    description = "Close the currently open gossip/vendor/trainer window."
+    params = {}
+    required = ()
+
+    def execute(self, session, world, **_) -> ActionResult:
+        was_open = world.get_ui_state() is not None
+        world.close_window()
+        return ActionResult(ok=True, detail={"was_open": was_open})
