@@ -16,6 +16,11 @@ the top of this file — the uniform shape UM-44's LLM loop exposes as tools —
 and the first two real actions, `set_target` and `face`. The free functions
 below (say/yell/.../send_attack) predate it and stay as-is; set_target and
 send_attack now also have Action wrappers registered in REGISTRY.
+
+agent.reflexes.follow (UM-58) registers three more actions (`follow`,
+`assist`, `stop_following`) into the same REGISTRY, and this module's
+move_to/move_towards/stop_movement pause that reflex before running (see
+_pause_follow_reflex) since an explicit LLM move outranks it.
 """
 
 import math
@@ -38,6 +43,20 @@ CMSG_ATTACKSTOP         = 0x142
 CMSG_CAST_SPELL         = 0x12E
 
 MELEE_RANGE_YD = 5.0  # ~ melee weapon range + average combat reach
+
+
+def _pause_follow_reflex(session, world):
+    """Pause the follow reflex (agent.reflexes.follow, UM-58) before an
+    explicit movement action runs — an LLM-picked move outranks the reflex
+    (docs/AI-AGENT-SPEC.md's reflex priority: survival > follow/assist >
+    idle), so following pauses and reports why instead of fighting the next
+    move command. Imported lazily to avoid a circular import: the
+    follow-reflex module imports Action/ActionResult/register from this
+    one. A no-op if agent.reflexes.follow hasn't been imported yet (nothing
+    is following) or nothing is currently following."""
+    from .reflexes import follow as _follow
+    _follow.pause_for_llm_override(session, world)
+
 
 # ChatMsg (SharedDefines.h) — the values here previously mapped 'say' to 0,
 # which is CHAT_MSG_SYSTEM; players can't legitimately send that type.
@@ -372,6 +391,7 @@ class MoveToAction(Action):
 
     def execute(self, session, world, x: float, y: float, z: float | None = None,
                 stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> ActionResult:
+        _pause_follow_reflex(session, world)
         mover = movement.get_mover(session, world)
         result = mover.move_to(x, y, z, stop_distance=stop_distance)
         return ActionResult(**result)
@@ -400,6 +420,7 @@ class MoveTowardsAction(Action):
 
     def execute(self, session, world, guid: int,
                 stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> ActionResult:
+        _pause_follow_reflex(session, world)
         mover = movement.get_mover(session, world)
         result = mover.move_towards(guid, stop_distance=stop_distance)
         return ActionResult(**result)
@@ -413,6 +434,7 @@ class StopMovementAction(Action):
     required = ()
 
     def execute(self, session, world, **_) -> ActionResult:
+        _pause_follow_reflex(session, world)
         mover = movement.get_mover(session, world)
         was_moving = mover.stop()
         return ActionResult(ok=True, detail={"was_moving": was_moving})
