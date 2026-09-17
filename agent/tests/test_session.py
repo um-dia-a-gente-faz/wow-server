@@ -12,6 +12,7 @@ import unittest
 import uuid
 import zlib
 
+from agent import mail as mail_mod
 from agent import names as nm
 from agent import npc as npc_mod
 from agent import loot as lo
@@ -413,6 +414,37 @@ class NpcInteractionDispatchTest(unittest.TestCase):
                                                  "options": [], "quests": []})
         sess._send_npc_text_queries()
         self.assertIn(npc_mod.build_npc_text_query(999, 5), sess.sock.sent)
+
+
+class MailDispatchTest(unittest.TestCase):
+    """UM-60: dispatch wiring for SMSG_SEND_MAIL_RESULT/SMSG_MAIL_LIST_RESULT/
+    SMSG_RECEIVED_MAIL."""
+
+    def test_send_mail_result_records_raw_mail_result_event(self):
+        sess = make_session()
+        payload = struct.pack('<III', 5, mail_mod.MAIL_SEND, mail_mod.MAIL_OK)
+        sess._dispatch(se.SMSG_SEND_MAIL_RESULT, payload)
+        results = [e for e in sess.events if e["kind"] == "mail_result"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["mail_id"], 5)
+        self.assertEqual(results[0]["command_name"], "send")
+
+    def test_mail_list_result_dispatch_fills_pending_mailbox(self):
+        sess = make_session()
+        sess.world_state.open_mailbox_request(0x1234)
+        payload = struct.pack('<iB', 0, 0)
+        sess._dispatch(se.SMSG_MAIL_LIST_RESULT, payload)
+        mailbox = sess.world_state.get_mailbox()
+        self.assertEqual(mailbox["mailbox_guid"], 0x1234)
+        self.assertEqual(mailbox["total_records"], 0)
+
+    def test_received_mail_dispatch_sets_flag_and_records_event(self):
+        sess = make_session()
+        payload = struct.pack('<f', 0.0)
+        sess._dispatch(se.SMSG_RECEIVED_MAIL, payload)
+        self.assertTrue(sess.world_state.snapshot()["has_new_mail"])
+        received = [e for e in sess.events if e["kind"] == "mail_received"]
+        self.assertEqual(len(received), 1)
 
 
 def len_string(s: str) -> bytes:

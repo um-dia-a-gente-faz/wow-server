@@ -23,6 +23,8 @@ UNIT_NPC_FLAG_GOSSIP = 0x00000001
 UNIT_NPC_FLAG_QUESTGIVER = 0x00000002
 UNIT_NPC_FLAG_TRAINER = 0x00000010
 UNIT_NPC_FLAG_VENDOR = 0x00000080
+UNIT_NPC_FLAG_MAILBOX = 0x04000000  # a rare custom mailbox NPC — see agent/mail.py's docstring; the usual case is a gameobject
+GAMEOBJECT_TYPE_MAILBOX = 19  # SharedDefines.h GameobjectTypes — the usual mailbox case (a gameobject, not an NPC)
 
 # UnitDynFlags (src/server/shared/SharedDefines.h)
 UNIT_DYNFLAG_LOOTABLE = 0x0001
@@ -57,6 +59,7 @@ class ObjectInfo:
     subname: str = ""  # creature "title" (e.g. "Guard Captain") — creatures/players only
     rank: str = ""  # CreatureEliteType name ("elite", "rareelite", "worldboss", "rare") — creatures only, "" = normal
     creature_type: str | None = None  # CreatureType name ("beast", "humanoid", ...) — creatures only
+    gameobject_type: int | None = None  # SMSG_GAMEOBJECT_QUERY_RESPONSE's `type` (GameObjectTypes, SharedDefines.h) — gameobjects only, None until queried
     level: int | None = None
     health: int | None = None
     max_health: int | None = None
@@ -112,6 +115,15 @@ class ObjectInfo:
 
     def is_trainer(self) -> bool:
         return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_TRAINER)
+
+    def is_mailbox(self) -> bool:
+        """UM-60: a gameobject whose queried template type is
+        GAMEOBJECT_TYPE_MAILBOX (the usual case — unknown/None until its
+        SMSG_GAMEOBJECT_QUERY_RESPONSE arrives, same lazy-resolution as
+        name), or a unit/player with the rare UNIT_NPC_FLAG_MAILBOX set."""
+        if self.gameobject_type == GAMEOBJECT_TYPE_MAILBOX:
+            return True
+        return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_MAILBOX)
 
     def set_spline(self, start_pos: tuple, destination: tuple, start_time: float, duration: float):
         """Start (or replace) this object's spline-interpolation state.
@@ -206,6 +218,11 @@ class WorldState:
         # 'window' key — None (no window), or {"kind": "gossip"|"vendor"|
         # "trainer", **parsed response}.
         self.ui_state: dict | None = None
+        # UM-60: the mailbox window (None until open_mailbox()), and a
+        # standing "you have mail" flag (SMSG_RECEIVED_MAIL) — both exposed
+        # to the LLM via snapshot()'s 'mailbox'/'has_new_mail' keys.
+        self.mailbox: dict | None = None
+        self.has_new_mail = False
 
     def set_my_guid(self, guid: int):
         """Remember which GUID is our own character. Does not create an object;
@@ -353,6 +370,13 @@ class WorldState:
                 data = self.names.gameobjects[obj.entry]
                 if data is not None:
                     obj.name = data["name"]
+                    # UM-60: is_mailbox() needs `type` too — found live testing:
+                    # a *disk-cached* gameobject template (agent.names.NameCache
+                    # persists creature/gameobject templates across runs) hit
+                    # this branch and backfilled only .name, leaving
+                    # .gameobject_type permanently None even though the type
+                    # was sitting right there in the same cached dict.
+                    obj.gameobject_type = data["type"]
             else:
                 self.names.want_gameobject(obj.entry, obj.guid)
         elif obj.object_type in ("item", "container") and obj.entry:
@@ -416,13 +440,16 @@ class WorldState:
 
     def apply_gameobject_query_response(self, data: dict):
         """SMSG_GAMEOBJECT_QUERY_RESPONSE: backfill every currently-known
-        gameobject with this entry."""
+        gameobject with this entry — name and, since UM-60, `type` (e.g.
+        GAMEOBJECT_TYPE_MAILBOX), the only way ObjectInfo.is_mailbox() can
+        tell a mailbox gameobject apart from any other."""
         with self._lock:
             self.names.on_gameobject_query_response(data)
             if data["found"]:
                 for obj in self.objects.values():
                     if obj.object_type == "gameobject" and obj.entry == data["entry"]:
                         obj.name = data["name"]
+                        obj.gameobject_type = data["type"]
 
     # ── Quests (UM-41) ─────────────────────────────────────────────────────
 
@@ -567,6 +594,55 @@ class WorldState:
                     if obj.object_type in ("item", "container") and obj.entry == data["entry"]:
                         obj.name = data["name"]
 
+    # ── Mailbox (UM-60) ────────────────────────────────────────────────────
+
+    def _resolve_attachment_name(self, item: dict) -> dict:
+        """entry -> name best-effort via the item-template cache (same
+        source build_equipment_and_inventory uses), queuing a query for an
+        unresolved entry — called with self._lock already held."""
+        cached = self.items.items.get(item["entry"])
+        if cached is not None:
+            name = cached["name"]
+        else:
+            name = None
+            self.items.want_item(item["entry"])
+        return {**item, "name": name}
+
+    def open_mailbox_request(self, mailbox_guid: int):
+        """Called by actions.OpenMailboxAction right before sending
+        CMSG_GET_MAIL_LIST — optimistically records which guid this is for
+        (SMSG_MAIL_LIST_RESULT itself doesn't carry the mailbox guid back),
+        the same "set local state, let the server reply fill it in" shape
+        as agent.perception's trade-request handling."""
+        with self._lock:
+            self.mailbox = {"mailbox_guid": mailbox_guid, "total_records": None, "mails": None}
+
+    def apply_mail_list_result(self, data: dict):
+        """SMSG_MAIL_LIST_RESULT (agent.mail.parse_mail_list_result): fills
+        in the mailbox window opened by open_mailbox_request — actions.py's
+        take_mail/delete_mail read `mails`/`mailbox_guid` from here. Ignored
+        if nothing is pending (a stale/unexpected reply). Clears
+        has_new_mail the same way a real client's mail icon clears once you
+        open the mailbox."""
+        with self._lock:
+            if self.mailbox is None:
+                return
+            mails = [{**m, "attachments": [self._resolve_attachment_name(a) for a in m["attachments"]]}
+                     for m in data["mails"]]
+            self.mailbox["total_records"] = data["total_records"]
+            self.mailbox["mails"] = mails
+            self.has_new_mail = False
+
+    def apply_received_mail(self, data: dict):
+        """SMSG_RECEIVED_MAIL (agent.mail.parse_received_mail): new mail
+        arrived — surfaced to the LLM via snapshot()'s `has_new_mail` flag."""
+        with self._lock:
+            self.has_new_mail = True
+
+    def get_mailbox(self) -> dict | None:
+        with self._lock:
+            return self.mailbox
+
     def _apply_movement(self, obj: ObjectInfo, movement: dict | None):
         if not movement:
             return
@@ -681,6 +757,8 @@ class WorldState:
             objects = list(self.objects.values())
             me = self.objects.get(self.my_guid)
             window = self.ui_state
+            mailbox = self.mailbox
+            has_new_mail = self.has_new_mail
 
         pos = my_position or (me.position if me else None)
         equipment, inventory = self.build_equipment_and_inventory()
@@ -693,6 +771,8 @@ class WorldState:
             "nearby_players": [],
             "nearby_objects": [],
             "window": window,
+            "mailbox": mailbox,
+            "has_new_mail": has_new_mail,
             "equipment": equipment,
             "inventory": inventory,
             "pending_invite": pending_invite,

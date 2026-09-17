@@ -533,3 +533,99 @@ combat events (UM-39) use.
 this section, `characters.character_queststatus` cross-checking, and the
 `wow_character_quests_completed_total` metric — all deferred to whenever
 this agent can run against a real TrinityCore 3.3.5a server again.
+
+## UM-60: mailbox wire formats
+
+Verified against TrinityCore branch `3.3.5`:
+  `src/server/game/Handlers/MailHandler.cpp` (every CMSG_* handler,
+    `WorldSession::CanOpenMailBox` — the mailbox-guid/range check every mail
+    opcode shares; sending `CMSG_GET_MAIL_LIST` *is* "opening the mailbox",
+    there's no separate use/hello opcode the way NPC windows have one)
+  `src/server/game/Server/Packets/MailPackets.h`/`.cpp` — despite the
+    "3.3.5" branch name, this handler was retrofitted onto the modern
+    typed-packet framework (`WorldPackets::Mail::*`); verified as the
+    byte-for-byte format this branch's build actually sends/expects, same
+    situation as `CancelTrade` in `TradeHandler.cpp` (see UM-59's section
+    above) — confirmed live (below), not just by reading source.
+  `src/server/game/Server/Packets/PacketUtilities.h` (`String<N, ...>`
+    reads via the same `ReadCString` as a plain `std::string` — still a
+    plain null-terminated cstring on the wire, not length-prefixed)
+  `src/server/game/Mails/Mail.h` (`MAX_MAIL_ITEMS`, `MailMessageType`,
+    `MailCheckMask`)
+  `src/server/shared/SharedDefines.h` (`enum MailResponseType`,
+    `enum MailResponseResult`, `GAMEOBJECT_TYPE_MAILBOX = 19`)
+  `src/server/game/Entities/Unit/UnitDefines.h` (`UNIT_NPC_FLAG_MAILBOX`)
+  `src/server/game/Entities/Item/ItemDefines.h` (`MAX_INSPECTED_ENCHANTMENT_SLOT`)
+
+Opcodes: `CMSG_SEND_MAIL 0x238` → `SMSG_SEND_MAIL_RESULT 0x239`,
+`CMSG_GET_MAIL_LIST 0x23A` → `SMSG_MAIL_LIST_RESULT 0x23B`,
+`CMSG_MAIL_TAKE_MONEY 0x245`, `CMSG_MAIL_TAKE_ITEM 0x246`,
+`CMSG_MAIL_MARK_AS_READ 0x247`, `CMSG_MAIL_DELETE 0x249`,
+`SMSG_RECEIVED_MAIL 0x285`. Every GUID is raw 8 bytes, same as trade/npc.
+
+**Finding a mailbox needs a gameobject's queried `type`, and that
+resolution has a caching trap — found live testing.** A mailbox is
+usually a gameobject; `ObjectInfo.is_mailbox()` checks its queried
+`SMSG_GAMEOBJECT_QUERY_RESPONSE` `type == GAMEOBJECT_TYPE_MAILBOX` (19).
+`agent.names.NameCache` persists creature/gameobject templates to disk
+across process runs (static data, safe to cache) — but
+`WorldState._maybe_resolve_name`'s *cached* branch for gameobjects only
+ever backfilled `.name` onto the freshly-perceived object, never `.type`,
+so on a second run against an already-warm cache `is_mailbox()` stayed
+`False` forever even though the correct type was sitting right there in
+the cached dict. Reproduced live (Luaprata, Silvermoon City mailbox,
+entry `182363`): first run resolved fine (fresh query), second run
+against the warm cache did not, until the cached branch was fixed to
+backfill `gameobject_type` too.
+
+**Sending mail costs postage even with no gold or item attached — found
+live testing, not obvious from a skim of the handler.** `HandleSendMail`'s
+`cost = !Attachments.empty() ? 30 * Attachments.size() : 30` always
+charges at least 30 copper (`MAIL_POSTAGE_COPPER`), added to whatever
+gold is being sent, checked as one `reqmoney` total. A level-1 character
+with 0 copper cannot send *any* mail, not even a text-only letter — this
+blocked a full live send/receive round trip this session (no agent
+character had 30 copper); confirmed instead by sending the real
+`CMSG_SEND_MAIL` and capturing the server's own
+`SMSG_SEND_MAIL_RESULT`/`MAIL_ERR_NOT_ENOUGH_MONEY` reply (fixture:
+`agent/tests/fixtures/mail/send_mail_result_not_enough_money.bin`) —
+proves the request's byte layout is accepted and parsed correctly by the
+real server, just not affordable.
+
+`SMSG_SEND_MAIL_RESULT` (`MailCommandResult::Write`) answers **four**
+different client opcodes through one shared reply, disambiguated by its
+`command` field (`MailResponseType`): `MAIL_SEND` (0, from `send_mail`),
+`MAIL_MONEY_TAKEN` (1) and `MAIL_ITEM_TAKEN` (2, both halves of
+`take_mail`), `MAIL_DELETED` (4, from `delete_mail`) — `agent/session.py`
+records one raw `"mail_result"` event per reply regardless of which,
+and `agent/actions.py`'s four mail actions each filter by
+`command`/`mail_id`/(for items) `attach_id` to find the reply that's
+theirs, the same "raw event + action-side filter" shape UM-59's
+`"trade_status"` event uses.
+
+An item attachment's `AttachID` (used later in `CMSG_MAIL_TAKE_ITEM`) is
+**not** a small positional index — `HandleMailTakeItem` compares it
+against the mailed item's own GUID low part (`MailAttachedItem::AttachID
+= item->GetGUID().GetCounter()`), so it must be echoed back verbatim from
+the mail list entry, never recomputed.
+
+Live-verified (Luaprata, level 10 blood elf paladin, account AGENT01,
+2026-09-17): walked ~182 yd with `move_to` (one call, arrived exactly)
+from her login position to the nearest known mailbox (Silvermoon City,
+gameobject entry `182363`); `is_mailbox()` correctly recognized it once
+`gameobject_type` resolved (see the caching trap above); `open_mailbox()`
+sent a real `CMSG_GET_MAIL_LIST` and received a real, correctly-parsed
+`SMSG_MAIL_LIST_RESULT` (empty inbox, `total_records=0`) — fixture:
+`agent/tests/fixtures/mail/mail_list_result_empty.bin`; a raw
+`CMSG_SEND_MAIL` (bypassing `send_mail`'s own client-side gold check, to
+see the server's real answer) got back a real, correctly-parsed
+`SMSG_SEND_MAIL_RESULT` with `MAIL_ERR_NOT_ENOUGH_MONEY` as described
+above.
+
+**Not live-verified:** a successful send (`MAIL_OK`), any inbox with real
+mail in it (attachments, COD, a non-`MAIL_NORMAL` sender), `take_mail`,
+`delete_mail`, and `SMSG_RECEIVED_MAIL` — all blocked this session by no
+agent character having any gold. `agent/tests/test_mail.py`'s hand-built-
+byte tests cover every one of those layouts; only the live round trip
+wasn't exercised for them. See the UM-60 PR for what's left as a human
+step.

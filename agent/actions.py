@@ -34,6 +34,7 @@ from . import quests as qu
 from . import spells
 from . import loot as lootmod
 from . import item_compare
+from . import mail as mailmod
 from . import update_fields as uf
 
 CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
@@ -48,6 +49,18 @@ CMSG_ATTACKSTOP         = 0x142
 CMSG_CAST_SPELL         = 0x12E
 
 MELEE_RANGE_YD = 5.0  # ~ melee weapon range + average combat reach
+
+
+def _record_event(session, kind: str, **fields):
+    """Same shape as WoWSession._record_event — duplicated here (matching
+    agent.reflexes.follow/rest's own copy of this) instead of calling
+    session._record_event() directly, so an action that records its own
+    event (send_mail, UM-60) also works against the plain `events: list`
+    fake sessions this module's tests use, which have no _record_event."""
+    events = getattr(session, "events", None)
+    if events is None:
+        return
+    events.append({"kind": kind, "t": time.monotonic(), **fields})
 
 
 def _pause_follow_reflex(session, world):
@@ -1472,3 +1485,271 @@ class AbandonQuestAction(Action):
     def execute(self, session, world, slot: int, **_) -> ActionResult:
         session._send_packet(qu.CMSG_QUESTLOG_REMOVE_QUEST, qu.build_questlog_remove_quest(slot))
         return ActionResult(ok=True, detail={"slot": slot})
+
+
+# ── Mailbox (UM-60) ────────────────────────────────────────────────────────
+# Wire layouts verified against TrinityCore branch `3.3.5`, see
+# agent/mail.py's docstring for the sources.
+
+
+def _find_nearby_mailbox(session, world):
+    """Closest currently-perceived mailbox (ObjectInfo.is_mailbox()) within
+    MAILBOX_INTERACT_RANGE_YD, or None. A gameobject's type only becomes
+    known once its SMSG_GAMEOBJECT_QUERY_RESPONSE arrives (queued
+    automatically the moment it's first perceived, same as its name) — a
+    mailbox just perceived this instant may not be recognized yet."""
+    if session.player_position is None:
+        return None
+    best = None
+    best_dist = None
+    for obj in world.get_objects().values():
+        if not obj.is_mailbox():
+            continue
+        dist = obj.distance_to(session.player_position)
+        if dist is None or dist > mailmod.MAILBOX_INTERACT_RANGE_YD:
+            continue
+        if best_dist is None or dist < best_dist:
+            best, best_dist = obj, dist
+    return best
+
+
+def _mail_item_flags(world, bag: int, slot: int):
+    """(item_guid, entry, is_soulbound) for the item at bag/slot, or None if
+    there's no known item there — same shape/rationale as agent.actions'
+    trade helper, duplicated here since this module doesn't depend on it."""
+    item_guid = _find_item_guid(world, bag, slot)
+    if item_guid is None:
+        return None
+    item_obj = world.get_object(item_guid)
+    if item_obj is None:
+        return None
+    decoded = uf.decode_item_fields(item_obj.raw_fields) if item_obj.raw_fields else {}
+    flags = decoded.get("item_flags") or 0
+    is_soulbound = bool(flags & mailmod.ITEM_FIELD_FLAG_SOULBOUND)
+    return item_guid, item_obj.entry, is_soulbound
+
+
+@register
+class OpenMailboxAction(Action):
+    name = "open_mailbox"
+    description = (f"Open the nearest mailbox within {mailmod.MAILBOX_INTERACT_RANGE_YD:.0f} yd "
+                    "and request its inbox (check the perception snapshot's `mailbox` after "
+                    "calling this).")
+    params = {}
+    required = ()
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, **_) -> str | None:
+        if _find_nearby_mailbox(session, world) is None:
+            return "no mailbox is within interact range — try move_towards a mailbox first"
+        return None
+
+    def execute(self, session, world, **_) -> ActionResult:
+        mailbox = _find_nearby_mailbox(session, world)
+        world.open_mailbox_request(mailbox.guid)
+        session._send_packet(mailmod.CMSG_GET_MAIL_LIST, mailmod.build_get_mail_list(mailbox.guid))
+
+        def has_list():
+            current = world.get_mailbox()
+            return current is not None and current.get("mails") is not None
+
+        got_list = _wait_for(has_list, timeout=self.confirm_timeout, interval=self.confirm_interval)
+        detail = {"mailbox_guid": mailbox.guid, "mailbox": world.get_mailbox()}
+        if not got_list:
+            return ActionResult(ok=False, error="no mail list response seen (timed out)", detail=detail)
+        return ActionResult(ok=True, detail=detail)
+
+
+@register
+class SendMailAction(Action):
+    name = "send_mail"
+    description = ("Send mail (with optional gold and one optional item) to a player by name — "
+                    "works even if they're offline or far away. Costs "
+                    f"{mailmod.MAIL_POSTAGE_COPPER} copper postage in addition to any gold sent. "
+                    "Requires a nearby mailbox.")
+    params = {
+        "to": {"type": "string", "description": "Recipient character name."},
+        "subject": {"type": "string", "description": "Mail subject."},
+        "body": {"type": "string", "description": "Mail body text."},
+        "gold": {"type": "integer", "description": "Copper to send. Default 0."},
+        "bag": {"type": "integer", "description": "Bag byte of an item to attach (255 = equipped "
+                                                    "items/backpack). Omit to send no item."},
+        "slot": {"type": "integer", "description": "Inventory slot of the item to attach — "
+                                                     "required together with bag."},
+    }
+    required = ("to", "subject", "body")
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, to: str, subject: str, body: str, gold: int = 0,
+              bag: int | None = None, slot: int | None = None, **_) -> str | None:
+        if _find_nearby_mailbox(session, world) is None:
+            return "no mailbox is within interact range — try move_towards a mailbox first"
+        if gold < 0:
+            return "gold must be >= 0"
+        item_guid = None
+        if (bag is None) != (slot is None):
+            return "bag and slot must be given together"
+        if bag is not None:
+            resolved = _mail_item_flags(world, bag, slot)
+            if resolved is None:
+                return f"no known item at bag={bag} slot={slot}"
+            item_guid, _entry, is_soulbound = resolved
+            if is_soulbound:
+                return "item is soulbound and can't be mailed"
+        postage = mailmod.MAIL_POSTAGE_COPPER
+        have = getattr(session, "coinage", 0) or 0
+        if postage + gold > have:
+            return f"not enough gold (have {have}, need {postage + gold} including postage)"
+        return None
+
+    def execute(self, session, world, to: str, subject: str, body: str, gold: int = 0,
+                bag: int | None = None, slot: int | None = None, **_) -> ActionResult:
+        mailbox = _find_nearby_mailbox(session, world)
+        item_guid = None
+        if bag is not None:
+            item_guid, _entry, _is_soulbound = _mail_item_flags(world, bag, slot)
+        sent_at = time.monotonic()
+        session._send_packet(mailmod.CMSG_SEND_MAIL,
+                              mailmod.build_send_mail(mailbox.guid, to, subject, body,
+                                                       money=gold, item_guid=item_guid))
+
+        def find_result():
+            for e in session.events:
+                if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
+                    continue
+                if e.get("command") == mailmod.MAIL_SEND:
+                    return e
+            return None
+
+        outcome = _wait_for_value(find_result, timeout=self.confirm_timeout,
+                                   interval=self.confirm_interval)
+        detail = {"to": to, "subject": subject, "gold": gold, "bag": bag, "slot": slot}
+        if outcome is None:
+            _record_event(session, "mail_error", reason="no send-mail confirmation seen (timed out)", to=to)
+            return ActionResult(ok=False, error="no send-mail confirmation seen (timed out)", detail=detail)
+        detail["outcome"] = outcome
+        if outcome["error_code"] != mailmod.MAIL_OK:
+            _record_event(session, "mail_error", reason=outcome["error_name"], to=to)
+            return ActionResult(ok=False, error=outcome["error_name"], detail=detail)
+        summary = {"to": to, "subject": subject, "gold": gold, "item_attached": bag is not None}
+        _record_event(session, "mail_sent", to=to, summary=summary)
+        return ActionResult(ok=True, detail=detail)
+
+
+@register
+class TakeMailAction(Action):
+    name = "take_mail"
+    description = ("Take all money and every item attached to mail_id from the currently open "
+                    "mailbox window (call open_mailbox first) — v1 take-everything, no selective "
+                    "taking, same as loot().")
+    params = {
+        "mail_id": {"type": "integer", "description": "Mail id, from the open mailbox window's "
+                                                        "`mails` list."},
+    }
+    required = ("mail_id",)
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, mail_id: int, **_) -> str | None:
+        mailbox = world.get_mailbox()
+        if mailbox is None or mailbox.get("mails") is None:
+            return "no mailbox window is open — call open_mailbox first"
+        mail = next((m for m in mailbox["mails"] if m["mail_id"] == mail_id), None)
+        if mail is None:
+            return f"mail_id {mail_id} is not in the open mailbox window"
+        # A COD amount is charged automatically when taking the item(s) —
+        # HandleMailTakeItem checks HasEnoughMoney(m->COD) server-side.
+        if mail["attachments"] and mail["cod"] > (getattr(session, "coinage", 0) or 0):
+            return (f"not enough gold to pay this mail's {mail['cod']} copper COD "
+                     f"(have {getattr(session, 'coinage', 0) or 0})")
+        return None
+
+    def execute(self, session, world, mail_id: int, **_) -> ActionResult:
+        mailbox = world.get_mailbox()
+        mail = next(m for m in mailbox["mails"] if m["mail_id"] == mail_id)
+        sent_at = time.monotonic()
+
+        def find_result(command, extra_check=None):
+            def _find():
+                for e in session.events:
+                    if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
+                        continue
+                    if e.get("mail_id") != mail_id or e.get("command") != command:
+                        continue
+                    if extra_check is not None and not extra_check(e):
+                        continue
+                    return e
+                return None
+            return _find
+
+        outcomes = {"money": None, "items": []}
+        if mail["money"]:  # COD is charged automatically alongside taking an item, not via TAKE_MONEY
+            session._send_packet(mailmod.CMSG_MAIL_TAKE_MONEY,
+                                  mailmod.build_mail_take_money(mailbox["mailbox_guid"], mail_id))
+            outcomes["money"] = _wait_for_value(find_result(mailmod.MAIL_MONEY_TAKEN),
+                                                 timeout=self.confirm_timeout,
+                                                 interval=self.confirm_interval)
+
+        for att in mail["attachments"]:
+            session._send_packet(mailmod.CMSG_MAIL_TAKE_ITEM,
+                                  mailmod.build_mail_take_item(mailbox["mailbox_guid"], mail_id,
+                                                                att["attach_id"]))
+            check_attach = lambda e, aid=att["attach_id"]: e.get("attach_id") == aid
+            outcomes["items"].append(_wait_for_value(
+                find_result(mailmod.MAIL_ITEM_TAKEN, extra_check=check_attach),
+                timeout=self.confirm_timeout, interval=self.confirm_interval))
+
+        detail = {"mail_id": mail_id, "outcomes": outcomes}
+        money_ok = outcomes["money"] is None or outcomes["money"].get("error_code") == mailmod.MAIL_OK
+        items_ok = all(o is not None and o.get("error_code") == mailmod.MAIL_OK for o in outcomes["items"])
+        if not money_ok or not items_ok:
+            return ActionResult(ok=False, error="one or more mail attachments failed to take", detail=detail)
+        return ActionResult(ok=True, detail=detail)
+
+
+@register
+class DeleteMailAction(Action):
+    name = "delete_mail"
+    description = ("Delete mail_id from the currently open mailbox window (call open_mailbox "
+                    "first). Irreversible — take any attachments first, they're lost otherwise.")
+    params = {
+        "mail_id": {"type": "integer", "description": "Mail id, from the open mailbox window's "
+                                                        "`mails` list."},
+    }
+    required = ("mail_id",)
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, mail_id: int, **_) -> str | None:
+        mailbox = world.get_mailbox()
+        if mailbox is None or mailbox.get("mails") is None:
+            return "no mailbox window is open — call open_mailbox first"
+        if not any(m["mail_id"] == mail_id for m in mailbox["mails"]):
+            return f"mail_id {mail_id} is not in the open mailbox window"
+        return None
+
+    def execute(self, session, world, mail_id: int, **_) -> ActionResult:
+        mailbox = world.get_mailbox()
+        sent_at = time.monotonic()
+        session._send_packet(mailmod.CMSG_MAIL_DELETE,
+                              mailmod.build_mail_delete(mailbox["mailbox_guid"], mail_id))
+
+        def find_result():
+            for e in session.events:
+                if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
+                    continue
+                if e.get("mail_id") == mail_id and e.get("command") == mailmod.MAIL_DELETED:
+                    return e
+            return None
+
+        outcome = _wait_for_value(find_result, timeout=self.confirm_timeout,
+                                   interval=self.confirm_interval)
+        detail = {"mail_id": mail_id, "outcome": outcome}
+        if outcome is None:
+            return ActionResult(ok=False, error="no delete confirmation seen (timed out)", detail=detail)
+        if outcome["error_code"] != mailmod.MAIL_OK:
+            # e.g. a COD mail can't be deleted before it's paid/returned (MAIL_ERR_INTERNAL_ERROR)
+            return ActionResult(ok=False, error=outcome["error_name"], detail=detail)
+        return ActionResult(ok=True, detail=detail)
