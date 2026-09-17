@@ -22,6 +22,14 @@ def cstring(s: str) -> bytes:
 
 # ── Request builders (golden bytes) ────────────────────────────────────────
 
+class OpcodeValuesTest(unittest.TestCase):
+    def test_questgiver_quest_details_opcode(self):
+        # 0x187 is CMSG_QUESTGIVER_QUERY_QUEST's response slot in some stale
+        # references; the real 3.3.5a SMSG_QUESTGIVER_QUEST_DETAILS value is
+        # 0x188.
+        self.assertEqual(qu.SMSG_QUESTGIVER_QUEST_DETAILS, 0x188)
+
+
 class BuildRequestTest(unittest.TestCase):
     def test_quest_query(self):
         self.assertEqual(qu.build_quest_query(1234, 0xABCD), struct.pack('<IQ', 1234, 0xABCD))
@@ -101,14 +109,18 @@ class ParseQuestQueryResponseTest(unittest.TestCase):
 
 class ParseQuestgiverStatusTest(unittest.TestCase):
     def test_known_status(self):
-        payload = struct.pack('<Q', 0xF130000000001234) + struct.pack('<I', 4)
+        # SMSG_QUESTGIVER_STATUS is guid (8 bytes) + a single status byte
+        # (9 bytes total), not guid + uint32 (12 bytes).
+        payload = struct.pack('<Q', 0xF130000000001234) + struct.pack('<B', 4)
+        self.assertEqual(len(payload), 9)
         info = qu.parse_questgiver_status(payload)
         self.assertEqual(info["guid"], 0xF130000000001234)
         self.assertEqual(info["status"], 4)
         self.assertEqual(info["status_name"], "available")
 
     def test_unknown_status_falls_back_to_status_n(self):
-        payload = struct.pack('<Q', 1) + struct.pack('<I', 77)
+        payload = struct.pack('<Q', 1) + struct.pack('<B', 77)
+        self.assertEqual(len(payload), 9)
         info = qu.parse_questgiver_status(payload)
         self.assertEqual(info["status_name"], "status_77")
 
@@ -379,7 +391,7 @@ class AcceptQuestActionTest(unittest.TestCase):
         world = FakeWorld(objects={1: FakeTarget()})
         action = ac.REGISTRY["accept_quest"]
         error = action.check(fake_session(), world, npc_guid=1, quest_id=100)
-        self.assertIn("no quest list/details window", error)
+        self.assertIn("no quest list/details/gossip window", error)
 
     def test_check_rejects_quest_not_in_open_list(self):
         world = FakeWorld(objects={1: FakeTarget()},
@@ -408,6 +420,50 @@ class AcceptQuestActionTest(unittest.TestCase):
         action = ac.REGISTRY["accept_quest"]
         error = action.check(fake_session(), world, npc_guid=1, quest_id=100)
         self.assertIn("out of interact range", error)
+
+    # ── Bug 3: gossip-primary questgivers (UM-40 gossip window carries the
+    # offered quests, e.g. Magistrix Erona/npc_flags=3) must also work with
+    # accept_quest, without opening a separate quest_list/quest_details
+    # window first.
+
+    def test_check_accepts_quest_in_open_gossip_window(self):
+        world = FakeWorld(objects={1: FakeTarget()},
+                           ui_state={"kind": "gossip", "npc_guid": 1, "menu_id": 1, "text_id": 1,
+                                     "options": [],
+                                     "quests": [{"quest_id": 8325, "quest_type": 0, "level": 5,
+                                                 "flags": 0, "repeatable": False,
+                                                 "title": "A Threat Within"}]})
+        action = ac.REGISTRY["accept_quest"]
+        error = action.check(fake_session(), world, npc_guid=1, quest_id=8325)
+        self.assertIsNone(error)
+
+    def test_check_rejects_quest_not_in_open_gossip_window(self):
+        world = FakeWorld(objects={1: FakeTarget()},
+                           ui_state={"kind": "gossip", "npc_guid": 1, "menu_id": 1, "text_id": 1,
+                                     "options": [], "quests": [{"quest_id": 999, "title": "Other"}]})
+        action = ac.REGISTRY["accept_quest"]
+        error = action.check(fake_session(), world, npc_guid=1, quest_id=8325)
+        self.assertIn("not offered", error)
+
+    def test_execute_from_gossip_window_queries_then_accepts(self):
+        world = FakeWorld(objects={1: FakeTarget()},
+                           ui_state={"kind": "gossip", "npc_guid": 1, "menu_id": 1, "text_id": 1,
+                                     "options": [],
+                                     "quests": [{"quest_id": 8325, "quest_type": 0, "level": 5,
+                                                 "flags": 0, "repeatable": False,
+                                                 "title": "A Threat Within"}]})
+        session = fake_session()
+        action = ac.REGISTRY["accept_quest"]
+        self.assertIsNone(action.check(session, world, npc_guid=1, quest_id=8325))
+        result = action.execute(session, world, npc_guid=1, quest_id=8325)
+        self.assertTrue(result.ok)
+        self.assertEqual(len(session._sent), 2)
+        query_opcode, query_payload = session._sent[0]
+        self.assertEqual(query_opcode, qu.CMSG_QUESTGIVER_QUERY_QUEST)
+        self.assertEqual(query_payload, qu.build_questgiver_query_quest(1, 8325))
+        accept_opcode, accept_payload = session._sent[1]
+        self.assertEqual(accept_opcode, qu.CMSG_QUESTGIVER_ACCEPT_QUEST)
+        self.assertEqual(accept_payload, qu.build_questgiver_accept_quest(1, 8325))
 
 
 class CompleteQuestActionTest(unittest.TestCase):
