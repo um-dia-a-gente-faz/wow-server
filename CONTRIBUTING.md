@@ -68,6 +68,19 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 
 - `main` — the single source of truth. Always deployable.
 - Feature branches: `feat/<slug>`, `fix/<slug>`.
+- **Every PR's base is `main`. Never stack a PR on another branch, even a
+  genuinely dependent one.** Branch from `main` (or from the tip of your own
+  in-progress work if you're queuing several tickets before any of them
+  merge — just re-target each PR to `main` once you open it), and describe
+  any real dependency in the PR body instead of encoding it in the git base.
+  Reason: a PR whose base is another feature branch merges *into that
+  branch*, not into `main` — if the base branch itself was already merged
+  into `main` earlier (a squash-merge, which severs the commit-ancestry
+  link), the PR's content silently never reaches `main` even though GitHub
+  and Linear both show it as "merged." This happened for real on 2026-09-17
+  (UM-38 and UM-39 were both "merged" into their stacked parent branches;
+  `main` was missing both for hours before anyone noticed) — see
+  `docs/AGENT-DIRECTION.md`'s "Known findings" for the recovery.
 - Use git worktrees for parallel work (each worktree is its own directory):
   ```bash
   git worktree add ../wowwork-<name> -b feat/<name>
