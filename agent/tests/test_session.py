@@ -8,8 +8,10 @@ import socket
 import struct
 import tempfile
 import unittest
+import uuid
 import zlib
 
+from agent import names as nm
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
@@ -70,6 +72,22 @@ def no_values() -> bytes:
     return b'\x00'
 
 
+def values_body(field_values: dict) -> bytes:
+    """uint8 mask_block_count, mask words, one uint32 per set bit ascending —
+    see agent/tests/test_update_object_parser.py for the same helper."""
+    if not field_values:
+        return b'\x00'
+    max_bit = max(field_values)
+    block_count = max_bit // 32 + 1
+    words = [0] * block_count
+    for idx in field_values:
+        words[idx // 32] |= 1 << (idx % 32)
+    out = bytes([block_count]) + b''.join(struct.pack('<I', w) for w in words)
+    for idx in sorted(field_values):
+        out += struct.pack('<I', field_values[idx])
+    return out
+
+
 def object_block(update_type: int, guid: int, object_type: int = uo.TYPEID_UNIT,
                   movement: bytes = None, values: bytes = None) -> bytes:
     """A CREATE_OBJECT[2] block body: packed guid, object type, movement, values."""
@@ -99,6 +117,10 @@ def compressed(payload: bytes) -> bytes:
 def make_session(stream: bytes = b'', **kw) -> se.WoWSession:
     sess = se.WoWSession('127.0.0.1', 8085, 'TEST', b'\x00' * 40, 1, **kw)
     sess.sock = FakeSocket(stream)
+    # A "found" creature/gameobject query response saves the on-disk name
+    # cache — never let that touch the real ~/.cache/wow-agent/names.json.
+    sess.world_state.names.cache_path = os.path.join(
+        tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
     return sess
 
 
@@ -197,6 +219,75 @@ class WorldStateTest(unittest.TestCase):
         self.assertEqual(ws.get_objects(), {})
         ws.record_guid(2, se.UPDATETYPE_CREATE_OBJECT2)
         self.assertEqual(list(ws.get_objects()), [2])
+
+
+def _cstr(s: str) -> bytes:
+    return s.encode('utf-8') + b'\x00'
+
+
+def name_query_response_payload(guid: int, name: str) -> bytes:
+    return (pk.pack_packed_guid(guid) + bytes([0]) + _cstr(name) + _cstr("")
+            + bytes([0, 0, 0, 0]))  # race, sex, class, has_declined_names
+
+
+def creature_query_response_payload(entry: int, name: str) -> bytes:
+    return (struct.pack('<I', entry) + _cstr(name) + bytes([0, 0, 0]) + _cstr("") + _cstr("")
+            + struct.pack('<4I', 0, 0, 0, 0)
+            + struct.pack(f'<{nm.MAX_KILL_CREDIT}I', *([0] * nm.MAX_KILL_CREDIT))
+            + struct.pack(f'<{nm.MAX_CREATURE_MODELS}I', *([0] * nm.MAX_CREATURE_MODELS))
+            + struct.pack('<2f', 1.0, 1.0) + bytes([0])
+            + struct.pack(f'<{nm.MAX_CREATURE_QUEST_ITEMS}I', *([0] * nm.MAX_CREATURE_QUEST_ITEMS))
+            + struct.pack('<I', 0))
+
+
+def gameobject_query_response_payload(entry: int, name: str) -> bytes:
+    return (struct.pack('<I', entry) + struct.pack('<II', 0, 0) + _cstr(name) + bytes([0, 0, 0])
+            + _cstr("") + _cstr("") + _cstr("")
+            + struct.pack(f'<{nm.MAX_GAMEOBJECT_DATA}I', *([0] * nm.MAX_GAMEOBJECT_DATA))
+            + struct.pack('<f', 1.0)
+            + struct.pack(f'<{nm.MAX_GAMEOBJECT_QUEST_ITEMS}I', *([0] * nm.MAX_GAMEOBJECT_QUEST_ITEMS)))
+
+
+class NameQueryTest(unittest.TestCase):
+    """UM-35: dispatch wiring for the three query-response opcodes, and the
+    recv-loop's budgeted drain-and-send of pending queries."""
+
+    def test_creature_query_response_dispatch(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+                                                               values=values_body({0x03: 17213}))))
+        sess._dispatch(se.SMSG_CREATURE_QUERY_RESPONSE, creature_query_response_payload(17213, "Broom"))
+        self.assertEqual(sess.world_state.get_object(CREATURE).name, "Broom")
+
+    def test_gameobject_query_response_dispatch(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+                                                               object_type=uo.TYPEID_GAMEOBJECT,
+                                                               values=values_body({0x03: 181646}))))
+        sess._dispatch(se.SMSG_GAMEOBJECT_QUERY_RESPONSE, gameobject_query_response_payload(181646, "Ship"))
+        self.assertEqual(sess.world_state.get_object(CREATURE).name, "Ship")
+
+    def test_name_query_response_dispatch(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, 7,
+                                                               object_type=uo.TYPEID_PLAYER,
+                                                               values=values_body({0x03: 0}))))
+        sess._dispatch(se.SMSG_NAME_QUERY_RESPONSE, name_query_response_payload(7, "Rubens"))
+        self.assertEqual(sess.world_state.get_object(7).name, "Rubens")
+
+    def test_send_name_queries_drains_and_sends_creature_query(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+                                                               values=values_body({0x03: 17213}))))
+        sess._send_name_queries()
+        # the sent bytes must contain the entry+guid payload somewhere in a CMSG_CREATURE_QUERY frame
+        expected_payload = nm.build_creature_query(17213, CREATURE)
+        self.assertIn(expected_payload, sess.sock.sent)
+
+    def test_send_name_queries_is_empty_when_nothing_pending(self):
+        sess = make_session()
+        sess._send_name_queries()
+        self.assertEqual(sess.sock.sent, b'')
 
 
 def len_string(s: str) -> bytes:

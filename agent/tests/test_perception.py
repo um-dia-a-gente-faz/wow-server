@@ -3,6 +3,7 @@
 that's agent/tests/test_update_object_parser.py's job."""
 
 import pathlib
+import tempfile
 import unittest
 
 from agent import perception as per
@@ -81,6 +82,101 @@ class UpdateObjectTest(unittest.TestCase):
         ws.remove_guids([1])
         self.assertIsNone(ws.get_object(1))
         self.assertIsNotNone(ws.get_object(2))
+
+
+class NameResolutionTest(unittest.TestCase):
+    """UM-35: WorldState enqueues name queries for unknown entries/players on
+    CREATE, resolves immediately from the cache when already known, and
+    backfills .name (etc.) on every matching object when a response arrives."""
+
+    def setUp(self):
+        # apply_creature_query_response()/apply_gameobject_query_response()
+        # save the on-disk cache on every "found" response — redirect every
+        # WorldState in this class to a throwaway file so tests never touch
+        # the real ~/.cache/wow-agent/names.json.
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+
+    def _new_ws(self) -> per.WorldState:
+        ws = per.WorldState()
+        ws.names.cache_path = f"{self._tmpdir.name}/names.json"
+        return ws
+
+    def test_unknown_creature_entry_enqueues_a_query(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_UNIT, fields={0x03: 17213}))
+        self.assertEqual(ws.names.drain(), [("creature", 17213, 1)])
+        self.assertEqual(ws.get_object(1).name, "")
+
+    def test_cached_creature_entry_resolves_immediately_no_query(self):
+        ws = self._new_ws()
+        ws.names.creatures[17213] = {"name": "Broom", "subname": "", "rank": "normal",
+                                      "creature_type_name": "critter"}
+        ws.update_object(create_block(1, object_type=uo.TYPEID_UNIT, fields={0x03: 17213}))
+        self.assertEqual(ws.get_object(1).name, "Broom")
+        self.assertEqual(ws.get_object(1).creature_type, "critter")
+        self.assertEqual(ws.names.drain(), [])
+
+    def test_unknown_player_guid_enqueues_a_query(self):
+        ws = self._new_ws()
+        ws.set_my_guid(99)  # a different guid — this player isn't "us"
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, fields={0x03: 0}))
+        self.assertEqual(ws.names.drain(), [("player", 1, 1)])
+
+    def test_own_object_is_never_queried(self):
+        ws = self._new_ws()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, fields={0x03: 0}))
+        self.assertEqual(ws.names.drain(), [])
+
+    def test_creature_query_response_backfills_every_matching_object(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_UNIT, fields={0x03: 37543}))
+        ws.update_object(create_block(2, object_type=uo.TYPEID_UNIT, fields={0x03: 37543}))
+        ws.apply_creature_query_response({"entry": 37543, "found": True, "name": "Shaker",
+                                           "subname": "", "rank": "normal", "creature_type_name": "humanoid"})
+        self.assertEqual(ws.get_object(1).name, "Shaker")
+        self.assertEqual(ws.get_object(2).name, "Shaker")
+        self.assertEqual(ws.names.creatures[37543]["name"], "Shaker")
+
+    def test_creature_query_response_not_found_is_cached_and_leaves_name_blank(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_UNIT, fields={0x03: 999}))
+        ws.apply_creature_query_response({"entry": 999, "found": False})
+        self.assertEqual(ws.get_object(1).name, "")
+        self.assertIsNone(ws.names.creatures[999])
+
+    def test_name_query_response_backfills_the_player(self):
+        ws = self._new_ws()
+        ws.set_my_guid(99)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, fields={0x03: 0}))
+        ws.apply_name_query_response({"guid": 1, "found": True, "name": "Rubens", "realm": "",
+                                       "race": 2, "sex": 0, "class_": 1, "has_declined_names": False})
+        self.assertEqual(ws.get_object(1).name, "Rubens")
+
+    def test_gameobject_query_response_backfills(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_GAMEOBJECT, fields={0x03: 181646}))
+        ws.apply_gameobject_query_response({"entry": 181646, "found": True, "name": "Ship"})
+        self.assertEqual(ws.get_object(1).name, "Ship")
+
+    def test_elite_rank_is_kept_but_normal_is_blank(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_UNIT, fields={0x03: 1}))
+        ws.apply_creature_query_response({"entry": 1, "found": True, "name": "Boss",
+                                           "subname": "", "rank": "worldboss", "creature_type_name": "humanoid"})
+        self.assertEqual(ws.get_object(1).rank, "worldboss")
+
+    def test_snapshot_includes_resolved_name(self):
+        ws = self._new_ws()
+        ws.set_my_guid(1)
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0, fields={0x03: 0}))
+        ws.update_object(create_block(2, object_type=uo.TYPEID_UNIT, x=1, y=0, z=0, fields={0x03: 6368}))
+        ws.apply_creature_query_response({"entry": 6368, "found": True, "name": "Cat",
+                                           "subname": "", "rank": "normal", "creature_type_name": "beast"})
+        snap = ws.snapshot(max_range=50)
+        self.assertEqual(snap["nearby_units"][0]["name"], "Cat")
 
 
 class ObjectInfoHelpersTest(unittest.TestCase):

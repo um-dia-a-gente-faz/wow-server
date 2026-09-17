@@ -103,3 +103,62 @@ take two words.
 | `UNIT_NPC_FLAGS` | `0x52` |
 | `UNIT_END` | `0x94` |
 | `PLAYER_FLAGS` | `0x96` |
+
+## Name resolution: `CMSG_NAME_QUERY` / `CMSG_CREATURE_QUERY` / `CMSG_GAMEOBJECT_QUERY` (`Handlers/QueryHandler.cpp`, `Server/Packets/QueryPackets.h`/`.cpp`)
+
+Verified against the live `TrinityCore/TrinityCore` branch `3.3.5` (UM-35;
+`gh api repos/TrinityCore/TrinityCore/contents/... ?ref=3.3.5`).
+
+Opcodes: `CMSG_NAME_QUERY 0x050` → `SMSG_NAME_QUERY_RESPONSE 0x051`,
+`CMSG_GAMEOBJECT_QUERY 0x05E` → `SMSG_GAMEOBJECT_QUERY_RESPONSE 0x05F`,
+`CMSG_CREATURE_QUERY 0x060` → `SMSG_CREATURE_QUERY_RESPONSE 0x061`.
+
+```
+CMSG_NAME_QUERY:        uint64 guid                    // raw, NOT packed (QueryPlayerName::Read)
+CMSG_CREATURE_QUERY:    uint32 entry, uint64 guid       // guid is a sample instance; only entry is looked up
+CMSG_GAMEOBJECT_QUERY:  uint32 entry, uint64 guid       // ditto
+```
+
+`SMSG_NAME_QUERY_RESPONSE` (`QueryPlayerNameResponse::Write`):
+```
+packedGuid player                 // PACKED here, unlike the request's raw guid
+uint8 result                       // 0 = full data follows, non-zero = not found
+// if result == 0:
+cstring name
+cstring realmName
+uint8 race, uint8 sex, uint8 classId
+uint8 hasDeclinedNames             // if 1, 5 more cstrings follow (Cyrillic client feature) — not parsed
+```
+
+`SMSG_CREATURE_QUERY_RESPONSE` (`QueryCreatureResponse::Write`, `CreatureData.h` for the `MAX_*` constants):
+```
+uint32 (entry | (found ? 0 : 0x80000000))
+// if found:
+cstring name, uint8 x3 (name2/3/4, always empty), cstring subname (Title), cstring cursorName
+uint32 flags, uint32 creatureType, uint32 creatureFamily, uint32 classification (rank)
+uint32 killCredit[2], uint32 displayId[4]
+float hpMulti, float energyMulti, uint8 leader
+uint32 questItems[6], uint32 movementInfoId
+```
+`classification` (`CreatureEliteType`, SharedDefines.h): `0` normal, `1` elite,
+`2` rareelite, `3` worldboss, `4` rare, `5` trivial. `creatureType`
+(`CreatureType`, SharedDefines.h): `1` beast .. `13` gas_cloud — see
+`agent/names.py::CREATURE_TYPE_NAMES` for the full mapping.
+
+`SMSG_GAMEOBJECT_QUERY_RESPONSE` (`QueryGameObjectResponse::Write`, `GameObjectData.h`/`SharedDefines.h` for `MAX_GAMEOBJECT_DATA=24`):
+```
+uint32 (entry | (found ? 0 : 0x80000000))
+// if found:
+uint32 type, uint32 displayId
+cstring name, uint8 x3 (name2/3/4, always empty)
+cstring iconName, cstring castBarCaption, cstring unkString
+uint32 data[24]                    // type-specific params, not decoded
+float size
+uint32 questItems[6]
+```
+
+All the `cstring` fields above (`name`, `subname`, `realmName`, ...) are
+plain null-terminated strings with **no length prefix** — `ByteBuffer::
+operator<<(std::string)` (`ByteBuffer.h`), same as `SMSG_MESSAGECHAT`'s
+channel name, and different from that packet's `senderName`/`chatText`
+(`uint32` length prefix). `agent/packets.py::cstring`.

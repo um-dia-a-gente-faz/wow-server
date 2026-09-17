@@ -13,6 +13,7 @@ import zlib
 
 from . import packets as pk
 from . import crypt as cr
+from . import names as nm
 from . import perception as per
 from . import update_fields as uo_fields
 from . import update_object as uo
@@ -54,6 +55,14 @@ SMSG_STANDSTATE_UPDATE  = 0x29D
 SMSG_GROUP_INVITE       = 0x06F
 SMSG_MESSAGECHAT        = 0x096
 SMSG_GM_MESSAGECHAT     = 0x3B3
+
+# Name resolution (UM-35)
+CMSG_NAME_QUERY               = 0x050
+SMSG_NAME_QUERY_RESPONSE      = 0x051
+CMSG_GAMEOBJECT_QUERY         = 0x05E
+SMSG_GAMEOBJECT_QUERY_RESPONSE = 0x05F
+CMSG_CREATURE_QUERY           = 0x060
+SMSG_CREATURE_QUERY_RESPONSE  = 0x061
 
 # ChatMsg values this parser understands by name (SharedDefines.h); anything
 # else is kept as "type_<n>" rather than dropped.
@@ -232,6 +241,7 @@ class WoWSession:
         # own blocks from everyone else's.
         self.player_guid = guid
         self.world_state.set_my_guid(guid)
+        self.world_state.names.load()  # UM-35: reuse the on-disk creature/gameobject cache, if any
         self._send_packet(CMSG_KEEP_ALIVE)
         self._send_packet(CMSG_PLAYER_LOGIN, struct.pack('<Q', guid))
 
@@ -305,6 +315,40 @@ class WoWSession:
         # Object::DestroyForPlayer (Object.cpp): uint64 guid, uint8 onDeath.
         guid = pk.u64(payload, 0)
         self.world_state.remove_guids([guid])
+
+    def _send_name_queries(self):
+        """UM-35: send whatever agent.perception.WorldState.names has queued,
+        up to its per-second budget. Called once per recv-loop tick (like
+        the keepalive below), so new objects get their names resolved
+        within a tick or two of showing up."""
+        for kind, key, sample_guid in self.world_state.names.drain():
+            if kind == "player":
+                self._send_packet(CMSG_NAME_QUERY, nm.build_name_query(key))
+            elif kind == "creature":
+                self._send_packet(CMSG_CREATURE_QUERY, nm.build_creature_query(key, sample_guid))
+            elif kind == "gameobject":
+                self._send_packet(CMSG_GAMEOBJECT_QUERY, nm.build_gameobject_query(key, sample_guid))
+
+    def _handle_name_query_response(self, payload: bytes):
+        try:
+            data = nm.parse_name_query_response(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_NAME_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+        self.world_state.apply_name_query_response(data)
+
+    def _handle_creature_query_response(self, payload: bytes):
+        try:
+            data = nm.parse_creature_query_response(payload)
+        except (IndexError, struct.error, ValueError) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_CREATURE_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+        self.world_state.apply_creature_query_response(data)
+
+    def _handle_gameobject_query_response(self, payload: bytes):
+        try:
+            data = nm.parse_gameobject_query_response(payload)
+        except (IndexError, struct.error, ValueError) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_GAMEOBJECT_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+        self.world_state.apply_gameobject_query_response(data)
 
     def _handle_update_object(self, opcode: int, payload: bytes):
         if opcode == SMSG_COMPRESSED_UPDATE_OBJECT:
@@ -438,6 +482,12 @@ class WoWSession:
             self._handle_group_invite(payload)
         elif opcode == SMSG_DESTROY_OBJECT:
             self._handle_destroy_object(payload)
+        elif opcode == SMSG_NAME_QUERY_RESPONSE:
+            self._handle_name_query_response(payload)
+        elif opcode == SMSG_CREATURE_QUERY_RESPONSE:
+            self._handle_creature_query_response(payload)
+        elif opcode == SMSG_GAMEOBJECT_QUERY_RESPONSE:
+            self._handle_gameobject_query_response(payload)
         elif opcode in (SMSG_PONG, SMSG_MONSTER_MOVE, SMSG_STANDSTATE_UPDATE):
             # SMSG_MONSTER_MOVE (NPC destinations) and MSG_MOVE_* heartbeats
             # (other players' positions) aren't parsed — see docs/ROADMAP.md.
@@ -487,11 +537,13 @@ class WoWSession:
                 if now - last_keepalive > 15:
                     self._send_packet(CMSG_KEEP_ALIVE)
                     last_keepalive = now
+                self._send_name_queries()
                 continue
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
                 return
             self._dispatch_guarded(opcode, payload)
+            self._send_name_queries()
 
     def _send_packet(self, opcode: int, payload: bytes = b''):
         hdr = struct.pack('>H', len(payload) + 4) + struct.pack('<I', opcode)
