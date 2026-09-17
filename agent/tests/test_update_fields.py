@@ -52,12 +52,30 @@ class UnitFieldsTest(unittest.TestCase):
         decoded = uf.decode_fields(uo.TYPEID_UNIT, {})
         self.assertNotIn('target_guid', decoded)
 
-    def test_power_and_max_power_lists_only_include_set_slots(self):
+    def test_power_and_max_power_keyed_by_power_name_only_include_set_slots(self):
         raw = {uf.UNIT_FIELD_POWER1: 10, uf.UNIT_FIELD_POWER1 + 2: 30,
                uf.UNIT_FIELD_MAXPOWER1: 100}
         decoded = uf.decode_fields(uo.TYPEID_UNIT, raw)
-        self.assertEqual(decoded['power'], [10, 30])
-        self.assertEqual(decoded['max_power'], [100])
+        self.assertEqual(decoded['power'], {'mana': 10, 'focus': 30})
+        self.assertEqual(decoded['max_power'], {'mana': 100})
+
+    def test_hunter_power_slots_keyed_correctly_not_positionally(self):
+        # UM-70: a level-1 hunter only has mana (slot 0) and focus (slot 2)
+        # set — rage/energy/etc. slots are simply absent, not zero. Before
+        # UM-70 the compacted list [145, 100] made focus look like it was at
+        # index 1 ("rage"); the dict must key it 'focus' regardless of which
+        # slots were sent.
+        raw = {
+            uf.UNIT_FIELD_POWER1: 145,        # mana
+            uf.UNIT_FIELD_POWER1 + 2: 100,    # focus
+            uf.UNIT_FIELD_MAXPOWER1: 145,
+            uf.UNIT_FIELD_MAXPOWER1 + 2: 100,
+        }
+        decoded = uf.decode_fields(uo.TYPEID_UNIT, raw)
+        self.assertEqual(decoded['power'], {'mana': 145, 'focus': 100})
+        self.assertEqual(decoded['max_power'], {'mana': 145, 'focus': 100})
+        self.assertNotIn('rage', decoded['power'])
+        self.assertNotIn('energy', decoded['power'])
 
     def test_bytes_0_splits_race_class_gender_powertype(self):
         # race=10 (blood elf), class=2 (paladin), gender=0, power_type=0

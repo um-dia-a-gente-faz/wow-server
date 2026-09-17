@@ -517,10 +517,11 @@ class CastSpellAction(Action):
         info = spells.get_spell_info(spell_id)
         if info is not None and info.power_cost:
             me = world.get_my_object()
-            if me is not None and me.power and len(me.power) > info.power_type \
-                    and me.power[info.power_type] < info.power_cost:
+            power_name = uf.POWER_NAMES[info.power_type] if 0 <= info.power_type < len(uf.POWER_NAMES) else None
+            have = me.power.get(power_name) if me is not None and power_name is not None else None
+            if have is not None and have < info.power_cost:
                 return (f"not enough power for spell {spell_id} "
-                        f"(need {info.power_cost}, have {me.power[info.power_type]})")
+                        f"(need {info.power_cost}, have {have})")
         if target_guid is not None and world.get_object(target_guid) is None:
             return f"guid {target_guid:#x} is not currently perceived"
         return None

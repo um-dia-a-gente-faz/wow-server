@@ -67,9 +67,8 @@ def needs_rest(me) -> bool:
     if me.health is not None and me.max_health:
         if me.health / me.max_health < REST_HP_PCT_THRESHOLD:
             return True
-    if (me.power_type == POWER_MANA and me.power and me.max_power
-            and len(me.power) > 0 and len(me.max_power) > 0 and me.max_power[0]):
-        if me.power[0] / me.max_power[0] < REST_MANA_PCT_THRESHOLD:
+    if me.power_type == POWER_MANA and me.power.get("mana") is not None and me.max_power.get("mana"):
+        if me.power["mana"] / me.max_power["mana"] < REST_MANA_PCT_THRESHOLD:
             return True
     return False
 

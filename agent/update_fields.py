@@ -100,6 +100,35 @@ def _guid_from_slots(raw: dict, index: int):
     return raw[index] | (raw.get(index + 1, 0) << 32)
 
 
+# TrinityCore branch `3.3.5`, src/server/shared/SharedDefines.h `enum Powers`
+# — the type stored in UNIT_FIELD_BYTES_0's power_type byte and the meaning
+# of UNIT_FIELD_POWER1..POWER7 / UNIT_FIELD_MAXPOWER1..MAXPOWER7 slot N (this
+# is NOT positional: a class only sends the slots for the powers it has, so
+# slot 0 is "mana" only when mana happens to be the first power present —
+# UM-70). POWER_NAMES[i] is the name for slot offset i (0-6).
+POWER_MANA = 0
+POWER_RAGE = 1
+POWER_FOCUS = 2
+POWER_ENERGY = 3
+POWER_HAPPINESS = 4
+POWER_RUNE = 5
+POWER_RUNIC_POWER = 6
+POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
+
+
+def _decode_power_slots(raw: dict, base_index: int) -> dict:
+    """{power_name: value} for whichever of the 7 POWER/MAXPOWER slots
+    starting at `base_index` are present in `raw` — keyed by Powers enum
+    name so index/key always means the same power type regardless of which
+    slots the server actually sent (UM-70)."""
+    out = {}
+    for i in range(7):
+        index = base_index + i
+        if index in raw:
+            out[POWER_NAMES[i]] = raw[index]
+    return out
+
+
 def decode_fields(object_type: int, raw: dict) -> dict:
     """Named, typed values from `raw` (agent.update_object's VALUES_UPDATE
     field dict: {field_index: uint32}). Only maps the fields listed in the
@@ -135,10 +164,10 @@ def decode_fields(object_type: int, raw: dict) -> dict:
         if target_guid is not None:
             out["target_guid"] = target_guid
 
-        power = [raw[UNIT_FIELD_POWER1 + i] for i in range(7) if (UNIT_FIELD_POWER1 + i) in raw]
+        power = _decode_power_slots(raw, UNIT_FIELD_POWER1)
         if power:
             out["power"] = power
-        max_power = [raw[UNIT_FIELD_MAXPOWER1 + i] for i in range(7) if (UNIT_FIELD_MAXPOWER1 + i) in raw]
+        max_power = _decode_power_slots(raw, UNIT_FIELD_MAXPOWER1)
         if max_power:
             out["max_power"] = max_power
 
