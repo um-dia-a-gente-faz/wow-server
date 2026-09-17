@@ -67,7 +67,11 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 ## Branches
 
 - `main` — the single source of truth. Always deployable.
-- Feature branches: `feat/<slug>`, `fix/<slug>`.
+- Every branch MUST follow `<type>/UM-<number>-<slug>`, where `<type>` is
+  `feature` or `bugfix` and `<number>` is the branch's Linear issue:
+  - `feature/UM-<number>-<slug>` — new functionality (Linear `feat`-type work).
+  - `bugfix/UM-<number>-<slug>` — bug fixes.
+  - Examples: `feature/UM-58-follow-leader-reflex`, `bugfix/UM-48-chat-log-level`.
 - **Every PR's base is `main`. Never stack a PR on another branch, even a
   genuinely dependent one.** Branch from `main` (or from the tip of your own
   in-progress work if you're queuing several tickets before any of them
@@ -83,7 +87,7 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
   `docs/AGENT-DIRECTION.md`'s "Known findings" for the recovery.
 - Use git worktrees for parallel work (each worktree is its own directory):
   ```bash
-  git worktree add ../wowwork-<name> -b feat/<name>
+  git worktree add ../wowwork-<name> -b feature/UM-<number>-<slug>
   ```
 
 ## Code style
