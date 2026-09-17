@@ -59,8 +59,8 @@ class ObjectInfo:
     level: int | None = None
     health: int | None = None
     max_health: int | None = None
-    power: list = field(default_factory=list)
-    max_power: list = field(default_factory=list)
+    power: dict = field(default_factory=dict)  # {Powers name: value} — agent.update_fields.POWER_NAMES, UM-70
+    max_power: dict = field(default_factory=dict)
     faction: int | None = None
     unit_flags: int | None = None
     dynamic_flags: int | None = None
@@ -503,9 +503,9 @@ class WorldState:
             if attr in decoded:
                 setattr(obj, attr, decoded[attr])
         if "power" in decoded:
-            obj.power = decoded["power"]
+            obj.power.update(decoded["power"])
         if "max_power" in decoded:
-            obj.max_power = decoded["max_power"]
+            obj.max_power.update(decoded["max_power"])
 
     def build_equipment_and_inventory(self) -> tuple[dict, list]:
         """UM-42: equipment (slot -> item dict, slots 0-18) and inventory

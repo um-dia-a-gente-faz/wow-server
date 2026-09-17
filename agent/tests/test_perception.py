@@ -58,6 +58,21 @@ class UpdateObjectTest(unittest.TestCase):
         self.assertIsNone(ws.get_object(99))
         self.assertEqual(ws.unknown_field_updates, 1)
 
+    def test_partial_power_update_keeps_other_powers(self):
+        # UM-70: a VALUES update reporting only the slot(s) that changed
+        # (e.g. focus regen) must not wipe out previously-known powers
+        # (e.g. mana) by replacing the whole dict.
+        ws = per.WorldState()
+        ws.update_object(create_block(1, fields={
+            uf.UNIT_FIELD_POWER1: 145, uf.UNIT_FIELD_POWER1 + 2: 90,
+            uf.UNIT_FIELD_MAXPOWER1: 145, uf.UNIT_FIELD_MAXPOWER1 + 2: 100,
+        }))
+        # Only focus (slot 2) changed this tick.
+        ws.update_object(values_block(1, {uf.UNIT_FIELD_POWER1 + 2: 100}))
+        obj = ws.get_object(1)
+        self.assertEqual(obj.power, {"mana": 145, "focus": 100})
+        self.assertEqual(obj.max_power, {"mana": 145, "focus": 100})
+
     def test_movement_updates_position(self):
         ws = per.WorldState()
         ws.set_my_map(530)
