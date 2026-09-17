@@ -32,6 +32,7 @@ from . import movement
 from . import npc
 from . import spells
 from . import loot as lootmod
+from . import item_compare
 from . import update_fields as uf
 
 CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
@@ -1020,3 +1021,119 @@ class DestroyItemAction(Action):
                 **_) -> ActionResult:
         session._send_packet(lootmod.CMSG_DESTROYITEM, lootmod.build_destroy_item(bag, slot, count))
         return ActionResult(ok=True, detail={"bag": bag, "slot": slot, "count": count})
+
+
+# ── Item comparison / equip (UM-69) ───────────────────────────────────────
+#
+# Wire layout for CMSG_AUTOEQUIP_ITEM verified against TrinityCore branch
+# `3.3.5` (src/server/game/Handlers/ItemHandler.cpp,
+# HandleAutoEquipItemOpcode) — see agent/loot.py's build_autoequip_item for
+# the byte-level detail and its opcode-value caveat (not independently
+# confirmed against a live server in this sandbox, no network access here).
+# Scoring/usability heuristics live in agent/item_compare.py (v1: primary
+# stat for class + item level tiebreak, no talent/spec awareness).
+
+
+def _resolve_item_template(world, bag: int, slot: int):
+    """(item_guid, entry, template_dict) for the item at bag/slot, or
+    (None, None, None) if there's no known item there. If the item's guid/
+    entry are known but its template (name/stats/armor/...) hasn't come
+    back from CMSG_ITEM_QUERY_SINGLE yet, returns (guid, entry, None) —
+    also requests the query (world.items.want_item) so it'll be available
+    on a later call. Callers treat a None template as "not enough
+    information yet", never as a crash."""
+    item_guid = _find_item_guid(world, bag, slot)
+    if item_guid is None:
+        return None, None, None
+    item_obj = world.get_object(item_guid)
+    if item_obj is None or item_obj.entry is None:
+        return item_guid, None, None
+    world.items.want_item(item_obj.entry)
+    template = world.items.items.get(item_obj.entry)
+    return item_guid, item_obj.entry, template
+
+
+@register
+class CompareItemsAction(Action):
+    name = "compare_items"
+    description = ("Compare two items at given bag/slot positions for the character's own class "
+                    "(UM-69 v1 heuristic: primary stat for class + item level as a tiebreaker, no "
+                    "talent/spec awareness — see agent.item_compare's docstring). Returns which "
+                    "item scores higher and a human-readable reason.")
+    params = {
+        "bag_a": {"type": "integer", "description": "Bag byte of the first item (255 = equipped items/backpack)."},
+        "slot_a": {"type": "integer", "description": "Inventory slot of the first item."},
+        "bag_b": {"type": "integer", "description": "Bag byte of the second item (255 = equipped items/backpack)."},
+        "slot_b": {"type": "integer", "description": "Inventory slot of the second item."},
+    }
+    required = ("bag_a", "slot_a", "bag_b", "slot_b")
+
+    def check(self, session, world, bag_a: int, slot_a: int, bag_b: int, slot_b: int, **_) -> str | None:
+        _, _, template_a = _resolve_item_template(world, bag_a, slot_a)
+        if template_a is None:
+            return f"no known item template at bag={bag_a} slot={slot_a} (not queried yet, or empty slot)"
+        _, _, template_b = _resolve_item_template(world, bag_b, slot_b)
+        if template_b is None:
+            return f"no known item template at bag={bag_b} slot={slot_b} (not queried yet, or empty slot)"
+        if template_a.get("inventory_type") != template_b.get("inventory_type"):
+            return (f"items are for different equip slots (inventory_type "
+                    f"{template_a.get('inventory_type')} vs {template_b.get('inventory_type')})")
+        return None
+
+    def execute(self, session, world, bag_a: int, slot_a: int, bag_b: int, slot_b: int, **_) -> ActionResult:
+        _, entry_a, template_a = _resolve_item_template(world, bag_a, slot_a)
+        _, entry_b, template_b = _resolve_item_template(world, bag_b, slot_b)
+        class_id = getattr(session, "class_", 0)
+        result = item_compare.compare(template_a, template_b, class_id)
+        detail = {
+            "entry_a": entry_a, "entry_b": entry_b,
+            "usability_error_a": item_compare.usability_error(template_a, class_id),
+            "usability_error_b": item_compare.usability_error(template_b, class_id),
+            **result,
+        }
+        return ActionResult(ok=True, detail=detail)
+
+
+@register
+class EquipItemAction(Action):
+    name = "equip_item"
+    description = ("Equip the item at bag/slot (CMSG_AUTOEQUIP_ITEM) — the server picks the equip "
+                    "slot from the item itself. Refuses up front if the item's cached template says "
+                    "it can't be used by this character (wrong armor type, class-restricted); "
+                    "otherwise waits for the server's confirmation/failure response before "
+                    "returning, so ok=True means the item was actually equipped.")
+    params = {
+        "bag": {"type": "integer", "description": "Bag byte of the item (255 = equipped items/backpack)."},
+        "slot": {"type": "integer", "description": "Inventory slot of the item."},
+    }
+    required = ("bag", "slot")
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, bag: int, slot: int, **_) -> str | None:
+        item_guid, _, template = _resolve_item_template(world, bag, slot)
+        if item_guid is None:
+            return f"no known item at bag={bag} slot={slot}"
+        if template is not None:
+            error = item_compare.usability_error(template, getattr(session, "class_", 0))
+            if error is not None:
+                return error
+        return None
+
+    def execute(self, session, world, bag: int, slot: int, **_) -> ActionResult:
+        item_guid, entry, _ = _resolve_item_template(world, bag, slot)
+        sent_at = time.monotonic()
+        session._send_packet(lootmod.CMSG_AUTOEQUIP_ITEM, lootmod.build_autoequip_item(bag, slot))
+
+        def find_failure():
+            for e in session.events:
+                if e.get("t", 0) >= sent_at and e.get("kind") == "inventory_change_failure":
+                    return e
+            return None
+
+        failure = _wait_for_value(find_failure, timeout=self.confirm_timeout, interval=self.confirm_interval)
+        detail = {"bag": bag, "slot": slot, "item_guid": item_guid, "entry": entry}
+        if failure is not None:
+            detail["failure"] = failure
+            return ActionResult(ok=False, error=failure.get("reason_name", "equip failed"), detail=detail)
+        return ActionResult(ok=True, detail=detail)

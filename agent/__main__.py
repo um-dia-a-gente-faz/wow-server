@@ -162,6 +162,7 @@ def _connect_and_login(cfg, log) -> WoWSession:
     choice = _resolve_character(cfg, chars)
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
     sess.race = choice['race']
+    sess.class_ = choice['class_']
     sess.login_character(choice['guid'])
     log.info("online — guid %d, position %s", sess.player_guid, sess.player_position)
     return sess

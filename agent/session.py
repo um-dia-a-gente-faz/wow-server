@@ -395,6 +395,7 @@ class WoWSession:
         self.player_position = None  # (map_id, x, y, z, orient)
         self.level = 0
         self.race = 0  # ChrRaces.dbc ID; set by callers (e.g. __main__.py) from enum_characters()
+        self.class_ = 0  # ChrClasses.dbc ID (UM-69); set by callers from enum_characters(), same as race
         self.xp = None
         self.next_level_xp = None
         self.coinage = None
