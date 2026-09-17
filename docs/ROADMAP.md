@@ -179,20 +179,31 @@ on perception and is a dependency for the next:
 
 ### Phase 3 — think loop + LLM integration
 
-`agent/__main__.py::_run_loop` already has the perceive/think/act skeleton
-with the think step commented as a placeholder; `agent/config.py` already has
-unused `llm_base_url`/`llm_api_key`/`llm_model` fields waiting for it. Once
-Phase 1 + enough of Phase 2 land to make an action loop meaningful:
+**UM-44 landed the first slice**: `agent/llm.py` (an OpenAI-compatible
+`/chat/completions` client over stdlib `urllib`, no extra dependency) and
+`agent/think.py::think_and_act()` (perception snapshot + `agent.actions.
+catalog()` as tools → one LLM call → validate the returned tool call against
+`agent.actions.REGISTRY` → execute exactly one action). `agent/__main__.py::
+_run_loop` calls it every think cycle when `LLM_BASE_URL`/`LLM_MODEL` are
+set; the agent idles (with a warning logged once) otherwise. Unit-tested
+with a mocked LLM client (`agent/tests/test_think.py`) and a mocked HTTP
+layer (`agent/tests/test_llm.py`) — not yet live-verified against a real
+free-model endpoint.
 
-1. Build the system prompt from `world_state.get_objects()` +
-   `player_position` + a fixed action catalog (the subset of
-   `docs/AI-AGENT-SPEC.md`'s action list actually implemented so far).
-2. One LLM call per think cycle → one action, using the existing
-   `think_interval` pacing (`AGENT_THINK_INTERVAL_S`, default 3s) as the
-   rate limit — no need to build a separate rate limiter first.
-3. Log every (perception snapshot, LLM decision, action, result) tuple —
-   this doubles as the audit log the spec's Safety section asks for, and as
-   debugging data for prompt iteration.
+Still open, in order:
+
+1. **Live-verify against a real free model** (`docs/AGENT-DIRECTION.md`'s
+   FreeLLMAPI/local-model constraint) — confirm tool-call reliability is
+   anywhere near the ≥90% valid-tool-call bar that doc sets, not just that
+   the client parses a well-formed mocked response.
+2. **Model pinning + fallback** — `auto` routing gave ~50% valid tool calls
+   in the earlier prototype; pin a short list of models known to be good at
+   tool calls (UM-61 benchmarks candidates), and fail over to a local model
+   server if the primary is down/rate-limited.
+3. **Audit log** — persist every (perception snapshot, LLM decision, action,
+   result) tuple, not just the current `log.info`/`log.warning` lines; this
+   doubles as the spec's Safety-section audit log and as prompt-iteration
+   data.
 4. Exit criterion (from the spec's Phase 3): one agent can autonomously level
    1→10 unattended. Don't reach for memory (vector store, long-term DB) or a
    second concurrent agent before this works — multi-agent coordination will

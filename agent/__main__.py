@@ -18,6 +18,8 @@ import time
 from .config import load_config
 from .auth import auth_logon
 from .session import WoWSession
+from .llm import LLMClient
+from .think import think_and_act
 
 
 def _setup_logging(level: str):
@@ -114,9 +116,16 @@ def main():
         log.info("dry-run complete.")
         return
 
+    llm_client = None
+    if cfg.llm_base_url and cfg.llm_model:
+        llm_client = LLMClient(cfg.llm_base_url, cfg.llm_model, api_key=cfg.llm_api_key)
+        log.info("llm: %s @ %s", cfg.llm_model, cfg.llm_base_url)
+    else:
+        log.warning("LLM_BASE_URL/LLM_MODEL not set — think step disabled, agent will idle")
+
     log.info("entering agent loop (ctrl+c to stop) ...")
     try:
-        _run_loop(sess, cfg, duration, perception_dump=args.perception_dump)
+        _run_loop(sess, cfg, duration, perception_dump=args.perception_dump, llm_client=llm_client)
     except KeyboardInterrupt:
         log.info("interrupted")
     finally:
@@ -124,7 +133,7 @@ def main():
         log.info("done.")
 
 
-def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False):
+def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, llm_client=None):
     log = logging.getLogger("agent")
     start = time.monotonic()
 
@@ -152,10 +161,12 @@ def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False):
             snapshot = sess.world_state.snapshot(my_position=sess.player_position)
             print(json.dumps(snapshot))
 
-        # ── think (LLM call — placeholder for now) ─────────────
-
-        # ── act (placeholder) ──────────────────────────────────
-        # For now: idle.  Real action loop comes with layer 2+3.
+        # ── think + act (LLM call → one validated action per cycle) ────
+        if llm_client is not None:
+            result = think_and_act(sess, sess.world_state, llm_client,
+                                    persona=cfg.persona, my_position=sess.player_position)
+            if not result.ok:
+                log.info("think cycle: no action taken (%s)", result.error)
 
         time.sleep(cfg.think_interval)
 
