@@ -3,6 +3,13 @@
 This repo is worked on by multiple agents (Claude, Codex, Hermes). These rules
 keep the output consistent regardless of who writes the code.
 
+Coding agents: start with [`CLAUDE.md`](CLAUDE.md) (also readable as `AGENTS.md`) — the
+short version of these rules plus the hard "never do this" list — and use the skills in
+[`.claude/skills/`](.claude/skills/) for the recurring workflows:
+`live-agent-test` (log an agent in and test on the live server), `trinity-protocol`
+(3.3.5a wire formats), `pr-workflow` (ship a change), `wowmap-dev` (the observability
+site).
+
 ## Conventional commits
 
 Every commit MUST follow the [Conventional Commits](https://www.conventionalcommits.org/) format:
