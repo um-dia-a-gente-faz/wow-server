@@ -13,6 +13,7 @@ import zlib
 
 from . import packets as pk
 from . import crypt as cr
+from . import loot as lo
 from . import names as nm
 from . import perception as per
 from . import spells as sp
@@ -98,6 +99,22 @@ SMSG_GAMEOBJECT_QUERY_RESPONSE = 0x05F
 CMSG_CREATURE_QUERY           = 0x060
 SMSG_CREATURE_QUERY_RESPONSE  = 0x061
 
+# Loot / inventory (UM-42)
+CMSG_USE_ITEM                   = lo.CMSG_USE_ITEM
+CMSG_DESTROYITEM                = lo.CMSG_DESTROYITEM
+SMSG_INVENTORY_CHANGE_FAILURE   = lo.SMSG_INVENTORY_CHANGE_FAILURE
+CMSG_AUTOSTORE_LOOT_ITEM        = lo.CMSG_AUTOSTORE_LOOT_ITEM
+CMSG_LOOT                       = lo.CMSG_LOOT
+CMSG_LOOT_MONEY                 = lo.CMSG_LOOT_MONEY
+CMSG_LOOT_RELEASE                = lo.CMSG_LOOT_RELEASE
+SMSG_LOOT_RESPONSE               = lo.SMSG_LOOT_RESPONSE
+SMSG_LOOT_RELEASE_RESPONSE       = lo.SMSG_LOOT_RELEASE_RESPONSE
+SMSG_LOOT_REMOVED                = lo.SMSG_LOOT_REMOVED
+SMSG_LOOT_MONEY_NOTIFY           = lo.SMSG_LOOT_MONEY_NOTIFY
+SMSG_ITEM_PUSH_RESULT            = lo.SMSG_ITEM_PUSH_RESULT
+CMSG_ITEM_QUERY_SINGLE           = lo.CMSG_ITEM_QUERY_SINGLE
+SMSG_ITEM_QUERY_SINGLE_RESPONSE  = lo.SMSG_ITEM_QUERY_SINGLE_RESPONSE
+
 # ChatMsg (uint8) — the full enum, src/server/shared/SharedDefines.h. UM-44's
 # prompt builder treats *_LEADER/RAID/PARTY/GUILD/WHISPER/name-mention kinds
 # as addressed to the agent and everything else (including monster_* other
@@ -157,6 +174,17 @@ _SPELL_DISPATCH = {
     SMSG_PARTYKILLLOG: "_handle_party_kill_log",
     SMSG_LOG_XPGAIN: "_handle_log_xp_gain",
     SMSG_LEVELUP_INFO: "_handle_levelup_info",
+}
+
+# opcode -> WoWSession handler method name, for the loot/item opcodes (UM-42).
+_LOOT_DISPATCH = {
+    SMSG_LOOT_RESPONSE: "_handle_loot_response",
+    SMSG_LOOT_RELEASE_RESPONSE: "_handle_loot_release_response",
+    SMSG_LOOT_REMOVED: "_handle_loot_removed",
+    SMSG_LOOT_MONEY_NOTIFY: "_handle_loot_money_notify",
+    SMSG_ITEM_PUSH_RESULT: "_handle_item_push_result",
+    SMSG_INVENTORY_CHANGE_FAILURE: "_handle_inventory_change_failure",
+    SMSG_ITEM_QUERY_SINGLE_RESPONSE: "_handle_item_query_response",
 }
 
 CHAT_MSG_CHANNEL = 0x11
@@ -330,6 +358,7 @@ class WoWSession:
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
         self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}
+        self.loot: dict | None = None  # current open loot session (agent.loot.parse_loot_response()'s dict), or None
 
     def connect(self):
         """Connect to world server and authenticate."""
@@ -517,6 +546,12 @@ class WoWSession:
             elif kind == "gameobject":
                 self._send_packet(CMSG_GAMEOBJECT_QUERY, nm.build_gameobject_query(key, sample_guid))
 
+    def _send_item_queries(self):
+        """UM-42: same idea as _send_name_queries, for
+        agent.perception.WorldState.items (item template cache)."""
+        for entry in self.world_state.items.drain():
+            self._send_packet(CMSG_ITEM_QUERY_SINGLE, lo.build_item_query(entry))
+
     def _handle_name_query_response(self, payload: bytes):
         try:
             data = nm.parse_name_query_response(payload)
@@ -537,6 +572,61 @@ class WoWSession:
         except (IndexError, struct.error, ValueError) as e:
             raise per.PerceptionParseError(f"malformed SMSG_GAMEOBJECT_QUERY_RESPONSE ({len(payload)} B): {e}") from e
         self.world_state.apply_gameobject_query_response(data)
+
+    def _handle_item_query_response(self, payload: bytes):
+        try:
+            data = lo.parse_item_query_response(payload)
+        except (IndexError, struct.error, ValueError) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_ITEM_QUERY_SINGLE_RESPONSE ({len(payload)} B): {e}") from e
+        self.world_state.apply_item_query_response(data)
+
+    # ── Loot / inventory (UM-42) ──────────────────────────────────────────
+
+    def _handle_loot_response(self, payload: bytes):
+        try:
+            data = lo.parse_loot_response(payload)
+        except (IndexError, struct.error, ValueError) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_LOOT_RESPONSE ({len(payload)} B): {e}") from e
+        self.loot = data
+        self._record_event("loot_response", **data)
+
+    def _handle_loot_release_response(self, payload: bytes):
+        try:
+            data = lo.parse_loot_release_response(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_LOOT_RELEASE_RESPONSE ({len(payload)} B): {e}") from e
+        if self.loot is not None and self.loot.get("guid") == data["guid"]:
+            self.loot = None
+        self._record_event("loot_release", **data)
+
+    def _handle_loot_removed(self, payload: bytes):
+        data = lo.parse_loot_removed(payload)
+        if self.loot is not None:
+            self.loot["items"] = [i for i in self.loot.get("items", []) if i["slot"] != data["slot"]]
+        self._record_event("loot_removed", **data)
+
+    def _handle_loot_money_notify(self, payload: bytes):
+        try:
+            data = lo.parse_loot_money_notify(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_LOOT_MONEY_NOTIFY ({len(payload)} B): {e}") from e
+        if self.loot is not None:
+            self.loot["coins"] = 0
+        self._record_event("loot_money", **data)
+
+    def _handle_item_push_result(self, payload: bytes):
+        try:
+            data = lo.parse_item_push_result(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_ITEM_PUSH_RESULT ({len(payload)} B): {e}") from e
+        self._record_event("item_received", **data)
+
+    def _handle_inventory_change_failure(self, payload: bytes):
+        try:
+            data = lo.parse_inventory_change_failure(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_INVENTORY_CHANGE_FAILURE ({len(payload)} B): {e}") from e
+        self._record_event("inventory_change_failure", **data)
 
     def _handle_monster_move(self, payload: bytes):
         """SMSG_MONSTER_MOVE (0x0DD): an NPC's new destination/path (UM-64).
@@ -640,6 +730,9 @@ class WoWSession:
                 self.next_level_xp = next_xp
             coinage = me.raw_fields.get(uo_fields.PLAYER_FIELD_COINAGE)
             if coinage is not None:
+                if self.coinage is not None and coinage != self.coinage:
+                    self._record_event("money_changed", old=self.coinage, new=coinage,
+                                        delta=coinage - self.coinage)
                 self.coinage = coinage
 
     def _handle_messagechat(self, opcode: int, payload: bytes):
@@ -797,6 +890,8 @@ class WoWSession:
             self._handle_move_broadcast(opcode, payload)
         elif opcode in _SPELL_DISPATCH:
             getattr(self, _SPELL_DISPATCH[opcode])(payload)
+        elif opcode in _LOOT_DISPATCH:
+            getattr(self, _LOOT_DISPATCH[opcode])(payload)
         elif opcode in (SMSG_PONG, SMSG_STANDSTATE_UPDATE):
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
@@ -843,12 +938,14 @@ class WoWSession:
                     self._send_packet(CMSG_KEEP_ALIVE)
                     last_keepalive = now
                 self._send_name_queries()
+                self._send_item_queries()
                 continue
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
                 return
             self._dispatch_guarded(opcode, payload)
             self._send_name_queries()
+            self._send_item_queries()
 
     def _send_packet(self, opcode: int, payload: bytes = b''):
         hdr = struct.pack('>H', len(payload) + 4) + struct.pack('<I', opcode)
