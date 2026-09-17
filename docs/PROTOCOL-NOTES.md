@@ -629,3 +629,19 @@ agent character having any gold. `agent/tests/test_mail.py`'s hand-built-
 byte tests cover every one of those layouts; only the live round trip
 wasn't exercised for them. See the UM-60 PR for what's left as a human
 step.
+
+**Gold, not movement, is the actual blocker — confirmed live.** Tried to
+earn the 30-copper postage honestly (no GM commands): sold Farstrider's
+only tradeable item (a starting-tier shield) to a nearby vendor
+(Shara Sunwing, Sunstrider Isle) for 3 copper — nowhere near enough.
+Separately, since every agent character's spawn is far from a mailbox,
+tested whether `move_to` can even cover that distance at all: Farstrider
+walked the full ~968 yd from Sunstrider Isle to the same Silvermoon City
+mailbox Luaprata used, in **one** `move_to` call, arriving within 0.17 yd
+in 136 s, no obstacles, no "stuck". So v1's straight-line movement *can*
+reach a mailbox from every agent's spawn — the only reason a full live
+send/receive round trip hasn't happened yet is that no agent has enough
+gold, not a movement/pathing limitation. Farstrider was left logged out
+right at the Silvermoon mailbox (3 copper) — a future session with
+~27 more copper on hand (or on any character that can reach him/a
+mailbox) can finish this test immediately without any more walking.
