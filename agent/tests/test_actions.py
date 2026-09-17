@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import movement as mv
+from agent import npc
 from agent import packets as pk
 from agent import perception as per
 from agent import update_fields as uf
@@ -617,6 +618,443 @@ class CastSpellActionTest(unittest.TestCase):
         target_flags = struct.unpack_from('<I', payload, 6)[0]
         self.assertEqual(spell_id, 21084)
         self.assertEqual(target_flags, 0)  # TARGET_FLAG_NONE
+
+
+def npc_object(guid, x, y, z, npc_flags=0, object_type="unit"):
+    """A creature/gameobject ObjectInfo with npc_flags set via a VALUES
+    merge, mirroring how real SMSG_UPDATE_OBJECT blocks land (CREATE with
+    movement, then a fields-only merge)."""
+    world_obj_type = uo.TYPEID_GAMEOBJECT if object_type == "gameobject" else uo.TYPEID_UNIT
+    block = uo.UpdateBlock(
+        update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=guid, object_type=world_obj_type,
+        movement={"update_flags": uo.UPDATEFLAG_STATIONARY_POSITION, "x": x, "y": y, "z": z, "o": 0.0},
+        fields={uf.UNIT_NPC_FLAGS: npc_flags} if object_type != "gameobject" else {},
+    )
+    return block
+
+
+class InteractActionTest(unittest.TestCase):
+    def test_check_fails_for_unperceived_guid(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        self.assertIsNotNone(ac.InteractAction().check(sess, world, guid=5))
+
+    def test_check_out_of_range_suggests_move_towards(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(npc_object(5, 100.0, 0.0, 0.0, npc_flags=per.UNIT_NPC_FLAG_VENDOR))
+        err = ac.InteractAction().check(sess, world, guid=5)
+        self.assertIsNotNone(err)
+        self.assertIn("move_towards", err)
+
+    def test_execute_sends_gossip_hello_for_gossip_flag(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(npc_object(5, 2.0, 0.0, 0.0, npc_flags=per.UNIT_NPC_FLAG_GOSSIP))
+        result = ac.InteractAction().execute(sess, world, guid=5)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_GOSSIP_HELLO, npc.build_gossip_hello(5)))
+
+    def test_execute_sends_list_inventory_for_vendor_only_flag(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(npc_object(5, 2.0, 0.0, 0.0, npc_flags=per.UNIT_NPC_FLAG_VENDOR))
+        result = ac.InteractAction().execute(sess, world, guid=5)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_LIST_INVENTORY, npc.build_list_inventory(5)))
+
+    def test_execute_sends_trainer_list_for_trainer_only_flag(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(npc_object(5, 2.0, 0.0, 0.0, npc_flags=per.UNIT_NPC_FLAG_TRAINER))
+        result = ac.InteractAction().execute(sess, world, guid=5)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_TRAINER_LIST, npc.build_trainer_list(5)))
+
+    def test_execute_sends_gameobj_use_for_gameobject(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(npc_object(5, 2.0, 0.0, 0.0, object_type="gameobject"))
+        result = ac.InteractAction().execute(sess, world, guid=5)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_GAMEOBJ_USE, npc.build_gameobj_use(5)))
+
+    def test_execute_reports_no_interaction_for_plain_unit(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(npc_object(5, 2.0, 0.0, 0.0, npc_flags=0))
+        result = ac.InteractAction().execute(sess, world, guid=5)
+        self.assertFalse(result.ok)
+
+
+class GossipSelectActionTest(unittest.TestCase):
+    def test_check_fails_without_open_window(self):
+        world = per.WorldState()
+        self.assertIsNotNone(ac.GossipSelectAction().check(fake_session(), world, option_index=0))
+
+    def test_check_fails_for_unknown_option(self):
+        world = per.WorldState()
+        world.ui_state = {"kind": "gossip", "npc_guid": 5, "menu_id": 1,
+                           "options": [{"index": 0}]}
+        self.assertIsNotNone(ac.GossipSelectAction().check(fake_session(), world, option_index=9))
+
+    def test_execute_sends_select_option(self):
+        world = per.WorldState()
+        world.ui_state = {"kind": "gossip", "npc_guid": 5, "menu_id": 1,
+                           "options": [{"index": 0}, {"index": 1}]}
+        sess = fake_session()
+        result = ac.GossipSelectAction().execute(sess, world, option_index=1)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_GOSSIP_SELECT_OPTION,
+                                          npc.build_gossip_select_option(5, 1, 1)))
+
+
+class BuyItemActionTest(unittest.TestCase):
+    def _window(self):
+        return {"kind": "vendor", "vendor_guid": 5,
+                "items": [{"slot": 1, "entry": 6948, "price": 500},
+                          {"slot": 2, "entry": 159, "price": 10}]}
+
+    def test_check_fails_without_open_window(self):
+        world = per.WorldState()
+        self.assertIsNotNone(ac.BuyItemAction().check(fake_session(), world, vendor_guid=5, slot=1))
+
+    def test_check_fails_for_unknown_slot(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        self.assertIsNotNone(ac.BuyItemAction().check(fake_session(), world, vendor_guid=5, slot=9))
+
+    def test_execute_by_slot_succeeds_on_buy_item_ack(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.BuyItemAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "buy_item", "vendor_guid": 5, "slot": 2,
+                                         "new_count": 3, "stacks": 3})
+        result = action.execute(sess, world, vendor_guid=5, slot=2, count=3)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_BUY_ITEM, npc.build_buy_item(5, 159, 2, 3)))
+
+    def test_execute_by_entry_succeeds_on_buy_item_ack(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.BuyItemAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "buy_item", "vendor_guid": 5, "slot": 1,
+                                         "new_count": -1, "stacks": 1})
+        result = action.execute(sess, world, vendor_guid=5, entry=6948, count=1)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_BUY_ITEM, npc.build_buy_item(5, 6948, 1, 1)))
+
+    def test_execute_fails_on_buy_failed(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.BuyItemAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "buy_failed", "vendor_guid": 5, "item_entry": 159,
+                                         "reason": 2, "reason_name": "not_enough_money"})
+        result = action.execute(sess, world, vendor_guid=5, slot=2, count=1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "not_enough_money")
+
+    def test_execute_no_response_times_out_as_failure(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.BuyItemAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        result = action.execute(sess, world, vendor_guid=5, slot=2, count=1)
+        self.assertFalse(result.ok)
+
+
+class SellItemActionTest(unittest.TestCase):
+    def test_check_fails_without_open_window(self):
+        world = per.WorldState()
+        self.assertIsNotNone(ac.SellItemAction().check(fake_session(), world, vendor_guid=5, bag=255, slot=23))
+
+    def test_check_fails_for_unknown_item(self):
+        world = per.WorldState()
+        world.ui_state = {"kind": "vendor", "vendor_guid": 5, "items": []}
+        self.assertIsNotNone(ac.SellItemAction().check(fake_session(), world, vendor_guid=5, bag=255, slot=23))
+
+    def test_execute_succeeds_when_no_failure_arrives(self):
+        world = per.WorldState()
+        world.set_my_guid(0x1)
+        item_guid = 0xF120000000000001
+        world.update_object(self_player_with_slots(0x1, {23: item_guid}))
+        world.ui_state = {"kind": "vendor", "vendor_guid": 5, "items": []}
+        sess = fake_session()
+        action = ac.SellItemAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        result = action.execute(sess, world, vendor_guid=5, bag=255, slot=23, count=1)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_SELL_ITEM, npc.build_sell_item(5, item_guid, 1)))
+
+    def test_execute_fails_on_sell_failed(self):
+        world = per.WorldState()
+        world.set_my_guid(0x1)
+        item_guid = 0xF120000000000001
+        world.update_object(self_player_with_slots(0x1, {23: item_guid}))
+        world.ui_state = {"kind": "vendor", "vendor_guid": 5, "items": []}
+        sess = fake_session()
+        action = ac.SellItemAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "sell_failed", "vendor_guid": 5, "item_guid": item_guid,
+                                         "reason": 2, "reason_name": "cant_sell_item"})
+        result = action.execute(sess, world, vendor_guid=5, bag=255, slot=23, count=1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "cant_sell_item")
+
+
+class TrainSpellActionTest(unittest.TestCase):
+    def _window(self):
+        return {"kind": "trainer", "trainer_guid": 5, "spells": [{"spell_id": 587}]}
+
+    def test_check_fails_without_open_window(self):
+        world = per.WorldState()
+        self.assertIsNotNone(ac.TrainSpellAction().check(fake_session(), world,
+                                                          trainer_guid=5, spell_id=587))
+
+    def test_check_fails_for_unknown_spell(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        self.assertIsNotNone(ac.TrainSpellAction().check(fake_session(), world,
+                                                          trainer_guid=5, spell_id=999))
+
+    def test_execute_succeeds_on_train_succeeded(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.TrainSpellAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "train_succeeded", "trainer_guid": 5, "spell_id": 587})
+        result = action.execute(sess, world, trainer_guid=5, spell_id=587)
+        self.assertTrue(result.ok)
+        self.assertEqual(sess._sent[0], (npc.CMSG_TRAINER_BUY_SPELL, npc.build_train_spell(5, 587)))
+
+    def test_execute_fails_on_train_failed(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.TrainSpellAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "train_failed", "trainer_guid": 5, "spell_id": 587,
+                                         "reason": 1, "reason_name": "not_enough_money"})
+        result = action.execute(sess, world, trainer_guid=5, spell_id=587)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "not_enough_money")
+
+    def test_execute_no_response_times_out(self):
+        world = per.WorldState()
+        world.ui_state = self._window()
+        sess = fake_session()
+        action = ac.TrainSpellAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        result = action.execute(sess, world, trainer_guid=5, spell_id=587)
+        self.assertFalse(result.ok)
+
+
+class CloseWindowActionTest(unittest.TestCase):
+    def test_closes_open_window(self):
+        world = per.WorldState()
+        world.ui_state = {"kind": "gossip"}
+        result = ac.CloseWindowAction().execute(fake_session(), world)
+        self.assertTrue(result.ok)
+        self.assertTrue(result.detail["was_open"])
+        self.assertIsNone(world.get_ui_state())
+
+    def test_noop_when_already_closed(self):
+        world = per.WorldState()
+        result = ac.CloseWindowAction().execute(fake_session(), world)
+        self.assertTrue(result.ok)
+        self.assertFalse(result.detail["was_open"])
+
+
+def lootable_object_at(guid, x, y, z):
+    block = object_at(guid, x, y, z)
+    ws_block = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=guid,
+                               fields={uf.UNIT_DYNAMIC_FLAGS: per.UNIT_DYNFLAG_LOOTABLE})
+    return block, ws_block
+
+
+def item_object(guid, entry, count=1):
+    return uo.UpdateBlock(
+        update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=guid, object_type=uo.TYPEID_ITEM,
+        movement={"update_flags": 0},
+        fields={uf.OBJECT_FIELD_ENTRY: entry, uf.ITEM_FIELD_STACK_COUNT: count},
+    )
+
+
+def self_player_with_slots(guid, slot_guids):
+    raw = {}
+    for slot, item_guid in slot_guids.items():
+        if slot < 23:
+            base = uf.PLAYER_FIELD_INV_SLOT_HEAD + slot * 2
+        else:
+            base = uf.PLAYER_FIELD_PACK_SLOT_1 + (slot - 23) * 2
+        raw[base] = item_guid & 0xFFFFFFFF
+        raw[base + 1] = item_guid >> 32
+    return uo.UpdateBlock(
+        update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=guid, object_type=uo.TYPEID_PLAYER,
+        movement={"update_flags": uo.UPDATEFLAG_STATIONARY_POSITION, "x": 0.0, "y": 0.0, "z": 0.0, "o": 0.0},
+        fields=raw,
+    )
+
+
+class LootActionTest(unittest.TestCase):
+    def test_check_not_lootable(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(object_at(5, 1.0, 0.0, 0.0))
+        self.assertIsNotNone(ac.LootAction().check(sess, world, guid=5))
+
+    def test_check_out_of_range(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        block, ws_block = lootable_object_at(5, 100.0, 0.0, 0.0)
+        world.update_object(block)
+        world.update_object(ws_block)
+        err = ac.LootAction().check(sess, world, guid=5)
+        self.assertIsNotNone(err)
+        self.assertIn("loot range", err)
+
+    def test_check_passes_in_range_and_lootable(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        world.set_my_map(530)
+        block, ws_block = lootable_object_at(5, 2.0, 0.0, 0.0)
+        world.update_object(block)
+        world.update_object(ws_block)
+        self.assertIsNone(ac.LootAction().check(sess, world, guid=5))
+
+    def test_execute_full_sequence_on_success(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        action = ac.LootAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+
+        response = {"kind": "loot_response", "guid": 5, "success": True, "coins": 12,
+                    "items": [{"slot": 0, "entry": 159, "count": 4}]}
+        append_event_after(sess, 0.02, response)
+        result = action.execute(sess, world, guid=5)
+
+        opcodes = [op for op, _ in sess._sent]
+        self.assertIn(ac.lootmod.CMSG_LOOT, opcodes)
+        self.assertIn(ac.lootmod.CMSG_LOOT_MONEY, opcodes)
+        self.assertIn(ac.lootmod.CMSG_AUTOSTORE_LOOT_ITEM, opcodes)
+        self.assertIn(ac.lootmod.CMSG_LOOT_RELEASE, opcodes)
+        # release must be the very last packet sent
+        self.assertEqual(opcodes[-1], ac.lootmod.CMSG_LOOT_RELEASE)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.detail["coins"], 12)
+        self.assertEqual(result.detail["items"], response["items"])
+
+    def test_execute_no_response_times_out(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        action = ac.LootAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        result = action.execute(sess, world, guid=5)
+        self.assertFalse(result.ok)
+        # never got a response, so no follow-up loot packets were sent
+        opcodes = [op for op, _ in sess._sent]
+        self.assertEqual(opcodes, [ac.lootmod.CMSG_LOOT])
+
+    def test_execute_failure_response_stops_early(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = per.WorldState()
+        action = ac.LootAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "loot_response", "guid": 5, "success": False,
+                                          "failure_reason_name": "too_far"})
+        result = action.execute(sess, world, guid=5)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "too_far")
+        opcodes = [op for op, _ in sess._sent]
+        self.assertEqual(opcodes, [ac.lootmod.CMSG_LOOT])
+
+
+class UseItemActionTest(unittest.TestCase):
+    def test_check_no_item_at_slot(self):
+        sess = fake_session()
+        world = per.WorldState()
+        world.set_my_guid(0x1)
+        world.update_object(self_player_with_slots(0x1, {}))
+        self.assertIsNotNone(ac.UseItemAction().check(sess, world, bag=255, slot=23))
+
+    def test_check_blocked_in_combat(self):
+        sess = fake_session()
+        world = per.WorldState()
+        world.set_my_guid(0x1)
+        item_guid = 0xF120000000000001
+        world.update_object(self_player_with_slots(0x1, {23: item_guid}))
+        world.update_object(item_object(item_guid, entry=159))
+        world.update_object(uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=0x1,
+                                            fields={uf.UNIT_FIELD_FLAGS: ac.UNIT_FLAG_IN_COMBAT}))
+        err = ac.UseItemAction().check(sess, world, bag=255, slot=23)
+        self.assertIsNotNone(err)
+        self.assertIn("combat", err)
+
+    def test_execute_sends_use_item_with_looked_up_spell(self):
+        sess = fake_session()
+        world = per.WorldState()
+        world.set_my_guid(0x1)
+        item_guid = 0xF120000000000001
+        world.update_object(self_player_with_slots(0x1, {23: item_guid}))
+        world.update_object(item_object(item_guid, entry=159))
+        world.items.items[159] = {"entry": 159, "found": True, "name": "Tough Jerky",
+                                   "spells": [{"spell_id": 433, "trigger": ac.lootmod.ITEM_SPELLTRIGGER_ON_USE}]}
+
+        result = ac.UseItemAction().execute(sess, world, bag=255, slot=23)
+        self.assertTrue(result.ok)
+        opcode, payload = sess._sent[0]
+        self.assertEqual(opcode, ac.lootmod.CMSG_USE_ITEM)
+        bag, slot, cast_count, spell_id = struct.unpack_from('<BBBI', payload, 0)
+        item_guid_on_wire = struct.unpack_from('<Q', payload, 7)[0]
+        self.assertEqual((bag, slot, spell_id), (255, 23, 433))
+        self.assertEqual(item_guid_on_wire, item_guid)
+        self.assertEqual(result.detail["spell_id"], 433)
+
+
+class DestroyItemActionTest(unittest.TestCase):
+    def test_requires_confirm(self):
+        sess = fake_session()
+        world = per.WorldState()
+        err = ac.DestroyItemAction().check(sess, world, bag=255, slot=23, count=1, confirm=False)
+        self.assertIsNotNone(err)
+        self.assertIn("confirm", err)
+
+    def test_execute_sends_destroyitem(self):
+        sess = fake_session()
+        world = per.WorldState()
+        result = ac.DestroyItemAction().run(sess, world, bag=255, slot=23, count=2, confirm=True)
+        self.assertTrue(result.ok)
+        opcode, payload = sess._sent[0]
+        self.assertEqual(opcode, ac.lootmod.CMSG_DESTROYITEM)
+        self.assertEqual(payload, struct.pack('<BBI', 255, 23, 2))
 
 
 if __name__ == '__main__':

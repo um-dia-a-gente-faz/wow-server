@@ -9,6 +9,7 @@ from unittest import mock
 
 from agent import perception as per
 from agent import update_fields as uf
+from agent import update_fields as uo_fields
 from agent import update_object as uo
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / "fixtures" / "update_object"
@@ -503,6 +504,134 @@ class RealFixtureIntegrationTest(unittest.TestCase):
 
         snap = ws.snapshot(my_position=(530, 9487.69, -7279.2, 14.29, 0.0), max_range=500)
         self.assertGreater(len(snap["nearby_units"]) + len(snap["nearby_objects"]), 0)
+
+
+class NpcUiStateTest(unittest.TestCase):
+    """UM-40: gossip/vendor/trainer windows land in WorldState.ui_state and
+    surface through snapshot()'s 'window' key."""
+
+    def test_snapshot_window_defaults_to_none(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0))
+        self.assertIsNone(ws.snapshot()["window"])
+
+    def test_gossip_message_opens_window_and_queues_text(self):
+        ws = per.WorldState()
+        data = {"npc_guid": 5, "menu_id": 1, "text_id": 999, "options": [], "quests": []}
+        ws.apply_gossip_message(data)
+        window = ws.get_ui_state()
+        self.assertEqual(window["kind"], "gossip")
+        self.assertEqual(window["npc_guid"], 5)
+        self.assertNotIn("body_text", window)  # not cached yet
+        self.assertEqual(ws.npc_texts.drain(), [(999, 5)])
+
+    def test_npc_text_update_backfills_open_gossip_window(self):
+        ws = per.WorldState()
+        ws.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                  "options": [], "quests": []})
+        ws.apply_npc_text_update({"text_id": 999, "found": True,
+                                   "options": [{"text0": "Welcome!", "text1": "", "probability": 1.0,
+                                                "language": 0, "emotes": []}]})
+        self.assertEqual(ws.get_ui_state()["body_text"], "Welcome!")
+
+    def test_gossip_complete_closes_window(self):
+        ws = per.WorldState()
+        ws.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                  "options": [], "quests": []})
+        ws.apply_gossip_complete()
+        self.assertIsNone(ws.get_ui_state())
+
+    def test_list_inventory_opens_vendor_window(self):
+        ws = per.WorldState()
+        ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
+        self.assertEqual(ws.get_ui_state()["kind"], "vendor")
+        self.assertEqual(ws.snapshot()["window"]["vendor_guid"], 5)
+
+    def test_trainer_list_opens_trainer_window(self):
+        ws = per.WorldState()
+        ws.apply_trainer_list({"trainer_guid": 5, "trainer_type": 0, "spells": [], "greeting": ""})
+        self.assertEqual(ws.get_ui_state()["kind"], "trainer")
+
+    def test_close_window_clears_state(self):
+        ws = per.WorldState()
+        ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
+        ws.close_window()
+        self.assertIsNone(ws.get_ui_state())
+class InventoryModelTest(unittest.TestCase):
+    """UM-42: building session.inventory/equipment from CREATE blocks (self
+    player + item objects) and the item-template cache."""
+
+    def _make_self(self, ws, guid, slot_guids):
+        raw = {}
+        for slot, item_guid in slot_guids.items():
+            if slot < 19 + 4:
+                base = uo_fields.PLAYER_FIELD_INV_SLOT_HEAD + slot * 2
+            else:
+                base = uo_fields.PLAYER_FIELD_PACK_SLOT_1 + (slot - 23) * 2
+            raw[base] = item_guid & 0xFFFFFFFF
+            raw[base + 1] = item_guid >> 32
+        ws.set_my_guid(guid)
+        ws.update_object(create_block(guid, object_type=uo.TYPEID_PLAYER, fields=raw))
+
+    def test_equipment_and_inventory_from_item_objects(self):
+        ws = per.WorldState()
+        me_guid = 0x1
+        head_item_guid = 0xF120000000000005
+        food_item_guid = 0xF120000000000006
+        self._make_self(ws, me_guid, {0: head_item_guid, 23: food_item_guid})
+
+        ws.update_object(create_block(
+            head_item_guid, object_type=uo.TYPEID_ITEM,
+            fields={uf_object_entry(): 1234, uo_fields.ITEM_FIELD_STACK_COUNT: 1}))
+        ws.update_object(create_block(
+            food_item_guid, object_type=uo.TYPEID_ITEM,
+            fields={uf_object_entry(): 159, uo_fields.ITEM_FIELD_STACK_COUNT: 4}))
+
+        equipment, inventory = ws.build_equipment_and_inventory()
+        self.assertEqual(equipment[0]["guid"], head_item_guid)
+        self.assertEqual(equipment[0]["entry"], 1234)
+
+        self.assertEqual(len(inventory), 1)
+        self.assertEqual(inventory[0]["guid"], food_item_guid)
+        self.assertEqual(inventory[0]["entry"], 159)
+        self.assertEqual(inventory[0]["count"], 4)
+        self.assertEqual(inventory[0]["slot"], 23)
+
+    def test_missing_item_object_still_reports_bare_guid(self):
+        ws = per.WorldState()
+        me_guid = 0x1
+        item_guid = 0xF120000000000099
+        self._make_self(ws, me_guid, {23: item_guid})
+        # No CREATE block for the item itself has arrived yet.
+        equipment, inventory = ws.build_equipment_and_inventory()
+        self.assertEqual(inventory, [{"guid": item_guid, "slot": 23}])
+
+    def test_no_self_object_yet(self):
+        ws = per.WorldState()
+        ws.set_my_guid(0x1)
+        self.assertEqual(ws.build_equipment_and_inventory(), ({}, []))
+
+    def test_snapshot_includes_equipment_and_inventory_keys(self):
+        ws = per.WorldState()
+        ws.set_my_map(0)
+        self._make_self(ws, 0x1, {})
+        snap = ws.snapshot(my_position=(0, 0.0, 0.0, 0.0, 0.0))
+        self.assertIn("equipment", snap)
+        self.assertIn("inventory", snap)
+
+    def test_item_query_response_backfills_name(self):
+        ws = per.WorldState()
+        item_guid = 0xF120000000000042
+        ws.update_object(create_block(
+            item_guid, object_type=uo.TYPEID_ITEM,
+            fields={uf_object_entry(): 159, uo_fields.ITEM_FIELD_STACK_COUNT: 1}))
+        ws.apply_item_query_response({"entry": 159, "found": True, "name": "Tough Jerky"})
+        self.assertEqual(ws.get_object(item_guid).name, "Tough Jerky")
+
+
+def uf_object_entry():
+    return uo_fields.OBJECT_FIELD_ENTRY
 
 
 if __name__ == '__main__':

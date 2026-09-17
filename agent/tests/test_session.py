@@ -13,6 +13,8 @@ import uuid
 import zlib
 
 from agent import names as nm
+from agent import npc as npc_mod
+from agent import loot as lo
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
@@ -361,6 +363,56 @@ class NameQueryTest(unittest.TestCase):
         sess = make_session()
         sess._send_name_queries()
         self.assertEqual(sess.sock.sent, b'')
+
+
+class NpcInteractionDispatchTest(unittest.TestCase):
+    """UM-40: dispatch wiring for gossip/vendor/trainer/npc-text opcodes."""
+
+    def test_gossip_message_dispatch_opens_window(self):
+        sess = make_session()
+        payload = (struct.pack('<Q', 5) + struct.pack('<i', 1) + struct.pack('<i', 999)
+                   + struct.pack('<I', 0) + struct.pack('<I', 0))
+        sess._dispatch(se.SMSG_GOSSIP_MESSAGE, payload)
+        window = sess.world_state.get_ui_state()
+        self.assertEqual(window["kind"], "gossip")
+        self.assertEqual(window["npc_guid"], 5)
+        # the missing npc text got queued
+        self.assertEqual(sess.world_state.npc_texts.drain(), [(999, 5)])
+
+    def test_gossip_complete_dispatch_closes_window(self):
+        sess = make_session()
+        sess.world_state.ui_state = {"kind": "gossip"}
+        sess._dispatch(se.SMSG_GOSSIP_COMPLETE, b'')
+        self.assertIsNone(sess.world_state.get_ui_state())
+
+    def test_list_inventory_dispatch_opens_vendor_window(self):
+        sess = make_session()
+        payload = struct.pack('<Q', 5) + bytes([0])
+        sess._dispatch(se.SMSG_LIST_INVENTORY, payload)
+        self.assertEqual(sess.world_state.get_ui_state()["kind"], "vendor")
+
+    def test_trainer_list_dispatch_opens_trainer_window(self):
+        sess = make_session()
+        payload = struct.pack('<Q', 5) + struct.pack('<i', 0) + struct.pack('<i', 0) + b'\x00'
+        sess._dispatch(se.SMSG_TRAINER_LIST, payload)
+        self.assertEqual(sess.world_state.get_ui_state()["kind"], "trainer")
+
+    def test_npc_text_update_dispatch_backfills_gossip_window(self):
+        sess = make_session()
+        sess.world_state.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                                 "options": [], "quests": []})
+        option = (struct.pack('<f', 1.0) + b'Hi\x00' + b'\x00' + struct.pack('<i', 0)
+                   + struct.pack('<6I', 0, 0, 0, 0, 0, 0))
+        payload = struct.pack('<I', 999) + option * npc_mod.MAX_NPC_TEXT_OPTIONS
+        sess._dispatch(se.SMSG_NPC_TEXT_UPDATE, payload)
+        self.assertEqual(sess.world_state.get_ui_state()["body_text"], "Hi")
+
+    def test_send_npc_text_queries_drains_and_sends(self):
+        sess = make_session()
+        sess.world_state.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                                 "options": [], "quests": []})
+        sess._send_npc_text_queries()
+        self.assertIn(npc_mod.build_npc_text_query(999, 5), sess.sock.sent)
 
 
 def len_string(s: str) -> bytes:
@@ -734,6 +786,101 @@ class ReconnectFlagTest(unittest.TestCase):
         sess._running = True
         sess._recv_loop()
         self.assertTrue(sess.unexpected_disconnect)
+class LootDispatchTest(unittest.TestCase):
+    """UM-42: SMSG_LOOT_RESPONSE / _RELEASE_RESPONSE / _REMOVED /
+    _MONEY_NOTIFY / SMSG_ITEM_PUSH_RESULT / SMSG_INVENTORY_CHANGE_FAILURE /
+    SMSG_ITEM_QUERY_SINGLE_RESPONSE dispatch wiring."""
+
+    def test_loot_response_sets_session_loot_and_records_event(self):
+        sess = make_session()
+        payload = struct.pack('<Q', 5) + bytes([lo.LOOT_CORPSE]) + struct.pack('<IB', 10, 0)
+        sess._dispatch(se.SMSG_LOOT_RESPONSE, payload)
+        self.assertEqual(sess.loot["guid"], 5)
+        self.assertTrue(sess.loot["success"])
+        self.assertEqual(sess.events[-1]["kind"], "loot_response")
+
+    def test_loot_release_response_clears_matching_loot(self):
+        sess = make_session()
+        sess.loot = {"guid": 5, "success": True, "items": []}
+        sess._dispatch(se.SMSG_LOOT_RELEASE_RESPONSE, struct.pack('<Q', 5) + bytes([1]))
+        self.assertIsNone(sess.loot)
+
+    def test_loot_release_response_ignores_mismatched_guid(self):
+        sess = make_session()
+        sess.loot = {"guid": 5, "success": True, "items": []}
+        sess._dispatch(se.SMSG_LOOT_RELEASE_RESPONSE, struct.pack('<Q', 999) + bytes([1]))
+        self.assertIsNotNone(sess.loot)
+
+    def test_loot_removed_drops_item_from_session_loot(self):
+        sess = make_session()
+        sess.loot = {"guid": 5, "success": True, "items": [{"slot": 0, "entry": 1}, {"slot": 1, "entry": 2}]}
+        sess._dispatch(se.SMSG_LOOT_REMOVED, bytes([0]))
+        self.assertEqual(sess.loot["items"], [{"slot": 1, "entry": 2}])
+
+    def test_loot_money_notify_records_event(self):
+        sess = make_session()
+        sess.loot = {"guid": 5, "success": True, "items": [], "coins": 12}
+        sess._dispatch(se.SMSG_LOOT_MONEY_NOTIFY, struct.pack('<I', 12) + bytes([1]))
+        self.assertEqual(sess.loot["coins"], 0)
+        self.assertEqual(sess.events[-1]["kind"], "loot_money")
+        self.assertEqual(sess.events[-1]["money"], 12)
+
+    def test_item_push_result_records_item_received_event(self):
+        sess = make_session()
+        payload = (struct.pack('<Q', 1) + struct.pack('<III', 1, 0, 1) + bytes([0])
+                   + struct.pack('<I', 23) + struct.pack('<I', 159) + struct.pack('<I', 0)
+                   + struct.pack('<i', -1) + struct.pack('<II', 1, 1))
+        sess._dispatch(se.SMSG_ITEM_PUSH_RESULT, payload)
+        self.assertEqual(sess.events[-1]["kind"], "item_received")
+        self.assertEqual(sess.events[-1]["entry"], 159)
+
+    def test_inventory_change_failure_records_event(self):
+        sess = make_session()
+        payload = (bytes([lo.EQUIP_ERR_INV_FULL]) + struct.pack('<Q', 0) + struct.pack('<Q', 0)
+                   + bytes([0]) + struct.pack('<i', 0))
+        sess._dispatch(se.SMSG_INVENTORY_CHANGE_FAILURE, payload)
+        self.assertEqual(sess.events[-1]["kind"], "inventory_change_failure")
+        self.assertFalse(sess.events[-1]["ok"])
+
+    def test_item_query_response_populates_world_state_cache(self):
+        sess = make_session()
+        payload = struct.pack('<I', 999999 | 0x80000000)  # "not found" (short payload, valid)
+        sess._dispatch(se.SMSG_ITEM_QUERY_SINGLE_RESPONSE, payload)
+        self.assertIn(999999, sess.world_state.items.items)
+        self.assertIsNone(sess.world_state.items.items[999999])
+
+    def test_money_changed_event_on_coinage_delta(self):
+        sess = make_session()
+        sess.player_guid = CREATURE
+        sess.world_state.set_my_guid(CREATURE)
+        block = uo.UpdateBlock(update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=CREATURE,
+                                object_type=uo.TYPEID_PLAYER,
+                                movement={"update_flags": uo.UPDATEFLAG_STATIONARY_POSITION,
+                                          "x": 0.0, "y": 0.0, "z": 0.0, "o": 0.0},
+                                fields={})
+        sess.world_state.update_object(block)
+        sess._sync_self_from_block(block)
+        # Zero-value fields aren't sent over the wire, so a missing coinage field
+        # once the self object exists defaults to 0 rather than staying None.
+        self.assertEqual(sess.coinage, 0)
+        self.assertEqual(list(sess.events), [])  # defaulting to 0 isn't a "change"
+
+        from agent import update_fields as uf
+        block2 = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=CREATURE,
+                                 fields={uf.PLAYER_FIELD_COINAGE: 100})
+        sess.world_state.update_object(block2)
+        sess._sync_self_from_block(block2)
+        self.assertEqual(sess.coinage, 100)
+        self.assertEqual(sess.events[-1], {**sess.events[-1], "kind": "money_changed",
+                                            "old": 0, "new": 100, "delta": 100})
+
+        block3 = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=CREATURE,
+                                 fields={uf.PLAYER_FIELD_COINAGE: 150})
+        sess.world_state.update_object(block3)
+        sess._sync_self_from_block(block3)
+        self.assertEqual(sess.coinage, 150)
+        self.assertEqual(sess.events[-1], {**sess.events[-1], "kind": "money_changed",
+                                            "old": 100, "new": 150, "delta": 50})
 
 
 if __name__ == '__main__':
