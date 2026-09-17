@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from . import items as it
 from . import names as nm
 from . import npc as npc_mod
 from . import update_fields as uf
@@ -156,6 +157,7 @@ class WorldState:
         self.my_map = None  # set by session.py from SMSG_LOGIN_VERIFY_WORLD
         self.unknown_field_updates = 0  # debug counter: VALUES for a guid we haven't CREATEd yet
         self.names = nm.NameCache()  # UM-35
+        self.items = it.ItemCache()  # UM-42: item template cache (names/stats by entry)
         # UM-38: the last position the SERVER reported for us via a real
         # update-object block — distinct from ObjectInfo.position, which
         # update_my_position_from_simulation() also overwrites with our own
@@ -317,6 +319,13 @@ class WorldState:
                     obj.name = data["name"]
             else:
                 self.names.want_gameobject(obj.entry, obj.guid)
+        elif obj.object_type in ("item", "container") and obj.entry:
+            if obj.entry in self.items.items:
+                data = self.items.items[obj.entry]
+                if data is not None:
+                    obj.name = data["name"]
+            else:
+                self.items.want_item(obj.entry)
 
     @staticmethod
     def _apply_creature_name(obj: ObjectInfo, data: dict):
@@ -408,6 +417,17 @@ class WorldState:
         with self._lock:
             self.ui_state = None
 
+    def apply_item_query_response(self, data: dict):
+        """SMSG_ITEM_QUERY_SINGLE_RESPONSE (UM-42): backfill every
+        currently-known item/container with this entry, same policy as
+        apply_creature_query_response."""
+        with self._lock:
+            self.items.on_item_query_response(data)
+            if data["found"]:
+                for obj in self.objects.values():
+                    if obj.object_type in ("item", "container") and obj.entry == data["entry"]:
+                        obj.name = data["name"]
+
     def _apply_movement(self, obj: ObjectInfo, movement: dict | None):
         if not movement:
             return
@@ -462,6 +482,40 @@ class WorldState:
         if "max_power" in decoded:
             obj.max_power = decoded["max_power"]
 
+    def build_equipment_and_inventory(self) -> tuple[dict, list]:
+        """UM-42: equipment (slot -> item dict, slots 0-18) and inventory
+        (list of item dicts, slots 19-38: 4 equipped-bag-container slots +
+        16 backpack slots) built from the self player's own INV_SLOT_HEAD/
+        PACK_SLOT_1 guid fields (agent.update_fields.
+        decode_equipment_and_inventory_guids) cross-referenced against the
+        item objects those guids point to (agent.update_fields.
+        decode_item_fields) and this WorldState's item-template cache for
+        names. A slot whose item object hasn't arrived yet (or whose
+        template name hasn't resolved) is still included with whatever is
+        known (bare guid, or guid+entry without a name)."""
+        with self._lock:
+            me = self.objects.get(self.my_guid)
+            if me is None:
+                return {}, []
+            slot_guids = uf.decode_equipment_and_inventory_guids(me.raw_fields)
+            equipment: dict[int, dict] = {}
+            inventory: list = []
+            for slot, guid in slot_guids.items():
+                item_obj = self.objects.get(guid)
+                d = {"guid": guid}
+                if item_obj is not None:
+                    d["entry"] = item_obj.entry
+                    d["name"] = item_obj.name or None
+                    count = item_obj.raw_fields and uf.decode_item_fields(item_obj.raw_fields).get("count")
+                    if count is not None:
+                        d["count"] = count
+                if slot < uf.EQUIPMENT_SLOT_COUNT:
+                    equipment[slot] = d
+                else:
+                    d["slot"] = slot
+                    inventory.append(d)
+            return equipment, inventory
+
     def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40) -> dict:
         """A JSON-serialisable view shaped like docs/AI-AGENT-SPEC.md's
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
@@ -477,12 +531,15 @@ class WorldState:
             window = self.ui_state
 
         pos = my_position or (me.position if me else None)
+        equipment, inventory = self.build_equipment_and_inventory()
         out = {
             "position": _position_dict(pos),
             "nearby_units": [],
             "nearby_players": [],
             "nearby_objects": [],
             "window": window,
+            "equipment": equipment,
+            "inventory": inventory,
         }
         if pos is None:
             return out

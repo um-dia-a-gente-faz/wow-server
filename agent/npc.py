@@ -114,12 +114,8 @@ def build_buy_item(vendor_guid: int, item_entry: int, slot: int, count: int) -> 
 def build_sell_item(vendor_guid: int, item_guid: int, amount: int) -> bytes:
     """CMSG_SELL_ITEM (0x1A0): SellItem::Read (ItemPackets.cpp) — ObjectGuid
     VendorGUID, ObjectGuid ItemGUID (the *item's own* GUID, looked up
-    server-side via GetItemByGuid — NOT a bag/slot pair), uint32 Amount.
-
-    Not wired up to a real Action yet: this codebase doesn't track item
-    GUIDs (that's UM-42's inventory work) — see actions.SellItemAction,
-    which returns ok=False until that lands. The builder is provided now so
-    UM-42 only needs to supply the guid, not the wire format."""
+    server-side via GetItemByGuid — NOT a bag/slot pair), uint32 Amount
+    (0 = sell the whole stack, per HandleSellItemOpcode)."""
     return struct.pack('<QQI', vendor_guid, item_guid, amount)
 
 
@@ -290,6 +286,94 @@ def parse_npc_text_update(payload: bytes) -> dict:
         })
     info["options"] = options
     return info
+
+
+# ── BuyResult / SellResult / trainer FailReason enums ─────────────────────
+# src/server/game/Entities/Item/ItemDefines.h (BuyResult, SellResult),
+# src/server/game/Entities/Creature/Trainer.h (Trainer::FailReason)
+BUY_RESULT_NAMES = {
+    0: 'cant_find_item', 1: 'item_already_sold', 2: 'not_enough_money',
+    4: 'seller_dont_like_you', 5: 'distance_too_far', 7: 'item_sold_out',
+    8: 'cant_carry_more', 11: 'rank_require', 12: 'reputation_require',
+}
+SELL_RESULT_NAMES = {
+    1: 'cant_find_item', 2: 'cant_sell_item', 3: 'cant_find_vendor',
+    4: 'you_dont_own_that_item', 5: 'unk', 6: 'only_empty_bag',
+    7: 'cant_sell_to_this_merchant',
+}
+TRAINER_FAIL_REASON_NAMES = {
+    0: 'unavailable', 1: 'not_enough_money', 2: 'not_enough_skill',
+}
+
+
+def parse_buy_item(payload: bytes) -> dict:
+    """SMSG_BUY_ITEM (0x1A4): sent by Player::BuyItemFromVendorSlot
+    (Player.cpp) directly to the buyer (SendDirectMessage — a personal ack,
+    not a nearby broadcast) on a successful purchase: ObjectGuid VendorGUID,
+    uint32 vendor slot (1-based, matches SMSG_LIST_INVENTORY's MuID/
+    build_buy_item's `slot`), int32 new stock count (-1/0xFFFFFFFF if the
+    vendor slot has unlimited stock), uint32 stacks bought."""
+    off = 0
+    vendor_guid = pk.u64(payload, off); off += 8
+    slot = pk.u32(payload, off); off += 4
+    new_count = struct.unpack_from('<i', payload, off)[0]; off += 4
+    stacks = pk.u32(payload, off); off += 4
+    return {"vendor_guid": vendor_guid, "slot": slot, "new_count": new_count, "stacks": stacks}
+
+
+def parse_buy_failed(payload: bytes) -> dict:
+    """SMSG_BUY_FAILED (0x1A5): Player::SendBuyError (Player.cpp) —
+    ObjectGuid vendor guid (Empty if creature was null), uint32 item entry,
+    optional uint32 param (only present if param > 0 — not flag-encoded,
+    only inferable from packet length: absent leaves the packet 13 B,
+    present makes it 17 B), uint8 BuyResult reason."""
+    off = 0
+    vendor_guid = pk.u64(payload, off); off += 8
+    item_entry = pk.u32(payload, off); off += 4
+    param = None
+    if len(payload) - off > 1:
+        param = pk.u32(payload, off); off += 4
+    reason = payload[off]
+    return {"vendor_guid": vendor_guid, "item_entry": item_entry, "param": param,
+            "reason": reason, "reason_name": BUY_RESULT_NAMES.get(reason, f"reason_{reason}")}
+
+
+def parse_sell_item(payload: bytes) -> dict:
+    """SMSG_SELL_ITEM (0x1A1): Player::SendSellError (Player.cpp) — this
+    opcode is ONLY ever sent on failure (HandleSellItemOpcode never sends
+    anything on success; a successful sell is silent). ObjectGuid vendor
+    guid (Empty if creature was null), ObjectGuid item guid, optional
+    uint32 param (only present if param > 0 — same length-inferred
+    presence as SMSG_BUY_FAILED), uint8 SellResult reason."""
+    off = 0
+    vendor_guid = pk.u64(payload, off); off += 8
+    item_guid = pk.u64(payload, off); off += 8
+    param = None
+    if len(payload) - off > 1:
+        param = pk.u32(payload, off); off += 4
+    reason = payload[off]
+    return {"vendor_guid": vendor_guid, "item_guid": item_guid, "param": param,
+            "reason": reason, "reason_name": SELL_RESULT_NAMES.get(reason, f"reason_{reason}")}
+
+
+def parse_trainer_buy_succeeded(payload: bytes) -> dict:
+    """SMSG_TRAINER_BUY_SUCCEEDED (0x1B3): TrainerBuySucceeded::Write
+    (NPCPackets.cpp) — raw uint64 TrainerGUID, int32 SpellID. No reason
+    field; presence of this opcode at all is the success signal."""
+    trainer_guid = pk.u64(payload, 0)
+    spell_id = struct.unpack_from('<i', payload, 8)[0]
+    return {"trainer_guid": trainer_guid, "spell_id": spell_id}
+
+
+def parse_trainer_buy_failed(payload: bytes) -> dict:
+    """SMSG_TRAINER_BUY_FAILED (0x1B4): TrainerBuyFailed::Write
+    (NPCPackets.cpp) — raw uint64 TrainerGUID, int32 SpellID, int32
+    TrainerFailedReason (Trainer::FailReason)."""
+    trainer_guid = pk.u64(payload, 0)
+    spell_id = struct.unpack_from('<i', payload, 8)[0]
+    reason = struct.unpack_from('<i', payload, 12)[0]
+    return {"trainer_guid": trainer_guid, "spell_id": spell_id, "reason": reason,
+            "reason_name": TRAINER_FAIL_REASON_NAMES.get(reason, f"reason_{reason}")}
 
 
 class NpcTextCache:
