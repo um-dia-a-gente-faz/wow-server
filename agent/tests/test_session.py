@@ -699,7 +699,10 @@ class LootDispatchTest(unittest.TestCase):
                                 fields={})
         sess.world_state.update_object(block)
         sess._sync_self_from_block(block)
-        self.assertIsNone(sess.coinage)
+        # Zero-value fields aren't sent over the wire, so a missing coinage field
+        # once the self object exists defaults to 0 rather than staying None.
+        self.assertEqual(sess.coinage, 0)
+        self.assertEqual(list(sess.events), [])  # defaulting to 0 isn't a "change"
 
         from agent import update_fields as uf
         block2 = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=CREATURE,
@@ -707,7 +710,8 @@ class LootDispatchTest(unittest.TestCase):
         sess.world_state.update_object(block2)
         sess._sync_self_from_block(block2)
         self.assertEqual(sess.coinage, 100)
-        self.assertEqual(list(sess.events), [])  # first-ever coinage isn't a "change"
+        self.assertEqual(sess.events[-1], {**sess.events[-1], "kind": "money_changed",
+                                            "old": 0, "new": 100, "delta": 100})
 
         block3 = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=CREATURE,
                                  fields={uf.PLAYER_FIELD_COINAGE: 150})

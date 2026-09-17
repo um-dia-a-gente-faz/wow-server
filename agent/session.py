@@ -729,11 +729,17 @@ class WoWSession:
             if next_xp is not None:
                 self.next_level_xp = next_xp
             coinage = me.raw_fields.get(uo_fields.PLAYER_FIELD_COINAGE)
-            if coinage is not None:
-                if self.coinage is not None and coinage != self.coinage:
-                    self._record_event("money_changed", old=self.coinage, new=coinage,
-                                        delta=coinage - self.coinage)
-                self.coinage = coinage
+            if coinage is None:
+                # Zero-value fields aren't sent over the wire, so a coinage of
+                # 0 copper looks identical to "field absent". Once the self
+                # object exists we know the field would be present for any
+                # nonzero value, so treat "missing" as 0 instead of leaving
+                # self.coinage as None.
+                coinage = 0
+            if self.coinage is not None and coinage != self.coinage:
+                self._record_event("money_changed", old=self.coinage, new=coinage,
+                                    delta=coinage - self.coinage)
+            self.coinage = coinage
 
     def _handle_messagechat(self, opcode: int, payload: bytes):
         """SMSG_MESSAGECHAT / SMSG_GM_MESSAGECHAT (WorldPackets::Chat::Chat::Write,

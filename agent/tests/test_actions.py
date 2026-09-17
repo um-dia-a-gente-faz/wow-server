@@ -788,15 +788,5 @@ class DestroyItemActionTest(unittest.TestCase):
         self.assertEqual(payload, struct.pack('<BBI', 255, 23, 2))
 
 
-class SellItemActionTest(unittest.TestCase):
-    def test_always_not_implemented(self):
-        sess = fake_session()
-        world = per.WorldState()
-        result = ac.SellItemAction().run(sess, world, vendor_guid=1, bag=255, slot=23)
-        self.assertFalse(result.ok)
-        self.assertIn("not_implemented", result.error)
-        self.assertEqual(sess._sent, [])  # never touches the wire
-
-
 if __name__ == '__main__':
     unittest.main()

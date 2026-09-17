@@ -757,23 +757,6 @@ class DestroyItemAction(Action):
         return ActionResult(ok=True, detail={"bag": bag, "slot": slot, "count": count})
 
 
-@register
-class SellItemAction(Action):
-    name = "sell_item"
-    description = ("TODO/NOT IMPLEMENTED: selling to a vendor requires UM-40's vendor-interaction "
-                    "window (CMSG_LIST_INVENTORY/CMSG_SELL_ITEM against an open vendor session), "
-                    "which is being developed in parallel and has not merged yet. This stub always "
-                    "returns ok=False so callers get a clear, typed failure instead of a missing "
-                    "action — replace this once UM-40 lands.")
-    params = {
-        "vendor_guid": {"type": "integer", "description": "Vendor NPC GUID (unused by this stub)."},
-        "bag": {"type": "integer", "description": "Bag byte of the item to sell (unused by this stub)."},
-        "slot": {"type": "integer", "description": "Slot of the item to sell (unused by this stub)."},
-    }
-    required = ("vendor_guid", "bag", "slot")
-
-    def execute(self, session, world, vendor_guid: int, bag: int, slot: int, **_) -> ActionResult:
-        return ActionResult(
-            ok=False,
-            error="not_implemented: sell_item depends on UM-40's vendor window (not merged yet)",
-            detail={"vendor_guid": vendor_guid, "bag": bag, "slot": slot})
+# sell_item is implemented in UM-40 (feature/UM-40-npc-interaction), which owns the
+# vendor-interaction window this action depends on. Dropped here to avoid duplicating
+# that PR's real implementation.
