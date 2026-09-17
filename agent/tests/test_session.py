@@ -292,6 +292,52 @@ def messagechat_payload(slash_cmd: int, text: str, sender_guid: int = 1,
     return payload
 
 
+UNIT_GUID = 0xF130000000000042      # HighGuid::Unit (0xF130) — not a player or pet
+PET_GUID = 0xF140000000000042       # HighGuid::Pet
+PLAYER_GUID = 0x0000000000000007    # HighGuid::Player (top 16 bits zero)
+
+
+def monster_chat_payload(slash_cmd: int, text: str, sender_name: str,
+                          sender_guid: int = 1, target_guid: int = 0,
+                          target_name: str | None = None) -> bytes:
+    """WorldPackets::Chat::Chat::Write's CHAT_KINDS_MONSTER branch."""
+    payload = struct.pack('<Bi', slash_cmd, 1)
+    payload += struct.pack('<Q', sender_guid)
+    payload += struct.pack('<I', 0)  # flags
+    payload += len_string(sender_name)
+    payload += struct.pack('<Q', target_guid)
+    if target_name is not None:
+        payload += len_string(target_name)
+    payload += len_string(text)
+    payload += b'\x00'  # chat_tag
+    return payload
+
+
+def whisper_foreign_payload(text: str, sender_name: str, sender_guid: int = 1,
+                             target_guid: int = 0) -> bytes:
+    payload = struct.pack('<Bi', se.CHAT_MSG_WHISPER_FOREIGN, 1)
+    payload += struct.pack('<Q', sender_guid)
+    payload += struct.pack('<I', 0)
+    payload += len_string(sender_name)
+    payload += struct.pack('<Q', target_guid)
+    payload += len_string(text)
+    payload += b'\x00'
+    return payload
+
+
+def bg_system_payload(text: str, sender_guid: int = 1, target_guid: int = 0,
+                       target_name: str | None = None) -> bytes:
+    payload = struct.pack('<Bi', se.CHAT_MSG_BG_SYSTEM_NEUTRAL, 1)
+    payload += struct.pack('<Q', sender_guid)
+    payload += struct.pack('<I', 0)
+    payload += struct.pack('<Q', target_guid)
+    if target_name is not None:
+        payload += len_string(target_name)
+    payload += len_string(text)
+    payload += b'\x00'
+    return payload
+
+
 class ChatParsingTest(unittest.TestCase):
     def test_gm_messagechat_say(self):
         sess = make_session()
@@ -333,6 +379,84 @@ class ChatParsingTest(unittest.TestCase):
             sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
         self.assertEqual(len(sess.chat_inbox), se.CHAT_INBOX_MAXLEN)
         self.assertEqual(sess.chat_inbox[-1]["text"], f"msg {se.CHAT_INBOX_MAXLEN + 9}")
+
+    def test_monster_say_no_target(self):
+        sess = make_session()
+        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_SAY,
+                                        "Remain strong. Lor'themar will lead you to power and glory!",
+                                        sender_name="Silvermoon City Guardian")
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry["kind"], "monster_say")
+        self.assertEqual(entry["sender_name"], "Silvermoon City Guardian")
+        self.assertEqual(entry["text"], "Remain strong. Lor'themar will lead you to power and glory!")
+        self.assertNotIn("target_name", entry)
+
+    def test_monster_whisper_with_unit_target_reads_target_name(self):
+        sess = make_session()
+        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_WHISPER, "Heel!", sender_name="Hound Master",
+                                        target_guid=UNIT_GUID, target_name="Wolf")
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry["kind"], "monster_whisper")
+        self.assertEqual(entry["target_name"], "Wolf")
+
+    def test_monster_chat_with_player_target_has_no_target_name(self):
+        sess = make_session()
+        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_WHISPER, "hi", sender_name="Guard",
+                                        target_guid=PLAYER_GUID)
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        self.assertNotIn("target_name", sess.chat_inbox[0])
+
+    def test_monster_chat_with_pet_target_has_no_target_name(self):
+        sess = make_session()
+        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_SAY, "grr", sender_name="Beast",
+                                        target_guid=PET_GUID)
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        self.assertNotIn("target_name", sess.chat_inbox[0])
+
+    def test_raid_boss_emote(self):
+        sess = make_session()
+        payload = monster_chat_payload(se.CHAT_MSG_RAID_BOSS_EMOTE, "roars!", sender_name="Boss")
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        self.assertEqual(sess.chat_inbox[0]["kind"], "raid_boss_emote")
+
+    def test_whisper_foreign(self):
+        sess = make_session()
+        payload = whisper_foreign_payload("psst", sender_name="SomeoneOnAnotherRealm")
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry["kind"], "whisper_foreign")
+        self.assertEqual(entry["sender_name"], "SomeoneOnAnotherRealm")
+
+    def test_bg_system_with_unit_target_reads_target_name(self):
+        sess = make_session()
+        payload = bg_system_payload("The flag has been captured!", target_guid=UNIT_GUID, target_name="Flag")
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        entry = sess.chat_inbox[0]
+        self.assertEqual(entry["kind"], "bg_system_neutral")
+        self.assertEqual(entry["target_name"], "Flag")
+
+    def test_bg_system_with_player_target_has_no_target_name(self):
+        sess = make_session()
+        payload = bg_system_payload("Welcome!", target_guid=PLAYER_GUID)
+        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        self.assertNotIn("target_name", sess.chat_inbox[0])
+
+    def test_party_leader_and_raid_leader_kinds_are_named(self):
+        sess = make_session()
+        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT,
+                                  messagechat_payload(se.CHAT_MSG_PARTY_LEADER, "let's go", sender_name="Rubens"))
+        self.assertEqual(sess.chat_inbox[0]["kind"], "party_leader")
+        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT,
+                                  messagechat_payload(se.CHAT_MSG_RAID_LEADER, "pull", sender_name="Rubens"))
+        self.assertEqual(sess.chat_inbox[1]["kind"], "raid_leader")
+
+    def test_no_unnamed_kinds_left_in_chatmsg_enum(self):
+        # Every ChatMsg value from 0x00 to 0x33 (SharedDefines.h) must have a
+        # name — anything falling back to "type_<n>" here is a gap.
+        for value in list(range(0x34)) + [0xFF]:
+            self.assertIn(value, se.CHAT_KIND_NAMES, f"unnamed ChatMsg {value:#04x}")
 
     def test_group_invite_sets_pending_invite(self):
         sess = make_session()

@@ -197,3 +197,38 @@ starts. Verified live: `face`'s resulting orientation matched exactly (to 6
 decimal places) between the packet we sent and `characters.characters.orientation`
 after a save. This also unblocks UM-38 (movement) — the same gate applies
 to every `MSG_MOVE_*` opcode.
+
+## `SMSG_MESSAGECHAT` / `SMSG_GM_MESSAGECHAT` (`WorldPackets::Chat::Chat::Write`, `Server/Packets/ChatPackets.cpp`)
+
+Verified against the live `TrinityCore/TrinityCore` branch `3.3.5` (UM-66;
+`gh api repos/TrinityCore/TrinityCore/contents/... ?ref=3.3.5`).
+
+```
+uint8  slashCmd            // ChatMsg (SharedDefines.h) — see agent/session.py::CHAT_KIND_NAMES for the full enum
+int32  language
+uint64 senderGuid          // raw ObjectGuid, NOT packed (ByteBuffer operator<<(ObjectGuid))
+uint32 flags                // always 0 in 3.3.5
+```
+
+Then one of four shapes, selected by `slashCmd`:
+
+| Group | Shape |
+|---|---|
+| `CHAT_MSG_MONSTER_SAY/PARTY/YELL/WHISPER/EMOTE`, `RAID_BOSS_EMOTE/WHISPER`, `BATTLENET` | `uint32 len + senderName` (always — an NPC has no other way for the client to know its name), `uint64 targetGuid`, then `uint32 len + targetName` **only if** `targetGuid != 0` and its `HighGuid` (top 16 bits) is neither `Player` (`0x0000`) nor `Pet` (`0xF140`) |
+| `CHAT_MSG_WHISPER_FOREIGN` | `uint32 len + senderName`, `uint64 targetGuid` (no conditional target name) |
+| `CHAT_MSG_BG_SYSTEM_NEUTRAL/ALLIANCE/HORDE` | `uint64 targetGuid`, then `uint32 len + targetName` **only if** `targetGuid != 0` and not a player |
+| everything else (default — say/yell/whisper/party/guild/officer/emote/text_emote/channel/achievement/…) | `[uint32 len + senderName]` only on the `SMSG_GM_MESSAGECHAT` opcode, `[channel` as a plain null-terminated cstring, no length prefix`]` only for `CHAT_MSG_CHANNEL`, then `uint64 targetGuid` unconditionally |
+
+Then always: `uint32 len + chatText`, `uint8 chatTag`, and — only for
+`CHAT_MSG_ACHIEVEMENT`/`CHAT_MSG_GUILD_ACHIEVEMENT` — a trailing
+`uint32 achievementId`.
+
+All the length-prefixed strings (`senderName`, `targetName`, `chatText`) use
+the same shape: `uint32 byteLength` (includes the trailing null) followed by
+that many bytes, UTF-8, null-terminated — `agent/session.py::_read_len_string`.
+The `channel` name is different: a plain null-terminated cstring with no
+length prefix (`agent/packets.py::cstring`).
+
+`ObjectGuid::HighGuid` values needed to classify `targetGuid` (`Entities/Object/ObjectGuid.h`,
+top 16 bits of the raw 64-bit guid): `Player = 0x0000`, `Unit = 0xF130`,
+`Pet = 0xF140`, `GameObject = 0xF110`.
