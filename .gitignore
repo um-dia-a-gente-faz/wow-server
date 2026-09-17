@@ -18,6 +18,9 @@ server_logs/
 
 # OS junk
 .DS_Store
+
+# LLM benchmark candidates (endpoints/keys; template: candidates.json.example)
+scripts/llm_bench/candidates.json
 Thumbs.db
 
 # Extracted client DBCs (game data — regenerate with TrinityCore's mapextractor)

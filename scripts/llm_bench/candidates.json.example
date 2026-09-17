@@ -1,0 +1,32 @@
+[
+  {
+    "name": "openrouter-glm-5.2-air-free",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "model": "z-ai/glm-5.2-air:free"
+  },
+  {
+    "name": "openrouter-nemotron-3-super-120b-free",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "model": "nvidia/nemotron-3-super-120b-a12b:free"
+  },
+  {
+    "name": "freellmapi-auto",
+    "base_url": "http://192.168.1.60:3002/v1",
+    "api_key_env": "FREELLMAPI_API_KEY",
+    "model": "auto"
+  },
+  {
+    "name": "local-llama-cpp-laptop-8b-q4",
+    "base_url": "http://192.168.1.61:8080/v1",
+    "api_key_env": "",
+    "model": "local"
+  },
+  {
+    "name": "local-ollama-desktop-14b-q4",
+    "base_url": "http://192.168.1.62:11434/v1",
+    "api_key_env": "",
+    "model": "local"
+  }
+]
