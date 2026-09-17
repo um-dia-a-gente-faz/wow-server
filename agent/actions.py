@@ -1288,12 +1288,14 @@ def _open_quest_giver_window(session, world, npc_guid: int, quest_id: int, kinds
 class AcceptQuestAction(Action):
     name = "accept_quest"
     description = ("Accept a quest offered by a nearby questgiver. Requires that NPC's quest "
-                    "list or quest details window to already be open (interact() with the NPC "
-                    "first) and the quest to be present in it.")
+                    "list/quest details window, or a gossip window listing the quest, to "
+                    "already be open (interact() with the NPC first) and the quest to be "
+                    "present in it.")
     params = {
         "npc_guid": {"type": "integer", "description": "GUID of the questgiver NPC."},
         "quest_id": {"type": "integer", "description": "Quest ID to accept, from the open "
-                                                         "quest_list/quest_details window."},
+                                                         "quest_list/quest_details/gossip "
+                                                         "window."},
     }
     required = ("npc_guid", "quest_id")
 
@@ -1307,18 +1309,34 @@ class AcceptQuestAction(Action):
                 return (f"guid {npc_guid:#x} is {distance:.1f} yd away, out of interact range "
                         f"({QUEST_INTERACT_RANGE_YD} yd) — try move_towards first")
         window = world.get_ui_state()
-        if window is None or window.get("kind") not in ("quest_list", "quest_details"):
-            return "no quest list/details window is open for that NPC — interact() with it first"
+        if window is None or window.get("kind") not in ("quest_list", "quest_details", "gossip"):
+            return "no quest list/details/gossip window is open for that NPC — interact() with it first"
         if window.get("npc_guid") != npc_guid:
             return "the open quest window belongs to a different NPC"
-        if window.get("kind") == "quest_list":
+        if window.get("kind") in ("quest_list", "gossip"):
+            # A gossip-primary questgiver (npc_flags with both gossip and
+            # questgiver set, e.g. Magistrix Erona) opens a "gossip" window
+            # that already lists its offered quests (agent.npc.
+            # parse_gossip_message's `quests`), never a quest_list/
+            # quest_details window — accept_quest must work against that
+            # window's `quests` the same way it does for quest_list's.
             if not any(q["quest_id"] == quest_id for q in window.get("quests", [])):
-                return f"quest {quest_id} is not offered in the open quest list"
+                return f"quest {quest_id} is not offered in the open quest window"
         elif window.get("quest_id") != quest_id:
             return "the open quest details window is for a different quest"
         return None
 
     def execute(self, session, world, npc_guid: int, quest_id: int, **_) -> ActionResult:
+        window = world.get_ui_state()
+        if window is not None and window.get("kind") == "gossip":
+            # The gossip window only carries the quest's id/title/level, not
+            # the full quest details the server expects the client to have
+            # queried before accepting it — bridge that with
+            # CMSG_QUESTGIVER_QUERY_QUEST (build_questgiver_query_quest) so
+            # accept_quest works directly from a gossip window without the
+            # LLM needing to know about the quest_list/gossip distinction.
+            session._send_packet(qu.CMSG_QUESTGIVER_QUERY_QUEST,
+                                  qu.build_questgiver_query_quest(npc_guid, quest_id))
         session._send_packet(qu.CMSG_QUESTGIVER_ACCEPT_QUEST,
                               qu.build_questgiver_accept_quest(npc_guid, quest_id))
         return ActionResult(ok=True, detail={"npc_guid": npc_guid, "quest_id": quest_id})
