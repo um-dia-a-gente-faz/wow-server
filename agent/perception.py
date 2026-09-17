@@ -26,6 +26,17 @@ UNIT_NPC_FLAG_VENDOR = 0x00000080
 # UnitDynFlags (src/server/shared/SharedDefines.h)
 UNIT_DYNFLAG_LOOTABLE = 0x0001
 
+# NPCFlags (UnitDefines.h) — spirit healer/guide, used by UM-43's spirit-healer fallback
+UNIT_NPC_FLAG_SPIRITHEALER = 0x00004000
+UNIT_NPC_FLAG_SPIRITGUIDE = 0x00008000
+
+# PlayerFlags (src/server/game/Entities/Player/Player.h) — UM-43's death/ghost detection
+PLAYER_FLAGS_GHOST = 0x00000010
+
+# UnitDefines.h POWER_MANA (enum Powers) — used by UM-43's rest reflex to tell
+# "no mana bar" classes (warrior/rogue/...) from "low on mana" ones.
+POWER_MANA = 0
+
 
 class PerceptionParseError(Exception):
     """A server packet could not be parsed into world state.
@@ -54,6 +65,8 @@ class ObjectInfo:
     unit_flags: int | None = None
     dynamic_flags: int | None = None
     npc_flags: int | None = None
+    player_flags: int | None = None  # PLAYER_FLAGS — players only; used by is_ghost() (UM-43)
+    power_type: int | None = None  # Powers enum (0=mana, 1=rage, 2=focus, 3=energy, ...) — UNIT_FIELD_BYTES_0
     target_guid: int | None = None
     position: tuple | None = None  # (map, x, y, z, o) — map is filled in by WorldState (blocks don't carry it)
     move_flags: int | None = None
@@ -70,6 +83,17 @@ class ObjectInfo:
 
     def is_dead(self) -> bool:
         return self.health == 0
+
+    def is_ghost(self) -> bool:
+        """PLAYER_FLAGS_GHOST (UM-43) — true from release_spirit() until the
+        agent resurrects (corpse reclaim or spirit healer). Distinct from
+        is_dead(): BuildPlayerRepop (Player.cpp) sets health back to 1 the
+        moment the ghost state begins, so is_dead() alone would miss the
+        whole corpse-run window."""
+        return bool(self.player_flags and (self.player_flags & PLAYER_FLAGS_GHOST))
+
+    def is_spirit_healer(self) -> bool:
+        return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_SPIRITHEALER))
 
     def is_lootable(self) -> bool:
         return bool(self.dynamic_flags) and bool(self.dynamic_flags & UNIT_DYNFLAG_LOOTABLE)
@@ -474,7 +498,8 @@ class WorldState:
         obj.raw_fields.update(raw_fields)
         decoded = uf.decode_fields(object_type if object_type is not None else -1, raw_fields)
         for attr in ("entry", "level", "health", "max_health", "faction",
-                     "unit_flags", "dynamic_flags", "npc_flags", "target_guid"):
+                     "unit_flags", "dynamic_flags", "npc_flags", "target_guid",
+                     "player_flags", "power_type"):
             if attr in decoded:
                 setattr(obj, attr, decoded[attr])
         if "power" in decoded:
@@ -516,7 +541,8 @@ class WorldState:
                     inventory.append(d)
             return equipment, inventory
 
-    def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40) -> dict:
+    def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40,
+                 corpse_position=None) -> dict:
         """A JSON-serialisable view shaped like docs/AI-AGENT-SPEC.md's
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
         nearby_objects, sorted by distance and capped at `limit` each.
@@ -524,6 +550,12 @@ class WorldState:
         `my_position` overrides the self object's own recorded position
         (useful right after login, before any update-object block has
         arrived for self) — defaults to the self object's position.
+
+        `corpse_position` (UM-43) is session-scoped protocol state (from
+        MSG_CORPSE_QUERY) this class doesn't otherwise have access to —
+        callers (agent/think.py) pass session.corpse_position through so the
+        LLM sees it, is_dead, and is_ghost alongside everything else in one
+        snapshot.
         """
         with self._lock:
             objects = list(self.objects.values())
@@ -534,6 +566,9 @@ class WorldState:
         equipment, inventory = self.build_equipment_and_inventory()
         out = {
             "position": _position_dict(pos),
+            "is_dead": bool(me is not None and me.is_dead()),
+            "is_ghost": bool(me is not None and me.is_ghost()),
+            "corpse_position": _position_dict(corpse_position) if corpse_position is not None else None,
             "nearby_units": [],
             "nearby_players": [],
             "nearby_objects": [],
@@ -543,6 +578,7 @@ class WorldState:
         }
         if pos is None:
             return out
+
 
         scored = []
         for obj in objects:

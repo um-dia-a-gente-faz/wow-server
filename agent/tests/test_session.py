@@ -7,6 +7,7 @@ import os
 import socket
 import struct
 import tempfile
+import time
 import unittest
 import uuid
 import zlib
@@ -17,6 +18,7 @@ from agent import loot as lo
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
+from agent import update_fields as uf
 from agent import update_object as uo
 from agent.tests.test_packets import tc_server_header
 
@@ -676,6 +678,114 @@ class ErrorThrottleTest(unittest.TestCase):
         self.assertEqual(t.check(0xA9), (False, 0))
 
 
+class DeathAndCorpseHandlerTest(unittest.TestCase):
+    """UM-43: death event detection, and the SMSG_CORPSE_RECLAIM_DELAY/
+    SMSG_DEATH_RELEASE_LOC/MSG_CORPSE_QUERY handlers."""
+
+    def test_death_event_on_health_zero_transition(self):
+        sess = make_session()
+        sess.player_guid = CREATURE
+        sess.world_state.set_my_guid(CREATURE)
+        alive = object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
+                              values=values_body({uf.UNIT_FIELD_HEALTH: 100}))
+        sess._parse_update_object(update_object(alive))
+        self.assertEqual(len(sess.events), 0)
+
+        dead = values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))
+        sess._parse_update_object(update_object(dead))
+        self.assertEqual(sess.events[-1]["kind"], "death")
+        self.assertIsNone(sess.events[-1]["killer_guid"])
+
+    def test_death_event_only_fires_once_per_transition(self):
+        sess = make_session()
+        sess.player_guid = CREATURE
+        sess.world_state.set_my_guid(CREATURE)
+        sess._parse_update_object(update_object(
+            object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
+                         values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
+        sess._parse_update_object(update_object(
+            values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
+        deaths = [e for e in sess.events if e["kind"] == "death"]
+        self.assertEqual(len(deaths), 1)
+
+    def test_death_event_infers_killer_from_attacker_state_update(self):
+        sess = make_session()
+        sess.player_guid = CREATURE
+        sess.world_state.set_my_guid(CREATURE)
+        sess._parse_update_object(update_object(
+            object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
+                         values=values_body({uf.UNIT_FIELD_HEALTH: 100}))))
+        sess._record_event("attacker_state_update", attacker_guid=0xBEEF, victim_guid=CREATURE)
+        sess._parse_update_object(update_object(
+            values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
+        self.assertEqual(sess.events[-1]["killer_guid"], 0xBEEF)
+
+    def test_corpse_reclaim_delay_sets_ready_at(self):
+        sess = make_session()
+        before = time.monotonic()
+        sess._handle_corpse_reclaim_delay(struct.pack('<I', 30000))
+        self.assertGreater(sess.corpse_reclaim_ready_at, before + 29)
+        self.assertLess(sess.corpse_reclaim_ready_at, before + 31)
+
+    def test_death_release_loc_stores_graveyard_position(self):
+        sess = make_session()
+        payload = struct.pack('<i3f', 0, 1.0, 2.0, 3.0)
+        sess._handle_death_release_loc(payload)
+        self.assertEqual(sess.graveyard_position, (0, 1.0, 2.0, 3.0))
+
+    def test_death_release_loc_ignores_clear_sentinel(self):
+        sess = make_session()
+        sess.graveyard_position = (0, 1.0, 2.0, 3.0)
+        payload = struct.pack('<i3f', -1, 0.0, 0.0, 0.0)
+        sess._handle_death_release_loc(payload)
+        self.assertEqual(sess.graveyard_position, (0, 1.0, 2.0, 3.0))  # unchanged
+
+    def test_corpse_query_response_valid(self):
+        sess = make_session()
+        payload = struct.pack('<Bi3fiI', 1, 0, 10.0, 20.0, 30.0, 0, 0)
+        sess._handle_corpse_query_response(payload)
+        self.assertEqual(sess.corpse_position, (0, 10.0, 20.0, 30.0))
+
+    def test_corpse_query_response_invalid_clears_position(self):
+        sess = make_session()
+        sess.corpse_position = (0, 1.0, 2.0, 3.0)
+        sess._handle_corpse_query_response(struct.pack('<B', 0))
+        self.assertIsNone(sess.corpse_position)
+
+    def test_dispatch_routes_new_opcodes(self):
+        sess = make_session()
+        self.assertTrue(sess._dispatch(se.SMSG_CORPSE_RECLAIM_DELAY, struct.pack('<I', 1000)))
+        self.assertIsNotNone(sess.corpse_reclaim_ready_at)
+        self.assertTrue(sess._dispatch(se.SMSG_DEATH_RELEASE_LOC, struct.pack('<i3f', 0, 1.0, 2.0, 3.0)))
+        self.assertEqual(sess.graveyard_position, (0, 1.0, 2.0, 3.0))
+        self.assertTrue(sess._dispatch(se.MSG_CORPSE_QUERY, struct.pack('<Bi3fiI', 1, 0, 1.0, 2.0, 3.0, 0, 0)))
+        self.assertEqual(sess.corpse_position, (0, 1.0, 2.0, 3.0))
+
+
+class ReconnectFlagTest(unittest.TestCase):
+    def test_logout_marks_requested_before_anything_else(self):
+        sess = make_session()
+        sess.logout()
+        self.assertTrue(sess._logout_requested)
+
+    def test_unrequested_logout_complete_sets_unexpected_disconnect(self):
+        sess = make_session(server_packet(se.SMSG_LOGOUT_COMPLETE, b''))
+        sess._running = True
+        sess._recv_loop()
+        self.assertTrue(sess.unexpected_disconnect)
+
+    def test_requested_logout_complete_does_not_set_unexpected_disconnect(self):
+        sess = make_session(server_packet(se.SMSG_LOGOUT_COMPLETE, b''))
+        sess._logout_requested = True
+        sess._running = True
+        sess._recv_loop()
+        self.assertFalse(sess.unexpected_disconnect)
+
+    def test_recv_thread_death_sets_unexpected_disconnect(self):
+        sess = make_session()  # empty stream -> immediate ConnectionError (EOF)
+        sess._running = True
+        sess._recv_loop()
+        self.assertTrue(sess.unexpected_disconnect)
 class LootDispatchTest(unittest.TestCase):
     """UM-42: SMSG_LOOT_RESPONSE / _RELEASE_RESPONSE / _REMOVED /
     _MONEY_NOTIFY / SMSG_ITEM_PUSH_RESULT / SMSG_INVENTORY_CHANGE_FAILURE /

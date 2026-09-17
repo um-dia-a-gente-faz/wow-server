@@ -61,7 +61,11 @@ def think_and_act(session, world, llm_client, persona: str = "",
     just successful ones.
     """
     registry = registry if registry is not None else ac.REGISTRY
-    snapshot = world.snapshot(my_position=my_position)
+    # corpse_position (UM-43) is session-scoped (MSG_CORPSE_QUERY), not part
+    # of WorldState — pass it through so the snapshot exposes it alongside
+    # is_dead/is_ghost. getattr() with a default: harmless if session is a
+    # test double without it.
+    snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None))
 
     def _audit(action_name=None, params=None, valid=False, ok=False, error=None):
         if audit_logger is None:

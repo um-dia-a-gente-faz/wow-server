@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 from agent import perception as per
+from agent import update_fields as uf
 from agent import update_fields as uo_fields
 from agent import update_object as uo
 
@@ -337,6 +338,17 @@ class ObjectInfoHelpersTest(unittest.TestCase):
         self.assertTrue(per.ObjectInfo(guid=1, health=0).is_dead())
         self.assertFalse(per.ObjectInfo(guid=1, health=1).is_dead())
 
+    def test_is_ghost(self):
+        self.assertTrue(per.ObjectInfo(guid=1, player_flags=per.PLAYER_FLAGS_GHOST).is_ghost())
+        self.assertTrue(per.ObjectInfo(guid=1, player_flags=per.PLAYER_FLAGS_GHOST | 0x20).is_ghost())
+        self.assertFalse(per.ObjectInfo(guid=1, player_flags=0x20).is_ghost())
+        self.assertFalse(per.ObjectInfo(guid=1, player_flags=None).is_ghost())
+
+    def test_is_spirit_healer(self):
+        obj = per.ObjectInfo(guid=1, npc_flags=per.UNIT_NPC_FLAG_SPIRITHEALER)
+        self.assertTrue(obj.is_spirit_healer())
+        self.assertFalse(per.ObjectInfo(guid=2, npc_flags=0).is_spirit_healer())
+
     def test_is_lootable(self):
         obj = per.ObjectInfo(guid=1, dynamic_flags=per.UNIT_DYNFLAG_LOOTABLE)
         self.assertTrue(obj.is_lootable())
@@ -440,6 +452,28 @@ class SnapshotTest(unittest.TestCase):
         snap = ws.snapshot(my_position=(530, 0.0, 0.0, 0.0, 0.0), max_range=50)
         self.assertEqual(snap["position"]["map"], 530)
         self.assertEqual(len(snap["nearby_units"]), 1)
+
+    def test_snapshot_exposes_is_dead_is_ghost_and_corpse_position(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0,
+                                       fields={0x03: 0, uf.UNIT_FIELD_HEALTH: 1,
+                                               uf.PLAYER_FLAGS: per.PLAYER_FLAGS_GHOST}))
+        snap = ws.snapshot(corpse_position=(530, 12.0, 34.0, 5.0))
+        self.assertFalse(snap["is_dead"])  # health=1 (ghost), not 0
+        self.assertTrue(snap["is_ghost"])
+        self.assertEqual(snap["corpse_position"], {"map": 530, "x": 12.0, "y": 34.0, "z": 5.0})
+
+    def test_snapshot_defaults_is_dead_is_ghost_false_and_corpse_position_none(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0, fields={0x03: 0}))
+        snap = ws.snapshot()
+        self.assertFalse(snap["is_dead"])
+        self.assertFalse(snap["is_ghost"])
+        self.assertIsNone(snap["corpse_position"])
 
 
 class RealFixtureIntegrationTest(unittest.TestCase):
