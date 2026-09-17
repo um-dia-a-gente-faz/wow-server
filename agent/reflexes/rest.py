@@ -10,10 +10,11 @@ CMSG_STANDSTATECHANGE verified against TrinityCore branch `3.3.5`:
   src/server/game/Entities/Unit/UnitDefines.h
     (enum UnitStandStateType: UNIT_STAND_STATE_STAND = 0, ..._SIT = 1)
 
-UM-42 (inventory/loot) is being developed in parallel and is NOT merged as
-of this writing — session.inventory and a registered `use_item` action
-don't exist yet. _try_eat_and_drink() degrades gracefully: no inventory (or
-no use_item action registered) means rest() just sits, per this card.
+UM-42 (inventory/loot) has merged: _try_eat_and_drink() reads the real
+inventory model (agent.perception.WorldState.build_equipment_and_inventory)
+and uses the registered `use_item` action. It still degrades gracefully —
+no inventory, no matching food/drink item, or no use_item action registered
+all mean rest() just sits, per this card.
 """
 
 import logging
@@ -21,6 +22,7 @@ import struct
 import time
 
 from .. import actions
+from .. import update_fields as uf
 from ..perception import POWER_MANA
 
 log = logging.getLogger("agent.reflexes.rest")
@@ -35,9 +37,9 @@ REST_HP_PCT_THRESHOLD = 0.5
 REST_MANA_PCT_THRESHOLD = 0.3
 REST_STOP_HP_PCT = 0.9
 
-# Food/drink item names this agent knows to look for once UM-42 lands —
-# a coarse heuristic (no item DB lookup), good enough until there's a real
-# "is this consumable food/drink" flag to check instead.
+# Food/drink item names this agent knows to look for — a coarse heuristic
+# (no item DB lookup), good enough until there's a real "is this consumable
+# food/drink" flag to check instead.
 _FOOD_DRINK_NAME_HINTS = ("bread", "water", "ration", "food", "drink", "juice", "bandage")
 
 
@@ -73,10 +75,15 @@ def needs_rest(me) -> bool:
 
 
 def _try_eat_and_drink(session, world) -> bool:
-    """Best-effort use of a food/drink item from session.inventory, if one
-    exists. Returns True if something was consumed. See module docstring —
-    this is a no-op (returns False) until UM-42 merges."""
-    inventory = getattr(session, "inventory", None)
+    """Best-effort use of a food/drink item from the world's inventory
+    model (agent.perception.WorldState.build_equipment_and_inventory, UM-42),
+    if one exists. Returns True if something was consumed.
+
+    Inventory items only carry a `slot` key (19-38 range) — they're all
+    implicitly in bag=INVENTORY_SLOT_BAG_0 (255, agent/update_fields.py),
+    the backpack/equipped-bags pseudo-bag; there is no per-item `bag` key to
+    read."""
+    _, inventory = world.build_equipment_and_inventory()
     if not inventory:
         return False
     use_item = actions.REGISTRY.get("use_item")
@@ -85,7 +92,7 @@ def _try_eat_and_drink(session, world) -> bool:
     for item in inventory:
         name = str(item.get("name") or "").lower()
         if any(hint in name for hint in _FOOD_DRINK_NAME_HINTS):
-            result = use_item.run(session, world, bag=item.get("bag"), slot=item.get("slot"))
+            result = use_item.run(session, world, bag=uf.INVENTORY_SLOT_BAG_0, slot=item.get("slot"))
             if result.ok:
                 return True
     return False

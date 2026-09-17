@@ -124,7 +124,7 @@ class RestReflexTickTest(unittest.TestCase):
 
     def test_tick_uses_food_when_inventory_available(self):
         sess = fake_session()
-        sess.inventory = [{"name": "Fresh Bread", "bag": 0, "slot": 1}]
+        item_guid = 0xF120000000000042
 
         @ac.register
         class _FakeUseItem(ac.Action):
@@ -136,6 +136,19 @@ class RestReflexTickTest(unittest.TestCase):
 
         try:
             world = world_with_self(sess.player_guid, health=30, max_health=100)
+            # Put an item guid in inventory slot 23 (first backpack slot) on
+            # the self player, and a matching item object so
+            # build_equipment_and_inventory() resolves its name.
+            world.update_object(uo.UpdateBlock(
+                update_type=uo.UPDATETYPE_VALUES, guid=sess.player_guid,
+                fields={uf.PLAYER_FIELD_PACK_SLOT_1: item_guid & 0xFFFFFFFF,
+                        uf.PLAYER_FIELD_PACK_SLOT_1 + 1: item_guid >> 32}))
+            world.update_object(uo.UpdateBlock(
+                update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=item_guid, object_type=uo.TYPEID_ITEM,
+                movement={"update_flags": 0},
+                fields={uf.OBJECT_FIELD_ENTRY: 159, uf.ITEM_FIELD_STACK_COUNT: 1}))
+            world.apply_item_query_response({"entry": 159, "found": True, "name": "Fresh Bread"})
+
             reflex = rf.RestReflex()
             reflex.tick(sess, world)
             self.assertTrue(reflex.active)
@@ -145,7 +158,7 @@ class RestReflexTickTest(unittest.TestCase):
             del ac.REGISTRY["use_item"]
 
     def test_no_inventory_falls_back_to_sitting(self):
-        sess = fake_session()  # no .inventory attribute at all (UM-42 not merged)
+        sess = fake_session()  # self object has no inventory item slots set
         world = world_with_self(sess.player_guid, health=30, max_health=100)
         reflex = rf.RestReflex()
         reflex.tick(sess, world)
