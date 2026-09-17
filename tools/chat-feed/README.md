@@ -63,7 +63,6 @@ python3 -m py_compile tools/chat-feed/app.py tools/chat-feed/tests/test_parser.p
 This is intentionally the 3--5 day prototype scoped by the spike, not a
 production service. It has no authentication or reverse-proxy integration,
 per-client rate limiting, durable history, moderation workflow, retention
-policy, metrics/alerts, or deployment validation against the live image's exact
-logger format. Rotation handling is implemented but has not been exercised
-against every Docker/runtime rotation mode. Capture real `Server.log` payloads
-before treating the parser as a stable contract.
+policy, or metrics/alerts. Rotation handling is implemented but has not been
+exercised against every Docker/runtime rotation mode. Capture real
+`Server.log` payloads before treating the parser as a stable contract.
