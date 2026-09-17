@@ -12,6 +12,7 @@ import uuid
 import zlib
 
 from agent import names as nm
+from agent import npc as npc_mod
 from agent import loot as lo
 from agent import packets as pk
 from agent import perception as per
@@ -360,6 +361,56 @@ class NameQueryTest(unittest.TestCase):
         sess = make_session()
         sess._send_name_queries()
         self.assertEqual(sess.sock.sent, b'')
+
+
+class NpcInteractionDispatchTest(unittest.TestCase):
+    """UM-40: dispatch wiring for gossip/vendor/trainer/npc-text opcodes."""
+
+    def test_gossip_message_dispatch_opens_window(self):
+        sess = make_session()
+        payload = (struct.pack('<Q', 5) + struct.pack('<i', 1) + struct.pack('<i', 999)
+                   + struct.pack('<I', 0) + struct.pack('<I', 0))
+        sess._dispatch(se.SMSG_GOSSIP_MESSAGE, payload)
+        window = sess.world_state.get_ui_state()
+        self.assertEqual(window["kind"], "gossip")
+        self.assertEqual(window["npc_guid"], 5)
+        # the missing npc text got queued
+        self.assertEqual(sess.world_state.npc_texts.drain(), [(999, 5)])
+
+    def test_gossip_complete_dispatch_closes_window(self):
+        sess = make_session()
+        sess.world_state.ui_state = {"kind": "gossip"}
+        sess._dispatch(se.SMSG_GOSSIP_COMPLETE, b'')
+        self.assertIsNone(sess.world_state.get_ui_state())
+
+    def test_list_inventory_dispatch_opens_vendor_window(self):
+        sess = make_session()
+        payload = struct.pack('<Q', 5) + bytes([0])
+        sess._dispatch(se.SMSG_LIST_INVENTORY, payload)
+        self.assertEqual(sess.world_state.get_ui_state()["kind"], "vendor")
+
+    def test_trainer_list_dispatch_opens_trainer_window(self):
+        sess = make_session()
+        payload = struct.pack('<Q', 5) + struct.pack('<i', 0) + struct.pack('<i', 0) + b'\x00'
+        sess._dispatch(se.SMSG_TRAINER_LIST, payload)
+        self.assertEqual(sess.world_state.get_ui_state()["kind"], "trainer")
+
+    def test_npc_text_update_dispatch_backfills_gossip_window(self):
+        sess = make_session()
+        sess.world_state.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                                 "options": [], "quests": []})
+        option = (struct.pack('<f', 1.0) + b'Hi\x00' + b'\x00' + struct.pack('<i', 0)
+                   + struct.pack('<6I', 0, 0, 0, 0, 0, 0))
+        payload = struct.pack('<I', 999) + option * npc_mod.MAX_NPC_TEXT_OPTIONS
+        sess._dispatch(se.SMSG_NPC_TEXT_UPDATE, payload)
+        self.assertEqual(sess.world_state.get_ui_state()["body_text"], "Hi")
+
+    def test_send_npc_text_queries_drains_and_sends(self):
+        sess = make_session()
+        sess.world_state.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                                 "options": [], "quests": []})
+        sess._send_npc_text_queries()
+        self.assertIn(npc_mod.build_npc_text_query(999, 5), sess.sock.sent)
 
 
 def len_string(s: str) -> bytes:

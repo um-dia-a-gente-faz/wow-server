@@ -472,6 +472,58 @@ class RealFixtureIntegrationTest(unittest.TestCase):
         self.assertGreater(len(snap["nearby_units"]) + len(snap["nearby_objects"]), 0)
 
 
+class NpcUiStateTest(unittest.TestCase):
+    """UM-40: gossip/vendor/trainer windows land in WorldState.ui_state and
+    surface through snapshot()'s 'window' key."""
+
+    def test_snapshot_window_defaults_to_none(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0))
+        self.assertIsNone(ws.snapshot()["window"])
+
+    def test_gossip_message_opens_window_and_queues_text(self):
+        ws = per.WorldState()
+        data = {"npc_guid": 5, "menu_id": 1, "text_id": 999, "options": [], "quests": []}
+        ws.apply_gossip_message(data)
+        window = ws.get_ui_state()
+        self.assertEqual(window["kind"], "gossip")
+        self.assertEqual(window["npc_guid"], 5)
+        self.assertNotIn("body_text", window)  # not cached yet
+        self.assertEqual(ws.npc_texts.drain(), [(999, 5)])
+
+    def test_npc_text_update_backfills_open_gossip_window(self):
+        ws = per.WorldState()
+        ws.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                  "options": [], "quests": []})
+        ws.apply_npc_text_update({"text_id": 999, "found": True,
+                                   "options": [{"text0": "Welcome!", "text1": "", "probability": 1.0,
+                                                "language": 0, "emotes": []}]})
+        self.assertEqual(ws.get_ui_state()["body_text"], "Welcome!")
+
+    def test_gossip_complete_closes_window(self):
+        ws = per.WorldState()
+        ws.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
+                                  "options": [], "quests": []})
+        ws.apply_gossip_complete()
+        self.assertIsNone(ws.get_ui_state())
+
+    def test_list_inventory_opens_vendor_window(self):
+        ws = per.WorldState()
+        ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
+        self.assertEqual(ws.get_ui_state()["kind"], "vendor")
+        self.assertEqual(ws.snapshot()["window"]["vendor_guid"], 5)
+
+    def test_trainer_list_opens_trainer_window(self):
+        ws = per.WorldState()
+        ws.apply_trainer_list({"trainer_guid": 5, "trainer_type": 0, "spells": [], "greeting": ""})
+        self.assertEqual(ws.get_ui_state()["kind"], "trainer")
+
+    def test_close_window_clears_state(self):
+        ws = per.WorldState()
+        ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
+        ws.close_window()
+        self.assertIsNone(ws.get_ui_state())
 class InventoryModelTest(unittest.TestCase):
     """UM-42: building session.inventory/equipment from CREATE blocks (self
     player + item objects) and the item-template cache."""
