@@ -105,6 +105,14 @@ class LLMClient:
             raise LLMError(f"HTTP {e.code} from {url}: {e.read()[:500]!r}") from e
         except urllib.error.URLError as e:
             raise LLMError(f"request to {url} failed: {e.reason}") from e
+        except OSError as e:
+            # urllib only wraps OSError as URLError around the request-send
+            # phase (urllib.request.AbstractHTTPHandler.do_open). A timeout
+            # while reading the response body (http.client.HTTPConnection
+            # .getresponse() -> socket.recv_into()) raises a bare
+            # TimeoutError/socket.timeout that neither except above catches,
+            # so it would otherwise kill the whole agent process (UM-81).
+            raise LLMError(f"request to {url} failed: {e}") from e
         try:
             return json.loads(raw)
         except json.JSONDecodeError as e:
