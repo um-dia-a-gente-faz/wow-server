@@ -40,11 +40,17 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # Textfile collector dir for monitoring/agent_metrics_textfile.py
+      # (UM-51 agent decision-audit metrics — no long-running agent process
+      # to attach an HTTP /metrics server to, so this is node-exporter's
+      # generic escape hatch instead of a new port/service).
+      - /opt/wow-server-metrics/textfile:/textfile:ro
     command:
       - "--path.procfs=/host/proc"
       - "--path.rootfs=/rootfs"
       - "--path.sysfs=/host/sys"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      - "--collector.textfile.directory=/textfile"
 
   cadvisor:
     container_name: cadvisor

@@ -226,10 +226,15 @@ Still open, in order:
    in the earlier prototype; pin a short list of models known to be good at
    tool calls (UM-61 benchmarks candidates), and fail over to a local model
    server if the primary is down/rate-limited.
-3. **Audit log** — persist every (perception snapshot, LLM decision, action,
-   result) tuple, not just the current `log.info`/`log.warning` lines; this
-   doubles as the spec's Safety-section audit log and as prompt-iteration
-   data.
+3. ~~**Audit log**~~ — **done (UM-51)**: `agent/audit.py::AuditLogger`
+   persists one JSONL record per think cycle (snapshot/hash, tool call,
+   validity, result, tokens, latency, reflex state, goal) to
+   `AGENT_AUDIT_DIR/<agent>/<YYYY-MM-DD>.jsonl` (size-rotated, retained for
+   `AGENT_AUDIT_RETENTION_DAYS`). `python3 -m agent.tools.replay` renders it
+   as a timeline; `agent/metrics.py` + `monitoring/agent_metrics_textfile.py`
+   derive counters/histograms (cycles, valid/invalid tool-call rate, actions
+   by name/outcome, tokens, LLM latency, deaths, level-ups, XP/hour) for
+   node-exporter's textfile collector — see `monitoring/README-agent-metrics.md`.
 4. Exit criterion (from the spec's Phase 3): one agent can autonomously level
    1→10 unattended. Don't reach for memory (vector store, long-term DB) or a
    second concurrent agent before this works — multi-agent coordination will

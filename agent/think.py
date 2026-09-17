@@ -38,7 +38,9 @@ class ThinkResult:
 
 
 def think_and_act(session, world, llm_client, persona: str = "",
-                   my_position=None, registry: dict | None = None) -> ThinkResult:
+                   my_position=None, registry: dict | None = None,
+                   audit_logger=None, cycle: int = 0,
+                   reflex_state: dict | None = None) -> ThinkResult:
     """One full think cycle:
 
     1. Build a perception snapshot (world.snapshot()).
@@ -52,25 +54,56 @@ def think_and_act(session, world, llm_client, persona: str = "",
     Any failure (LLM error, invalid tool call, failed validation) yields a
     non-ok ThinkResult instead of raising — callers (the main loop) log and
     move on to the next cycle rather than crash the agent.
+
+    If `audit_logger` (agent.audit.AuditLogger, UM-51) is given, one record
+    is appended for this cycle regardless of outcome — that's the whole
+    point of an audit log: it must capture failed/invalid cycles too, not
+    just successful ones.
     """
     registry = registry if registry is not None else ac.REGISTRY
     snapshot = world.snapshot(my_position=my_position)
+
+    def _audit(action_name=None, params=None, valid=False, ok=False, error=None):
+        if audit_logger is None:
+            return
+        usage = getattr(llm_client, "last_usage", None) or {}
+        try:
+            audit_logger.record(
+                cycle=cycle,
+                snapshot=snapshot,
+                tool_call={"name": action_name, "args": params or {}},
+                valid=valid,
+                result={"ok": ok, "error": error},
+                reflex=reflex_state or {},
+                goal=persona or None,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                model=getattr(llm_client, "model", None),
+                latency_ms=getattr(llm_client, "last_latency_ms", None),
+            )
+        except OSError as e:  # never let audit I/O crash a think cycle
+            log.warning("audit log write failed: %s", e)
 
     try:
         action_name, params = llm_client.choose_action(snapshot, ac.catalog(), persona=persona)
     except LLMError as e:
         log.warning("llm call failed: %s", e)
+        _audit(error=f"llm call failed: {e}")
         return ThinkResult(ok=False, error=f"llm call failed: {e}")
 
     action = registry.get(action_name)
     if action is None:
         log.warning("model chose unknown action %r (params=%r)", action_name, params)
+        _audit(action_name=action_name, params=params, valid=False,
+               error=f"unknown action: {action_name!r}")
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"unknown action: {action_name!r}")
 
     missing = [p for p in action.required if p not in params]
     if missing:
         log.warning("action %s missing required params %r (got %r)", action_name, missing, params)
+        _audit(action_name=action_name, params=params, valid=False,
+               error=f"missing required params: {missing}")
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"missing required params: {missing}")
 
@@ -80,13 +113,17 @@ def think_and_act(session, world, llm_client, persona: str = "",
         # Unexpected/extra kwargs the model hallucinated, or a param of the
         # wrong shape reaching execute()'s positional signature.
         log.warning("action %s rejected params %r: %s", action_name, params, e)
+        _audit(action_name=action_name, params=params, valid=True,
+               error=f"bad params: {e}")
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"bad params: {e}")
 
     if not result.ok:
         log.info("action %s failed validation/execution: %s", action_name, result.error)
+        _audit(action_name=action_name, params=params, valid=True, ok=False, error=result.error)
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=result.error, detail=result.detail)
 
     log.info("action %s executed: %s", action_name, result.detail)
+    _audit(action_name=action_name, params=params, valid=True, ok=True)
     return ThinkResult(ok=True, action_name=action_name, params=params, detail=result.detail)
