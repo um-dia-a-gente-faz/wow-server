@@ -281,6 +281,21 @@ class LoginTest(unittest.TestCase):
         self.assertEqual(sess.world_state.my_guid, 2)
         self.assertEqual(sess.player_position[0], 530)
 
+    def test_login_sends_set_active_mover(self):
+        # UM-36: without CMSG_SET_ACTIVE_MOVER, WorldSession::
+        # ValidateAndGetUnitBeingMoved silently drops every MSG_MOVE_* we
+        # send (found live-verifying the face action) — a real client sends
+        # this right after login, so we must too.
+        verify_world = struct.pack('<iffff', 530, 9487.0, -7279.0, 14.3, 0.0)
+        sess = make_session(server_packet(se.SMSG_LOGIN_VERIFY_WORLD, verify_world))
+        sess._recv_loop = lambda: None
+        sess.login_character(7)
+        sess._recv_thread.join()
+        # Unencrypted here (no crypt set up), so the packet's raw bytes —
+        # header (size, opcode) + uint64 guid payload — appear as-is.
+        expected = struct.pack('>H', 4 + 8) + struct.pack('<I', se.CMSG_SET_ACTIVE_MOVER) + struct.pack('<Q', 7)
+        self.assertIn(expected, sess.sock.sent)
+
 
 class RecvLoopSafetyNetTest(unittest.TestCase):
     def test_bad_packets_are_dropped_and_loop_continues(self):

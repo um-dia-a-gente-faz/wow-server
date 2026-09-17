@@ -34,6 +34,7 @@ SMSG_AUTH_RESPONSE      = 0x1EE
 CMSG_CHAR_ENUM          = 0x037
 SMSG_CHAR_ENUM          = 0x03B
 CMSG_PLAYER_LOGIN       = 0x03D
+CMSG_SET_ACTIVE_MOVER   = 0x26A
 CMSG_LOGOUT_REQUEST     = 0x04B
 CMSG_PING               = 0x1DC
 SMSG_PONG               = 0x1DD
@@ -247,6 +248,13 @@ class WoWSession:
 
             if opcode == SMSG_LOGIN_VERIFY_WORLD:
                 self._handle_verify_world(payload)
+                # A real client sends this right after login (CMSG_SET_ACTIVE_MOVER,
+                # 0x26A) to claim itself as the unit it controls. Without it,
+                # WorldSession::ValidateAndGetUnitBeingMoved (MovementHandler.cpp)
+                # finds no GameClient::_activelyMovedUnit and silently drops every
+                # MSG_MOVE_* we send (face, and later movement in UM-38) — found
+                # while live-verifying UM-36's face action.
+                self._send_packet(CMSG_SET_ACTIVE_MOVER, struct.pack('<Q', guid))
                 self._in_world = True
                 self._running = True
                 self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)

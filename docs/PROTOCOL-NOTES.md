@@ -103,3 +103,30 @@ take two words.
 | `UNIT_NPC_FLAGS` | `0x52` |
 | `UNIT_END` | `0x94` |
 | `PLAYER_FLAGS` | `0x96` |
+
+## Sending movement: `CMSG_SET_ACTIVE_MOVER` is required before any `MSG_MOVE_*` we send takes effect
+
+Found live-verifying UM-36's `face` action: a `MSG_MOVE_SET_FACING` (or any other
+`MSG_MOVE_*`) packet we send is **silently dropped** unless the agent has
+first sent `CMSG_SET_ACTIVE_MOVER` (`0x26A`, payload: raw uint64 guid —
+`WorldSession::HandleSetActiveMoverOpcode`, `MovementHandler.cpp`) for its
+own guid, once, after login.
+
+Why: `WorldSession::HandleMovementOpcode` (`MovementHandler.cpp`) calls
+`ValidateAndGetUnitBeingMoved(movementInfo.guid, opcode, false)`, which
+requires `GameClient::GetActivelyMovedUnit()` to be non-null and match the
+guid in the packet. That field is *only* ever set by
+`HandleSetActiveMoverOpcode` — nothing sets it automatically at login. A
+real client sends `CMSG_SET_ACTIVE_MOVER` for itself as part of its normal
+post-login sequence; our headless client didn't, so every movement packet
+we sent (facing included) was accepted at the socket level, parsed, and
+then dropped with no error response — `ValidateAndGetUnitBeingMoved` logs a
+`TC_LOG_DEBUG` on rejection, but nothing at `INFO` level, so this was
+invisible without live testing.
+
+Fix: `agent/session.py::login_character` sends `CMSG_SET_ACTIVE_MOVER` with
+our own guid right after `SMSG_LOGIN_VERIFY_WORLD`, before the recv thread
+starts. Verified live: `face`'s resulting orientation matched exactly (to 6
+decimal places) between the packet we sent and `characters.characters.orientation`
+after a save. This also unblocks UM-38 (movement) — the same gate applies
+to every `MSG_MOVE_*` opcode.

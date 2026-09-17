@@ -8,9 +8,22 @@ against TrinityCore branch `3.3.5`:
   src/server/shared/SharedDefines.h (enum ChatMsg, LANG_* constants)
   src/server/game/Server/Packets/PartyPackets.cpp (PartyInviteClient::Read)
   src/server/game/Server/Protocol/Opcodes.h
+  src/server/game/Server/Packets/CombatPackets.cpp (AttackSwing::Read)
+  src/server/game/Server/Packets/MiscPackets.cpp (SetSelection::Read)
+
+UM-36 adds the Action framework (Action/ActionResult/REGISTRY/catalog()) at
+the top of this file — the uniform shape UM-44's LLM loop exposes as tools —
+and the first two real actions, `set_target` and `face`. The free functions
+below (say/yell/.../send_attack) predate it and stay as-is; set_target and
+send_attack now also have Action wrappers registered in REGISTRY.
 """
 
+import math
 import struct
+import time
+from dataclasses import dataclass, field
+
+from . import movement
 
 CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
 CMSG_TEXT_EMOTE         = 0x104
@@ -35,6 +48,94 @@ CHAT_MSG_EMOTE = 0x0A
 LANG_UNIVERSAL = 0
 LANG_ORCISH = 1
 LANG_COMMON = 7
+
+# ── Action framework (UM-36) ─────────────────────────────────────────────
+# The uniform shape every action follows, so UM-44's LLM loop can expose
+# REGISTRY as a tool catalog without bespoke per-action glue.
+
+DEFAULT_CONFIRM_TIMEOUT_S = 2.0
+DEFAULT_CONFIRM_POLL_S = 0.1
+
+
+@dataclass
+class ActionResult:
+    ok: bool
+    error: str | None = None
+    detail: dict = field(default_factory=dict)
+
+
+def _wait_for(predicate, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
+              interval: float = DEFAULT_CONFIRM_POLL_S) -> bool:
+    """Poll `predicate` (called with no args) until it's true or `timeout`
+    seconds pass. Used by an action's execute() to confirm its effect landed
+    in perception (e.g. the self target field, UNIT_FIELD_TARGET) instead of
+    just trusting the packet was sent. Blocks the calling thread — callers
+    run this from the think/act step, not the recv thread."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if predicate():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+
+
+class Action:
+    """Base for every agent action. Subclasses set `name`/`description`/
+    `params` (JSON-schema `properties`, OpenAI/Anthropic-tool-compatible)
+    and implement `check`/`execute`; `run` is what callers use."""
+
+    name: str = ""
+    description: str = ""
+    params: dict = {}
+    required: tuple = ()  # subset of params.keys() the schema marks required
+
+    def check(self, session, world, **params) -> str | None:
+        """Return an error string if this action shouldn't execute right
+        now, else None. Called by run() before execute() — execute()
+        implementations can assume check() already passed."""
+        return None
+
+    def execute(self, session, world, **params) -> ActionResult:
+        raise NotImplementedError
+
+    def run(self, session, world, **params) -> ActionResult:
+        error = self.check(session, world, **params)
+        if error is not None:
+            return ActionResult(ok=False, error=error)
+        return self.execute(session, world, **params)
+
+    def schema(self) -> dict:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": self.params,
+                "required": list(self.required),
+            },
+        }
+
+
+REGISTRY: dict[str, Action] = {}
+
+
+def register(action_cls: type) -> type:
+    """Class decorator: instantiates `action_cls` and adds it to REGISTRY
+    under its `.name`. Actions are stateless aside from per-instance
+    confirm_timeout/confirm_interval overrides, so one shared instance is
+    fine — tests that need a different timeout construct their own
+    instance directly instead of going through REGISTRY."""
+    instance = action_cls()
+    REGISTRY[instance.name] = instance
+    return action_cls
+
+
+def catalog() -> list[dict]:
+    """Every registered action's schema, in registration order — the tool
+    list UM-44's LLM loop passes to the model."""
+    return [a.schema() for a in REGISTRY.values()]
+
 
 # ChrRaces.dbc race IDs (matches WoWSession.enum_characters()'s 'race' field).
 _ALLIANCE_RACES = {1, 3, 4, 7, 11}  # Human, Dwarf, Night Elf, Gnome, Draenei
@@ -123,14 +224,17 @@ def leave_group(session):
 
 
 def send_target(session, guid: int):
-    """Target a unit or object by GUID."""
+    """Target a unit or object by GUID. SetSelection::Read (MiscPackets.cpp):
+    a single raw (not packed) uint64 guid."""
     session._send_packet(CMSG_SET_SELECTION, struct.pack("<Q", guid))
 
 
 def send_attack(session, guid: int):
-    """Start auto-attack on target."""
+    """Start auto-attack on target. AttackSwing::Read (CombatPackets.cpp):
+    a single raw (not packed) uint64 victim guid — previously sent with no
+    payload at all (a malformed packet; found in review, fixed by UM-36)."""
     send_target(session, guid)
-    session._send_packet(CMSG_ATTACKSWING)
+    session._send_packet(CMSG_ATTACKSWING, struct.pack("<Q", guid))
 
 
 def send_chat_message(session, message: str, channel: str = "say", target: str | None = None):
@@ -146,3 +250,80 @@ def send_chat_message(session, message: str, channel: str = "say", target: str |
         emote(session, message)
     else:
         say(session, message)
+
+
+# ── Registered actions (UM-36) ────────────────────────────────────────────
+
+@register
+class SetTargetAction(Action):
+    name = "set_target"
+    description = "Target a nearby unit, player, or object by its GUID from the perception snapshot."
+    params = {
+        "guid": {"type": "integer", "description": "GUID of the object to target."},
+    }
+    required = ("guid",)
+    # Overridable (class or instance attribute) so tests don't have to block
+    # for the production default — real confirmation normally lands within
+    # one or two update-object ticks.
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, guid: int, **_) -> str | None:
+        if world.get_object(guid) is None:
+            return f"guid {guid:#x} is not currently perceived"
+        return None
+
+    def execute(self, session, world, guid: int, **_) -> ActionResult:
+        send_target(session, guid)
+        confirmed = _wait_for(lambda: (me := world.get_my_object()) is not None and me.target_guid == guid,
+                               timeout=self.confirm_timeout, interval=self.confirm_interval)
+        if not confirmed:
+            return ActionResult(ok=False, error="target field did not update in time",
+                                 detail={"guid": guid})
+        return ActionResult(ok=True, detail={"guid": guid})
+
+
+@register
+class FaceAction(Action):
+    name = "face"
+    description = ("Turn in place to face a nearby object by GUID, or a specific x,y position, "
+                    "without otherwise moving.")
+    params = {
+        "guid": {"type": "integer", "description": "GUID of the object to face. Mutually exclusive with x/y."},
+        "x": {"type": "number", "description": "Target X coordinate. Requires y; mutually exclusive with guid."},
+        "y": {"type": "number", "description": "Target Y coordinate. Requires x; mutually exclusive with guid."},
+    }
+    required = ()  # exactly one of guid or (x and y) — enforced in check(), not expressible as a flat "required" list
+
+    def check(self, session, world, guid: int | None = None, x: float | None = None,
+              y: float | None = None, **_) -> str | None:
+        if guid is None and (x is None or y is None):
+            return "face needs either guid or both x and y"
+        if guid is not None and (x is not None or y is not None):
+            return "face takes either guid or x/y, not both"
+        if session.player_position is None:
+            return "own position unknown"
+        if guid is not None:
+            target = world.get_object(guid)
+            if target is None or target.position is None:
+                return f"guid {guid:#x} has no known position"
+        return None
+
+    def execute(self, session, world, guid: int | None = None, x: float | None = None,
+                y: float | None = None, **_) -> ActionResult:
+        _, my_x, my_y, my_z, _my_o = session.player_position
+        if guid is not None:
+            target = world.get_object(guid)
+            _, tx, ty, _tz, _ = target.position
+        else:
+            tx, ty = x, y
+        orientation = math.atan2(ty - my_y, tx - my_x) % (2 * math.pi)
+
+        movement.send_set_facing(session, my_x, my_y, my_z, orientation)
+        # The server doesn't echo MSG_MOVE_* back to the sender, so mirror
+        # the new orientation locally — matches how session.py mirrors self
+        # position/stats from perception for cheap access (_sync_self_from_block).
+        map_id = session.player_position[0]
+        session.player_position = (map_id, my_x, my_y, my_z, orientation)
+
+        return ActionResult(ok=True, detail={"orientation": orientation})

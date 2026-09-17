@@ -167,6 +167,11 @@ on perception and is a dependency for the next:
      real navmesh-backed pathing — likely as a small sidecar service (Python
      bindings around Detour, or a thin wrapper shelling out to a Recast/
      Detour CLI) rather than a pure-Python reimplementation.
+   - **UM-36 found and fixed a prerequisite for any of this:** the agent
+     must send `CMSG_SET_ACTIVE_MOVER` for its own guid once after login, or
+     every `MSG_MOVE_*` it sends (including v1's `START_FORWARD`/`STOP`) is
+     silently dropped server-side — see `docs/PROTOCOL-NOTES.md`. Already
+     wired into `agent/session.py::login_character`.
 
 ### Phase 3 — think loop + LLM integration
 
