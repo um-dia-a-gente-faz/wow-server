@@ -19,6 +19,7 @@ adding a new Action automatically extends what the model can choose from.
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 
@@ -83,6 +84,12 @@ class LLMClient:
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
+        # Populated by the last choose_action() call, for callers (agent.think's
+        # audit logging, UM-51) that want token usage/latency without changing
+        # choose_action()'s (name, params) return shape. Never holds the API
+        # key or anything else that needs redacting.
+        self.last_usage: dict = {}
+        self.last_latency_ms: float | None = None
 
     def _post(self, path: str, body: dict) -> dict:
         url = f"{self.base_url}{path}"
@@ -116,7 +123,10 @@ class LLMClient:
             "tools": build_tools(catalog),
             "tool_choice": "required",
         }
+        t0 = time.monotonic()
         response = self._post("/chat/completions", body)
+        self.last_latency_ms = (time.monotonic() - t0) * 1000.0
+        self.last_usage = response.get("usage") or {}
         return _extract_tool_call(response)
 
 

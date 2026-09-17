@@ -13,6 +13,12 @@ x-agent: &agent-defaults
     WOW_PASSWORD: ${AGENT_PASSWORD:?set AGENT_PASSWORD in .env (see .env.example)}
     AGENT_THINK_INTERVAL_S: 5
     LOG_LEVEL: INFO
+  # Decision audit log (UM-51) — one JSONL file per agent per day. Host path
+  # matches monitoring/docker-compose.yml's node-exporter textfile mount
+  # input (see monitoring/agent_metrics_textfile.py), so the same directory
+  # feeds both the replay viewer and the Prometheus exporter.
+  volumes: &audit-volume
+    - /opt/wow-server-metrics/audit:/data/audit
 
 services:
   agent-luaprata:

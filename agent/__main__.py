@@ -21,6 +21,7 @@ from .auth import auth_logon
 from .session import WoWSession
 from .llm import LLMClient
 from .think import think_and_act
+from .audit import AuditLogger
 from .reflexes.follow import get_follow_reflex
 
 
@@ -125,9 +126,14 @@ def main():
     else:
         log.warning("LLM_BASE_URL/LLM_MODEL not set — think step disabled, agent will idle")
 
+    audit_logger = AuditLogger(cfg.agent_name, base_dir=cfg.audit_dir,
+                                retention_days=cfg.audit_retention_days)
+    log.info("audit log: %s (retention %d days)", audit_logger.agent_dir, audit_logger.retention_days)
+
     log.info("entering agent loop (ctrl+c to stop) ...")
     try:
-        _run_loop(sess, cfg, duration, perception_dump=args.perception_dump, llm_client=llm_client)
+        _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
+                  llm_client=llm_client, audit_logger=audit_logger)
     except KeyboardInterrupt:
         log.info("interrupted")
     finally:
@@ -155,22 +161,41 @@ def _run_follow_reflex_loop(sess, stop_event: threading.Event,
         stop_event.wait(tick_interval)
 
 
-def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, llm_client=None):
+def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, llm_client=None,
+              audit_logger=None):
     start = time.monotonic()
 
     reflex_stop = threading.Event()
     reflex_thread = threading.Thread(target=_run_follow_reflex_loop, args=(sess, reflex_stop), daemon=True)
     reflex_thread.start()
     try:
-        _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump, llm_client=llm_client)
+        _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump,
+                         llm_client=llm_client, audit_logger=audit_logger)
     finally:
         reflex_stop.set()
         reflex_thread.join(timeout=2.0)
 
 
+def _reflex_state(sess) -> dict:
+    """Best-effort snapshot of active reflexes for the audit log — never
+    raises, since a reflex's internal shape isn't this loop's business."""
+    reflex = getattr(sess, "_follow_reflex", None)
+    if reflex is None or not getattr(reflex, "enabled", False):
+        return {}
+    return {
+        "follow": {
+            "enabled": True,
+            "leader_guid": getattr(reflex, "leader_guid", None),
+            "leader_name": getattr(reflex, "leader_name", None),
+            "assist": getattr(reflex, "assist", False),
+        }
+    }
+
+
 def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
-                     llm_client=None):
+                     llm_client=None, audit_logger=None):
     log = logging.getLogger("agent")
+    cycle = 0
     while duration is None or time.monotonic() - start < duration:
         # ── perceive ───────────────────────────────────────────
         objects = sess.world_state.get_objects()
@@ -197,8 +222,11 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
 
         # ── think + act (LLM call → one validated action per cycle) ────
         if llm_client is not None:
+            cycle += 1
             result = think_and_act(sess, sess.world_state, llm_client,
-                                    persona=cfg.persona, my_position=sess.player_position)
+                                    persona=cfg.persona, my_position=sess.player_position,
+                                    audit_logger=audit_logger, cycle=cycle,
+                                    reflex_state=_reflex_state(sess))
             if not result.ok:
                 log.info("think cycle: no action taken (%s)", result.error)
 

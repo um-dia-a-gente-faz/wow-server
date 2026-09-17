@@ -67,6 +67,10 @@ class Config:
     # Directory to dump raw (decrypted, inflated) SMSG_UPDATE_OBJECT payloads into.
     dump_packets_dir: str = field(default_factory=lambda: _env_str("AGENT_DUMP_PACKETS"))
 
+    # ── Audit log (UM-51) ─────────────────────────────────────
+    audit_dir: str = field(default_factory=lambda: _env_str("AGENT_AUDIT_DIR", "/data/audit"))
+    audit_retention_days: int = field(default_factory=lambda: _env_int("AGENT_AUDIT_RETENTION_DAYS", 14))
+
     def validate(self, require_character: bool = True) -> list[str]:
         """Return a list of configuration problems (empty = OK)."""
         problems = []
@@ -94,6 +98,8 @@ class Config:
             "llm_model": self.llm_model or "(unset)",
             "log_level": self.log_level,
             "dump_packets": self.dump_packets_dir or "(off)",
+            "audit_dir": self.audit_dir,
+            "audit_retention_days": self.audit_retention_days,
         }
 
 
