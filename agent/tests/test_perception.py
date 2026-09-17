@@ -5,6 +5,7 @@ that's agent/tests/test_update_object_parser.py's job."""
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 from agent import perception as per
 from agent import update_object as uo
@@ -177,6 +178,103 @@ class NameResolutionTest(unittest.TestCase):
                                            "subname": "", "rank": "normal", "creature_type_name": "beast"})
         snap = ws.snapshot(max_range=50)
         self.assertEqual(snap["nearby_units"][0]["name"], "Cat")
+
+def spline_movement_block(guid, x, y, z, destination, duration, time_passed=0):
+    """`duration`/`time_passed` are milliseconds, matching the real wire
+    values agent.update_object._parse_create_object_spline_block produces."""
+    return uo.UpdateBlock(
+        update_type=uo.UPDATETYPE_MOVEMENT, guid=guid,
+        movement={"update_flags": uo.UPDATEFLAG_LIVING, "move_flags": uo.MOVEMENTFLAG_SPLINE_ENABLED,
+                  "x": x, "y": y, "z": z, "o": 0.0,
+                  "spline": {"destination": destination, "duration": duration, "time_passed": time_passed}})
+
+
+def living_movement_block(guid, x, y, z, move_flags=0):
+    return uo.UpdateBlock(
+        update_type=uo.UPDATETYPE_MOVEMENT, guid=guid,
+        movement={"update_flags": uo.UPDATEFLAG_LIVING, "move_flags": move_flags, "x": x, "y": y, "z": z, "o": 0.0})
+
+
+class SplineInterpolationTest(unittest.TestCase):
+    """UM-64: NPC/player positions interpolate toward an in-flight spline's
+    destination between update-object/MONSTER_MOVE ticks."""
+
+    def test_spline_movement_block_sets_spline_state(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        ws.update_object(spline_movement_block(1, 0.0, 0.0, 0.0, (10.0, 0.0, 0.0), duration=2000))
+        obj = ws.get_object(1)
+        self.assertIsNotNone(obj.spline)
+        self.assertEqual(obj.spline["destination"], (10.0, 0.0, 0.0))
+
+    def test_current_position_interpolates_halfway(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        with mock.patch("agent.perception.time.monotonic", return_value=100.0):
+            ws.update_object(spline_movement_block(1, 0.0, 0.0, 0.0, (10.0, 0.0, 0.0), duration=2000))
+        obj = ws.get_object(1)
+        with mock.patch("agent.perception.time.monotonic", return_value=101.0):
+            pos = obj.current_position()
+        self.assertAlmostEqual(pos[1], 5.0)
+
+    def test_current_position_clamps_at_destination_after_duration(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        with mock.patch("agent.perception.time.monotonic", return_value=100.0):
+            ws.update_object(spline_movement_block(1, 0.0, 0.0, 0.0, (10.0, 0.0, 0.0), duration=2000))
+        obj = ws.get_object(1)
+        with mock.patch("agent.perception.time.monotonic", return_value=1000.0):
+            pos = obj.current_position()
+        self.assertEqual(pos[1:4], (10.0, 0.0, 0.0))
+
+    def test_fresh_living_block_without_spline_clears_it(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        ws.update_object(spline_movement_block(1, 0.0, 0.0, 0.0, (10.0, 0.0, 0.0), duration=2000))
+        ws.update_object(living_movement_block(1, 3.0, 0.0, 0.0))
+        self.assertIsNone(ws.get_object(1).spline)
+
+    def test_apply_monster_move_starts_spline(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        ws.apply_monster_move({"mover_guid": 1, "move_type": uo.MONSTER_MOVE_NORMAL,
+                                "pos": (0.0, 0.0, 0.0), "destination": (10.0, 0.0, 0.0), "move_time": 2000})
+        obj = ws.get_object(1)
+        self.assertIsNotNone(obj.spline)
+        self.assertEqual(obj.spline["destination"], (10.0, 0.0, 0.0))
+
+    def test_apply_monster_move_stop_clears_spline(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        ws.apply_monster_move({"mover_guid": 1, "move_type": uo.MONSTER_MOVE_NORMAL,
+                                "pos": (0.0, 0.0, 0.0), "destination": (10.0, 0.0, 0.0), "move_time": 2000})
+        ws.apply_monster_move({"mover_guid": 1, "move_type": uo.MONSTER_MOVE_STOP, "pos": (10.0, 0.0, 0.0)})
+        self.assertIsNone(ws.get_object(1).spline)
+
+    def test_apply_monster_move_unknown_guid_ignored_and_counted(self):
+        ws = per.WorldState()
+        ws.apply_monster_move({"mover_guid": 99, "move_type": uo.MONSTER_MOVE_STOP, "pos": (0.0, 0.0, 0.0)})
+        self.assertIsNone(ws.get_object(99))
+        self.assertEqual(ws.unknown_field_updates, 1)
+
+    def test_apply_movement_info_updates_position(self):
+        ws = per.WorldState()
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0, y=0, z=0))
+        ws.apply_movement_info(1, {"move_flags": 0, "x": 5.0, "y": 6.0, "z": 7.0, "o": 0.0})
+        self.assertEqual(ws.get_object(1).position, (530, 5.0, 6.0, 7.0, 0.0))
+
+    def test_apply_movement_info_unknown_guid_ignored_and_counted(self):
+        ws = per.WorldState()
+        ws.apply_movement_info(99, {"move_flags": 0, "x": 0.0, "y": 0.0, "z": 0.0})
+        self.assertIsNone(ws.get_object(99))
+        self.assertEqual(ws.unknown_field_updates, 1)
 
 
 class ObjectInfoHelpersTest(unittest.TestCase):

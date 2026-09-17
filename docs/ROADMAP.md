@@ -39,12 +39,16 @@ documented gap (no live `OUT_OF_RANGE_OBJECTS`/standalone `MOVEMENT` capture
 — same-map `.go` GM teleports don't trigger TrinityCore's live visibility
 resync without a `MSG_MOVE_TELEPORT_ACK` this agent doesn't send yet; a
 relogin does, and that's what these PRs used to verify position changes and
-nearby-object detection instead). `SMSG_MONSTER_MOVE`/`MSG_MOVE_*` heartbeats
-(other objects' movement between their own update-object blocks) are also
-not parsed yet — nearby objects still get position updates from their own
-CREATE/MOVEMENT/VALUES blocks, just not every tick. Both are natural
-follow-ups once real character movement (Phase 2, `move_to`) needs a
-teleport ack anyway.
+nearby-object detection instead). A teleport ack is a natural follow-up once
+real character movement (Phase 2, `move_to`) needs one anyway.
+
+### Phase 1.5 — spline movement — SHIPPED 2026-09-17
+
+UM-64: the `SPLINE_ENABLED` create-object block, `SMSG_MONSTER_MOVE`, and
+`MSG_MOVE_*` broadcasts are now all parsed — a moving NPC or player no
+longer drops the whole packet it's in, and nearby objects get a simple
+straight-line position interpolation between their own update-object/
+`MONSTER_MOVE` ticks instead of going stale.
 
 Original plan (kept below for context; superseded by the actual PRs above):
 
@@ -167,6 +171,11 @@ on perception and is a dependency for the next:
      real navmesh-backed pathing — likely as a small sidecar service (Python
      bindings around Detour, or a thin wrapper shelling out to a Recast/
      Detour CLI) rather than a pure-Python reimplementation.
+   - **UM-36 found and fixed a prerequisite for any of this:** the agent
+     must send `CMSG_SET_ACTIVE_MOVER` for its own guid once after login, or
+     every `MSG_MOVE_*` it sends (including v1's `START_FORWARD`/`STOP`) is
+     silently dropped server-side — see `docs/PROTOCOL-NOTES.md`. Already
+     wired into `agent/session.py::login_character`.
 
 ### Phase 3 — think loop + LLM integration
 

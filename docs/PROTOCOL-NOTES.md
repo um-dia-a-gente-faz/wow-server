@@ -75,6 +75,73 @@ Then these trailing fields, in this order, each only when its flag is set:
 `UNKNOWN` `uint32`, `LOWGUID` `uint32`, `HAS_TARGET` packed GUID, `TRANSPORT`
 `uint32`, `VEHICLE` `uint32` + `float`, `ROTATION` `int64`.
 
+## Spline create block (`WorldPackets::Movement::CommonMovement::WriteCreateObjectSplineDataBlock`, `Server/Packets/MovementPackets.cpp`)
+
+Appended to a `LIVING` movement block (after the 9 speed floats) when
+`MOVEMENTFLAG_SPLINE_ENABLED` (`0x08000000`) is set — a moving NPC or player,
+caught mid-`CREATE`. Verified against the live `TrinityCore/TrinityCore`
+branch `3.3.5` (`gh api repos/TrinityCore/TrinityCore/contents/... ?ref=3.3.5`)
+and empirically against `login_sunstrider.bin`'s 14 real spline blocks — the
+whole 13316 B payload parses to exactly `len(payload)` with this layout.
+
+```
+uint32 splineFlags                  // Movement::MoveSplineFlag
+// at most one, gated by Mask_Final_Facing (Final_Point|Final_Target|Final_Angle):
+float finalAngle                    // if Final_Angle (0x00020000)
+uint64 finalTargetGuid              // if Final_Target (0x00010000) — RAW guid, not packed (ByteBuffer operator<<(ObjectGuid))
+float finalPoint.x, y, z            // if Final_Point (0x00008000)
+int32  timePassed                   // elapsed ms
+uint32 duration                     // total ms
+uint32 splineId
+float  durationMod, nextDurationMod // always 1.0f on the wire, unused
+float  verticalAcceleration
+uint32 effectStartTime
+uint32 pointCount
+float  points[pointCount].x, y, z   // MoveSpline::getPath() verbatim — raw floats, no packed-delta compression here
+uint8  mode                         // Spline::EvaluationMode: 0 linear, 1 catmullrom, 2 unused bezier3
+float  destination.x, y, z          // (0,0,0) if the spline is cyclic
+```
+
+## `SMSG_MONSTER_MOVE` (`WorldPackets::Movement::MonsterMove::Write`/`InitializeSplineData`, `MovementPackets.cpp`)
+
+An NPC's new destination/path. Does **not** cover `SMSG_MONSTER_MOVE_TRANSPORT`
+(`0x2AE`, transport-relative movement) — different, unimplemented layout.
+
+```
+packedGuid mover
+uint8  vehicleExitVoluntary
+float  pos.x, y, z                  // starting position, no orientation
+uint32 splineId
+uint8  moveType                     // MonsterMoveType: 0 NORMAL, 1 STOP, 2 FACING_SPOT, 3 FACING_TARGET, 4 FACING_ANGLE
+// if moveType != STOP:
+  // at most one, gated by moveType:
+  uint64 faceGuid                   // if FACING_TARGET — raw, not packed
+  float  faceDirection               // if FACING_ANGLE
+  float  faceSpot.x, y, z            // if FACING_SPOT
+  uint32 flags                       // Movement::MoveSplineFlag
+  uint8  animTier; uint32 animStartTime   // if flags & Animation (0x00200000)
+  uint32 moveTime
+  float  jumpGravity; uint32 jumpStartTime // if flags & Parabolic (0x00000800)
+  uint32 pointCount
+  // if flags & (Flying|Catmullrom) (0x00002000|0x00040000): pointCount raw float x,y,z points
+  // else: 1 raw float x,y,z point (the final destination), then (pointCount-1) packed-delta uint32s —
+  //       each a compressed offset from the midpoint of start and destination (ByteBuffer::appendPackXYZ:
+  //       11/11/10-bit signed fields, quarter-yard units, low-to-high x/y/z)
+```
+
+## `MSG_MOVE_*` broadcasts (`WorldPackets::Movement::MoveUpdate::Write`, `MovementPackets.cpp`)
+
+Another player's movement (start/stop forward/strafe/turn, jump, fall-land,
+swim, set-facing, heartbeat, ...) relayed to nearby clients:
+`WorldSession::HandleMovementOpcodes` in `Opcodes.cpp` lists every opcode that
+uses this exact wire shape.
+
+```
+packedGuid mover
+MovementInfo                        // same fields as the LIVING form above, MINUS the 9 speeds and spline data —
+                                     // those are UPDATE_OBJECT-specific; a plain MSG_MOVE_* packet ends right here
+```
+
 ## Values update (`Updates/UpdateMask.h`, `Object::BuildValuesUpdate`)
 
 ```
@@ -162,3 +229,30 @@ plain null-terminated strings with **no length prefix** — `ByteBuffer::
 operator<<(std::string)` (`ByteBuffer.h`), same as `SMSG_MESSAGECHAT`'s
 channel name, and different from that packet's `senderName`/`chatText`
 (`uint32` length prefix). `agent/packets.py::cstring`.
+
+## Sending movement: `CMSG_SET_ACTIVE_MOVER` is required before any `MSG_MOVE_*` we send takes effect
+
+Found live-verifying UM-36's `face` action: a `MSG_MOVE_SET_FACING` (or any other
+`MSG_MOVE_*`) packet we send is **silently dropped** unless the agent has
+first sent `CMSG_SET_ACTIVE_MOVER` (`0x26A`, payload: raw uint64 guid —
+`WorldSession::HandleSetActiveMoverOpcode`, `MovementHandler.cpp`) for its
+own guid, once, after login.
+
+Why: `WorldSession::HandleMovementOpcode` (`MovementHandler.cpp`) calls
+`ValidateAndGetUnitBeingMoved(movementInfo.guid, opcode, false)`, which
+requires `GameClient::GetActivelyMovedUnit()` to be non-null and match the
+guid in the packet. That field is *only* ever set by
+`HandleSetActiveMoverOpcode` — nothing sets it automatically at login. A
+real client sends `CMSG_SET_ACTIVE_MOVER` for itself as part of its normal
+post-login sequence; our headless client didn't, so every movement packet
+we sent (facing included) was accepted at the socket level, parsed, and
+then dropped with no error response — `ValidateAndGetUnitBeingMoved` logs a
+`TC_LOG_DEBUG` on rejection, but nothing at `INFO` level, so this was
+invisible without live testing.
+
+Fix: `agent/session.py::login_character` sends `CMSG_SET_ACTIVE_MOVER` with
+our own guid right after `SMSG_LOGIN_VERIFY_WORLD`, before the recv thread
+starts. Verified live: `face`'s resulting orientation matched exactly (to 6
+decimal places) between the packet we sent and `characters.characters.orientation`
+after a save. This also unblocks UM-38 (movement) — the same gate applies
+to every `MSG_MOVE_*` opcode.

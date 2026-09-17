@@ -108,9 +108,10 @@ The first milestone replaced the roadmap's original order (one agent levels
   never writes player chat to any log, so tailing `Server.log` shows nothing.
   The chat panel (UM-47) and hardening (UM-48) need a different data source
   first, for example a listener agent relaying `SMSG_MESSAGECHAT`.
-- **Moving objects drop packets.** The update-object parser doesn't handle
-  spline movement yet, so a packet containing any walking NPC is dropped whole
-  (UM-64, needed before the follow reflex).
+- **Moving objects drop packets — FIXED by UM-64.** The update-object parser
+  now handles spline movement (the create-object spline block,
+  `SMSG_MONSTER_MOVE`, and `MSG_MOVE_*` broadcasts), so a packet containing a
+  walking NPC or player parses cleanly instead of being dropped whole.
 - **Teleport ack is missing.** Without `MSG_MOVE_TELEPORT_ACK` a same-map GM
   teleport doesn't finish server-side (UM-38). Don't teleport agent characters
   to set up tests; relog or walk instead.
