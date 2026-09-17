@@ -7,14 +7,13 @@ replay buffer, and publishes public messages using Server-Sent Events (SSE).
 
 ## TrinityCore logging prerequisite
 
-The compose service attempts the image's documented dot-to-double-underscore
-mapping with `TC_WORLD__Logger__chat__log=3,Console Server`. The underlying
-TrinityCore setting is `Logger.chat.log=3,Console Server`, but logger keys are
-a special case because they themselves contain dots. Inspect the generated
-`worldserver.conf` on this image and verify that override before deployment; if
-it is not written exactly, configure the setting directly in the image's
-supported worldserver configuration mechanism. Restart worldserver after it is
-enabled.
+The root compose file sets `TC_WORLD__Logger__chat__log=2,Console Server`,
+which the image writes into `worldserver.conf` as `Logger.chat.log = 2,Console Server`
+(verified on the live image). Chat lines come from TrinityCore's `ChatLogScript`,
+which logs at **debug**, so the level must be `2` (`LogLevel`: 1 trace, 2 debug,
+3 info). At `3`, every chat line is dropped and this feed shows nothing.
+Changing the value recreates the worldserver container on the next deploy,
+which disconnects everyone online.
 
 ## Configuration
 
@@ -64,7 +63,6 @@ python3 -m py_compile tools/chat-feed/app.py tools/chat-feed/tests/test_parser.p
 This is intentionally the 3--5 day prototype scoped by the spike, not a
 production service. It has no authentication or reverse-proxy integration,
 per-client rate limiting, durable history, moderation workflow, retention
-policy, metrics/alerts, or deployment validation against the live image's exact
-logger format. Rotation handling is implemented but has not been exercised
-against every Docker/runtime rotation mode. Capture real `Server.log` payloads
-before treating the parser as a stable contract.
+policy, or metrics/alerts. Rotation handling is implemented but has not been
+exercised against every Docker/runtime rotation mode. Capture real
+`Server.log` payloads before treating the parser as a stable contract.
