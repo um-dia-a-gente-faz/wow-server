@@ -143,16 +143,18 @@ def _cstring(s: str) -> bytes:
 
 class ParseItemQueryResponseTest(unittest.TestCase):
     def _build(self, entry=159, name="Tough Jerky", stackable=20, max_durability=0,
+               item_level=1, allowable_class=-1, item_class=0, subclass=5,
+               stats=(), armor=0, damage=(),
                spells=((3222, lo.ITEM_SPELLTRIGGER_ON_USE),)) -> bytes:
         p = struct.pack('<I', entry)
-        p += struct.pack('<III', 0, 5, 0)  # class(consumable=0? use 0), subclass, sound_override
+        p += struct.pack('<III', item_class, subclass, 0)  # class, subclass, sound_override
         p += _cstring(name) + bytes([0, 0, 0])
         p += struct.pack('<II', 100, 1)  # display_info_id, quality
         p += struct.pack('<II', 0, 0)  # Flags[2]
         p += struct.pack('<iI', 500, 500)  # buy_price(i32), sell_price
         p += struct.pack('<I', 0)  # inventory_type
-        p += struct.pack('<II', 0, 0)  # allowable_class, allowable_race
-        p += struct.pack('<I', 1)  # item_level
+        p += struct.pack('<iI', allowable_class, 0)  # allowable_class(i32), allowable_race
+        p += struct.pack('<I', item_level)  # item_level
         p += struct.pack('<I', 0)  # required_level
         p += struct.pack('<IIII', 0, 0, 0, 0)  # required_skill/rank/spell/honor_rank
         p += struct.pack('<II', 0, 0)  # required_city_rank, required_reputation_faction
@@ -160,10 +162,15 @@ class ParseItemQueryResponseTest(unittest.TestCase):
         p += struct.pack('<i', -1)  # max_count
         p += struct.pack('<i', stackable)  # stackable
         p += struct.pack('<I', 0)  # container_slots
-        p += struct.pack('<I', 0)  # stats_count (0 entries)
+        stat_slots = list(stats) + [(0, 0)] * (lo.MAX_ITEM_PROTO_STATS - len(stats))
+        for stat_type, stat_value in stat_slots[:lo.MAX_ITEM_PROTO_STATS]:
+            p += struct.pack('<Ii', stat_type, stat_value)
         p += struct.pack('<II', 0, 0)  # scaling_stat_distribution, scaling_stat_value
-        p += (struct.pack('<ffI', 0.0, 0.0, 0)) * 2  # Damage[MAX_ITEM_PROTO_DAMAGES=2]
-        p += struct.pack('<IIIIIII', 0, 0, 0, 0, 0, 0, 0)  # Resistance[7]
+        damage_slots = list(damage) + [(0.0, 0.0, 0)] * (lo.MAX_ITEM_PROTO_DAMAGES - len(damage))
+        for dmin, dmax, dtype in damage_slots[:lo.MAX_ITEM_PROTO_DAMAGES]:
+            p += struct.pack('<ffI', dmin, dmax, dtype)
+        p += struct.pack('<I', armor)  # armor
+        p += struct.pack('<IIIIII', 0, 0, 0, 0, 0, 0)  # holy/fire/nature/frost/shadow/arcane res
         p += struct.pack('<I', 0)  # delay
         p += struct.pack('<I', 0)  # ammo_type
         p += struct.pack('<f', 0.0)  # ranged_mod_range
@@ -201,7 +208,31 @@ class ParseItemQueryResponseTest(unittest.TestCase):
         self.assertEqual(info["entry"], 159)
         self.assertEqual(info["name"], "Tough Jerky")
         self.assertEqual(info["stackable"], 20)
+        self.assertEqual(info["item_level"], 1)
+        self.assertEqual(info["stats"], [])
+        self.assertEqual(info["armor"], 0)
+        self.assertEqual(info["damage"], [])
         self.assertEqual(info["spells"], [{"spell_id": 3222, "trigger": lo.ITEM_SPELLTRIGGER_ON_USE}])
+
+    def test_stats_armor_and_damage(self):
+        payload = self._build(
+            name="Sword of Testing", item_class=2, subclass=7, item_level=60,
+            allowable_class=-1, armor=0,
+            stats=((4, 12), (7, 20)),  # STRENGTH +12, STAMINA +20
+            damage=((10.0, 20.0, 0),),
+        )
+        info = lo.parse_item_query_response(payload)
+        self.assertEqual(info["stats"], [{"type": 4, "value": 12}, {"type": 7, "value": 20}])
+        self.assertEqual(info["damage"], [{"min": 10.0, "max": 20.0, "type": 0}])
+        self.assertEqual(info["item_level"], 60)
+        self.assertEqual(info["allowable_class"], -1)
+
+    def test_armor_piece(self):
+        payload = self._build(name="Plate Chest", item_class=4, subclass=4, armor=500)
+        info = lo.parse_item_query_response(payload)
+        self.assertEqual(info["class_"], 4)
+        self.assertEqual(info["subclass"], 4)
+        self.assertEqual(info["armor"], 500)
 
     def test_not_found(self):
         payload = struct.pack('<I', 999999 | 0x80000000)
