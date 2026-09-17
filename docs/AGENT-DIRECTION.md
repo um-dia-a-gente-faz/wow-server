@@ -115,3 +115,19 @@ The first milestone replaced the roadmap's original order (one agent levels
 - **Teleport ack is missing.** Without `MSG_MOVE_TELEPORT_ACK` a same-map GM
   teleport doesn't finish server-side (UM-38). Don't teleport agent characters
   to set up tests; relog or walk instead.
+- **Stacked PRs can merge "successfully" without ever reaching `main` — FIXED
+  by re-opening against `main` directly, but the branching rule changed
+  because of it.** On 2026-09-17, UM-38 and UM-39 were each opened as a PR
+  based on the previous ticket's still-open branch (the convention at the
+  time, meant to keep a real dependency visible). Both got merged — but
+  *into their base branch*, not into `main`, because that base branch had
+  already been separately squash-merged into `main` moments earlier
+  (squash-merge creates a new commit, severing the ancestry link back to
+  the original branch). Linear and GitHub both showed the tickets as done;
+  `main` silently had neither `agent/movement.py`'s v1 actions nor
+  `agent/spells.py` at all. Caught only because a later PR stacked on top
+  of the same chain started showing merge conflicts against `main`.
+  Recovered by cherry-picking each ticket's own commit onto current `main`
+  and re-opening PRs #32/#33 there. **New rule, effective immediately: every
+  PR's base is `main`, never another branch — see `CONTRIBUTING.md`
+  → Branches.**
