@@ -52,6 +52,38 @@ SMSG_LOGOUT_COMPLETE    = 0x04D
 SMSG_MONSTER_MOVE       = 0x0DD
 SMSG_STANDSTATE_UPDATE  = 0x29D
 
+# MSG_MOVE_* broadcasts of another unit's movement (Opcodes.cpp:
+# &WorldSession::HandleMovementOpcodes, WorldPackets::Movement::MoveUpdate) —
+# packed guid + MovementInfo, no speeds/spline (agent.update_object.
+# parse_movement_info). Excludes MSG_MOVE_TELEPORT/TELEPORT_ACK (different,
+# ack-specific payload; UM-38) and cheat/rare opcodes not sent by a normal
+# client.
+MSG_MOVE_START_FORWARD      = 0x0B5
+MSG_MOVE_START_BACKWARD     = 0x0B6
+MSG_MOVE_STOP                = 0x0B7
+MSG_MOVE_START_STRAFE_LEFT  = 0x0B8
+MSG_MOVE_START_STRAFE_RIGHT = 0x0B9
+MSG_MOVE_STOP_STRAFE        = 0x0BA
+MSG_MOVE_JUMP                = 0x0BB
+MSG_MOVE_START_TURN_LEFT    = 0x0BC
+MSG_MOVE_START_TURN_RIGHT   = 0x0BD
+MSG_MOVE_STOP_TURN          = 0x0BE
+MSG_MOVE_SET_RUN_MODE       = 0x0C2
+MSG_MOVE_SET_WALK_MODE      = 0x0C3
+MSG_MOVE_FALL_LAND          = 0x0C9
+MSG_MOVE_START_SWIM         = 0x0CA
+MSG_MOVE_STOP_SWIM          = 0x0CB
+MSG_MOVE_SET_FACING         = 0x0DA
+MSG_MOVE_HEARTBEAT          = 0x0EE
+
+MSG_MOVE_OPCODES = frozenset((
+    MSG_MOVE_START_FORWARD, MSG_MOVE_START_BACKWARD, MSG_MOVE_STOP,
+    MSG_MOVE_START_STRAFE_LEFT, MSG_MOVE_START_STRAFE_RIGHT, MSG_MOVE_STOP_STRAFE,
+    MSG_MOVE_JUMP, MSG_MOVE_START_TURN_LEFT, MSG_MOVE_START_TURN_RIGHT, MSG_MOVE_STOP_TURN,
+    MSG_MOVE_SET_RUN_MODE, MSG_MOVE_SET_WALK_MODE, MSG_MOVE_FALL_LAND,
+    MSG_MOVE_START_SWIM, MSG_MOVE_STOP_SWIM, MSG_MOVE_SET_FACING, MSG_MOVE_HEARTBEAT,
+))
+
 SMSG_GROUP_INVITE       = 0x06F
 SMSG_MESSAGECHAT        = 0x096
 SMSG_GM_MESSAGECHAT     = 0x3B3
@@ -314,6 +346,37 @@ class WoWSession:
         guid = pk.u64(payload, 0)
         self.world_state.remove_guids([guid])
 
+    def _handle_monster_move(self, payload: bytes):
+        """SMSG_MONSTER_MOVE (0x0DD): an NPC's new destination/path (UM-64).
+        Starts or replaces that object's spline-interpolation state in
+        world_state — see agent/update_object.py::parse_monster_move and
+        agent/perception.py::WorldState.apply_monster_move."""
+        if self.dump_packets_dir:
+            self._dump_packet(SMSG_MONSTER_MOVE, payload)
+        try:
+            info = uo.parse_monster_move(payload)
+        except (IndexError, struct.error, ValueError) as e:
+            raise per.PerceptionParseError(
+                f"malformed SMSG_MONSTER_MOVE payload ({len(payload)} B): {e}") from e
+        self.world_state.apply_monster_move(info)
+
+    def _handle_move_broadcast(self, opcode: int, payload: bytes):
+        """A MSG_MOVE_* broadcast of another unit's movement (UM-64): packed
+        guid + MovementInfo, no speeds/spline (agent.update_object.
+        parse_movement_info) — see MSG_MOVE_OPCODES for which ones this
+        covers and why."""
+        if self.dump_packets_dir:
+            self._dump_packet(opcode, payload)
+        try:
+            guid, off = pk.unpack_packed_guid(payload, 0)
+            move_info, off = uo.parse_movement_info(payload, off)
+            if off != len(payload):
+                raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+        except (IndexError, struct.error, ValueError) as e:
+            raise per.PerceptionParseError(
+                f"malformed {opcode:#05x} payload ({len(payload)} B): {e}") from e
+        self.world_state.apply_movement_info(guid, move_info)
+
     def _handle_update_object(self, opcode: int, payload: bytes):
         if opcode == SMSG_COMPRESSED_UPDATE_OBJECT:
             unc_size = pk.u32(payload, 0)
@@ -348,11 +411,10 @@ class WoWSession:
         the session directly for cheap access without going through
         world_state.
 
-        Raises PerceptionParseError on truncated or malformed data, or lets
-        UnhandledMovementFlags propagate (an unimplemented conditional path,
-        e.g. spline movement) — either way the caller's per-packet safety net
-        (_dispatch_guarded) drops just this packet and keeps the connection.
-        Anything recorded from earlier packets is kept.
+        Raises PerceptionParseError on truncated or malformed data — the
+        caller's per-packet safety net (_dispatch_guarded) drops just this
+        packet and keeps the connection. Anything recorded from earlier
+        packets is kept.
         """
         try:
             blocks = uo.parse_update_object(data)
@@ -446,11 +508,11 @@ class WoWSession:
             self._handle_group_invite(payload)
         elif opcode == SMSG_DESTROY_OBJECT:
             self._handle_destroy_object(payload)
-        elif opcode in (SMSG_PONG, SMSG_MONSTER_MOVE, SMSG_STANDSTATE_UPDATE):
-            # SMSG_MONSTER_MOVE (NPC destinations) and MSG_MOVE_* heartbeats
-            # (other players' positions) aren't parsed — see docs/ROADMAP.md.
-            # Nearby objects still get position updates from their own
-            # periodic update-object blocks, just not every movement tick.
+        elif opcode == SMSG_MONSTER_MOVE:
+            self._handle_monster_move(payload)
+        elif opcode in MSG_MOVE_OPCODES:
+            self._handle_move_broadcast(opcode, payload)
+        elif opcode in (SMSG_PONG, SMSG_STANDSTATE_UPDATE):
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
             self._in_world = False

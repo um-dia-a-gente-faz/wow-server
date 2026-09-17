@@ -189,6 +189,77 @@ class ParseUpdateObjectTest(unittest.TestCase):
         self.assertIn(CREATURE, sess.world_state.get_objects())
 
 
+def monster_move_payload(guid: int, move_type: int = uo.MONSTER_MOVE_NORMAL,
+                          pos=(1.0, 2.0, 3.0), destination=(10.0, 2.0, 3.0),
+                          move_time: int = 2000) -> bytes:
+    body = pk.pack_packed_guid(guid) + bytes([0]) + struct.pack('<3f', *pos) + struct.pack('<I', 1)
+    body += bytes([move_type])
+    if move_type != uo.MONSTER_MOVE_STOP:
+        body += (struct.pack('<I', 0)             # flags
+                 + struct.pack('<I', move_time)
+                 + struct.pack('<I', 1)            # point_count
+                 + struct.pack('<3f', *destination))
+    return body
+
+
+def heartbeat_payload(guid: int, x=5.0, y=6.0, z=7.0, o=0.0) -> bytes:
+    return (pk.pack_packed_guid(guid)
+            + struct.pack('<I', 0) + struct.pack('<H', 0) + struct.pack('<I', 1)
+            + struct.pack('<4f', x, y, z, o)
+            + struct.pack('<I', 0))
+
+
+class MovementBroadcastTest(unittest.TestCase):
+    """UM-64: SMSG_MONSTER_MOVE and MSG_MOVE_* broadcasts, dispatched straight
+    to world_state without going through an UpdateBlock."""
+
+    def test_monster_move_starts_spline_for_known_guid(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
+        obj = sess.world_state.get_object(CREATURE)
+        self.assertIsNotNone(obj.spline)
+        self.assertEqual(obj.spline["destination"], (10.0, 2.0, 3.0))
+        self.assertEqual(obj.position[1:4], (1.0, 2.0, 3.0))
+
+    def test_monster_move_stop_clears_spline(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
+        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE, move_type=uo.MONSTER_MOVE_STOP))
+        self.assertIsNone(sess.world_state.get_object(CREATURE).spline)
+
+    def test_monster_move_for_unknown_guid_is_ignored_and_counted(self):
+        sess = make_session()
+        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(0xDEAD))
+        self.assertIsNone(sess.world_state.get_object(0xDEAD))
+        self.assertEqual(sess.world_state.unknown_field_updates, 1)
+
+    def test_heartbeat_updates_known_object_position(self):
+        sess = make_session()
+        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        sess._dispatch(se.MSG_MOVE_HEARTBEAT, heartbeat_payload(CREATURE))
+        obj = sess.world_state.get_object(CREATURE)
+        self.assertEqual((obj.position[1], obj.position[2], obj.position[3]), (5.0, 6.0, 7.0))
+
+    def test_move_broadcast_for_unknown_guid_is_ignored_and_counted(self):
+        sess = make_session()
+        sess._dispatch(se.MSG_MOVE_HEARTBEAT, heartbeat_payload(0xDEAD))
+        self.assertIsNone(sess.world_state.get_object(0xDEAD))
+        self.assertEqual(sess.world_state.unknown_field_updates, 1)
+
+    def test_monster_move_and_heartbeat_are_dumped(self):
+        with tempfile.TemporaryDirectory() as d:
+            dump_dir = os.path.join(d, 'dumps')
+            sess = make_session(dump_packets_dir=dump_dir)
+            sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+            sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
+            sess._dispatch(se.MSG_MOVE_HEARTBEAT, heartbeat_payload(CREATURE))
+            names = os.listdir(dump_dir)
+            self.assertTrue(any(n.endswith(f'_{se.SMSG_MONSTER_MOVE:#06x}.bin') for n in names))
+            self.assertTrue(any(n.endswith(f'_{se.MSG_MOVE_HEARTBEAT:#06x}.bin') for n in names))
+
+
 class WorldStateTest(unittest.TestCase):
     def test_set_my_guid_does_not_insert(self):
         ws = per.WorldState()
