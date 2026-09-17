@@ -17,6 +17,7 @@ from . import loot as lo
 from . import names as nm
 from . import npc as npc_mod
 from . import perception as per
+from . import quests as qu
 from . import spells as sp
 from . import update_fields as uo_fields
 from . import update_object as uo
@@ -132,6 +133,28 @@ SMSG_SELL_ITEM             = npc_mod.SMSG_SELL_ITEM
 SMSG_TRAINER_BUY_SUCCEEDED = npc_mod.SMSG_TRAINER_BUY_SUCCEEDED
 SMSG_TRAINER_BUY_FAILED    = npc_mod.SMSG_TRAINER_BUY_FAILED
 
+# Quests (UM-41) — see agent/quests.py for citations/caveats.
+CMSG_QUEST_QUERY               = qu.CMSG_QUEST_QUERY
+SMSG_QUEST_QUERY_RESPONSE      = qu.SMSG_QUEST_QUERY_RESPONSE
+CMSG_QUESTGIVER_STATUS_QUERY   = qu.CMSG_QUESTGIVER_STATUS_QUERY
+SMSG_QUESTGIVER_STATUS         = qu.SMSG_QUESTGIVER_STATUS
+CMSG_QUESTGIVER_HELLO          = qu.CMSG_QUESTGIVER_HELLO
+SMSG_QUESTGIVER_QUEST_LIST     = qu.SMSG_QUESTGIVER_QUEST_LIST
+CMSG_QUESTGIVER_QUERY_QUEST    = qu.CMSG_QUESTGIVER_QUERY_QUEST
+SMSG_QUESTGIVER_QUEST_DETAILS  = qu.SMSG_QUESTGIVER_QUEST_DETAILS
+CMSG_QUESTGIVER_ACCEPT_QUEST   = qu.CMSG_QUESTGIVER_ACCEPT_QUEST
+CMSG_QUESTGIVER_COMPLETE_QUEST = qu.CMSG_QUESTGIVER_COMPLETE_QUEST
+SMSG_QUESTGIVER_REQUEST_ITEMS  = qu.SMSG_QUESTGIVER_REQUEST_ITEMS
+CMSG_QUESTGIVER_REQUEST_REWARD = qu.CMSG_QUESTGIVER_REQUEST_REWARD
+SMSG_QUESTGIVER_OFFER_REWARD   = qu.SMSG_QUESTGIVER_OFFER_REWARD
+CMSG_QUESTGIVER_CHOOSE_REWARD  = qu.CMSG_QUESTGIVER_CHOOSE_REWARD
+SMSG_QUESTGIVER_QUEST_COMPLETE = qu.SMSG_QUESTGIVER_QUEST_COMPLETE
+SMSG_QUESTGIVER_QUEST_FAILED   = qu.SMSG_QUESTGIVER_QUEST_FAILED
+CMSG_QUESTLOG_REMOVE_QUEST     = qu.CMSG_QUESTLOG_REMOVE_QUEST
+SMSG_QUESTUPDATE_COMPLETE      = qu.SMSG_QUESTUPDATE_COMPLETE
+SMSG_QUESTUPDATE_ADD_KILL      = qu.SMSG_QUESTUPDATE_ADD_KILL
+SMSG_QUESTUPDATE_ADD_ITEM      = qu.SMSG_QUESTUPDATE_ADD_ITEM
+
 # Loot / inventory (UM-42)
 CMSG_USE_ITEM                   = lo.CMSG_USE_ITEM
 CMSG_DESTROYITEM                = lo.CMSG_DESTROYITEM
@@ -232,6 +255,21 @@ _LOOT_DISPATCH = {
     SMSG_ITEM_PUSH_RESULT: "_handle_item_push_result",
     SMSG_INVENTORY_CHANGE_FAILURE: "_handle_inventory_change_failure",
     SMSG_ITEM_QUERY_SINGLE_RESPONSE: "_handle_item_query_response",
+}
+
+# Quest opcodes (UM-41) -> handler method name.
+_QUEST_DISPATCH = {
+    SMSG_QUEST_QUERY_RESPONSE: "_handle_quest_query_response",
+    SMSG_QUESTGIVER_STATUS: "_handle_questgiver_status",
+    SMSG_QUESTGIVER_QUEST_LIST: "_handle_questgiver_quest_list",
+    SMSG_QUESTGIVER_QUEST_DETAILS: "_handle_questgiver_quest_details",
+    SMSG_QUESTGIVER_REQUEST_ITEMS: "_handle_questgiver_request_items",
+    SMSG_QUESTGIVER_OFFER_REWARD: "_handle_questgiver_offer_reward",
+    SMSG_QUESTGIVER_QUEST_COMPLETE: "_handle_questgiver_quest_complete",
+    SMSG_QUESTGIVER_QUEST_FAILED: "_handle_questgiver_quest_failed",
+    SMSG_QUESTUPDATE_ADD_KILL: "_handle_questupdate_add_kill",
+    SMSG_QUESTUPDATE_ADD_ITEM: "_handle_questupdate_add_item",
+    SMSG_QUESTUPDATE_COMPLETE: "_handle_questupdate_complete",
 }
 
 CHAT_MSG_CHANNEL = 0x11
@@ -717,6 +755,95 @@ class WoWSession:
             raise per.PerceptionParseError(f"malformed SMSG_ITEM_QUERY_SINGLE_RESPONSE ({len(payload)} B): {e}") from e
         self.world_state.apply_item_query_response(data)
 
+    # ── Quests (UM-41) ─────────────────────────────────────────────────────
+
+    def _send_quest_queries(self):
+        """UM-41: send whatever agent.perception.WorldState.quest_texts has
+        queued, like _send_name_queries/_send_npc_text_queries — called
+        once per recv-loop tick."""
+        for quest_id, guid in self.world_state.quest_texts.drain():
+            self._send_packet(CMSG_QUEST_QUERY, qu.build_quest_query(quest_id, guid))
+        for guid in self.world_state.drain_quest_giver_status_queries():
+            self._send_packet(CMSG_QUESTGIVER_STATUS_QUERY, qu.build_questgiver_status_query(guid))
+
+    def _handle_quest_query_response(self, payload: bytes):
+        try:
+            data = qu.parse_quest_query_response(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUEST_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+        self.world_state.apply_quest_query_response(data)
+
+    def _handle_questgiver_status(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_status(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_STATUS ({len(payload)} B): {e}") from e
+        self.world_state.apply_questgiver_status(data)
+
+    def _handle_questgiver_quest_list(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_quest_list(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_LIST ({len(payload)} B): {e}") from e
+        self.world_state.apply_questgiver_quest_list(data)
+
+    def _handle_questgiver_quest_details(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_quest_details(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_DETAILS ({len(payload)} B): {e}") from e
+        self.world_state.apply_questgiver_quest_details(data)
+
+    def _handle_questgiver_request_items(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_request_items(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_REQUEST_ITEMS ({len(payload)} B): {e}") from e
+        self.world_state.apply_questgiver_request_items(data)
+
+    def _handle_questgiver_offer_reward(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_offer_reward(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_OFFER_REWARD ({len(payload)} B): {e}") from e
+        self.world_state.apply_questgiver_offer_reward(data)
+
+    def _handle_questgiver_quest_complete(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_quest_complete(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_COMPLETE ({len(payload)} B): {e}") from e
+        self.world_state.close_window()
+        self._record_event("quest_turned_in", **data)
+
+    def _handle_questgiver_quest_failed(self, payload: bytes):
+        try:
+            data = qu.parse_questgiver_quest_failed(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_FAILED ({len(payload)} B): {e}") from e
+        self._record_event("quest_failed", **data)
+
+    def _handle_questupdate_add_kill(self, payload: bytes):
+        try:
+            data = qu.parse_questupdate_add_kill(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_KILL ({len(payload)} B): {e}") from e
+        self._record_event("quest_progress", kind="kill", **data)
+
+    def _handle_questupdate_add_item(self, payload: bytes):
+        try:
+            data = qu.parse_questupdate_add_item(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_ITEM ({len(payload)} B): {e}") from e
+        self._record_event("quest_progress", kind="item", **data)
+
+    def _handle_questupdate_complete(self, payload: bytes):
+        try:
+            data = qu.parse_questupdate_complete(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_COMPLETE ({len(payload)} B): {e}") from e
+        self._record_event("quest_complete", **data)
+
     # ── Loot / inventory (UM-42) ──────────────────────────────────────────
 
     def _handle_loot_response(self, payload: bytes):
@@ -1112,6 +1239,8 @@ class WoWSession:
             getattr(self, _NPC_DISPATCH[opcode])(payload)
         elif opcode in _LOOT_DISPATCH:
             getattr(self, _LOOT_DISPATCH[opcode])(payload)
+        elif opcode in _QUEST_DISPATCH:
+            getattr(self, _QUEST_DISPATCH[opcode])(payload)
         elif opcode in (SMSG_PONG, SMSG_STANDSTATE_UPDATE):
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
@@ -1171,6 +1300,7 @@ class WoWSession:
                 self._send_name_queries()
                 self._send_npc_text_queries()
                 self._send_item_queries()
+                self._send_quest_queries()
                 continue
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
@@ -1179,6 +1309,7 @@ class WoWSession:
             self._send_name_queries()
             self._send_npc_text_queries()
             self._send_item_queries()
+            self._send_quest_queries()
 
     def _send_packet(self, opcode: int, payload: bytes = b''):
         hdr = struct.pack('>H', len(payload) + 4) + struct.pack('<I', opcode)

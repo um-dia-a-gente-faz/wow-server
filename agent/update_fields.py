@@ -46,6 +46,20 @@ PLAYER_XP = UNIT_END + 0x1E6
 PLAYER_NEXT_LEVEL_XP = UNIT_END + 0x1E7
 PLAYER_FIELD_COINAGE = UNIT_END + 0x3FE
 
+# Quest log (UM-41): PLAYER_QUEST_LOG_1_1 = UNIT_END + 0x0A, 5 uint32 fields
+# per slot (quest id, state, two packed-counter words, time), 25 slots
+# (MAX_QUEST_LOG_SIZE) — the slot array runs UNIT_END+0x0A .. UNIT_END+0x86,
+# immediately followed by PLAYER_VISIBLE_ITEM_1_ENTRYID at UNIT_END+0x87,
+# which checks out arithmetically (25 * 5 = 125 = 0x87 - 0x0A) against this
+# module's existing UNIT_END/PLAYER_FLAGS numbering. See docs/PROTOCOL-NOTES.md
+# ("Quest log fields") — not independently diffed against a live TrinityCore
+# checkout this session (no network access), only reconstructed from the
+# well-documented 3.3.5a field layout and cross-checked against this file's
+# own established OBJECT_END/UNIT_END arithmetic.
+PLAYER_QUEST_LOG_1_1 = UNIT_END + 0x0A   # quest id
+QUEST_LOG_SLOT_COUNT = 25                # MAX_QUEST_LOG_SIZE
+QUEST_LOG_FIELDS_PER_SLOT = 5
+
 # Inventory/equipment item-GUID slots (UM-42): each slot is a guid (Size 2:
 # low, high uint32). Equipment (0-18) and the 4 equipped-bag-container slots
 # (19-22) share one contiguous 23-slot array starting at INV_SLOT_HEAD;
@@ -231,6 +245,39 @@ def decode_item_fields(raw: dict) -> dict:
         out["durability"] = raw[ITEM_FIELD_DURABILITY]
     if ITEM_FIELD_MAXDURABILITY in raw:
         out["max_durability"] = raw[ITEM_FIELD_MAXDURABILITY]
+    return out
+
+
+def decode_quest_log(raw: dict) -> list:
+    """The self player's quest log (UM-41): up to QUEST_LOG_SLOT_COUNT
+    slots, each PLAYER_QUEST_LOG_x_1..x_5 (quest id, state, two
+    packed-counter words, time — see PLAYER_QUEST_LOG_1_1 above). A slot
+    with quest id 0 (or absent — zero-value fields aren't sent over the
+    wire, same caveat as PLAYER_FIELD_COINAGE elsewhere in this module) is
+    empty and skipped. Each packed-counter word holds two uint16 objective
+    counters (low half, high half) — TrinityCore's `QuestSlotOffsets`
+    (`Player.h`) packs up to 4 kill/item counters into the two x_3/x_4
+    words this way. Returns a list sorted by slot, not keyed by quest id,
+    since two log slots could (in principle, e.g. a bugged/duplicated
+    quest) carry the same quest id."""
+    out = []
+    for slot in range(QUEST_LOG_SLOT_COUNT):
+        base = PLAYER_QUEST_LOG_1_1 + slot * QUEST_LOG_FIELDS_PER_SLOT
+        quest_id = raw.get(base)
+        if not quest_id:
+            continue
+        state = raw.get(base + 1, 0)
+        counters_a = raw.get(base + 2, 0)
+        counters_b = raw.get(base + 3, 0)
+        qtime = raw.get(base + 4, 0)
+        counters = [
+            counters_a & 0xFFFF, (counters_a >> 16) & 0xFFFF,
+            counters_b & 0xFFFF, (counters_b >> 16) & 0xFFFF,
+        ]
+        out.append({
+            "slot": slot, "quest_id": quest_id, "state": state,
+            "counters": counters, "time": qtime,
+        })
     return out
 
 
