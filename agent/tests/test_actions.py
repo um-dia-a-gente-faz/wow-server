@@ -926,12 +926,26 @@ class EmoteActionTest(unittest.TestCase):
 
 
 class InviteToGroupActionTest(unittest.TestCase):
-    def test_execute_sends_invite(self):
+    def test_execute_succeeds_when_no_failure_arrives(self):
         sess = fake_session()
-        result = ac.InviteToGroupAction().execute(sess, None, name="Rubens")
+        action = ac.InviteToGroupAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        result = action.execute(sess, None, name="Rubens")
         self.assertTrue(result.ok)
         opcode, payload = sess._sent[0]
         self.assertEqual(opcode, ac.CMSG_GROUP_INVITE)
+
+    def test_execute_fails_on_group_invite_failed(self):
+        sess = fake_session()
+        action = ac.InviteToGroupAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "group_invite_failed", "target_name": "Rubens",
+                                         "result": 5, "result_name": "already_in_group"})
+        result = action.execute(sess, None, name="Rubens")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "already_in_group")
 
 
 class WhisperActionTest(unittest.TestCase):
@@ -958,10 +972,25 @@ class WhisperActionTest(unittest.TestCase):
         world = per.WorldState()
         sess = fake_session()
         sess.chat_inbox = [{"sender_name": "Rubens", "text": "hi", "kind": "say"}]
-        result = ac.WhisperAction().run(sess, world, target_name="Rubens", message="hi there")
+        action = ac.WhisperAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        result = action.run(sess, world, target_name="Rubens", message="hi there")
         self.assertTrue(result.ok)
         opcode, payload = sess._sent[0]
         self.assertEqual(opcode, ac.CMSG_MESSAGECHAT)
+
+    def test_execute_fails_on_whisper_failed(self):
+        world = per.WorldState()
+        sess = fake_session()
+        sess.chat_inbox = [{"sender_name": "Rubens", "text": "hi", "kind": "say"}]
+        action = ac.WhisperAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "whisper_failed", "target_name": "Rubens"})
+        result = action.run(sess, world, target_name="Rubens", message="hi there")
+        self.assertFalse(result.ok)
+        self.assertIn("Rubens", result.error)
 
 
 class AcceptGroupActionTest(unittest.TestCase):
