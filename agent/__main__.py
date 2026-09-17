@@ -13,11 +13,13 @@ import argparse
 import json
 import logging
 import sys
+import threading
 import time
 
 from .config import load_config
 from .auth import auth_logon
 from .session import WoWSession
+from .reflexes.follow import get_follow_reflex
 
 
 def _setup_logging(level: str):
@@ -124,10 +126,41 @@ def main():
         log.info("done.")
 
 
+FOLLOW_REFLEX_TICK_INTERVAL_S = 0.3  # 250-500 ms, per UM-58's card
+
+
+def _run_follow_reflex_loop(sess, stop_event: threading.Event,
+                             tick_interval: float = FOLLOW_REFLEX_TICK_INTERVAL_S):
+    """Runs agent.reflexes.follow's FollowReflex.tick() on its own thread at
+    a fixed cadence, independent of the (much slower) LLM think_interval —
+    this is what makes it a reflex ("between LLM steps") rather than
+    another step of the think loop. One bad tick shouldn't kill the whole
+    loop or the recv thread, so exceptions are logged and swallowed."""
+    log = logging.getLogger("agent.reflexes.follow")
+    reflex = get_follow_reflex(sess)
+    while not stop_event.is_set():
+        try:
+            reflex.tick(sess, sess.world_state)
+        except Exception:
+            log.exception("follow reflex tick failed")
+        stop_event.wait(tick_interval)
+
+
 def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False):
-    log = logging.getLogger("agent")
     start = time.monotonic()
 
+    reflex_stop = threading.Event()
+    reflex_thread = threading.Thread(target=_run_follow_reflex_loop, args=(sess, reflex_stop), daemon=True)
+    reflex_thread.start()
+    try:
+        _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump)
+    finally:
+        reflex_stop.set()
+        reflex_thread.join(timeout=2.0)
+
+
+def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False):
+    log = logging.getLogger("agent")
     while duration is None or time.monotonic() - start < duration:
         # ── perceive ───────────────────────────────────────────
         objects = sess.world_state.get_objects()
