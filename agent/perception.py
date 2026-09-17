@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from . import items as it
 from . import names as nm
 from . import npc as npc_mod
+from . import quests as qu
 from . import update_fields as uf
 from . import update_object as uo
 
@@ -66,6 +67,8 @@ class ObjectInfo:
     dynamic_flags: int | None = None
     npc_flags: int | None = None
     player_flags: int | None = None  # PLAYER_FLAGS — players only; used by is_ghost() (UM-43)
+    quest_giver_status: int | None = None  # SMSG_QUESTGIVER_STATUS (UM-41); None = not yet queried
+    quest_giver_status_name: str | None = None
     power_type: int | None = None  # Powers enum (0=mana, 1=rage, 2=focus, 3=energy, ...) — UNIT_FIELD_BYTES_0
     target_guid: int | None = None
     position: tuple | None = None  # (map, x, y, z, o) — map is filled in by WorldState (blocks don't carry it)
@@ -190,6 +193,15 @@ class WorldState:
         # server actually agrees with where we think we are.
         self.my_server_position: tuple | None = None
         self.npc_texts = npc_mod.NpcTextCache()  # UM-40: gossip body text, cached like names
+        self.quest_texts = qu.QuestCache()  # UM-41: static per-quest-id text/reward cache
+        # UM-41: guids we've queued a CMSG_QUESTGIVER_STATUS_QUERY for but
+        # haven't heard back on yet — deliberately simple (no persistent
+        # cache like names/quest_texts: quest-giver status is per-visit
+        # state, e.g. it flips the moment a quest is turned in) since a
+        # nearby questgiver's status is cheap to re-query every time it's
+        # first perceived.
+        self._quest_status_pending: list = []
+        self._quest_status_in_flight: set = set()
         # UM-40: "which NPC window is open", read by the LLM via snapshot()'s
         # 'window' key — None (no window), or {"kind": "gossip"|"vendor"|
         # "trainer", **parsed response}.
@@ -351,6 +363,29 @@ class WorldState:
             else:
                 self.items.want_item(obj.entry)
 
+        # UM-41: any unit/player with the questgiver npc flag and no status
+        # yet gets a CMSG_QUESTGIVER_STATUS_QUERY queued, same trigger point
+        # as the name/npc-text queries above (called every time a CREATE or
+        # a fresh VALUES update touches this object).
+        if obj.is_quest_giver() and obj.quest_giver_status is None \
+                and obj.guid not in self._quest_status_in_flight:
+            self._quest_status_in_flight.add(obj.guid)
+            self._quest_status_pending.append(obj.guid)
+
+    def drain_quest_giver_status_queries(self, max_items: int | None = None) -> list:
+        """Pop queued questgiver guids to CMSG_QUESTGIVER_STATUS_QUERY —
+        drained by session.py once per recv-loop tick, like
+        names/npc_texts/quest_texts. No send-rate budget: this queue only
+        grows from newly-perceived questgivers, which in practice arrive at
+        a trickle, not a flood."""
+        with self._lock:
+            if max_items is None:
+                out, self._quest_status_pending = self._quest_status_pending, []
+                return out
+            out = self._quest_status_pending[:max_items]
+            self._quest_status_pending = self._quest_status_pending[max_items:]
+            return out
+
     @staticmethod
     def _apply_creature_name(obj: ObjectInfo, data: dict):
         obj.name = data["name"]
@@ -388,6 +423,86 @@ class WorldState:
                 for obj in self.objects.values():
                     if obj.object_type == "gameobject" and obj.entry == data["entry"]:
                         obj.name = data["name"]
+
+    # ── Quests (UM-41) ─────────────────────────────────────────────────────
+
+    def apply_questgiver_status(self, data: dict):
+        """SMSG_QUESTGIVER_STATUS (agent.quests.parse_questgiver_status):
+        backfill the matching NPC's quest_giver_status, exposed to the LLM
+        via snapshot()'s nearby_units/nearby_players entries."""
+        with self._lock:
+            obj = self.objects.get(data["guid"])
+            if obj is not None:
+                obj.quest_giver_status = data["status"]
+                obj.quest_giver_status_name = data["status_name"]
+            self._quest_status_in_flight.discard(data["guid"])
+
+    def apply_questgiver_quest_list(self, data: dict):
+        """SMSG_QUESTGIVER_QUEST_LIST: opens the questgiver's quest-list
+        window (available/offered quests at this NPC)."""
+        with self._lock:
+            self.ui_state = {"kind": "quest_list", **data}
+
+    def apply_questgiver_quest_details(self, data: dict):
+        """SMSG_QUESTGIVER_QUEST_DETAILS: opens a single quest's detail
+        view (full text, before accepting)."""
+        with self._lock:
+            self.ui_state = {"kind": "quest_details", **data}
+
+    def apply_questgiver_request_items(self, data: dict):
+        """SMSG_QUESTGIVER_REQUEST_ITEMS: the "turn this quest in" window —
+        shown in response to CMSG_QUESTGIVER_COMPLETE_QUEST when the
+        server wants confirmation of the required items/money before
+        offering the reward."""
+        with self._lock:
+            self.ui_state = {"kind": "quest_request_items", **data}
+
+    def apply_questgiver_offer_reward(self, data: dict):
+        """SMSG_QUESTGIVER_OFFER_REWARD: the reward-choice window —
+        CMSG_QUESTGIVER_CHOOSE_REWARD (turn_in_quest) reads its
+        reward_choice_items from here."""
+        with self._lock:
+            self.ui_state = {"kind": "quest_offer_reward", **data}
+
+    def apply_quest_query_response(self, data: dict):
+        """SMSG_QUEST_QUERY_RESPONSE (agent.quests.parse_quest_query_response):
+        cache this quest's static text/reward data — consumed by
+        build_quest_log() below to enrich quest_log entries with title/
+        objective text and used by any window that only carries a bare
+        quest id."""
+        with self._lock:
+            self.quest_texts.on_response(data)
+
+    def build_quest_log(self) -> list:
+        """UM-41: the self player's quest log (agent.update_fields.
+        decode_quest_log) enriched with cached quest text/rewards (title,
+        objectives) and a best-effort human-readable progress string per
+        objective, e.g. "Mana Wyrm slain: 3/8" — built from the quest log's
+        raw counters against the cached quest's required_credit/
+        required_items counts (agent.quests.QuestCache), when known.
+        Queues a CMSG_QUEST_QUERY for any quest id seen that isn't cached
+        yet (drained by session.py like the name/npc-text caches)."""
+        with self._lock:
+            me = self.objects.get(self.my_guid)
+            if me is None:
+                return []
+            slots = uf.decode_quest_log(me.raw_fields)
+            out = []
+            for slot in slots:
+                quest_id = slot["quest_id"]
+                cached = self.quest_texts.quests.get(quest_id)
+                if cached is None:
+                    self.quest_texts.want(quest_id)
+                entry = {
+                    "slot": slot["slot"], "quest_id": quest_id, "state": slot["state"],
+                    "counters": slot["counters"], "time": slot["time"],
+                }
+                if cached is not None:
+                    entry["title"] = cached.get("title")
+                    entry["objectives_text"] = cached.get("objectives")
+                    entry["objectives"] = _quest_objectives_progress(slot["counters"], cached)
+                out.append(entry)
+            return out
 
     # ── NPC interaction / ui_state (UM-40) ────────────────────────────────
 
@@ -582,6 +697,7 @@ class WorldState:
             "inventory": inventory,
             "pending_invite": pending_invite,
             "chat_inbox": list(chat_inbox) if chat_inbox is not None else [],
+            "quest_log": self.build_quest_log(),
         }
         if pos is None:
             return out
@@ -637,8 +753,32 @@ def _object_dict(obj: ObjectInfo, distance: float) -> dict:
         d["health_pct"] = round(obj.health / obj.max_health, 2) if obj.max_health else None
     if obj.target_guid is not None:
         d["target_guid"] = obj.target_guid
+    if obj.quest_giver_status is not None:
+        d["quest_giver_status"] = obj.quest_giver_status_name or obj.quest_giver_status
     d["in_combat"] = bool(obj.unit_flags and (obj.unit_flags & 0x00080000))  # UNIT_FLAG_IN_COMBAT, UnitDefines.h
     return d
+
+
+def _quest_objectives_progress(counters: list, cached: dict) -> list:
+    """Best-effort per-objective progress strings, e.g. "Mana Wyrm slain:
+    3/8" for a kill-credit objective or "Linen Cloth: 2/5" for an item
+    objective — pairs the quest log's up-to-4 raw counters (agent.
+    update_fields.decode_quest_log) against the cached quest's
+    required_credit (creature/GO kill credit) then required_items
+    (agent.quests.parse_quest_query_response), in that order, since that's
+    the order TrinityCore's own quest-log UI lists them in. A counter with
+    no corresponding cached requirement (index beyond what the quest
+    actually needs) is skipped rather than guessed at."""
+    reqs = list(cached.get("required_credit") or []) + list(cached.get("required_items") or [])
+    out = []
+    for i, req in enumerate(reqs):
+        if i >= len(counters) or not req.get("count"):
+            continue
+        out.append({
+            "entry": req["entry"], "count": counters[i], "needed": req["count"],
+            "text": f"{req['entry']}: {counters[i]}/{req['count']}",
+        })
+    return out
 
 
 def _first_npc_text(data: dict) -> str:
