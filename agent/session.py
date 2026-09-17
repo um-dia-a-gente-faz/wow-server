@@ -54,6 +54,25 @@ SMSG_LOGOUT_COMPLETE    = 0x04D
 SMSG_MONSTER_MOVE       = 0x0DD
 SMSG_STANDSTATE_UPDATE  = 0x29D
 
+# Death/resurrection (UM-43). Verified against TrinityCore branch `3.3.5`:
+#   src/server/game/Server/Protocol/Opcodes.h
+#   src/server/game/Server/Packets/MiscPackets.h/.cpp (RepopRequest,
+#     ReclaimCorpse, CorpseReclaimDelay, DeathReleaseLoc)
+#   src/server/game/Server/Packets/QueryPackets.h/.cpp (CorpseLocation —
+#     MSG_CORPSE_QUERY is the same opcode both ways: an empty client request,
+#     a populated server response)
+#   src/server/game/Handlers/MiscHandler.cpp (HandleRepopRequest,
+#     HandleReclaimCorpse), src/server/game/Handlers/NPCHandler.cpp
+#     (HandleSpiritHealerActivateOpcode)
+#   src/server/game/Entities/Player/Player.h (enum PlayerFlags —
+#     PLAYER_FLAGS_GHOST = 0x10; CORPSE_RECLAIM_RADIUS = 39)
+CMSG_REPOP_REQUEST          = 0x15A  # payload: uint8 CheckInstance (always 0 from a real client)
+CMSG_RECLAIM_CORPSE         = 0x1D2  # payload: uint64 CorpseGUID (raw, not packed — ObjectGuid::operator>>)
+CMSG_SPIRIT_HEALER_ACTIVATE = 0x21C  # payload: uint64 guid (raw)
+MSG_CORPSE_QUERY            = 0x216  # client->server: empty; server->client: see _handle_corpse_query_response
+SMSG_CORPSE_RECLAIM_DELAY   = 0x269  # payload: uint32 Remaining (ms)
+SMSG_DEATH_RELEASE_LOC      = 0x378  # payload: int32 MapID, float x, y, z
+
 # MSG_MOVE_* broadcasts of another unit's movement (Opcodes.cpp:
 # &WorldSession::HandleMovementOpcodes, WorldPackets::Movement::MoveUpdate) —
 # packed guid + MovementInfo, no speeds/spline (agent.update_object.
@@ -331,6 +350,16 @@ class WoWSession:
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
         self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}
 
+        # Death/resurrection (UM-43)
+        self.corpse_position = None       # (map_id, x, y, z) from MSG_CORPSE_QUERY's response, or None
+        self.corpse_reclaim_ready_at = None  # time.monotonic() deadline from SMSG_CORPSE_RECLAIM_DELAY, or None
+        self.graveyard_position = None    # (map_id, x, y, z) from SMSG_DEATH_RELEASE_LOC, informational only
+        self._was_alive = True            # tracks health>0 -> 0 for the 'death' event (see _sync_self_from_block)
+
+        # Reconnect supervisor (UM-43, agent/__main__.py)
+        self._logout_requested = False    # set by logout() — distinguishes a clean stop from a forced one
+        self.unexpected_disconnect = False  # set when the recv thread/socket dies without a requested logout
+
     def connect(self):
         """Connect to world server and authenticate."""
         self.sock = socket.create_connection((self.host, self.port), 15)
@@ -461,6 +490,7 @@ class WoWSession:
     def logout(self):
         """Graceful logout. Safe to call at any stage, including after the
         recv thread has died."""
+        self._logout_requested = True  # a SMSG_LOGOUT_COMPLETE after this is expected, not a drop (UM-43)
         if self.sock is None:
             return
         self._running = False
@@ -641,6 +671,75 @@ class WoWSession:
             coinage = me.raw_fields.get(uo_fields.PLAYER_FIELD_COINAGE)
             if coinage is not None:
                 self.coinage = coinage
+            self._check_death_transition(me)
+
+    def _check_death_transition(self, me):
+        """Emit a 'death' event on the health>0 -> 0 transition (UM-43).
+        There is no SMSG_PLAYER_DEAD in TrinityCore 3.3.5 — death is only
+        observable via this VALUES update (UNIT_FIELD_HEALTH -> 0), per
+        Player::Kill (Player.cpp). Re-arms once health is next seen > 0
+        (after a resurrect), so a later death emits again."""
+        if me.health is None:
+            return
+        if me.health == 0:
+            if self._was_alive:
+                self._was_alive = False
+                self._record_event("death", killer_guid=self._infer_killer_guid(),
+                                    position=self.player_position)
+        elif me.health > 0:
+            self._was_alive = True
+
+    def _infer_killer_guid(self):
+        """Best-effort killer GUID for the 'death' event: the most recent
+        combat event (in agent.events, newest last) whose victim was us.
+        SMSG_ATTACKERSTATEUPDATE/SMSG_PARTYKILLLOG (UM-39) are the only
+        signals available — TrinityCore doesn't otherwise tell the client
+        who landed the killing blow. None if nothing matches (e.g. died to
+        fall damage/environment, or the killing packet hasn't arrived yet)."""
+        for e in reversed(self.events):
+            if e.get("kind") == "party_kill" and e.get("victim_guid") == self.player_guid:
+                return e.get("killer_guid")
+            if e.get("kind") == "attacker_state_update" and e.get("victim_guid") == self.player_guid:
+                return e.get("attacker_guid")
+        return None
+
+    def _handle_corpse_reclaim_delay(self, payload: bytes):
+        """SMSG_CORPSE_RECLAIM_DELAY (Player::SendCorpseReclaimDelay,
+        Player.cpp): uint32 Remaining, milliseconds until CMSG_RECLAIM_CORPSE
+        will be accepted (server enforces this too; kept here so
+        reclaim_corpse's check() can fail fast instead of round-tripping)."""
+        remaining_ms = pk.u32(payload, 0)
+        self.corpse_reclaim_ready_at = time.monotonic() + remaining_ms / 1000.0
+
+    def _handle_death_release_loc(self, payload: bytes):
+        """SMSG_DEATH_RELEASE_LOC (WorldPackets::Misc::DeathReleaseLoc,
+        MiscPackets.cpp): int32 MapID, float x, y, z. Player::ResurrectPlayer
+        also sends this opcode with MapID=-1 as a "clear the release marker"
+        signal (no real position follows it in that case) — skip storing
+        that sentinel rather than mistake it for a graveyard position."""
+        map_id = struct.unpack_from('<i', payload, 0)[0]
+        if map_id < 0:
+            return
+        x, y, z = struct.unpack_from('<3f', payload, 4)
+        self.graveyard_position = (map_id, x, y, z)
+
+    def _handle_corpse_query_response(self, payload: bytes):
+        """MSG_CORPSE_QUERY's server->client shape (WorldPackets::Query::
+        CorpseLocation::Write, QueryPackets.cpp): uint8 Valid; if valid,
+        int32 MapID, float x, y, z, int32 ActualMapID, uint32 Transport.
+        ActualMapID (not MapID) is what a client paths to — for a corpse in
+        an instance's entrance map TrinityCore substitutes the reachable
+        entrance map/position there, per WorldSession::HandleQueryCorpseLocation
+        (QueryHandler.cpp). Transport offsets are unused — the agent doesn't
+        ride transports yet (same limitation as agent/movement.py)."""
+        valid = payload[0]
+        if not valid:
+            self.corpse_position = None
+            return
+        x, y, z = struct.unpack_from('<3f', payload, 5)
+        actual_map_id = struct.unpack_from('<i', payload, 17)[0]
+        self.corpse_position = (actual_map_id, x, y, z)
+
 
     def _handle_messagechat(self, opcode: int, payload: bytes):
         """SMSG_MESSAGECHAT / SMSG_GM_MESSAGECHAT (WorldPackets::Chat::Chat::Write,
@@ -797,9 +896,21 @@ class WoWSession:
             self._handle_move_broadcast(opcode, payload)
         elif opcode in _SPELL_DISPATCH:
             getattr(self, _SPELL_DISPATCH[opcode])(payload)
+        elif opcode == SMSG_CORPSE_RECLAIM_DELAY:
+            self._handle_corpse_reclaim_delay(payload)
+        elif opcode == SMSG_DEATH_RELEASE_LOC:
+            self._handle_death_release_loc(payload)
+        elif opcode == MSG_CORPSE_QUERY:
+            self._handle_corpse_query_response(payload)
         elif opcode in (SMSG_PONG, SMSG_STANDSTATE_UPDATE):
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
+            if not self._logout_requested:
+                # The server ended our session without us asking (kicked,
+                # duplicate login elsewhere, forced disconnect) — the
+                # reconnect supervisor (agent/__main__.py, UM-43) treats
+                # this the same as a dropped socket.
+                self.unexpected_disconnect = True
             self._in_world = False
             self._running = False
         else:
@@ -830,6 +941,11 @@ class WoWSession:
             if self._running:
                 log.warning("recv thread exited while the session was still running")
                 self._running = False
+                # Not a requested logout() (that sets _running=False itself
+                # before joining this thread) — the reconnect supervisor
+                # (agent/__main__.py, UM-43) treats this as a drop worth
+                # retrying rather than the agent process exiting.
+                self.unexpected_disconnect = True
 
     def _recv_until_stopped(self):
         last_keepalive = time.monotonic()
