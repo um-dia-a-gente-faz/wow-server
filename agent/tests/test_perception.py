@@ -83,6 +83,54 @@ class UpdateObjectTest(unittest.TestCase):
         self.assertIsNotNone(ws.get_object(2))
 
 
+class MyServerPositionTest(unittest.TestCase):
+    """UM-38: my_server_position tracks only what the server actually said
+    about our own position — distinct from ObjectInfo.position, which
+    update_my_position_from_simulation() also writes for other perception
+    consumers. Movement's stuck detection needs the untouched value to
+    compare our simulation against something other than itself."""
+
+    def test_create_with_position_sets_it(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(1, x=5.0, y=6.0, z=7.0))
+        self.assertEqual(ws.my_server_position[1:4], (5.0, 6.0, 7.0))
+
+    def test_movement_block_with_position_updates_it(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(1, x=0.0, y=0.0, z=0.0))
+        ws.update_object(movement_block(1, 50.0, 50.0, 0.0))
+        self.assertEqual(ws.my_server_position[1:4], (50.0, 50.0, 0.0))
+
+    def test_other_objects_never_set_it(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(2, x=9.0, y=9.0, z=9.0))
+        self.assertIsNone(ws.my_server_position)
+
+    def test_simulation_mirror_does_not_touch_it(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, x=0.0, y=0.0, z=0.0))
+        real_server_pos = ws.my_server_position
+        # Movement's Mover calls this every tick while simulating; it must
+        # update ObjectInfo.position (for distance_to/snapshot) but never
+        # clobber my_server_position — that's the whole point of the field.
+        ws.update_my_position_from_simulation((530, 123.0, 456.0, 0.0, 1.0))
+        self.assertEqual(ws.get_my_object().position, (530, 123.0, 456.0, 0.0, 1.0))
+        self.assertEqual(ws.my_server_position, real_server_pos)
+
+    def test_values_only_block_does_not_touch_it(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.update_object(create_block(1, x=1.0, y=2.0, z=3.0, fields={0x03: 0}))
+        # A VALUES-only update (e.g. health regen) has no position component.
+        ws.update_object(values_block(1, {0x18: 50}))
+        self.assertEqual(ws.my_server_position[1:4], (1.0, 2.0, 3.0))
+
+
 class ObjectInfoHelpersTest(unittest.TestCase):
     def test_is_player(self):
         obj = per.ObjectInfo(guid=1, object_type="player")

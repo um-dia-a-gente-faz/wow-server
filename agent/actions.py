@@ -327,3 +327,72 @@ class FaceAction(Action):
         session.player_position = (map_id, my_x, my_y, my_z, orientation)
 
         return ActionResult(ok=True, detail={"orientation": orientation})
+
+
+@register
+class MoveToAction(Action):
+    name = "move_to"
+    description = ("Walk in a straight line to a point on the ground, stopping within "
+                    "stop_distance yards. No pathfinding — obstacles will block it (returns "
+                    "ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.")
+    params = {
+        "x": {"type": "number", "description": "Destination X coordinate."},
+        "y": {"type": "number", "description": "Destination Y coordinate."},
+        "z": {"type": "number", "description": "Destination Z coordinate. Optional — "
+                                                 "omit to stay level with the current height (no terrain data in v1)."},
+        "stop_distance": {"type": "number", "description": "How close counts as arrived, in yards. Default 1.0."},
+    }
+    required = ("x", "y")
+
+    def check(self, session, world, x: float, y: float, z: float | None = None,
+              stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> str | None:
+        if session.player_position is None:
+            return "own position unknown"
+        return None
+
+    def execute(self, session, world, x: float, y: float, z: float | None = None,
+                stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> ActionResult:
+        mover = movement.get_mover(session, world)
+        result = mover.move_to(x, y, z, stop_distance=stop_distance)
+        return ActionResult(**result)
+
+
+@register
+class MoveTowardsAction(Action):
+    name = "move_towards"
+    description = ("Chase a nearby unit or player by GUID, re-targeting its position every "
+                    "tick, stopping within stop_distance yards. Blocks until arrival, stuck, "
+                    "the target leaving perception, or stopped.")
+    params = {
+        "guid": {"type": "integer", "description": "GUID of the object to move towards."},
+        "stop_distance": {"type": "number", "description": "How close counts as arrived, in yards. Default 1.0."},
+    }
+    required = ("guid",)
+
+    def check(self, session, world, guid: int,
+              stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> str | None:
+        if session.player_position is None:
+            return "own position unknown"
+        target = world.get_object(guid)
+        if target is None or target.position is None:
+            return f"guid {guid:#x} has no known position"
+        return None
+
+    def execute(self, session, world, guid: int,
+                stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> ActionResult:
+        mover = movement.get_mover(session, world)
+        result = mover.move_towards(guid, stop_distance=stop_distance)
+        return ActionResult(**result)
+
+
+@register
+class StopMovementAction(Action):
+    name = "stop_movement"
+    description = "Stop any in-progress move_to/move_towards immediately."
+    params = {}
+    required = ()
+
+    def execute(self, session, world, **_) -> ActionResult:
+        mover = movement.get_mover(session, world)
+        was_moving = mover.stop()
+        return ActionResult(ok=True, detail={"was_moving": was_moving})
