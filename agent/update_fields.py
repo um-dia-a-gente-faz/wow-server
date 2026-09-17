@@ -46,11 +46,38 @@ PLAYER_XP = UNIT_END + 0x1E6
 PLAYER_NEXT_LEVEL_XP = UNIT_END + 0x1E7
 PLAYER_FIELD_COINAGE = UNIT_END + 0x3FE
 
+# Inventory/equipment item-GUID slots (UM-42): each slot is a guid (Size 2:
+# low, high uint32). Equipment (0-18) and the 4 equipped-bag-container slots
+# (19-22) share one contiguous 23-slot array starting at INV_SLOT_HEAD;
+# backpack contents (23-38, 16 slots) are a separate array right after it.
+# src/server/game/Entities/Object/Updates/UpdateFields.h,
+# src/server/game/Entities/Player/Player.h (EquipmentSlots/InventorySlots/
+# InventoryPackSlots enums — the bag/slot numbers CMSG_LOOT's
+# CMSG_AUTOSTORE_LOOT_ITEM, CMSG_USE_ITEM, CMSG_DESTROYITEM address).
+PLAYER_FIELD_INV_SLOT_HEAD = UNIT_END + 0xB0   # Size 46 (23 guids): equip 0-18 + bag-container 19-22
+PLAYER_FIELD_PACK_SLOT_1 = UNIT_END + 0xDE     # Size 32 (16 guids): backpack contents, slot 23-38
+EQUIPMENT_SLOT_COUNT = 19
+BAG_SLOT_COUNT = 4          # equipped bag containers, slots 19-22
+BACKPACK_SLOT_COUNT = 16    # slots 23-38
+INVENTORY_SLOT_BAG_0 = 255  # pseudo-bag id meaning "equipped / main backpack" (Player.h)
+
 # ── GAMEOBJECT (extends OBJECT directly, not UNIT) ───────────────────────
 GAMEOBJECT_DISPLAYID = OBJECT_END + 0x02
 GAMEOBJECT_FLAGS = OBJECT_END + 0x03
 GAMEOBJECT_FACTION = OBJECT_END + 0x09
 GAMEOBJECT_LEVEL = OBJECT_END + 0x0A
+
+# ── ITEM (extends OBJECT directly, not UNIT) — UM-42 ─────────────────────
+# src/server/game/Entities/Object/Updates/UpdateFields.h
+ITEM_FIELD_OWNER = OBJECT_END + 0x00           # Size 2 (guid)
+ITEM_FIELD_CONTAINED = OBJECT_END + 0x02       # Size 2 (guid) — the bag this item sits in, if any
+ITEM_FIELD_CREATOR = OBJECT_END + 0x04         # Size 2 (guid)
+ITEM_FIELD_STACK_COUNT = OBJECT_END + 0x08
+ITEM_FIELD_FLAGS = OBJECT_END + 0x0F
+ITEM_FIELD_PROPERTY_SEED = OBJECT_END + 0x34
+ITEM_FIELD_RANDOM_PROPERTIES_ID = OBJECT_END + 0x35
+ITEM_FIELD_DURABILITY = OBJECT_END + 0x36
+ITEM_FIELD_MAXDURABILITY = OBJECT_END + 0x37
 
 # ── Type hints for the handful of fields decode_fields() reinterprets ────
 FIELD_TYPE_FLOAT = "float"
@@ -142,4 +169,56 @@ def decode_fields(object_type: int, raw: dict) -> dict:
         if GAMEOBJECT_LEVEL in raw:
             out["level"] = raw[GAMEOBJECT_LEVEL]
 
+    if object_type in (uo.TYPEID_ITEM, uo.TYPEID_CONTAINER):
+        out.update(decode_item_fields(raw))
+
+    return out
+
+
+def decode_item_fields(raw: dict) -> dict:
+    """Named, typed values for an ITEM/CONTAINER object's VALUES_UPDATE
+    fields (UM-42) — used both from decode_fields() above (for objects
+    perceived generically through update-object) and directly by
+    agent.perception.WorldState when building session.inventory from the
+    self player's own item objects."""
+    out = {}
+    if OBJECT_FIELD_ENTRY in raw:
+        out["entry"] = raw[OBJECT_FIELD_ENTRY]
+    owner = _guid_from_slots(raw, ITEM_FIELD_OWNER)
+    if owner is not None:
+        out["owner_guid"] = owner
+    contained = _guid_from_slots(raw, ITEM_FIELD_CONTAINED)
+    if contained is not None:
+        out["contained_guid"] = contained
+    if ITEM_FIELD_STACK_COUNT in raw:
+        out["count"] = raw[ITEM_FIELD_STACK_COUNT]
+    if ITEM_FIELD_FLAGS in raw:
+        out["item_flags"] = raw[ITEM_FIELD_FLAGS]
+    if ITEM_FIELD_RANDOM_PROPERTIES_ID in raw:
+        out["random_property_id"] = raw[ITEM_FIELD_RANDOM_PROPERTIES_ID]
+    if ITEM_FIELD_PROPERTY_SEED in raw:
+        out["property_seed"] = raw[ITEM_FIELD_PROPERTY_SEED]
+    if ITEM_FIELD_DURABILITY in raw:
+        out["durability"] = raw[ITEM_FIELD_DURABILITY]
+    if ITEM_FIELD_MAXDURABILITY in raw:
+        out["max_durability"] = raw[ITEM_FIELD_MAXDURABILITY]
+    return out
+
+
+def decode_equipment_and_inventory_guids(raw: dict) -> dict:
+    """The self player's equipment (slots 0-18), equipped-bag-container
+    (slots 19-22) and backpack (slots 23-38) item GUIDs, keyed by slot
+    number 0-38 (matching the bag/slot numbering CMSG_AUTOSTORE_LOOT_ITEM /
+    CMSG_USE_ITEM / CMSG_DESTROYITEM use with bag=INVENTORY_SLOT_BAG_0).
+    Only nonzero (occupied) slots are included."""
+    out = {}
+    total = EQUIPMENT_SLOT_COUNT + BAG_SLOT_COUNT
+    for i in range(total):
+        guid = _guid_from_slots(raw, PLAYER_FIELD_INV_SLOT_HEAD + i * 2)
+        if guid:
+            out[i] = guid
+    for i in range(BACKPACK_SLOT_COUNT):
+        guid = _guid_from_slots(raw, PLAYER_FIELD_PACK_SLOT_1 + i * 2)
+        if guid:
+            out[EQUIPMENT_SLOT_COUNT + BAG_SLOT_COUNT + i] = guid
     return out

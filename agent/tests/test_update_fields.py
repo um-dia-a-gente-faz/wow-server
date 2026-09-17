@@ -122,5 +122,53 @@ class GameObjectFieldsTest(unittest.TestCase):
         self.assertNotIn('health', decoded)
 
 
+class ItemFieldsTest(unittest.TestCase):
+    def test_item_fields(self):
+        raw = {
+            uf.OBJECT_FIELD_ENTRY: 159,
+            uf.ITEM_FIELD_OWNER: 0xAABB, uf.ITEM_FIELD_OWNER + 1: 0,
+            uf.ITEM_FIELD_CONTAINED: 0xCCDD, uf.ITEM_FIELD_CONTAINED + 1: 0,
+            uf.ITEM_FIELD_STACK_COUNT: 4,
+            uf.ITEM_FIELD_FLAGS: 0,
+            uf.ITEM_FIELD_RANDOM_PROPERTIES_ID: 0,
+            uf.ITEM_FIELD_PROPERTY_SEED: 0,
+            uf.ITEM_FIELD_DURABILITY: 90,
+            uf.ITEM_FIELD_MAXDURABILITY: 100,
+        }
+        decoded = uf.decode_fields(uo.TYPEID_ITEM, raw)
+        self.assertEqual(decoded['entry'], 159)
+        self.assertEqual(decoded['owner_guid'], 0xAABB)
+        self.assertEqual(decoded['contained_guid'], 0xCCDD)
+        self.assertEqual(decoded['count'], 4)
+        self.assertEqual(decoded['durability'], 90)
+        self.assertEqual(decoded['max_durability'], 100)
+
+    def test_container_uses_same_item_fields(self):
+        raw = {uf.OBJECT_FIELD_ENTRY: 5000, uf.ITEM_FIELD_STACK_COUNT: 1}
+        decoded = uf.decode_fields(uo.TYPEID_CONTAINER, raw)
+        self.assertEqual(decoded['entry'], 5000)
+        self.assertEqual(decoded['count'], 1)
+
+    def test_decode_item_fields_missing_optional(self):
+        self.assertEqual(uf.decode_item_fields({}), {})
+
+
+class EquipmentAndInventoryGuidsTest(unittest.TestCase):
+    def test_equipment_and_backpack_slots(self):
+        raw = {}
+        raw[uf.PLAYER_FIELD_INV_SLOT_HEAD] = 0x1111       # equip slot 0
+        raw[uf.PLAYER_FIELD_INV_SLOT_HEAD + 1] = 0
+        raw[uf.PLAYER_FIELD_INV_SLOT_HEAD + 2 * 19] = 0x2222  # bag-container slot 19
+        raw[uf.PLAYER_FIELD_INV_SLOT_HEAD + 2 * 19 + 1] = 0
+        raw[uf.PLAYER_FIELD_PACK_SLOT_1] = 0x3333          # backpack slot 23
+        raw[uf.PLAYER_FIELD_PACK_SLOT_1 + 1] = 0
+
+        guids = uf.decode_equipment_and_inventory_guids(raw)
+        self.assertEqual(guids, {0: 0x1111, 19: 0x2222, 23: 0x3333})
+
+    def test_empty_slots_omitted(self):
+        self.assertEqual(uf.decode_equipment_and_inventory_guids({}), {})
+
+
 if __name__ == '__main__':
     unittest.main()
