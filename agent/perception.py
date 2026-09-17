@@ -621,6 +621,20 @@ class WorldState:
             obj.power.update(decoded["power"])
         if "max_power" in decoded:
             obj.max_power.update(decoded["max_power"])
+        # UM-83: the server sends non-zero baseline template values for
+        # power types the unit's class never uses (e.g. a hunter's raw
+        # fields include a phantom "energy" baseline alongside real mana —
+        # WotLK hunters have no personal focus/energy pool). Once the unit's
+        # own power_type (UNIT_FIELD_BYTES_0) is known, drop every entry
+        # that isn't that one real power, so downstream consumers (the LLM
+        # prompt snapshot, actions.py's cast_spell precondition) never see
+        # resources the unit can't actually spend. Left alone until
+        # power_type is known, since fields worth 0 aren't sent at all —
+        # absent isn't the same as "not a real power".
+        if obj.power_type is not None and 0 <= obj.power_type < len(uf.POWER_NAMES):
+            real_power = uf.POWER_NAMES[obj.power_type]
+            obj.power = {k: v for k, v in obj.power.items() if k == real_power}
+            obj.max_power = {k: v for k, v in obj.max_power.items() if k == real_power}
 
     def build_equipment_and_inventory(self) -> tuple[dict, list]:
         """UM-42: equipment (slot -> item dict, slots 0-18) and inventory
