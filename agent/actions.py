@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import movement
+from . import spells
 
 CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
 CMSG_TEXT_EMOTE         = 0x104
@@ -34,6 +35,9 @@ CMSG_SET_SELECTION      = 0x13D  # target a GUID
 CMSG_STAND_STATE_CHANGE = 0x101
 CMSG_ATTACKSWING        = 0x141
 CMSG_ATTACKSTOP         = 0x142
+CMSG_CAST_SPELL         = 0x12E
+
+MELEE_RANGE_YD = 5.0  # ~ melee weapon range + average combat reach
 
 # ChatMsg (SharedDefines.h) — the values here previously mapped 'say' to 0,
 # which is CHAT_MSG_SYSTEM; players can't legitimately send that type.
@@ -77,6 +81,22 @@ def _wait_for(predicate, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
             return True
         if time.monotonic() >= deadline:
             return False
+        time.sleep(interval)
+
+
+def _wait_for_value(get_value, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
+                     interval: float = DEFAULT_CONFIRM_POLL_S):
+    """Like _wait_for, but for confirmations that need to return *which*
+    event matched (e.g. a cast succeeding vs. failing) — polls `get_value()`
+    until it returns something other than None, or `timeout` elapses (then
+    returns None)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        value = get_value()
+        if value is not None:
+            return value
+        if time.monotonic() >= deadline:
+            return None
         time.sleep(interval)
 
 
@@ -396,3 +416,143 @@ class StopMovementAction(Action):
         mover = movement.get_mover(session, world)
         was_moving = mover.stop()
         return ActionResult(ok=True, detail={"was_moving": was_moving})
+
+
+@register
+class AutoAttackAction(Action):
+    name = "auto_attack"
+    description = "Target and start melee auto-attack on a nearby hostile unit."
+    params = {
+        "guid": {"type": "integer", "description": "GUID of the unit to attack."},
+    }
+    required = ("guid",)
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, guid: int, **_) -> str | None:
+        target = world.get_object(guid)
+        if target is None:
+            return f"guid {guid:#x} is not currently perceived"
+        if target.is_dead():
+            return f"guid {guid:#x} is already dead"
+        me = world.get_my_object()
+        if me is not None and target.is_hostile_to(me.faction) is False:
+            return f"guid {guid:#x} is not hostile"
+        if session.player_position is None:
+            return "own position unknown"
+        distance = target.distance_to(session.player_position)
+        if distance is not None and distance > MELEE_RANGE_YD:
+            return (f"guid {guid:#x} is {distance:.1f} yd away, out of melee range "
+                    f"({MELEE_RANGE_YD} yd) — try move_towards first")
+        return None
+
+    def execute(self, session, world, guid: int, **_) -> ActionResult:
+        sent_at = time.monotonic()
+        send_target(session, guid)
+        send_attack(session, guid)
+        confirmed = _wait_for(
+            lambda: any(e.get("kind") == "attack_start" and e.get("victim_guid") == guid
+                        and e.get("t", 0) >= sent_at for e in session.events),
+            timeout=self.confirm_timeout, interval=self.confirm_interval)
+        if not confirmed:
+            return ActionResult(ok=False, error="no attack_start event seen", detail={"guid": guid})
+        return ActionResult(ok=True, detail={"guid": guid})
+
+
+@register
+class StopAttackAction(Action):
+    name = "stop_attack"
+    description = "Stop melee auto-attack."
+    params = {}
+    required = ()
+
+    def execute(self, session, world, **_) -> ActionResult:
+        session._send_packet(CMSG_ATTACKSTOP)
+        return ActionResult(ok=True)
+
+
+@register
+class CastSpellAction(Action):
+    name = "cast_spell"
+    description = "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted)."
+    params = {
+        "spell_id": {"type": "integer", "description": "Spell ID to cast — must be in the agent's spellbook."},
+        "target_guid": {"type": "integer", "description": "GUID to cast on. Omit to cast on self."},
+    }
+    required = ("spell_id",)
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, spell_id: int, target_guid: int | None = None, **_) -> str | None:
+        if spell_id not in session.spellbook:
+            return f"spell {spell_id} is not known"
+        cooldown = session.spell_cooldowns.get(spell_id)
+        if cooldown and cooldown.get("recovery_time", 0) > 0:
+            return f"spell {spell_id} is on cooldown"
+        info = spells.get_spell_info(spell_id)
+        if info is not None and info.power_cost:
+            me = world.get_my_object()
+            if me is not None and me.power and len(me.power) > info.power_type \
+                    and me.power[info.power_type] < info.power_cost:
+                return (f"not enough power for spell {spell_id} "
+                        f"(need {info.power_cost}, have {me.power[info.power_type]})")
+        if target_guid is not None and world.get_object(target_guid) is None:
+            return f"guid {target_guid:#x} is not currently perceived"
+        return None
+
+    def execute(self, session, world, spell_id: int, target_guid: int | None = None, **_) -> ActionResult:
+        if target_guid is not None:
+            target = world.get_object(target_guid)
+            if target is not None and target.position is not None and session.player_position is not None:
+                FaceAction().execute(session, world, guid=target_guid)
+
+        sent_at = time.monotonic()
+        session._send_packet(CMSG_CAST_SPELL, spells.build_cast_spell(spell_id, target_guid=target_guid))
+
+        def find_start_or_failure():
+            for e in session.events:
+                if e.get("t", 0) < sent_at or e.get("spell_id") != spell_id:
+                    continue
+                if e.get("kind") in ("cast_failed", "spell_start", "spell_go"):
+                    return e
+            return None
+
+        # The server always answers with SMSG_SPELL_START right away (even
+        # for instant casts — TrinityCore's Spell::prepare sends it before
+        # checking cast time), then SMSG_SPELL_GO only after the spell's own
+        # cast_time (ms) elapses. A fixed confirm_timeout would time out on
+        # any cast_time above ~1.9s (e.g. Holy Light's 2.5s) even on success
+        # — found live testing against a training dummy — so the wait for
+        # the real outcome is extended by the cast time this spell reports.
+        event = _wait_for_value(find_start_or_failure, timeout=self.confirm_timeout,
+                                 interval=self.confirm_interval)
+        if event is None:
+            return ActionResult(ok=False, error="no cast confirmation seen (timed out)",
+                                 detail={"spell_id": spell_id})
+        if event["kind"] in ("cast_failed", "spell_go"):
+            if event["kind"] == "cast_failed":
+                return ActionResult(ok=False, error=event["reason_name"], detail=event)
+            return ActionResult(ok=True, detail=event)
+
+        # event["kind"] == "spell_start": cast is in flight — wait out its
+        # reported cast time (plus the normal confirm margin) for the
+        # actual outcome.
+        started_at = event["t"]
+        cast_time_s = event.get("cast_time", 0) / 1000.0
+
+        def find_outcome():
+            for e in session.events:
+                if e.get("t", 0) <= started_at or e.get("spell_id") != spell_id:
+                    continue
+                if e.get("kind") in ("cast_failed", "spell_go"):
+                    return e
+            return None
+
+        outcome = _wait_for_value(find_outcome, timeout=cast_time_s + self.confirm_timeout,
+                                   interval=self.confirm_interval)
+        if outcome is None:
+            return ActionResult(ok=False, error="no cast confirmation seen (timed out)",
+                                 detail={"spell_id": spell_id, "cast_time_ms": event.get("cast_time")})
+        if outcome["kind"] == "cast_failed":
+            return ActionResult(ok=False, error=outcome["reason_name"], detail=outcome)
+        return ActionResult(ok=True, detail=outcome)

@@ -14,6 +14,7 @@ import zlib
 from . import packets as pk
 from . import crypt as cr
 from . import perception as per
+from . import spells as sp
 from . import update_fields as uo_fields
 from . import update_object as uo
 from .update_object import (
@@ -55,6 +56,44 @@ SMSG_STANDSTATE_UPDATE  = 0x29D
 SMSG_GROUP_INVITE       = 0x06F
 SMSG_MESSAGECHAT        = 0x096
 SMSG_GM_MESSAGECHAT     = 0x3B3
+
+# Combat / spells (UM-39)
+SMSG_INITIAL_SPELLS         = 0x12A
+SMSG_LEARNED_SPELL          = 0x12B
+CMSG_CAST_SPELL             = 0x12E
+SMSG_CAST_FAILED            = 0x130
+SMSG_SPELL_START            = 0x131
+SMSG_SPELL_GO                = 0x132
+SMSG_ATTACK_START           = 0x143
+SMSG_ATTACK_STOP            = 0x144
+SMSG_ATTACKERSTATEUPDATE    = 0x14A
+SMSG_LOG_XPGAIN             = 0x1D0
+SMSG_LEVELUP_INFO           = 0x1D4
+SMSG_PARTYKILLLOG           = 0x1F5
+SMSG_REMOVED_SPELL          = 0x203
+SMSG_SPELLNONMELEEDAMAGELOG = 0x250
+
+# Bounded so a long fight or a busy session can't grow this without limit —
+# the LLM loop (UM-44) only ever needs the last N events per think cycle.
+EVENTS_MAXLEN = 100
+
+# opcode -> WoWSession handler method name, for the combat/spell opcodes
+# above (kept as a table instead of a long elif chain — see _dispatch).
+_SPELL_DISPATCH = {
+    SMSG_INITIAL_SPELLS: "_handle_initial_spells",
+    SMSG_LEARNED_SPELL: "_handle_learned_spell",
+    SMSG_REMOVED_SPELL: "_handle_removed_spell",
+    SMSG_CAST_FAILED: "_handle_cast_failed",
+    SMSG_SPELL_START: "_handle_spell_start",
+    SMSG_SPELL_GO: "_handle_spell_go",
+    SMSG_ATTACK_START: "_handle_attack_start",
+    SMSG_ATTACK_STOP: "_handle_attack_stop",
+    SMSG_ATTACKERSTATEUPDATE: "_handle_attacker_state_update",
+    SMSG_SPELLNONMELEEDAMAGELOG: "_handle_spell_non_melee_damage_log",
+    SMSG_PARTYKILLLOG: "_handle_party_kill_log",
+    SMSG_LOG_XPGAIN: "_handle_log_xp_gain",
+    SMSG_LEVELUP_INFO: "_handle_levelup_info",
+}
 
 # ChatMsg values this parser understands by name (SharedDefines.h); anything
 # else is kept as "type_<n>" rather than dropped.
@@ -141,6 +180,9 @@ class WoWSession:
         self.on_update_object = None  # callback(update_type, guid, fields)
         self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
         self.pending_invite = None  # {"inviter_name": str} or None
+        self.spellbook: set[int] = set()  # known spell IDs (UM-39)
+        self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
+        self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}
 
     def connect(self):
         """Connect to world server and authenticate."""
@@ -430,6 +472,57 @@ class WoWSession:
         self.pending_invite = {"inviter_name": inviter_name}
         log.info("group invite from %s", inviter_name)
 
+    def _handle_initial_spells(self, payload: bytes):
+        info = sp.parse_initial_spells(payload)
+        self.spellbook = set(info["spell_ids"])
+        self.spell_cooldowns = {c["spell_id"]: c for c in info["cooldowns"]}
+
+    def _handle_learned_spell(self, payload: bytes):
+        self.spellbook.add(sp.parse_learned_spell(payload))
+
+    def _handle_removed_spell(self, payload: bytes):
+        spell_id = sp.parse_removed_spell(payload)
+        self.spellbook.discard(spell_id)
+        self.spell_cooldowns.pop(spell_id, None)
+
+    def _record_event(self, kind: str, **fields):
+        """Append to session.events with a time.monotonic() timestamp, so
+        callers (e.g. agent.actions' _wait_for-style confirmation) can find
+        "events since I sent this packet" reliably even though `events` is
+        a bounded deque (older entries can fall off the left, which would
+        make plain index-based slicing wrong)."""
+        self.events.append({"kind": kind, "t": time.monotonic(), **fields})
+
+    def _handle_cast_failed(self, payload: bytes):
+        self._record_event("cast_failed", **sp.parse_cast_failed(payload))
+
+    def _handle_spell_start(self, payload: bytes):
+        self._record_event("spell_start", **sp.parse_spell_cast_prefix(payload))
+
+    def _handle_spell_go(self, payload: bytes):
+        self._record_event("spell_go", **sp.parse_spell_cast_prefix(payload))
+
+    def _handle_attack_start(self, payload: bytes):
+        self._record_event("attack_start", **sp.parse_attack_start(payload))
+
+    def _handle_attack_stop(self, payload: bytes):
+        self._record_event("attack_stop", **sp.parse_attack_stop(payload))
+
+    def _handle_attacker_state_update(self, payload: bytes):
+        self._record_event("attacker_state_update", **sp.parse_attacker_state_update(payload))
+
+    def _handle_spell_non_melee_damage_log(self, payload: bytes):
+        self._record_event("spell_damage", **sp.parse_spell_non_melee_damage_log(payload))
+
+    def _handle_party_kill_log(self, payload: bytes):
+        self._record_event("party_kill", **sp.parse_party_kill_log(payload))
+
+    def _handle_log_xp_gain(self, payload: bytes):
+        self._record_event("xp_gain", **sp.parse_log_xp_gain(payload))
+
+    def _handle_levelup_info(self, payload: bytes):
+        self._record_event("levelup", **sp.parse_levelup_info(payload))
+
     def _send_sync(self, payload):
         counter = struct.unpack_from('<I', payload, 0)[0]
         self._send_packet(CMSG_TIME_SYNC_RESP, struct.pack('<II', counter, 0))
@@ -446,6 +539,8 @@ class WoWSession:
             self._handle_group_invite(payload)
         elif opcode == SMSG_DESTROY_OBJECT:
             self._handle_destroy_object(payload)
+        elif opcode in _SPELL_DISPATCH:
+            getattr(self, _SPELL_DISPATCH[opcode])(payload)
         elif opcode in (SMSG_PONG, SMSG_MONSTER_MOVE, SMSG_STANDSTATE_UPDATE):
             # SMSG_MONSTER_MOVE (NPC destinations) and MSG_MOVE_* heartbeats
             # (other players' positions) aren't parsed — see docs/ROADMAP.md.

@@ -149,10 +149,20 @@ on perception and is a dependency for the next:
    `CMSG_QUESTGIVER_*` opcodes against an NPC GUID from perception. No
    movement needed if already in range; a good next milestone because it
    proves the perceive→act loop closes without needing pathfinding yet.
-3. **Combat basics** — `auto_attack`/`stop_attack` (mostly wired already via
-   `actions.send_attack`), then `cast_spell` (needs the spellbook, which
-   isn't parsed yet either — comes from `SMSG_INITIAL_SPELLS` at login,
-   similar shape of work to update-object parsing but far smaller).
+3. **Combat basics — SHIPPED (UM-39).** `auto_attack`/`stop_attack`/
+   `cast_spell` in `agent/actions.py`, spellbook from `SMSG_INITIAL_SPELLS`
+   in `agent/spells.py`, combat events (`attack_start`, `spell_go`,
+   `cast_failed`, `attacker_state_update`, ...) recorded on
+   `session.events` for actions to confirm against — see
+   `docs/PROTOCOL-NOTES.md` "UM-39: combat wire formats" for the wire
+   details and two live findings: `SMSG_SPELL_START` always precedes
+   `SMSG_SPELL_GO` (even for instant casts), and `cast_spell`'s
+   confirmation wait originally timed out on any cast time above ~2 s
+   (fixed to extend the wait by the spell's own reported cast time).
+   Live-verified against a training dummy (no appropriately-leveled real
+   hostile was reachable from the test account's spawn hub — a real kill +
+   `SMSG_LOG_XPGAIN`/`SMSG_PARTYKILLLOG` capture is still open, see the
+   protocol notes).
 4. **`loot`** — `CMSG_LOOT`/`CMSG_LOOT_ITEM` once `unit_death` / a lootable
    flag is visible in perception (from `UNIT_DYNAMIC_FLAGS`).
 5. **Movement (`move_to`) — v1 SHIPPED (UM-38), navmesh v2 still open.** The

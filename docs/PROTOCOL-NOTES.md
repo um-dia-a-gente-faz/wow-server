@@ -164,3 +164,97 @@ makes the drift check a dormant safety net for the rare case something
 external (a real teleport/knockback) does update it — `_simulate`'s
 "no measurable progress over 3 s" check is the one that actually fires
 during ordinary v1 use.
+
+## UM-39: combat wire formats
+
+Verified against TrinityCore branch `3.3.5`:
+  `src/server/game/Server/Packets/SpellPackets.cpp` (`SpellCastRequest::Read`,
+    `SendSpellGo`/`SendSpellStart` payload shape, `SendCastResult`)
+  `src/server/game/Spells/Spell.cpp` (`Spell::prepare`/`Spell::cast` — when
+    `SendSpellStart`/`SendSpellGo` actually fire, see below)
+  `src/server/game/Handlers/SpellHandler.cpp` (`SMSG_INITIAL_SPELLS`,
+    `SMSG_LEARNED_SPELL`, `SMSG_SUPERCEDED_SPELL`/`SMSG_REMOVED_SPELL`)
+  `src/server/game/Server/Packets/CombatPackets.cpp` (`AttackSwing`,
+    `SMSG_ATTACKERSTATEUPDATE` / `HitInfo` flags)
+  `src/server/shared/SharedDefines.h` (`enum SpellCastResult`, 188 values —
+    `agent/spells.py::SPELL_CAST_RESULT_NAMES` maps all of them)
+
+`agent/spells.py` holds every pure parser/builder (no opcodes, no I/O — same
+split as `agent/names.py`); opcodes live in `agent/session.py`, dispatched
+through `_SPELL_DISPATCH` into thirteen thin handlers that call
+`WoWSession._record_event()`. `agent/actions.py` adds `auto_attack`,
+`stop_attack`, `cast_spell` to the Action registry, all reading confirmation
+off `session.events` (a bounded deque) rather than blocking on a single
+expected reply — the same shape `set_target`/`face` established in UM-36.
+
+`SMSG_SPELL_START`/`SMSG_SPELL_GO` are only partially parsed
+(`spells.parse_spell_cast_prefix`): the fixed unconditional prefix
+(caster guids, cast id, spell id, cast flags, cast time) is decoded and the
+variable tail (hit/miss target lists, power data) is deliberately left
+alone — packets are length-prefixed and self-delimited, so skipping a tail
+doesn't desync the stream, and the agent doesn't need it yet.
+
+**`SMSG_SPELL_START` always arrives, even for an instant cast — found live
+testing `cast_spell`.** `Spell::prepare` (`Spell.cpp`) calls `SendSpellStart()`
+unconditionally for a non-triggered cast, before it even checks
+`m_casttime`; only *after* that, if `m_casttime == 0`, does the same call
+immediately run `cast(true)` (→ `SendSpellGo()`). So a real client — and
+this agent — sees `spell_start` first in all cases, then `spell_go` either
+back-to-back (instant) or after `cast_time` milliseconds (the spell's own
+cast time, echoed in `spell_start`'s payload).
+
+**Bug found from this, fixed before shipping:** `CastSpellAction`'s
+confirmation wait originally looked only for `spell_go`/`cast_failed`
+within one fixed `confirm_timeout` (2.0 s) from when the cast was sent. Any
+spell whose cast time exceeds that (Holy Light is 2.5 s) timed out on
+`cast_spell` even when the cast fully succeeded, because `spell_go` simply
+hadn't arrived yet. Reproduced live: casting spell 635 on self while
+auto-attacking a training dummy always returned `"no cast confirmation seen
+(timed out)"`, while the event log showed a matching `spell_go` arriving
+~2.5 s later. Fixed in `agent/actions.py::CastSpellAction.execute` — the
+wait is now two-phase: phase one waits `confirm_timeout` for `spell_start`
+(near-instant) or a same-tick `cast_failed`/`spell_go`; phase two, only
+once `spell_start` is seen, extends the deadline to that event's own
+`cast_time` (ms) plus `confirm_timeout` as margin. Covered by
+`test_execute_extends_wait_by_reported_cast_time`/
+`test_execute_reports_cast_failed_after_cast_time_wait` in
+`agent/tests/test_actions.py`.
+
+`SMSG_CAST_FAILED`'s optional `failed_arg1`/`failed_arg2` fields carry no
+flag bits on the wire — presence is implied purely by total payload length
+(base 6 B; +4 B if ≥ 10 B; +4 B more if ≥ 14 B), so
+`spells.parse_cast_failed` branches on `len(payload)` instead of a header
+field.
+
+`SMSG_ATTACKERSTATEUPDATE`'s layout is conditionally gated by its `HitInfo`
+bitfield (absorb/resist/block sub-sections, an optional rage-gain field, and
+an always-present trailing `unk1`/`melee_spell_id` — `spells.
+parse_attacker_state_update` follows the flag checks in `Unit::
+SendAttackStateUpdate`/`BuildProcResistedBlockedInfo` one for one.
+
+Live-verified (character Luaprata, level 10 blood elf paladin, account
+AGENT01): `SMSG_INITIAL_SPELLS` parsed into a 45-entry `session.spellbook`
+matching the live character's real kit; `cast_spell` correctly rejects an
+unknown spell id before sending anything; `auto_attack` correctly rejects
+an out-of-melee-range target with an actionable "try move_towards first"
+error, then, after `move_to`-ing ~280 yd to a nearby training-dummy cluster
+(`Expert's Training Dummy`, world DB entry 32666 — the character's login
+hub has no appropriately-leveled genuine hostile within walking range, see
+below), `auto_attack` produced a confirmed `attack_start` and a stream of
+real `SMSG_ATTACKERSTATEUPDATE` swings against it (0 damage — target
+dummies are the expected invulnerable/no-retaliate kind); `cast_spell`
+against Holy Light (635, 2.5 s cast) on self, sent mid-combat, confirmed
+`ok=True` against the real `spell_go` event once the timeout fix above
+landed.
+
+**Not live-verified: killing a real hostile mob and observing
+`SMSG_PARTYKILLLOG`/`SMSG_LOG_XPGAIN`.** `AGENT01`'s character (`Luaprata`)
+spawns in what's clearly a custom testing/trainer hub on map 530 (class
+trainers, holiday-event NPCs, and the training-dummy cluster used above) —
+every creature within the reach of straight-line-only `move_to` v1 near
+that hub is either a same-faction NPC or, per `world.creature_template`, a
+guard/vendor that the current blunt "different faction number = hostile"
+heuristic (`ObjectInfo.is_hostile_to`, documented as approximate since
+UM-34) misclassifies as attackable. Confirming a real kill + XP gain needs
+either a longer supervised walk into an actual leveling zone or the owner
+placing/pointing at a safe low-level hostile near spawn.
