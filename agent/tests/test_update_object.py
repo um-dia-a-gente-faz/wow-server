@@ -56,21 +56,22 @@ class BlockCountTest(unittest.TestCase):
                 self.assertEqual(block_count, expected)
 
 
-# login_sunstrider.bin's block 3 has MOVEMENTFLAG_SPLINE_ENABLED set (a real
-# creature actively pathing at capture time) — spline data isn't implemented,
-# so parsing this one fixture is expected to raise UnhandledMovementFlags
-# partway through rather than consume the whole payload. Every other fixture
-# has no spline blocks and should fully round-trip.
-EXPECT_SPLINE_RAISE = "login_sunstrider.bin"
+# login_sunstrider.bin's block 3 (and several others: 4, 12, 16, 18, 19, 21,
+# 22, 28, 37, 42, 43, 45, 51, 54) has MOVEMENTFLAG_SPLINE_ENABLED set — real
+# creatures actively pathing at capture time (see fixtures README). UM-64
+# implements that block, so this fixture now fully round-trips like every
+# other one; it's the only fixture that exercises the spline path against
+# real bytes (agent/tests/test_update_object_parser.py covers it with hand-
+# built data for the branches this fixture doesn't happen to contain, e.g.
+# FINAL_TARGET/FINAL_ANGLE facing).
+FIXTURE_WITH_SPLINE_BLOCKS = "login_sunstrider.bin"
 
 
 class FramingTest(unittest.TestCase):
-    """UM-32 acceptance criteria against the real fixtures."""
+    """UM-32/UM-64 acceptance criteria against the real fixtures."""
 
-    def test_every_other_fixture_consumes_exactly_its_length(self):
+    def test_every_fixture_consumes_exactly_its_length(self):
         for name in EXPECTED_BLOCK_COUNTS:
-            if name == EXPECT_SPLINE_RAISE:
-                continue
             with self.subTest(fixture=name):
                 data = load_fixture(name)
                 blocks = uo.parse_update_object(data)
@@ -78,11 +79,14 @@ class FramingTest(unittest.TestCase):
                 for block in blocks:
                     self.assertIn(block.update_type, range(6))
 
-    def test_login_sunstrider_spline_block_raises(self):
-        data = load_fixture(EXPECT_SPLINE_RAISE)
-        with self.assertRaises(uo.UnhandledMovementFlags) as ctx:
-            uo.parse_update_object(data)
-        self.assertTrue(ctx.exception.move_flags & uo.MOVEMENTFLAG_SPLINE_ENABLED)
+    def test_login_sunstrider_has_spline_blocks(self):
+        data = load_fixture(FIXTURE_WITH_SPLINE_BLOCKS)
+        blocks = uo.parse_update_object(data)
+        spline_blocks = [b for b in blocks if b.movement and "spline" in b.movement]
+        self.assertGreaterEqual(len(spline_blocks), 14)
+        for b in spline_blocks:
+            self.assertIn(b.movement["spline"]["mode"], (0, 1, 2))
+            self.assertEqual(len(b.movement["spline"]["destination"]), 3)
 
     def test_self_position_matches_login_verify_world(self):
         data = load_fixture("login_self_create.bin")
@@ -96,14 +100,19 @@ class FramingTest(unittest.TestCase):
 
 class FieldMappingTest(unittest.TestCase):
     """UM-33: decode_fields() against fixtures cross-checked against
-    world.creature_template / world.gameobject_template (see the README).
+    world.creature_template / world.gameobject_template (see the README)."""
 
-    login_sunstrider.bin isn't used here even though its "Cat" critter
-    (entry 6368) is the README's headline example: that fixture raises
-    UnhandledMovementFlags partway through (the spline block), so
-    parse_update_object never returns blocks for it. busy_zone.bin and
-    gameobject_cluster.bin fully round-trip and carry the same real data.
-    """
+    def test_login_sunstrider_cat_critters(self):
+        data = load_fixture("login_sunstrider.bin")
+        blocks = uo.parse_update_object(data)
+        decoded = [uf.decode_fields(b.object_type, b.fields) for b in blocks
+                   if b.update_type in (uo.UPDATETYPE_CREATE_OBJECT, uo.UPDATETYPE_CREATE_OBJECT2)]
+        cats = [d for d in decoded if d.get("entry") == 6368]
+        self.assertGreaterEqual(len(cats), 2)
+        for d in cats:
+            self.assertEqual(d["level"], 1)
+            self.assertEqual(d["health"], 1)
+            self.assertEqual(d["max_health"], 1)
 
     def test_creature_entries_and_stats(self):
         data = load_fixture("gameobject_cluster.bin")

@@ -53,6 +53,7 @@ class ObjectInfo:
     move_flags: int | None = None
     last_update: float = 0.0  # time.monotonic() of the last block that touched this object
     raw_fields: dict = field(default_factory=dict)
+    spline: dict | None = None  # active spline (UM-64): {start_pos, destination, start_time, duration}
 
     def __repr__(self):
         return f"<{self.object_type or 'object'} #{self.guid:x} {self.name or self.entry or '?'}>"
@@ -78,18 +79,50 @@ class ObjectInfo:
     def is_trainer(self) -> bool:
         return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_TRAINER)
 
+    def set_spline(self, start_pos: tuple, destination: tuple, start_time: float, duration: float):
+        """Start (or replace) this object's spline-interpolation state.
+        `start_pos`/`destination` are (x, y, z); `start_time` is a
+        time.monotonic() timestamp; `duration` is in seconds."""
+        self.spline = {"start_pos": start_pos, "destination": destination,
+                        "start_time": start_time, "duration": duration}
+
+    def clear_spline(self):
+        self.spline = None
+
+    def current_position(self) -> tuple | None:
+        """self.position, or — while a spline is in flight (UM-64) — a
+        straight-line interpolation toward its destination. This is a
+        "simple interpolation over the spline duration", not a real spline
+        evaluation (no easing, no intermediate waypoints): good enough to
+        keep a moving NPC's reported position from going stale for the ~1s
+        between its own update-object/MONSTER_MOVE ticks. Once `duration`
+        elapses the interpolation clamps at the destination, which also
+        covers "arrived and stopped" without needing an explicit signal."""
+        if self.spline is None or self.position is None:
+            return self.position
+        duration = self.spline["duration"]
+        if duration <= 0:
+            return self.position
+        t = max(0.0, min(1.0, (time.monotonic() - self.spline["start_time"]) / duration))
+        sx, sy, sz = self.spline["start_pos"]
+        dx, dy, dz = self.spline["destination"]
+        map_id, _, _, _, o = self.position
+        return (map_id, sx + (dx - sx) * t, sy + (dy - sy) * t, sz + (dz - sz) * t, o)
+
     def distance_to(self, pos) -> float | None:
-        """3D distance to (x, y, z) or (map, x, y, z, ...). None if either
-        position is unknown, or they're on different maps."""
-        if self.position is None:
+        """3D distance to (x, y, z) or (map, x, y, z, ...), from this
+        object's current (possibly spline-interpolated) position. None if
+        either position is unknown, or they're on different maps."""
+        my_pos = self.current_position()
+        if my_pos is None:
             return None
         if len(pos) >= 4:
             map_id, x, y, z = pos[0], pos[1], pos[2], pos[3]
-            if map_id != self.position[0]:
+            if map_id != my_pos[0]:
                 return None
         else:
             x, y, z = pos
-        _, sx, sy, sz, _ = self.position
+        _, sx, sy, sz, _ = my_pos
         return math.sqrt((sx - x) ** 2 + (sy - y) ** 2 + (sz - z) ** 2)
 
     def is_hostile_to(self, my_faction: int | None) -> bool | None:
@@ -183,6 +216,40 @@ class WorldState:
                 self._apply_movement(obj, block.movement)
             obj.last_update = time.monotonic()
 
+    def apply_monster_move(self, info: dict):
+        """SMSG_MONSTER_MOVE (agent.update_object.parse_monster_move):
+        (re)start an NPC's spline-interpolation state, or — for
+        MONSTER_MOVE_STOP / a spline with no destination — snap straight to
+        its reported position. Same unknown-guid policy as update_object():
+        a MONSTER_MOVE for a GUID we haven't CREATEd yet is ignored and
+        counted, we'd have nowhere to put it."""
+        with self._lock:
+            obj = self.objects.get(info["mover_guid"])
+            if obj is None:
+                self.unknown_field_updates += 1
+                return
+            px, py, pz = info["pos"]
+            o = obj.position[4] if obj.position else 0.0
+            obj.position = (self.my_map, px, py, pz, o)
+            if info["move_type"] == uo.MONSTER_MOVE_STOP or "destination" not in info:
+                obj.clear_spline()
+            else:
+                obj.set_spline(info["pos"], info["destination"], time.monotonic(),
+                                info["move_time"] / 1000.0)
+            obj.last_update = time.monotonic()
+
+    def apply_movement_info(self, guid: int, move_info: dict):
+        """MSG_MOVE_* broadcasts (agent.update_object.parse_movement_info):
+        a plain position update for an object we already know about. Same
+        unknown-guid policy as update_object()."""
+        with self._lock:
+            obj = self.objects.get(guid)
+            if obj is None:
+                self.unknown_field_updates += 1
+                return
+            self._apply_movement(obj, move_info)
+            obj.last_update = time.monotonic()
+
     def remove_guids(self, guids):
         """OUT_OF_RANGE_OBJECTS: the server is telling us these are no
         longer visible. Drop them entirely rather than mark them stale —
@@ -203,6 +270,21 @@ class WorldState:
             obj.move_flags = movement["move_flags"]
         if "target_guid" in movement:
             obj.target_guid = movement["target_guid"]
+
+        spline = movement.get("spline")
+        if spline is not None:
+            obj.set_spline(
+                (movement["x"], movement["y"], movement["z"]),
+                spline["destination"],
+                time.monotonic() - spline["time_passed"] / 1000.0,
+                spline["duration"] / 1000.0,
+            )
+        elif "move_flags" in movement:
+            # A fresh LIVING block without spline data (direct control, or
+            # the spline finished) supersedes any earlier spline. POSITION/
+            # STATIONARY_POSITION blocks never carry move_flags at all, so
+            # they leave existing spline state alone rather than guess.
+            obj.clear_spline()
 
     def _apply_fields(self, obj: ObjectInfo, object_type: int | None, raw_fields: dict | None):
         if not raw_fields:
@@ -280,8 +362,9 @@ def _object_dict(obj: ObjectInfo, distance: float) -> dict:
         "type": obj.object_type or None,
         "distance": round(distance, 1),
     }
-    if obj.position is not None:
-        d["position"] = _position_dict(obj.position)
+    current_position = obj.current_position()
+    if current_position is not None:
+        d["position"] = _position_dict(current_position)
     if obj.faction is not None:
         d["faction"] = obj.faction
     if obj.level is not None:

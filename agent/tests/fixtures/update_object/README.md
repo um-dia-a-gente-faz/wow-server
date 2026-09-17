@@ -25,7 +25,7 @@ payloads only (GUIDs, positions, health/level/entry fields).
 | File | Scenario | Size | Blocks | Notes |
 |---|---|---:|---:|---|
 | `login_self_create.bin` | Own player's CREATE block, sent as its own small packet immediately before the burst below | 685 B | 1 | type **2** (`CREATE_OBJECT`, not `CREATE_OBJECT2`/3 — see below), guid `0x2` (Luaprata), `UPDATEFLAG_LIVING\|SELF` (`0x61`). Position `(10344.900390625, -6354.1201171875, 32.60350036621094, 0.0)` — matches `session.player_position` from `SMSG_LOGIN_VERIFY_WORLD` in the same session exactly (see UM-32 acceptance criterion "self position within 0.1yd"). `health=58, max_health=58, level=1`. |
-| `login_sunstrider.bin` | First compressed burst right after login: nearby NPCs + another online player (Rubens, guid `0x1`), **not** our own self (that's the file above) | 13316 B | 55 | Block 0: guid `0x1` (Rubens, PLAYER, stationary, `health=76 max_health=76 level=2`). Blocks 1–2: two "Cat" critters (`entry=6368`, `health=1 max_health=1 level=1` — matches `world.creature_template` `minlevel=maxlevel=1`). **Block 3 has `MOVEMENTFLAG_SPLINE_ENABLED` set** — a real spline-movement block from this burst; useful fixture for the `UnhandledMovementFlags` path UM-32's card calls out. Blocks 4–54 not yet decoded by hand (see caveat below). |
+| `login_sunstrider.bin` | First compressed burst right after login: nearby NPCs + another online player (Rubens, guid `0x1`), **not** our own self (that's the file above) | 13316 B | 55 | Block 0: guid `0x1` (Rubens, PLAYER, stationary, `health=76 max_health=76 level=2`). Blocks 1–2: two "Cat" critters (`entry=6368`, `health=1 max_health=1 level=1` — matches `world.creature_template` `minlevel=maxlevel=1`). **Block 3 has `MOVEMENTFLAG_SPLINE_ENABLED` set**, as do 13 other blocks in this burst — real spline-movement data; this is the fixture UM-64's spline create-block parser is verified against (see caveat below). |
 | `busy_zone.bin` | Fresh login directly into Silvermoon City (relogin at a saved-via-`.go` position, not a same-session teleport — see caveat) | 11540 B | 74 | All 74 blocks are `CREATE_OBJECT`, all fully hand-decoded (offset lands exactly at EOF). Mix of `GAMEOBJECT` (zone banners/signage — entries 182323 "The Royal Exchange", 182324 "Court of the Sun", 182325 "Farstrider Square", 182326 "The Bazaar", 182623/182624 "Chair") and `UNIT` (`entry=37543`/`37574` "[DND] Shaker"/"Shaker - Small", `entry=25148`/`25149` "Bergrisst"/"Chief Thunder-Skins", level 60–70). All `UPDATEFLAG` values are `0x350` (GO: STATIONARY_POSITION\|LOWGUID\|POSITION... — verify against `UpdateData.h` in UM-32) or `0x60` (unit: LIVING\|SELF-ish, non-moving). No `MOVEMENT` (type 1) or `OUT_OF_RANGE_OBJECTS` (type 4) blocks present — see caveat. |
 | `gameobject_cluster.bin` | A mid-size burst: 6 more "Shaker" utility NPCs near Silvermoon, all in one packet | 1216 B | 6 | All 6 blocks fully hand-decoded, offset lands exactly at EOF. All `UNIT`, `entry=37543` or `37574`, `health=3052 max_health=3052 level=60`. Good multi-block-but-small fixture (a middle ground between the two above). |
 | `gameobject_create.bin` | Uncompressed `SMSG_UPDATE_OBJECT` (0xA9) for a single stationary gameobject near spawn | 93 B | 1 | type 2, guid high part `0x1FC0...`, `objectTypeId=GAMEOBJECT`, `entry=181646` ("Ship, Night Elf (Elune's Blessing)" — a docked-ship prop near the Sunstrider Isle spawn point), `UPDATEFLAG=0x252` (STATIONARY_POSITION-family, no LIVING). |
@@ -71,12 +71,14 @@ Extensively attempted and root-caused, not just "didn't get around to it":
 
 ## Caveats for whoever writes the real parser (UM-32/33)
 
-- `login_sunstrider.bin` block 3 raises on spline data by design — the
-  exploratory decoder used to write this README does not implement spline
-  parsing (per the UM-32 card: "implement it if a fixture contains it,
-  otherwise raise `UnhandledMovementFlags`" — this fixture is exactly that
-  case). Blocks 4–54 of this file were never decoded (parsing stopped at the
-  first exception); there could be more surprises in there.
+- `login_sunstrider.bin` block 3 used to raise on spline data by design — the
+  exploratory decoder used to write this README didn't implement spline
+  parsing. **Resolved by UM-64**: `agent/update_object.py` now implements the
+  spline create block (`_parse_create_object_spline_block`), and this fixture
+  fully round-trips — see `agent/tests/test_update_object.py`'s
+  `test_login_sunstrider_has_spline_blocks`. Blocks 4–54 of this file were
+  never decoded *by hand* for this README, but the real parser now consumes
+  all 55 to exactly `len(payload)`.
 - Field decode above used the *tentative* indices from `docs/PROTOCOL-NOTES.md`
   (`OBJECT_FIELD_ENTRY=0x03`, `UNIT_FIELD_HEALTH=0x18`,
   `UNIT_FIELD_MAXHEALTH=0x20`, `UNIT_FIELD_LEVEL=0x36`) — cross-checked
