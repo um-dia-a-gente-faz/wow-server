@@ -38,7 +38,7 @@ SMSG_QUESTGIVER_STATUS         = 0x183
 CMSG_QUESTGIVER_HELLO          = 0x184
 SMSG_QUESTGIVER_QUEST_LIST     = 0x185
 CMSG_QUESTGIVER_QUERY_QUEST    = 0x186
-SMSG_QUESTGIVER_QUEST_DETAILS  = 0x187
+SMSG_QUESTGIVER_QUEST_DETAILS  = 0x188
 CMSG_QUESTGIVER_ACCEPT_QUEST   = 0x189
 CMSG_QUESTGIVER_COMPLETE_QUEST = 0x18A
 SMSG_QUESTGIVER_REQUEST_ITEMS  = 0x18B
@@ -184,10 +184,12 @@ def parse_quest_query_response(payload: bytes) -> dict:
 
 
 def parse_questgiver_status(payload: bytes) -> dict:
-    """SMSG_QUESTGIVER_STATUS (0x183): raw uint64 guid, uint32 status
-    (QuestGiverStatus)."""
+    """SMSG_QUESTGIVER_STATUS (0x183): raw uint64 guid, uint8 status
+    (QuestGiverStatus) — matches TrinityCore 3.3.5's
+    QuestGiverStatus::Write() in QuestPackets.cpp (guid + single status
+    byte, 9 bytes total)."""
     guid = pk.u64(payload, 0)
-    status = pk.u32(payload, 8)
+    status = pk.u8(payload, 8)
     return {"guid": guid, "status": status,
             "status_name": QUEST_GIVER_STATUS_NAMES.get(status, f"status_{status}")}
 
@@ -215,7 +217,7 @@ def parse_questgiver_quest_list(payload: bytes) -> dict:
 
 
 def parse_questgiver_quest_details(payload: bytes) -> dict:
-    """SMSG_QUESTGIVER_QUEST_DETAILS (0x187): raw uint64 npc guid, uint32
+    """SMSG_QUESTGIVER_QUEST_DETAILS (0x188): raw uint64 npc guid, uint32
     quest_id, cstring title, cstring details, cstring objectives, uint8
     auto_finish, uint32 suggested_players, uint32 reward_money, uint32
     reward_xp, then MAX_QUEST_REQ (entry, count) required creature/GO
