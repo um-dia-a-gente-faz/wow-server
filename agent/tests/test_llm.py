@@ -129,6 +129,37 @@ class LLMClientChooseActionTest(unittest.TestCase):
             with self.assertRaises(llm.LLMError):
                 client.choose_action({}, [])
 
+    def test_post_mid_response_timeout_raises_llm_error_not_bare_timeout(self):
+        # Regression test for UM-81: a socket timeout while reading the
+        # response body (after the connection is already open) surfaces from
+        # urlopen()'s context manager as a bare TimeoutError, not wrapped in
+        # urllib.error.URLError. Simulate that by having the context manager
+        # body (resp.read()) raise, since that's the phase urllib doesn't
+        # wrap.
+        client = llm.LLMClient("https://free.example/v1", "test-model")
+        resp = mock.MagicMock()
+        resp.read.side_effect = TimeoutError("timed out")
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            with self.assertRaises(llm.LLMError):
+                client.choose_action({}, [])
+
+    def test_post_incomplete_read_raises_llm_error(self):
+        # Regression test found in review: http.client.IncompleteRead (the
+        # connection drops after headers but before the promised
+        # Content-Length body arrives) is not an OSError subclass, so the
+        # UM-81 fix's `except OSError` alone still missed it — same "crashes
+        # the agent" failure mode as the bare TimeoutError case above.
+        import http.client
+
+        client = llm.LLMClient("https://free.example/v1", "test-model")
+        resp = mock.MagicMock()
+        resp.read.side_effect = http.client.IncompleteRead(b"partial")
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            with self.assertRaises(llm.LLMError):
+                client.choose_action({}, [])
+
     def test_base_url_trailing_slash_stripped(self):
         client = llm.LLMClient("https://free.example/v1/", "m")
         self.assertEqual(client.base_url, "https://free.example/v1")

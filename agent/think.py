@@ -9,11 +9,31 @@ fake LLM client without booting a real WoWSession.
 """
 
 import logging
+import time
 
 from . import actions as ac
+from . import trade as tr
 from .llm import LLMError
 
 log = logging.getLogger("agent.think")
+
+TRADE_IDLE_TIMEOUT_S = 60.0  # UM-59: cancel a stalled trade instead of blocking the agent forever
+
+
+def _maybe_cancel_idle_trade(session, world):
+    """UM-59 safety rail: an open/pending trade nobody has touched in a
+    while (an offer change, accept, etc. all bump `last_activity_at`) gets
+    cancelled automatically — code decides this, not the LLM, matching the
+    issue's "timeout and cancel an idle trade after ~60s". A side effect
+    checked once per think cycle rather than its own reflex thread: the
+    ~60s target doesn't need sub-second responsiveness, unlike follow/rest."""
+    trade = world.get_trade()
+    if trade is None:
+        return
+    if time.monotonic() - trade["last_activity_at"] < TRADE_IDLE_TIMEOUT_S:
+        return
+    log.info("trade with %#x idle for over %.0fs — cancelling", trade["partner_guid"], TRADE_IDLE_TIMEOUT_S)
+    session._send_packet(tr.CMSG_CANCEL_TRADE, tr.build_cancel_trade())
 
 
 class ThinkResult:
@@ -61,6 +81,7 @@ def think_and_act(session, world, llm_client, persona: str = "",
     just successful ones.
     """
     registry = registry if registry is not None else ac.REGISTRY
+    _maybe_cancel_idle_trade(session, world)
     # corpse_position (UM-43) is session-scoped (MSG_CORPSE_QUERY), not part
     # of WorldState — pass it through so the snapshot exposes it alongside
     # is_dead/is_ghost. getattr() with a default: harmless if session is a

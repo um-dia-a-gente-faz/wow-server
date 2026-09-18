@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import perception as per
+from agent import think
+from agent import trade as tr
 from agent import update_object as uo
 from agent.llm import LLMError
 from agent.think import think_and_act
@@ -180,6 +182,41 @@ class ThinkAndActTest(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(result.error, "server rejected it")
+
+
+class IdleTradeTimeoutTest(unittest.TestCase):
+    """UM-59: a trade nobody has touched in TRADE_IDLE_TIMEOUT_S gets
+    cancelled by code, before the LLM even gets a turn this cycle."""
+
+    def test_maybe_cancel_idle_trade_no_trade_is_a_no_op(self):
+        sess = fake_session()
+        world = per.WorldState()
+        think._maybe_cancel_idle_trade(sess, world)
+        self.assertEqual(sess._sent, [])
+
+    def test_maybe_cancel_idle_trade_leaves_a_fresh_trade_alone(self):
+        sess = fake_session()
+        world = per.WorldState()
+        world.start_trade_request(0x5, initiated_by_me=True)
+        think._maybe_cancel_idle_trade(sess, world)
+        self.assertEqual(sess._sent, [])
+
+    def test_maybe_cancel_idle_trade_cancels_after_timeout(self):
+        sess = fake_session()
+        world = per.WorldState()
+        world.start_trade_request(0x5, initiated_by_me=True)
+        world.trade["last_activity_at"] -= think.TRADE_IDLE_TIMEOUT_S + 1
+        think._maybe_cancel_idle_trade(sess, world)
+        self.assertEqual(sess._sent, [(tr.CMSG_CANCEL_TRADE, tr.build_cancel_trade())])
+
+    def test_think_and_act_cancels_idle_trade_before_the_llm_call(self):
+        world = per.WorldState()
+        sess = fake_session()
+        world.start_trade_request(0x5, initiated_by_me=True)
+        world.trade["last_activity_at"] -= think.TRADE_IDLE_TIMEOUT_S + 1
+        llm = FakeLLMClient(error=LLMError("no free think this cycle"))
+        think_and_act(sess, world, llm)
+        self.assertIn((tr.CMSG_CANCEL_TRADE, tr.build_cancel_trade()), sess._sent)
 
 
 if __name__ == "__main__":

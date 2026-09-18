@@ -19,6 +19,7 @@ from agent import loot as lo
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
+from agent import trade as tr
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.tests.test_packets import tc_server_header
@@ -445,6 +446,52 @@ class MailDispatchTest(unittest.TestCase):
         self.assertTrue(sess.world_state.snapshot()["has_new_mail"])
         received = [e for e in sess.events if e["kind"] == "mail_received"]
         self.assertEqual(len(received), 1)
+
+class TradeDispatchTest(unittest.TestCase):
+    """UM-59: dispatch wiring for SMSG_TRADE_STATUS/SMSG_TRADE_STATUS_EXTENDED
+    — parsing lands in world_state.trade, and every status is recorded as a
+    raw 'trade_status' event (actions.py's offer_item/offer_gold wait on
+    that directly — see agent/trade.py's docstring for why)."""
+
+    def test_begin_trade_opens_request_and_records_events(self):
+        sess = make_session()
+        payload = struct.pack('<IQ', tr.TRADE_STATUS_BEGIN_TRADE, 0x555)
+        sess._dispatch(se.SMSG_TRADE_STATUS, payload)
+        trade_state = sess.world_state.get_trade()
+        self.assertEqual(trade_state["phase"], "requested")
+        self.assertEqual(trade_state["partner_guid"], 0x555)
+        kinds = [e["kind"] for e in sess.events]
+        self.assertIn("trade_status", kinds)
+        self.assertIn("trade_requested", kinds)
+
+    def test_open_window_dispatch_advances_phase_with_no_named_event(self):
+        sess = make_session()
+        sess.world_state.start_trade_request(0x555, initiated_by_me=True)
+        payload = struct.pack('<II', tr.TRADE_STATUS_OPEN_WINDOW, 0)
+        sess._dispatch(se.SMSG_TRADE_STATUS, payload)
+        self.assertEqual(sess.world_state.get_trade()["phase"], "open")
+        self.assertEqual([e["kind"] for e in sess.events], ["trade_status"])
+
+    def test_trade_complete_dispatch_clears_state_and_records_summary(self):
+        sess = make_session()
+        sess.world_state.start_trade_request(0x555, initiated_by_me=True)
+        payload = struct.pack('<I', tr.TRADE_STATUS_TRADE_COMPLETE)
+        sess._dispatch(se.SMSG_TRADE_STATUS, payload)
+        self.assertIsNone(sess.world_state.get_trade())
+        completed = [e for e in sess.events if e["kind"] == "trade_completed"]
+        self.assertEqual(len(completed), 1)
+        self.assertIn("summary", completed[0])
+
+    def test_trade_status_extended_dispatch_updates_their_offer(self):
+        sess = make_session()
+        sess.world_state.start_trade_request(0x555, initiated_by_me=True)
+        payload = struct.pack('<BIIII', 1, 0, tr.TRADE_SLOT_COUNT, tr.TRADE_SLOT_COUNT, 1234) \
+            + struct.pack('<I', 0) + b'\x00' * (tr.TRADE_SLOT_COUNT * (1 + 4 * 18))
+        sess._dispatch(se.SMSG_TRADE_STATUS_EXTENDED, payload)
+        self.assertEqual(sess.world_state.get_trade()["their_gold"], 1234)
+        changed = [e for e in sess.events if e["kind"] == "trade_offer_changed"]
+        self.assertEqual(len(changed), 1)
+        self.assertEqual(changed[0]["gold"], 1234)
 
 
 def len_string(s: str) -> bytes:

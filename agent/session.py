@@ -20,6 +20,7 @@ from . import npc as npc_mod
 from . import perception as per
 from . import quests as qu
 from . import spells as sp
+from . import trade as trade_mod
 from . import update_fields as uo_fields
 from . import update_object as uo
 from .update_object import (
@@ -196,6 +197,20 @@ SMSG_ITEM_PUSH_RESULT            = lo.SMSG_ITEM_PUSH_RESULT
 CMSG_ITEM_QUERY_SINGLE           = lo.CMSG_ITEM_QUERY_SINGLE
 SMSG_ITEM_QUERY_SINGLE_RESPONSE  = lo.SMSG_ITEM_QUERY_SINGLE_RESPONSE
 
+# Trade (UM-59)
+CMSG_INITIATE_TRADE        = trade_mod.CMSG_INITIATE_TRADE
+CMSG_BEGIN_TRADE           = trade_mod.CMSG_BEGIN_TRADE
+CMSG_BUSY_TRADE            = trade_mod.CMSG_BUSY_TRADE
+CMSG_IGNORE_TRADE          = trade_mod.CMSG_IGNORE_TRADE
+CMSG_ACCEPT_TRADE          = trade_mod.CMSG_ACCEPT_TRADE
+CMSG_UNACCEPT_TRADE        = trade_mod.CMSG_UNACCEPT_TRADE
+CMSG_CANCEL_TRADE          = trade_mod.CMSG_CANCEL_TRADE
+CMSG_SET_TRADE_ITEM        = trade_mod.CMSG_SET_TRADE_ITEM
+CMSG_CLEAR_TRADE_ITEM      = trade_mod.CMSG_CLEAR_TRADE_ITEM
+CMSG_SET_TRADE_GOLD        = trade_mod.CMSG_SET_TRADE_GOLD
+SMSG_TRADE_STATUS          = trade_mod.SMSG_TRADE_STATUS
+SMSG_TRADE_STATUS_EXTENDED = trade_mod.SMSG_TRADE_STATUS_EXTENDED
+
 # Mailbox (UM-60)
 CMSG_SEND_MAIL         = mail_mod.CMSG_SEND_MAIL
 SMSG_SEND_MAIL_RESULT  = mail_mod.SMSG_SEND_MAIL_RESULT
@@ -306,6 +321,12 @@ _QUEST_DISPATCH = {
     SMSG_QUESTUPDATE_ADD_KILL: "_handle_questupdate_add_kill",
     SMSG_QUESTUPDATE_ADD_ITEM: "_handle_questupdate_add_item",
     SMSG_QUESTUPDATE_COMPLETE: "_handle_questupdate_complete",
+}
+
+# Trade opcodes (UM-59) -> handler method name.
+_TRADE_DISPATCH = {
+    SMSG_TRADE_STATUS: "_handle_trade_status",
+    SMSG_TRADE_STATUS_EXTENDED: "_handle_trade_status_extended",
 }
 
 # Mailbox opcodes (UM-60) -> handler method name.
@@ -887,6 +908,37 @@ class WoWSession:
             raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_COMPLETE ({len(payload)} B): {e}") from e
         self._record_event("quest_complete", **data)
 
+    # ── Trade (UM-59) ────────────────────────────────────────────────────
+
+    def _handle_trade_status(self, payload: bytes):
+        if self.dump_packets_dir:
+            self._dump_packet(SMSG_TRADE_STATUS, payload)
+        try:
+            data = trade_mod.parse_trade_status(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_TRADE_STATUS ({len(payload)} B): {e}") from e
+        # Recorded unconditionally (not just when apply_trade_status returns
+        # a named event) — actions.py's offer_item/offer_gold/open_trade/
+        # accept_trade_request/cancel_trade wait on this raw status_name
+        # directly (e.g. "back_to_trade" confirms our own SET_TRADE_ITEM,
+        # which never gets its own named event — see agent/trade.py).
+        self._record_event("trade_status", **data)
+        result = self.world_state.apply_trade_status(data)
+        if result is not None:
+            kind, fields = result
+            self._record_event(kind, **fields)
+
+    def _handle_trade_status_extended(self, payload: bytes):
+        if self.dump_packets_dir:
+            self._dump_packet(SMSG_TRADE_STATUS_EXTENDED, payload)
+        try:
+            data = trade_mod.parse_trade_status_extended(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_TRADE_STATUS_EXTENDED ({len(payload)} B): {e}") from e
+        changed = self.world_state.apply_trade_status_extended(data)
+        if changed is not None:
+            self._record_event("trade_offer_changed", **changed)
+
     # ── Mailbox (UM-60) ─────────────────────────────────────────────────
 
     def _handle_send_mail_result(self, payload: bytes):
@@ -1354,6 +1406,8 @@ class WoWSession:
             getattr(self, _LOOT_DISPATCH[opcode])(payload)
         elif opcode in _QUEST_DISPATCH:
             getattr(self, _QUEST_DISPATCH[opcode])(payload)
+        elif opcode in _TRADE_DISPATCH:
+            getattr(self, _TRADE_DISPATCH[opcode])(payload)
         elif opcode in _MAIL_DISPATCH:
             getattr(self, _MAIL_DISPATCH[opcode])(payload)
         elif opcode in (SMSG_PONG, SMSG_STANDSTATE_UPDATE):
