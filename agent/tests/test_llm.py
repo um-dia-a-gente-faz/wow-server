@@ -144,6 +144,22 @@ class LLMClientChooseActionTest(unittest.TestCase):
             with self.assertRaises(llm.LLMError):
                 client.choose_action({}, [])
 
+    def test_post_incomplete_read_raises_llm_error(self):
+        # Regression test found in review: http.client.IncompleteRead (the
+        # connection drops after headers but before the promised
+        # Content-Length body arrives) is not an OSError subclass, so the
+        # UM-81 fix's `except OSError` alone still missed it — same "crashes
+        # the agent" failure mode as the bare TimeoutError case above.
+        import http.client
+
+        client = llm.LLMClient("https://free.example/v1", "test-model")
+        resp = mock.MagicMock()
+        resp.read.side_effect = http.client.IncompleteRead(b"partial")
+        resp.__enter__.return_value = resp
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            with self.assertRaises(llm.LLMError):
+                client.choose_action({}, [])
+
     def test_base_url_trailing_slash_stripped(self):
         client = llm.LLMClient("https://free.example/v1/", "m")
         self.assertEqual(client.base_url, "https://free.example/v1")

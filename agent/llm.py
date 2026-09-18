@@ -17,6 +17,7 @@ The system prompt is built from the perception snapshot
 adding a new Action automatically extends what the model can choose from.
 """
 
+import http.client
 import json
 import logging
 import time
@@ -105,13 +106,19 @@ class LLMClient:
             raise LLMError(f"HTTP {e.code} from {url}: {e.read()[:500]!r}") from e
         except urllib.error.URLError as e:
             raise LLMError(f"request to {url} failed: {e.reason}") from e
-        except OSError as e:
+        except (OSError, http.client.HTTPException) as e:
             # urllib only wraps OSError as URLError around the request-send
             # phase (urllib.request.AbstractHTTPHandler.do_open). A timeout
             # while reading the response body (http.client.HTTPConnection
             # .getresponse() -> socket.recv_into()) raises a bare
             # TimeoutError/socket.timeout that neither except above catches,
             # so it would otherwise kill the whole agent process (UM-81).
+            # http.client.HTTPException (e.g. IncompleteRead, BadStatusLine)
+            # is caught alongside it for the same reason: resp.read() can
+            # raise that instead of an OSError if the connection drops after
+            # the headers arrive but before the promised body is complete —
+            # found in review, not OSError's MRO, so the original except
+            # OSError alone still missed it.
             raise LLMError(f"request to {url} failed: {e}") from e
         try:
             return json.loads(raw)
