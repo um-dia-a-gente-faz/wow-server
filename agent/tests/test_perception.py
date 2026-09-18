@@ -73,6 +73,40 @@ class UpdateObjectTest(unittest.TestCase):
         self.assertEqual(obj.power, {"mana": 145, "focus": 100})
         self.assertEqual(obj.max_power, {"mana": 145, "focus": 100})
 
+    def test_power_filtered_to_unit_own_power_type_once_known(self):
+        # UM-83: a hunter's raw fields carry baseline values for power types
+        # it doesn't use (server template noise). power_type=0 (mana) means
+        # only "mana" should survive in power/max_power.
+        ws = per.WorldState()
+        ws.update_object(create_block(1, fields={
+            uf.UNIT_FIELD_BYTES_0: 0,  # race/class/gender all 0, power_type (byte 3) = 0 = mana
+            uf.UNIT_FIELD_POWER1: 145, uf.UNIT_FIELD_POWER1 + 3: 100,        # mana=145, energy=100 (phantom)
+            uf.UNIT_FIELD_MAXPOWER1: 145, uf.UNIT_FIELD_MAXPOWER1 + 1: 1000,  # max mana=145, max rage=1000 (phantom)
+            uf.UNIT_FIELD_MAXPOWER1 + 3: 100, uf.UNIT_FIELD_MAXPOWER1 + 6: 1000,  # max energy/runic_power (phantom)
+        }))
+        obj = ws.get_object(1)
+        self.assertEqual(obj.power, {"mana": 145})
+        self.assertEqual(obj.max_power, {"mana": 145})
+
+    def test_power_kept_unfiltered_until_power_type_known(self):
+        # No UNIT_FIELD_BYTES_0 in this update, so power_type is still
+        # unknown — don't drop data we can't yet judge as unusable.
+        ws = per.WorldState()
+        ws.update_object(create_block(1, fields={
+            uf.UNIT_FIELD_POWER1: 145, uf.UNIT_FIELD_POWER1 + 3: 100,
+        }))
+        obj = ws.get_object(1)
+        self.assertEqual(obj.power, {"mana": 145, "energy": 100})
+
+    def test_power_filtered_once_power_type_arrives_in_a_later_update(self):
+        ws = per.WorldState()
+        ws.update_object(create_block(1, fields={
+            uf.UNIT_FIELD_POWER1: 145, uf.UNIT_FIELD_POWER1 + 3: 100,
+        }))
+        ws.update_object(values_block(1, {uf.UNIT_FIELD_BYTES_0: 0}))
+        obj = ws.get_object(1)
+        self.assertEqual(obj.power, {"mana": 145})
+
     def test_movement_updates_position(self):
         ws = per.WorldState()
         ws.set_my_map(530)
