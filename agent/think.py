@@ -34,6 +34,10 @@ def _maybe_cancel_idle_trade(session, world):
         return
     log.info("trade with %#x idle for over %.0fs — cancelling", trade["partner_guid"], TRADE_IDLE_TIMEOUT_S)
     session._send_packet(tr.CMSG_CANCEL_TRADE, tr.build_cancel_trade())
+    # Bump last_activity_at so we don't re-send the cancel on every think
+    # cycle while waiting for the server's TRADE_STATUS_TRADE_CANCELED to
+    # arrive and clear world.trade (found in post-merge review, UM-59).
+    trade["last_activity_at"] = time.monotonic()
 
 
 class ThinkResult:
