@@ -1515,8 +1515,10 @@ def _find_nearby_mailbox(session, world):
 
 def _mail_item_flags(world, bag: int, slot: int):
     """(item_guid, entry, is_soulbound) for the item at bag/slot, or None if
-    there's no known item there — same shape/rationale as agent.actions'
-    trade helper, duplicated here since this module doesn't depend on it."""
+    there's no known item there. UM-59 (player trade, still unmerged as of
+    this writing) needs the identical soulbound check for its own
+    offer_item action — once both land, worth factoring into one shared
+    helper instead of two independent copies."""
     item_guid = _find_item_guid(world, bag, slot)
     if item_guid is None:
         return None
@@ -1547,6 +1549,15 @@ class OpenMailboxAction(Action):
 
     def execute(self, session, world, **_) -> ActionResult:
         mailbox = _find_nearby_mailbox(session, world)
+        if mailbox is None:
+            # Re-checked, not just trusted from check(): the mailbox is a
+            # stationary gameobject, so this only fires on a genuine race
+            # (e.g. it left perception via a concurrent OUT_OF_RANGE_OBJECTS
+            # on the recv thread between check() and execute()) — found in
+            # review. Reported as a normal ActionResult, not an
+            # AttributeError, since that wouldn't be caught by think.py's
+            # `except TypeError` and would crash the think cycle instead.
+            return ActionResult(ok=False, error="mailbox no longer in range")
         world.open_mailbox_request(mailbox.guid)
         session._send_packet(mailmod.CMSG_GET_MAIL_LIST, mailmod.build_get_mail_list(mailbox.guid))
 
@@ -1607,6 +1618,9 @@ class SendMailAction(Action):
     def execute(self, session, world, to: str, subject: str, body: str, gold: int = 0,
                 bag: int | None = None, slot: int | None = None, **_) -> ActionResult:
         mailbox = _find_nearby_mailbox(session, world)
+        if mailbox is None:
+            # Same TOCTOU guard as OpenMailboxAction.execute() — found in review.
+            return ActionResult(ok=False, error="mailbox no longer in range")
         item_guid = None
         if bag is not None:
             item_guid, _entry, _is_soulbound = _mail_item_flags(world, bag, slot)
@@ -1668,37 +1682,53 @@ class TakeMailAction(Action):
 
     def execute(self, session, world, mail_id: int, **_) -> ActionResult:
         mailbox = world.get_mailbox()
-        mail = next(m for m in mailbox["mails"] if m["mail_id"] == mail_id)
-        sent_at = time.monotonic()
+        mail = next((m for m in (mailbox or {}).get("mails") or [] if m["mail_id"] == mail_id), None)
+        if mail is None:
+            # Re-checked, not just trusted from check() — found in review:
+            # a concurrent SMSG_MAIL_LIST_RESULT (recv thread) could replace
+            # world.mailbox between check() and execute(). A bare next()
+            # would raise StopIteration here, which think.py's `except
+            # TypeError` doesn't catch, crashing the think cycle instead of
+            # degrading to a normal ActionResult(ok=False).
+            return ActionResult(ok=False, error=f"mail_id {mail_id} is no longer in the open mailbox window")
 
-        def find_result(command, extra_check=None):
+        def find_result(command, sent_at):
             def _find():
                 for e in session.events:
                     if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
                         continue
-                    if e.get("mail_id") != mail_id or e.get("command") != command:
-                        continue
-                    if extra_check is not None and not extra_check(e):
-                        continue
-                    return e
+                    if e.get("mail_id") == mail_id and e.get("command") == command:
+                        return e
                 return None
             return _find
 
         outcomes = {"money": None, "items": []}
         if mail["money"]:  # COD is charged automatically alongside taking an item, not via TAKE_MONEY
+            sent_at = time.monotonic()
             session._send_packet(mailmod.CMSG_MAIL_TAKE_MONEY,
                                   mailmod.build_mail_take_money(mailbox["mailbox_guid"], mail_id))
-            outcomes["money"] = _wait_for_value(find_result(mailmod.MAIL_MONEY_TAKEN),
+            outcomes["money"] = _wait_for_value(find_result(mailmod.MAIL_MONEY_TAKEN, sent_at),
                                                  timeout=self.confirm_timeout,
                                                  interval=self.confirm_interval)
 
         for att in mail["attachments"]:
+            # A fresh sent_at per attachment, not a shared one, matches by
+            # time order instead of the response's `attach_id` — found in
+            # review: SMSG_SEND_MAIL_RESULT only includes `attach_id` on
+            # success (or item-expired); a same-mail_id failure for a
+            # *different* reason (e.g. equip error) carries no attach_id at
+            # all, so attach_id-matching would never see it and this
+            # attachment would time out instead of surfacing the real
+            # error. Safe because each take-item send blocks on its own
+            # reply before the next is sent (sequential, not pipelined), so
+            # "the next mail_result for this mail_id/command" is
+            # unambiguous.
+            sent_at = time.monotonic()
             session._send_packet(mailmod.CMSG_MAIL_TAKE_ITEM,
                                   mailmod.build_mail_take_item(mailbox["mailbox_guid"], mail_id,
                                                                 att["attach_id"]))
-            check_attach = lambda e, aid=att["attach_id"]: e.get("attach_id") == aid
             outcomes["items"].append(_wait_for_value(
-                find_result(mailmod.MAIL_ITEM_TAKEN, extra_check=check_attach),
+                find_result(mailmod.MAIL_ITEM_TAKEN, sent_at),
                 timeout=self.confirm_timeout, interval=self.confirm_interval))
 
         detail = {"mail_id": mail_id, "outcomes": outcomes}

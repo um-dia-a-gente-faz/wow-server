@@ -1390,6 +1390,20 @@ class OpenMailboxActionTest(unittest.TestCase):
         result = action.execute(sess, world)
         self.assertFalse(result.ok)
 
+    def test_execute_reports_failure_not_attributeerror_if_mailbox_vanishes_after_check(self):
+        # Regression test found in review: check() passing doesn't guarantee
+        # execute()'s own _find_nearby_mailbox() call still finds it — the
+        # recv thread could process an OUT_OF_RANGE_OBJECTS in between. Must
+        # degrade to ActionResult(ok=False), not raise AttributeError
+        # (which think.py's `except TypeError` wouldn't catch).
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        world = self._world_with_mailbox()
+        self.assertIsNone(ac.OpenMailboxAction().check(sess, world))
+        world.remove_guids([5])  # simulate it leaving perception between check() and execute()
+        result = ac.OpenMailboxAction().execute(sess, world)
+        self.assertFalse(result.ok)
+        self.assertIn("no longer in range", result.error)
+
 
 class SendMailActionTest(unittest.TestCase):
     def _world_with_mailbox_and_item(self):
@@ -1470,6 +1484,17 @@ class SendMailActionTest(unittest.TestCase):
         error_events = [e for e in sess.events if e["kind"] == "mail_error"]
         self.assertEqual(len(error_events), 1)
 
+    def test_execute_reports_failure_not_attributeerror_if_mailbox_vanishes_after_check(self):
+        # Same TOCTOU regression as OpenMailboxAction — found in review.
+        world, _ = self._world_with_mailbox_and_item()
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        sess.coinage = 1000
+        self.assertIsNone(ac.SendMailAction().check(sess, world, to="Rubens", subject="Hi", body="Body"))
+        world.remove_guids([5])
+        result = ac.SendMailAction().execute(sess, world, to="Rubens", subject="Hi", body="Body")
+        self.assertFalse(result.ok)
+        self.assertIn("no longer in range", result.error)
+
 
 class TakeMailActionTest(unittest.TestCase):
     def test_check_fails_without_open_mailbox(self):
@@ -1481,6 +1506,21 @@ class TakeMailActionTest(unittest.TestCase):
         world.open_mailbox_request(5)
         world.apply_mail_list_result({"total_records": 0, "mails": []})
         self.assertIsNotNone(ac.TakeMailAction().check(fake_session(), world, mail_id=99))
+
+    def test_execute_reports_failure_not_stopiteration_if_mail_vanishes_after_check(self):
+        # Regression test found in review: check() passing doesn't
+        # guarantee execute()'s own mail_id lookup still finds it — a
+        # concurrent SMSG_MAIL_LIST_RESULT (recv thread) could replace
+        # world.mailbox between the two calls. A bare next() would raise
+        # StopIteration here, uncaught by think.py's `except TypeError`.
+        world = per.WorldState()
+        world.open_mailbox_request(5)
+        world.apply_mail_list_result({"total_records": 1, "mails": [mail_list_entry(mail_id=1)]})
+        self.assertIsNone(ac.TakeMailAction().check(fake_session(), world, mail_id=1))
+        world.apply_mail_list_result({"total_records": 0, "mails": []})  # mail_id 1 gone now
+        result = ac.TakeMailAction().execute(fake_session(), world, mail_id=1)
+        self.assertFalse(result.ok)
+        self.assertIn("no longer", result.error)
 
     def test_check_fails_when_cant_afford_cod(self):
         world = per.WorldState()
@@ -1505,9 +1545,16 @@ class TakeMailActionTest(unittest.TestCase):
         action.confirm_interval = 0.01
 
         def respond():
-            time.sleep(0.02)
+            # Mirrors the real server: each reply only arrives after its
+            # own request was actually sent — waits for len(sess._sent) to
+            # reach 1 (money request sent) before answering it, then for 2
+            # (item request sent) before answering that.
+            while len(sess._sent) < 1:
+                time.sleep(0.005)
             sess.events.append({"kind": "mail_result", "t": time.monotonic(), "mail_id": 1,
                                  "command": mailmod.MAIL_MONEY_TAKEN, "error_code": mailmod.MAIL_OK})
+            while len(sess._sent) < 2:
+                time.sleep(0.005)
             sess.events.append({"kind": "mail_result", "t": time.monotonic(), "mail_id": 1,
                                  "command": mailmod.MAIL_ITEM_TAKEN, "attach_id": 22,
                                  "error_code": mailmod.MAIL_OK})
@@ -1539,6 +1586,28 @@ class TakeMailActionTest(unittest.TestCase):
         result = action.execute(sess, world, mail_id=1)
         t.join()
         self.assertFalse(result.ok)
+
+    def test_execute_matches_a_failure_reply_with_no_attach_id_field(self):
+        # Regression test found in review: SMSG_SEND_MAIL_RESULT only
+        # includes `attach_id` when the take-item succeeded (or the item
+        # expired) — a failure for another reason (e.g. equip error) omits
+        # it entirely, per agent/mail.py::parse_send_mail_result. Matching
+        # by time order instead of attach_id means this failure is still
+        # found, not mistaken for "no confirmation seen (timed out)".
+        world = per.WorldState()
+        world.open_mailbox_request(5)
+        world.apply_mail_list_result({"total_records": 1, "mails": [
+            mail_list_entry(mail_id=1, attachments=[{"position": 0, "attach_id": 22, "entry": 20812}])]})
+        sess = fake_session()
+        action = ac.TakeMailAction()
+        action.confirm_timeout = 0.2
+        action.confirm_interval = 0.01
+        append_event_after(sess, 0.02, {"kind": "mail_result", "mail_id": 1,
+                                         "command": mailmod.MAIL_ITEM_TAKEN,
+                                         "error_code": 1, "error_name": "equip_error"})
+        result = action.execute(sess, world, mail_id=1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.detail["outcomes"]["items"][0]["error_name"], "equip_error")
 
 
 class DeleteMailActionTest(unittest.TestCase):
