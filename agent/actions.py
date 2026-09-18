@@ -1643,8 +1643,23 @@ class OfferItemAction(Action):
 
     def execute(self, session, world, bag: int, slot: int, trade_slot: int | None = None,
                 **_) -> ActionResult:
+        # Re-checked, not just trusted from check() — found in review
+        # (same category as UM-60's mailbox-action fixes): the trade could
+        # be cancelled by the partner, or the item moved/consumed, via a
+        # concurrent update on the recv thread between check() and
+        # execute(). A bare `item["guid"]`/`trade["my_items"]` below would
+        # raise TypeError on a None — think.py's `except TypeError` does
+        # catch that, but mislabels it as "bad params" even though the
+        # LLM's params were fine.
+        trade = world.get_trade()
+        if trade is None or trade["phase"] != "open":
+            return ActionResult(ok=False, error="no trade window is open")
         item = _resolve_offered_item(world, bag, slot)
+        if item is None:
+            return ActionResult(ok=False, error=f"item at bag={bag} slot={slot} is no longer there")
         picked_slot = self._pick_trade_slot(world, trade_slot)
+        if isinstance(picked_slot, str):
+            return ActionResult(ok=False, error=picked_slot)
         detail = {"bag": bag, "slot": slot, "trade_slot": picked_slot, "item": item}
         # TradeData::SetItem (TradeData.cpp) early-returns with no reply at
         # all — not even TRADE_STATUS_BACK_TO_TRADE — when this exact item
@@ -1653,7 +1668,6 @@ class OfferItemAction(Action):
         # timed out even though nothing was actually wrong. Skip the round
         # trip in that case instead of waiting for a confirmation that will
         # never come.
-        trade = world.get_trade()
         if trade["my_items"].get(picked_slot, {}).get("guid") == item["guid"]:
             detail["note"] = "already offered at that trade slot — no packet sent"
             return ActionResult(ok=True, detail=detail)
@@ -1695,13 +1709,18 @@ class OfferGoldAction(Action):
 
     def execute(self, session, world, amount: int, **_) -> ActionResult:
         detail = {"amount": amount}
+        # Re-checked, not just trusted from check() — found in review, same
+        # TOCTOU category as OfferItemAction above: the trade could be
+        # cancelled by the partner between check() and execute().
+        trade = world.get_trade()
+        if trade is None or trade["phase"] != "open":
+            return ActionResult(ok=False, error="no trade window is open", detail=detail)
         # TradeData::SetMoney (TradeData.cpp) early-returns with no reply at
         # all when `amount` equals what's already offered (0 the first time,
         # since my_gold starts at 0) — found live testing: offer_gold(0)
         # right after opening a trade always timed out even though nothing
         # was wrong. Skip the round trip in that case, same fix as
         # OfferItemAction.
-        trade = world.get_trade()
         if trade["my_gold"] == amount:
             detail["note"] = "already offering that amount — no packet sent"
             return ActionResult(ok=True, detail=detail)

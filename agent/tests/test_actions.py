@@ -1515,6 +1515,28 @@ class OfferItemActionTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(sess._sent, [])  # no packet sent at all
 
+    def test_execute_reports_failure_not_typeerror_if_trade_cancelled_after_check(self):
+        # Regression test found in review (same TOCTOU category as UM-60's
+        # mailbox actions): the partner could cancel the trade via a
+        # concurrent update on the recv thread between check() and
+        # execute(). A bare trade["my_items"] on a None trade would raise
+        # TypeError — think.py's `except TypeError` does catch that, but
+        # mislabels it as "bad params" even though the LLM's params were fine.
+        world, _ = self._world_with_open_trade_and_item()
+        self.assertIsNone(ac.OfferItemAction().check(fake_session(), world, bag=255, slot=23))
+        world.clear_trade()  # simulate the partner cancelling in between
+        result = ac.OfferItemAction().execute(fake_session(), world, bag=255, slot=23)
+        self.assertFalse(result.ok)
+        self.assertIn("no trade window is open", result.error)
+
+    def test_execute_reports_failure_not_typeerror_if_item_vanishes_after_check(self):
+        world, item_guid = self._world_with_open_trade_and_item()
+        self.assertIsNone(ac.OfferItemAction().check(fake_session(), world, bag=255, slot=23))
+        world.remove_guids([item_guid])  # simulate the item being moved/consumed in between
+        result = ac.OfferItemAction().execute(fake_session(), world, bag=255, slot=23)
+        self.assertFalse(result.ok)
+        self.assertIn("no longer there", result.error)
+
 
 class OfferGoldActionTest(unittest.TestCase):
     def _world_with_open_trade(self):
@@ -1584,6 +1606,17 @@ class OfferGoldActionTest(unittest.TestCase):
         result = action.execute(sess, world, amount=0)
         self.assertTrue(result.ok)
         self.assertEqual(sess._sent, [])  # no packet sent at all
+
+    def test_execute_reports_failure_not_typeerror_if_trade_cancelled_after_check(self):
+        # Same TOCTOU regression as OfferItemAction — found in review.
+        world = self._world_with_open_trade()
+        sess = fake_session()
+        sess.coinage = 500
+        self.assertIsNone(ac.OfferGoldAction().check(sess, world, amount=100))
+        world.clear_trade()
+        result = ac.OfferGoldAction().execute(sess, world, amount=100)
+        self.assertFalse(result.ok)
+        self.assertIn("no trade window is open", result.error)
 
 
 class AcceptTradeActionTest(unittest.TestCase):
