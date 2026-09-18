@@ -1495,6 +1495,22 @@ class SendMailActionTest(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("no longer in range", result.error)
 
+    def test_execute_reports_failure_not_typeerror_if_item_vanishes_after_check(self):
+        # Same race as the mailbox one above, for the attached item —
+        # found in review. A bare tuple-unpack of None would raise
+        # TypeError (which think.py does catch, but mislabels as "bad
+        # params" even though the LLM's params were fine).
+        world, item_guid = self._world_with_mailbox_and_item()
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        sess.coinage = 1000
+        self.assertIsNone(ac.SendMailAction().check(sess, world, to="Rubens", subject="Hi", body="Body",
+                                                      bag=255, slot=23))
+        world.remove_guids([item_guid])  # simulate the item being moved/consumed between check() and execute()
+        result = ac.SendMailAction().execute(sess, world, to="Rubens", subject="Hi", body="Body",
+                                              bag=255, slot=23)
+        self.assertFalse(result.ok)
+        self.assertIn("no longer there", result.error)
+
 
 class TakeMailActionTest(unittest.TestCase):
     def test_check_fails_without_open_mailbox(self):

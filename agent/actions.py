@@ -1623,7 +1623,17 @@ class SendMailAction(Action):
             return ActionResult(ok=False, error="mailbox no longer in range")
         item_guid = None
         if bag is not None:
-            item_guid, _entry, _is_soulbound = _mail_item_flags(world, bag, slot)
+            # Re-checked, not just trusted from check() — found in review:
+            # the item could be moved/consumed by a concurrent inventory
+            # update on the recv thread between check() and execute(). A
+            # bare unpack of None would raise TypeError, which think.py
+            # *does* catch (unlike the mailbox case above) but mislabels
+            # as "bad params" — misleading, since the LLM's params were
+            # fine when it called this.
+            resolved = _mail_item_flags(world, bag, slot)
+            if resolved is None:
+                return ActionResult(ok=False, error=f"item at bag={bag} slot={slot} is no longer there")
+            item_guid, _entry, _is_soulbound = resolved
         sent_at = time.monotonic()
         session._send_packet(mailmod.CMSG_SEND_MAIL,
                               mailmod.build_send_mail(mailbox.guid, to, subject, body,
