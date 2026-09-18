@@ -14,6 +14,7 @@ import zlib
 from . import packets as pk
 from . import crypt as cr
 from . import loot as lo
+from . import mail as mail_mod
 from . import names as nm
 from . import npc as npc_mod
 from . import perception as per
@@ -210,6 +211,17 @@ CMSG_SET_TRADE_GOLD        = trade_mod.CMSG_SET_TRADE_GOLD
 SMSG_TRADE_STATUS          = trade_mod.SMSG_TRADE_STATUS
 SMSG_TRADE_STATUS_EXTENDED = trade_mod.SMSG_TRADE_STATUS_EXTENDED
 
+# Mailbox (UM-60)
+CMSG_SEND_MAIL         = mail_mod.CMSG_SEND_MAIL
+SMSG_SEND_MAIL_RESULT  = mail_mod.SMSG_SEND_MAIL_RESULT
+CMSG_GET_MAIL_LIST     = mail_mod.CMSG_GET_MAIL_LIST
+SMSG_MAIL_LIST_RESULT  = mail_mod.SMSG_MAIL_LIST_RESULT
+CMSG_MAIL_TAKE_MONEY   = mail_mod.CMSG_MAIL_TAKE_MONEY
+CMSG_MAIL_TAKE_ITEM    = mail_mod.CMSG_MAIL_TAKE_ITEM
+CMSG_MAIL_MARK_AS_READ = mail_mod.CMSG_MAIL_MARK_AS_READ
+CMSG_MAIL_DELETE       = mail_mod.CMSG_MAIL_DELETE
+SMSG_RECEIVED_MAIL     = mail_mod.SMSG_RECEIVED_MAIL
+
 # ChatMsg (uint8) — the full enum, src/server/shared/SharedDefines.h. UM-44's
 # prompt builder treats *_LEADER/RAID/PARTY/GUILD/WHISPER/name-mention kinds
 # as addressed to the agent and everything else (including monster_* other
@@ -315,6 +327,13 @@ _QUEST_DISPATCH = {
 _TRADE_DISPATCH = {
     SMSG_TRADE_STATUS: "_handle_trade_status",
     SMSG_TRADE_STATUS_EXTENDED: "_handle_trade_status_extended",
+}
+
+# Mailbox opcodes (UM-60) -> handler method name.
+_MAIL_DISPATCH = {
+    SMSG_SEND_MAIL_RESULT: "_handle_send_mail_result",
+    SMSG_MAIL_LIST_RESULT: "_handle_mail_list_result",
+    SMSG_RECEIVED_MAIL: "_handle_received_mail",
 }
 
 CHAT_MSG_CHANNEL = 0x11
@@ -920,6 +939,42 @@ class WoWSession:
         if changed is not None:
             self._record_event("trade_offer_changed", **changed)
 
+    # ── Mailbox (UM-60) ─────────────────────────────────────────────────
+
+    def _handle_send_mail_result(self, payload: bytes):
+        """Answers send_mail, and both halves of take_mail (money then
+        each item) and delete_mail — `data['command']` (MailResponseType)
+        says which. Recorded as a raw 'mail_result' event; actions.py
+        correlates by mail_id/command and, for send_mail specifically,
+        additionally records the ticket-named mail_sent/mail_error event
+        once it knows the recipient (not present in this payload)."""
+        if self.dump_packets_dir:
+            self._dump_packet(SMSG_SEND_MAIL_RESULT, payload)
+        try:
+            data = mail_mod.parse_send_mail_result(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_SEND_MAIL_RESULT ({len(payload)} B): {e}") from e
+        self._record_event("mail_result", **data)
+
+    def _handle_mail_list_result(self, payload: bytes):
+        if self.dump_packets_dir:
+            self._dump_packet(SMSG_MAIL_LIST_RESULT, payload)
+        try:
+            data = mail_mod.parse_mail_list_result(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_MAIL_LIST_RESULT ({len(payload)} B): {e}") from e
+        self.world_state.apply_mail_list_result(data)
+
+    def _handle_received_mail(self, payload: bytes):
+        if self.dump_packets_dir:
+            self._dump_packet(SMSG_RECEIVED_MAIL, payload)
+        try:
+            data = mail_mod.parse_received_mail(payload)
+        except (IndexError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_RECEIVED_MAIL ({len(payload)} B): {e}") from e
+        self.world_state.apply_received_mail(data)
+        self._record_event("mail_received", **data)
+
     # ── Loot / inventory (UM-42) ──────────────────────────────────────────
 
     def _handle_loot_response(self, payload: bytes):
@@ -1353,6 +1408,8 @@ class WoWSession:
             getattr(self, _QUEST_DISPATCH[opcode])(payload)
         elif opcode in _TRADE_DISPATCH:
             getattr(self, _TRADE_DISPATCH[opcode])(payload)
+        elif opcode in _MAIL_DISPATCH:
+            getattr(self, _MAIL_DISPATCH[opcode])(payload)
         elif opcode in (SMSG_PONG, SMSG_STANDSTATE_UPDATE):
             pass
         elif opcode == SMSG_LOGOUT_COMPLETE:
