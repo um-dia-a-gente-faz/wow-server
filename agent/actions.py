@@ -1558,6 +1558,8 @@ class OpenTradeAction(Action):
         "guid": {"type": "integer", "description": "GUID of the player to trade with."},
     }
     required = ("guid",)
+    confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, guid: int, **_) -> str | None:
         if world.get_trade() is not None:
@@ -1580,7 +1582,7 @@ class OpenTradeAction(Action):
         session._send_packet(tr.CMSG_INITIATE_TRADE, tr.build_initiate_trade(guid))
 
         failure = _wait_for_value(lambda: _find_event_since(session, sent_at, "trade_cancelled"),
-                                   timeout=TRADE_CONFIRM_TIMEOUT_S, interval=DEFAULT_CONFIRM_POLL_S)
+                                   timeout=self.confirm_timeout, interval=self.confirm_interval)
         if failure is not None:
             return ActionResult(ok=False, error=failure.get("reason", "trade request rejected"),
                                  detail=failure)
@@ -1593,6 +1595,8 @@ class AcceptTradeRequestAction(Action):
     description = "Accept a pending incoming trade request (see the trade window's `phase`: 'requested')."
     params = {}
     required = ()
+    confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, **_) -> str | None:
         trade = world.get_trade()
@@ -1607,7 +1611,7 @@ class AcceptTradeRequestAction(Action):
         session._send_packet(tr.CMSG_BEGIN_TRADE, tr.build_begin_trade())
 
         failure = _wait_for_value(lambda: _find_event_since(session, sent_at, "trade_cancelled"),
-                                   timeout=TRADE_CONFIRM_TIMEOUT_S, interval=DEFAULT_CONFIRM_POLL_S)
+                                   timeout=self.confirm_timeout, interval=self.confirm_interval)
         if failure is not None:
             return ActionResult(ok=False, error=failure.get("reason", "trade request expired"),
                                  detail=failure)
@@ -1628,6 +1632,8 @@ class OfferItemAction(Action):
                                                            "it in. Default: the first free one."},
     }
     required = ("bag", "slot")
+    confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def _pick_trade_slot(self, world, trade_slot: int | None) -> int | str:
         trade = world.get_trade()
@@ -1638,7 +1644,7 @@ class OfferItemAction(Action):
         for s in range(tr.TRADE_SLOT_TRADED_COUNT):
             if s not in trade["my_items"]:
                 return s
-        return "all 6 trade slots are already offered — clear one first"
+        return "all 6 trade slots are already offered — pass trade_slot to replace one"
 
     def check(self, session, world, bag: int, slot: int, trade_slot: int | None = None, **_) -> str | None:
         trade = world.get_trade()
@@ -1689,7 +1695,7 @@ class OfferItemAction(Action):
 
         outcome = _wait_for_value(
             lambda: _find_trade_status_event(session, sent_at, ("back_to_trade", "trade_canceled", "not_on_taplist")),
-            timeout=TRADE_CONFIRM_TIMEOUT_S, interval=DEFAULT_CONFIRM_POLL_S)
+            timeout=self.confirm_timeout, interval=self.confirm_interval)
         if outcome is None:
             return ActionResult(ok=False, error="no trade confirmation seen (timed out)", detail=detail)
         if outcome["status_name"] != "back_to_trade":
@@ -1708,6 +1714,8 @@ class OfferGoldAction(Action):
                                                        "10000 = 1 gold). 0 clears a previous offer."},
     }
     required = ("amount",)
+    confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, amount: int, **_) -> str | None:
         trade = world.get_trade()
@@ -1742,7 +1750,7 @@ class OfferGoldAction(Action):
 
         outcome = _wait_for_value(
             lambda: _find_trade_status_event(session, sent_at, ("back_to_trade", "close_window")),
-            timeout=TRADE_CONFIRM_TIMEOUT_S, interval=DEFAULT_CONFIRM_POLL_S)
+            timeout=self.confirm_timeout, interval=self.confirm_interval)
         if outcome is None:
             return ActionResult(ok=False, error="no trade confirmation seen (timed out)", detail=detail)
         if outcome["status_name"] != "back_to_trade":
@@ -1770,6 +1778,8 @@ class AcceptTradeAction(Action):
                                                          "you believe they're offering no items."},
     }
     required = ()
+    confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, expected_their_gold: int = 0,
               expected_their_item_entries: list | None = None, **_) -> str | None:
@@ -1797,8 +1807,8 @@ class AcceptTradeAction(Action):
             return (_find_event_since(session, sent_at, "trade_completed")
                     or _find_event_since(session, sent_at, "trade_cancelled"))
 
-        outcome = _wait_for_value(find_outcome, timeout=TRADE_CONFIRM_TIMEOUT_S,
-                                   interval=DEFAULT_CONFIRM_POLL_S)
+        outcome = _wait_for_value(find_outcome, timeout=self.confirm_timeout,
+                                   interval=self.confirm_interval)
         if outcome is None:
             # The common case: the other side hasn't accepted yet — the
             # server gives the accepting player no ack at all until *both*
@@ -1815,6 +1825,8 @@ class CancelTradeAction(Action):
     description = "Cancel/decline the pending or open trade."
     params = {}
     required = ()
+    confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, **_) -> str | None:
         if world.get_trade() is None:
@@ -1829,7 +1841,7 @@ class CancelTradeAction(Action):
         # for that answer as a nicety, but a slow/missed event here still
         # isn't a real failure the way a timeout is for e.g. buy_item.
         event = _wait_for_value(lambda: _find_event_since(session, sent_at, "trade_cancelled"),
-                                 timeout=TRADE_CONFIRM_TIMEOUT_S, interval=DEFAULT_CONFIRM_POLL_S)
+                                 timeout=self.confirm_timeout, interval=self.confirm_interval)
         return ActionResult(ok=True, detail=event or {"status": "cancel_sent"})
 
 

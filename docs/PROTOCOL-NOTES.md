@@ -623,10 +623,12 @@ Outgoing payloads: `CMSG_INITIATE_TRADE` = raw `uint64` target guid;
 `uint8 tradeSlot, uint8 bag, uint8 slot`; `CMSG_CLEAR_TRADE_ITEM` = `uint8
 tradeSlot`; `CMSG_SET_TRADE_GOLD` = `uint32 copper`.
 
-Not live-verified in this session (no second agent character available to
-pair with at write time — see the UM-59 PR for whether that changed): the
-full byte-level fixture capture this card asks for
-(`AGENT_DUMP_PACKETS`). `agent/tests/test_trade.py` covers every parser/
+Live-verified: byte-level fixtures captured with `AGENT_DUMP_PACKETS` from
+a real two-agent trade on the LAN realm (2026-09-17, Farstrider/AGENT02 +
+Shadowblade/AGENT03 — see `agent/tests/fixtures/trade/README.md`).
+`agent/tests/test_trade.py` covers every parser/builder with hand-built
+bytes and re-parses the live captures in `RealFixtureIntegrationTest`.
+
 ## UM-60: mailbox wire formats
 
 Verified against TrinityCore branch `3.3.5`:
