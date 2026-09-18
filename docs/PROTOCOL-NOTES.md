@@ -533,3 +533,98 @@ combat events (UM-39) use.
 this section, `characters.character_queststatus` cross-checking, and the
 `wow_character_quests_completed_total` metric — all deferred to whenever
 this agent can run against a real TrinityCore 3.3.5a server again.
+
+## UM-59: player trade wire formats
+
+Verified against TrinityCore branch `3.3.5`:
+  `src/server/game/Handlers/TradeHandler.cpp` (every CMSG_* handler,
+    `WorldSession::SendTradeStatus`, `WorldSession::SendUpdateTrade`)
+  `src/server/game/Server/Packets/TradePackets.h` (`CancelTrade::Read` — empty)
+  `src/server/game/Entities/Player/TradeData.h`/`.cpp` (`TradeSlots` enum,
+    `SetItem`/`SetMoney`/`SetAccepted` — which status goes to which side)
+  `src/server/game/Entities/Player/Player.cpp` (`Player::TradeCancel`)
+  `src/server/game/Entities/Object/ObjectDefines.h` (`TRADE_DISTANCE = 11.11f`)
+  `src/server/shared/SharedDefines.h` (`enum TradeStatus`)
+  `src/server/game/Entities/Item/ItemTemplate.h` (`ITEM_FIELD_FLAG_SOULBOUND`,
+    `MAX_ITEM_PROTO_SOCKETS = 3`)
+
+Opcodes (`Opcodes.h`): `CMSG_INITIATE_TRADE 0x116`, `CMSG_BEGIN_TRADE 0x117`,
+`CMSG_BUSY_TRADE 0x118`, `CMSG_IGNORE_TRADE 0x119`, `CMSG_ACCEPT_TRADE 0x11A`,
+`CMSG_UNACCEPT_TRADE 0x11B`, `CMSG_CANCEL_TRADE 0x11C`,
+`CMSG_SET_TRADE_ITEM 0x11D`, `CMSG_CLEAR_TRADE_ITEM 0x11E`,
+`CMSG_SET_TRADE_GOLD 0x11F`, `SMSG_TRADE_STATUS 0x120`,
+`SMSG_TRADE_STATUS_EXTENDED 0x121`. Every `ObjectGuid` in this section is a
+**raw** 8-byte read/write (`ObjectGuid.cpp`'s plain `operator<</operator>>`)
+— not the variable-length `PackedGuid` movement/update-object use, which is
+a distinct type only used explicitly in this branch.
+
+**The single most important trap: our own offer is never echoed back to
+us.** `TradeData::SetItem`/`SetMoney` only ever call `Update(forTrader=true)`
+— which sends `SMSG_TRADE_STATUS_EXTENDED` to *the trade partner*, telling
+them about *our* new offer. Nothing equivalent goes back to the player who
+just changed their own offer (a real client already updated its own window
+optimistically the moment it sent the packet). So `agent/perception.py`'s
+`world.trade["my_items"]`/`"my_gold"` are tracked client-side the moment
+`agent/actions.py` sends `CMSG_SET_TRADE_ITEM`/`CMSG_SET_TRADE_GOLD` — only
+`their_items`/`their_gold` ever arrives from the server. What the sender
+*does* reliably get back is `SMSG_TRADE_STATUS`: `TRADE_STATUS_BACK_TO_TRADE`
+(7) on success — `TradeData::SetAccepted(false)` is unconditional, so *any*
+offer change on *either* side un-accepts both sides and answers both
+players — or a rejection (`TRADE_STATUS_TRADE_CANCELED` for a bad
+bag/slot/already-offered item, `TRADE_STATUS_NOT_ON_TAPLIST` for a soulbound
+one, `TRADE_STATUS_CLOSE_WINDOW` for `CMSG_SET_TRADE_GOLD` with insufficient
+funds). `agent/actions.py`'s `offer_item`/`offer_gold` wait for one of
+those, keyed off a raw `"trade_status"` event `agent/session.py` records for
+every `SMSG_TRADE_STATUS` (not just the named `trade_requested`/
+`trade_completed`/`trade_cancelled`/`trade_offer_rejected` events
+`WorldState.apply_trade_status` decides on top of it).
+
+**Accepting first gets no reply at all — this is the expected, common
+case, not a stall.** `HandleAcceptTradeOpcode` only answers the *other*
+player (`TRADE_STATUS_TRADE_ACCEPT`) when the partner hasn't accepted yet;
+the accepting player themselves gets nothing until the trade actually
+completes or fails. `AcceptTradeAction.execute()` sends the packet, marks
+its own `my_accepted` optimistically, waits briefly for
+`trade_completed`/`trade_cancelled`, and reports `ok=True` either way if
+neither arrives — unlike every other action in this codebase, a timeout
+here isn't a failure.
+
+`SMSG_TRADE_STATUS` (`WorldSession::SendTradeStatus`): `uint32 status`
+always, then a status-specific tail selected by a `switch` — everything not
+listed below has no tail at all:
+```
+status == TRADE_STATUS_BEGIN_TRADE (1):    uint64 traderGuid (raw)         // the guid of whoever initiated
+status == TRADE_STATUS_OPEN_WINDOW (2):    uint32 (always 0, unused)
+status == TRADE_STATUS_CLOSE_WINDOW (12):  uint32 result (InventoryResult), uint8 isTargetResult, uint32 itemLimitCategoryId
+status in (WRONG_REALM 22, NOT_ON_TAPLIST 23): uint8 slot
+```
+
+`SMSG_TRADE_STATUS_EXTENDED` (`WorldSession::SendUpdateTrade`): `uint8
+traderData` (1 = this describes the *other* side's offer — the only value
+this agent ever receives in practice, per the trap above), `uint32 tradeId`
+(always 0), `uint32 x2` slot counts (always `TRADE_SLOT_COUNT` = 7),
+`uint32 money`, `uint32 spell` (enchant spell cast on slot 6, out of scope
+here), then exactly `TRADE_SLOT_COUNT` (7) fixed entries — `TRADE_SLOT_TRADED_COUNT`
+(6) real trade slots (0-5) plus slot 6 (`TRADE_SLOT_NONTRADED`, the
+enchant-reagent slot, not modeled): `uint8 slotIndex`, then either a real
+item's 17 fields or 18 zero `uint32`s for an empty slot (`entry == 0` means
+empty — no separate presence flag on the wire):
+```
+uint32 entry, displayId, stackCount, wrapped(0/1)
+uint64 giftCreatorGuid (raw)
+uint32 permEnchantId, socketEnchant[3]   // MAX_ITEM_PROTO_SOCKETS = 3
+uint64 creatorGuid (raw)
+uint32 charges, suffixFactor, randomPropertyId, lockId, maxDurability, durability
+```
+
+Outgoing payloads: `CMSG_INITIATE_TRADE` = raw `uint64` target guid;
+`CMSG_BEGIN_TRADE`/`BUSY_TRADE`/`IGNORE_TRADE`/`ACCEPT_TRADE`/
+`UNACCEPT_TRADE`/`CANCEL_TRADE` are all empty; `CMSG_SET_TRADE_ITEM` =
+`uint8 tradeSlot, uint8 bag, uint8 slot`; `CMSG_CLEAR_TRADE_ITEM` = `uint8
+tradeSlot`; `CMSG_SET_TRADE_GOLD` = `uint32 copper`.
+
+Not live-verified in this session (no second agent character available to
+pair with at write time — see the UM-59 PR for whether that changed): the
+full byte-level fixture capture this card asks for
+(`AGENT_DUMP_PACKETS`). `agent/tests/test_trade.py` covers every parser/
+builder with hand-built bytes instead.
