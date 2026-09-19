@@ -534,7 +534,8 @@ class WoWSession:
         )
         self._send_packet(CMSG_CHAR_CREATE, payload)
         opcode, resp = self._recv_packet()
-        assert opcode == SMSG_CHAR_CREATE
+        if opcode != SMSG_CHAR_CREATE:
+            raise RuntimeError(f"char create failed for {name!r}: unexpected opcode {opcode:#x}")
         code = resp[0]
         if code != CHAR_CREATE_SUCCESS:
             raise RuntimeError(f"char create failed for {name!r}: response code {code}")

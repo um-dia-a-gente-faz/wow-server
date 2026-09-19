@@ -10,8 +10,13 @@ results yet — see "Results log" at the bottom, filled in after each attempt.
 
 Use a fresh character, not Luaprata (the existing dev character — keep it
 for manual poking around). Create it via `agent.session.WoWSession.
-create_character()` (CMSG_CHAR_CREATE, added for this issue) or GM `.character
-create` if the protocol path is broken on the day.
+create_character()` (CMSG_CHAR_CREATE, added for this issue) — there is no
+GM command fallback: TrinityCore 3.3.5a's `.character` subcommands
+(`customize`, `changefaction`, `changerace`, `changeaccount`, `deleted`,
+`erase`, `level`, `rename`, `reputation`, `titles`) don't include `create`,
+and it isn't in `docs/GM-COMMANDS.md` either. If the protocol path is broken,
+create the character the normal way instead: log a real client into
+character select and create it there.
 
 Record here once created:
 
