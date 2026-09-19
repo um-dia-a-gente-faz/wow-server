@@ -162,8 +162,8 @@ class ParseItemQueryResponseTest(unittest.TestCase):
         p += struct.pack('<i', -1)  # max_count
         p += struct.pack('<i', stackable)  # stackable
         p += struct.pack('<I', 0)  # container_slots
-        stat_slots = list(stats) + [(0, 0)] * (lo.MAX_ITEM_PROTO_STATS - len(stats))
-        for stat_type, stat_value in stat_slots[:lo.MAX_ITEM_PROTO_STATS]:
+        p += struct.pack('<I', len(stats))  # stats_count (UM-88: real field on the wire)
+        for stat_type, stat_value in stats:
             p += struct.pack('<Ii', stat_type, stat_value)
         p += struct.pack('<II', 0, 0)  # scaling_stat_distribution, scaling_stat_value
         damage_slots = list(damage) + [(0.0, 0.0, 0)] * (lo.MAX_ITEM_PROTO_DAMAGES - len(damage))
@@ -244,6 +244,29 @@ class ParseItemQueryResponseTest(unittest.TestCase):
         payload = self._build() + b'\xFF'
         with self.assertRaises(ValueError):
             lo.parse_item_query_response(payload)
+
+    def test_regression_um88_real_stats_count_not_padded_to_max(self):
+        """UM-88: real SMSG_ITEM_QUERY_SINGLE_RESPONSE payloads carry a
+        stats_count field and only that many {type, value} pairs — never
+        padded out to MAX_ITEM_PROTO_STATS=10. Every live capture (443B and
+        434B payloads, both non-zero but well under 10 stats) tripped the
+        old fixed-loop parser 8 bytes short at max_durability. A payload
+        this size (well short of the old fixed-width assumption) is exactly
+        what made that parser overrun the buffer; it must parse cleanly now."""
+        payload = self._build(
+            name="Real Capture Item", stackable=1, max_durability=100,
+            stats=((3, 5), (4, 8), (7, 10)),  # 3 stats, not 10
+        )
+        info = lo.parse_item_query_response(payload)
+        self.assertEqual(info["stats"], [{"type": 3, "value": 5}, {"type": 4, "value": 8},
+                                          {"type": 7, "value": 10}])
+        self.assertEqual(info["max_durability"], 100)
+
+    def test_stats_count_at_max(self):
+        stats = tuple((i, i + 1) for i in range(1, lo.MAX_ITEM_PROTO_STATS + 1))
+        payload = self._build(stats=stats)
+        info = lo.parse_item_query_response(payload)
+        self.assertEqual(len(info["stats"]), lo.MAX_ITEM_PROTO_STATS)
 
 
 if __name__ == '__main__':
