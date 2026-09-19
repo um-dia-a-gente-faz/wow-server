@@ -724,6 +724,21 @@ class ChatParsingTest(unittest.TestCase):
         self.assertEqual(sess.events[-1]["result_name"], "bad_player_name")
 
 
+class CreateCharacterTest(unittest.TestCase):
+    def test_sends_expected_payload_and_returns_on_success(self):
+        sess = make_session(server_packet(se.SMSG_CHAR_CREATE, bytes([se.CHAR_CREATE_SUCCESS])))
+        code = sess.create_character('Testelf', race=10, class_=2, gender=1)  # blood elf paladin, female
+        expected_payload = b'Testelf\x00' + bytes([10, 2, 1, 0, 0, 0, 0, 0]) + b'\x00'
+        expected = struct.pack('>H', len(expected_payload) + 4) + struct.pack('<I', se.CMSG_CHAR_CREATE) + expected_payload
+        self.assertEqual(sess.sock.sent, expected)
+        self.assertEqual(code, se.CHAR_CREATE_SUCCESS)
+
+    def test_raises_on_non_success_code(self):
+        sess = make_session(server_packet(se.SMSG_CHAR_CREATE, bytes([se.CHAR_CREATE_NAME_IN_USE])))
+        with self.assertRaises(RuntimeError):
+            sess.create_character('Taken', race=1, class_=1)
+
+
 class LoginTest(unittest.TestCase):
     def test_login_stores_player_guid(self):
         verify_world = struct.pack('<iffff', 530, 9487.0, -7279.0, 14.3, 0.0)
