@@ -36,6 +36,10 @@ log = logging.getLogger("agent.session")
 SMSG_AUTH_CHALLENGE     = 0x1EC
 CMSG_AUTH_SESSION       = 0x1ED
 SMSG_AUTH_RESPONSE      = 0x1EE
+CMSG_CHAR_CREATE        = 0x036
+SMSG_CHAR_CREATE        = 0x03A
+CHAR_CREATE_SUCCESS     = 47  # SharedDefines.h ResponseCodes (0x2F)
+CHAR_CREATE_NAME_IN_USE = 50  # 0x32
 CMSG_CHAR_ENUM          = 0x037
 SMSG_CHAR_ENUM          = 0x03B
 CMSG_PLAYER_LOGIN       = 0x03D
@@ -509,6 +513,32 @@ class WoWSession:
                 break
 
         return True
+
+    def create_character(self, name: str, race: int, class_: int, gender: int = 0,
+                          skin: int = 0, face: int = 0, hair_style: int = 0,
+                          hair_color: int = 0, facial_hair: int = 0) -> int:
+        """Create a fresh level-1 character (CMSG_CHAR_CREATE; UM-55).
+
+        Payload layout verified against TrinityCore 3.3.5a
+        WorldPackets::Character::CreateCharacter::Read() (CharacterPackets.cpp):
+        null-terminated name, then one uint8 each for race, class, gender
+        (Sex), skin, face, hair style, hair color, facial hair, outfit id
+        (always 0, deprecated). Response is SMSG_CHAR_CREATE with a single
+        uint8 result code (SharedDefines.h ResponseCodes); raises on
+        anything but CHAR_CREATE_SUCCESS (47).
+        """
+        payload = (
+            name.encode() + b'\x00'
+            + bytes([race, class_, gender, skin, face, hair_style, hair_color, facial_hair])
+            + b'\x00'  # OutfitId, deprecated
+        )
+        self._send_packet(CMSG_CHAR_CREATE, payload)
+        opcode, resp = self._recv_packet()
+        assert opcode == SMSG_CHAR_CREATE
+        code = resp[0]
+        if code != CHAR_CREATE_SUCCESS:
+            raise RuntimeError(f"char create failed for {name!r}: response code {code}")
+        return code
 
     def enum_characters(self) -> list[dict]:
         """List characters on the realm. Returns [{'guid':..., 'name':...}, ...]."""
