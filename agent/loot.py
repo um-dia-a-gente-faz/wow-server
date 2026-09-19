@@ -288,14 +288,22 @@ ITEM_SPELLTRIGGER_ON_USE = 0
 # always writes exactly this many (spell_id<=0) placeholder slots.
 MAX_ITEM_PROTO_SPELLS = 5
 
-# MAX_ITEM_PROTO_STATS (ItemTemplate.h) — SMSG_ITEM_QUERY_SINGLE_RESPONSE
-# always writes exactly this many {type, value} pairs, with no separate
-# "count" field on the wire (UM-69: an earlier version of this parser
-# treated the ContainerSlots field's neighbor as a stats *count* prefix,
-# which happened to consume the right number of bytes only when a test
-# item had zero stats — QueryItemSingleResponse::Write in TrinityCore's
-# QueryPackets.cpp has no such prefix; it's a fixed-size array like
-# Damage/Socket/Resistance below).
+# MAX_ITEM_PROTO_STATS (ItemTemplate.h) — the upper bound on ItemTemplate's
+# stat array, and the array size WorldPackets::Query::ItemStats.ItemStat[]
+# is declared with. It is NOT how many {type, value} pairs actually go on
+# the wire.
+#
+# UM-88: QueryItemSingleResponse::Write (TrinityCore 3.3.5,
+# src/server/game/Server/Packets/QueryPackets.cpp) writes a uint32
+# `Stats.StatsCount` field right before the stat array, then loops
+# `for (i = 0; i < Stats.StatsCount; ++i)` — i.e. the wire only ever
+# carries StatsCount pairs (StatsCount itself comes straight from the
+# item_template.StatsCount DB column via ObjectMgr::LoadItemTemplates,
+# clamped to MAX_ITEM_PROTO_STATS), never a fixed 10. An earlier version of
+# this parser skipped the count field and always read 10 fixed pairs,
+# which overruns the buffer by the padding it wrongly assumed the server
+# sent whenever an item's real StatsCount was less than 10 (every
+# real-world item observed so far).
 MAX_ITEM_PROTO_STATS = 10
 
 # MAX_ITEM_PROTO_DAMAGES (ItemTemplate.h).
@@ -324,7 +332,8 @@ def parse_item_query_response(payload: bytes) -> dict:
       required_level, required_skill, required_skill_rank, required_spell,
       required_honor_rank, required_city_rank, required_reputation_faction,
       required_reputation_rank, max_count(i32), stackable(i32),
-      container_slots, ItemStat[MAX_ITEM_PROTO_STATS=10]{type, value(i32)},
+      container_slots, stats_count(u32),
+      ItemStat[stats_count, capped at MAX_ITEM_PROTO_STATS=10]{type, value(i32)},
       scaling_stat_distribution, scaling_stat_value,
       Damage[MAX_ITEM_PROTO_DAMAGES=2]{min(f32), max(f32), type}, armor,
       holy_res, fire_res, nature_res, frost_res, shadow_res, arcane_res,
@@ -368,8 +377,9 @@ def parse_item_query_response(payload: bytes) -> dict:
     stackable = struct.unpack_from('<i', payload, off)[0]; off += 4
     off += 4  # container_slots
 
+    stats_count = pk.u32(payload, off); off += 4
     stats = []
-    for _ in range(MAX_ITEM_PROTO_STATS):
+    for _ in range(min(stats_count, MAX_ITEM_PROTO_STATS)):
         stat_type = pk.u32(payload, off); off += 4
         stat_value = struct.unpack_from('<i', payload, off)[0]; off += 4
         if stat_value != 0:
