@@ -1,7 +1,15 @@
-# Agent run: level 1→10 unattended (UM-55)
+# Agent run: level 1→N unattended (UM-55)
 
 Evaluation runbook for the Phase 3 exit criterion: **one agent levels a
-fresh character from 1 to 10 with zero human intervention.**
+fresh character from 1 to a target level, fully unattended (zero human
+intervention).**
+
+The target level is **10** per the original exit criterion, but the same
+run works at a lower target (e.g. **3** or **5**) as a cheaper, faster first
+pass — fewer zones/quest chains to cover, less wall-clock time and token
+spend, while still proving the same thing: the agent perceives, decides and
+acts entirely on its own for the whole run. Record the target level you used
+for each attempt in the results log; don't silently change it mid-run.
 
 This doc only covers the run itself. It does not include a live run's
 results yet — see "Results log" at the bottom, filled in after each attempt.
@@ -97,13 +105,26 @@ doesn't touch the character.
 
 A run counts as successful only if **all** of:
 
-- [ ] Character reaches level 10.
+- [ ] Character reaches the target level chosen for this attempt.
 - [ ] Zero human interventions (see above) for the entire run.
-- [ ] Wall-clock time recorded (start → level 10).
+- [ ] Wall-clock time recorded (start → target level).
 - [ ] Token usage and $ cost recorded (from the LLM provider's own
       accounting, not an estimate).
 - [ ] Deaths, stuck events (no progress for N minutes), and invalid-LLM-call
       rate recorded from the audit log.
+
+**"Fully autonomous" is more than just reaching the level.** Skimming the
+audit log (`agent.tools.replay`) for the whole run should also show:
+
+- [ ] Every cycle has a `tool_call` the agent chose itself — no cycles where
+      the LLM call failed and the reflex/idle path carried the run
+      (`valid: false` or `tool_call.name: null` should be rare, not the norm;
+      see `docs/AI-AGENT-SPEC.md`'s >= 90% valid-tool-call bar from UM-61).
+- [ ] `goal`/`persona` and the tool calls made are plausibly connected to
+      quest/XP progress — not looping the same no-op action for many cycles
+      in a row (goal drift).
+- [ ] No cycle required a hardcoded reflex (follow-leader) to make progress;
+      this run is one agent alone, reflexes should be off or idle.
 
 ## Failure catalog
 
@@ -148,6 +169,7 @@ One entry per attempt, successful or not.
 ### Attempt 1 — _(date)_
 
 - Character: _(name, race/class)_
+- Target level: _(e.g. 5)_
 - Model: _(provider/model, settings)_
 - Start: _(timestamp)_ · Stop: _(timestamp)_ · Outcome: _(success/failure)_
 - Token usage / cost: _(from provider dashboard)_
