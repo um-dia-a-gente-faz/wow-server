@@ -40,7 +40,7 @@ class BuildMessagesTest(unittest.TestCase):
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[1]["role"], "user")
-        self.assertIn('"map": 0', messages[1]["content"])
+        self.assertIn('"map":0', messages[1]["content"])
 
     def test_persona_appended_to_system_prompt(self):
         messages = llm.build_messages({}, persona="a cautious rogue")
@@ -163,6 +163,51 @@ class LLMClientChooseActionTest(unittest.TestCase):
     def test_base_url_trailing_slash_stripped(self):
         client = llm.LLMClient("https://free.example/v1/", "m")
         self.assertEqual(client.base_url, "https://free.example/v1")
+
+
+class PromptUM90Test(unittest.TestCase):
+    """UM-90: standing goal, history in the prompt, compacted snapshot."""
+
+    def test_goal_is_in_system_prompt(self):
+        system = llm.build_messages({})[0]["content"]
+        self.assertIn("Goal:", system)
+        self.assertIn("quest_log", system)
+
+    def test_persona_can_override_goal(self):
+        system = llm.build_messages({}, persona="a pacifist herbalist")[0]["content"]
+        self.assertIn("a pacifist herbalist", system)
+        self.assertIn("follow the persona", system)
+
+    def test_history_goes_into_user_message(self):
+        history = [{"action": "accept_quest", "args": {"quest_id": 8325}, "ok": True, "changed": False}]
+        user = llm.build_messages({}, history=history)[1]["content"]
+        self.assertIn("history:", user)
+        self.assertIn('"quest_id":8325', user)
+
+    def test_no_history_section_when_empty(self):
+        self.assertNotIn("history:", llm.build_messages({}, history=[])[1]["content"])
+
+    def test_compact_snapshot_caps_units_and_drops_empties(self):
+        units = [{"guid": i, "name": None, "distance": float(i), "in_combat": False,
+                  "position": {"map": 0, "x": 1.23456, "y": 2.0, "z": 0.0}} for i in range(40)]
+        snap = {"position": {"map": 0, "x": 1.26, "y": 2.0, "z": 3.0}, "is_dead": False,
+                "corpse_position": None, "chat_inbox": [], "trade": None, "nearby_units": units}
+        out = llm.compact_snapshot(snap)
+        self.assertEqual(len(out["nearby_units"]), llm.PROMPT_BUCKET_CAPS["nearby_units"])
+        self.assertEqual(out["nearby_units"][0], {"guid": 0, "distance": 0.0,
+                                                  "position": {"map": 0, "x": 1.2, "y": 2.0, "z": 0.0}})
+        self.assertEqual(out["position"], {"map": 0, "x": 1.3, "y": 2.0, "z": 3.0})
+        for key in ("is_dead", "corpse_position", "chat_inbox", "trade"):
+            self.assertNotIn(key, out)
+        # The caller's snapshot (also written to the audit log) is untouched.
+        self.assertEqual(len(snap["nearby_units"]), 40)
+        self.assertEqual(snap["position"]["x"], 1.26)
+
+    def test_choose_action_passes_history(self):
+        client = llm.LLMClient("http://x", "m")
+        with mock.patch.object(client, "_post", return_value=chat_response()) as post:
+            client.choose_action({}, [], history=[{"action": "face", "args": {}, "ok": True}])
+        self.assertIn('"action":"face"', post.call_args[0][1]["messages"][1]["content"])
 
 
 if __name__ == "__main__":
