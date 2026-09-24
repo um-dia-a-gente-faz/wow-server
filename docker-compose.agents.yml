@@ -22,7 +22,7 @@ x-agent: &agent-defaults
     LLM_PROVIDER: ${LLM_PROVIDER:-openai-compatible}
     LLM_BASE_URL: ${LLM_BASE_URL:-}
     LLM_API_KEY: ${LLM_API_KEY:-}
-    LLM_MODEL: ${LLM_MODEL:-}
+    LLM_MODEL: ${LLM_MODEL:-}  # one id, or a comma-separated fallback list (UM-94, see .env.example)
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
   # Decision audit log (UM-51) — one JSONL file per agent per day. Host path
   # matches monitoring/docker-compose.yml's node-exporter textfile mount
