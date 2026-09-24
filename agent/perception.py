@@ -233,6 +233,12 @@ class WorldState:
         self.mailbox: dict | None = None
         self.has_new_mail = False
 
+        # UM-93: chat channels we're in, full server name ("General -
+        # Eversong Woods") -> {"channel_id", "flags"}. Filled from
+        # SMSG_CHANNEL_NOTIFY (agent.channels); exposed to the LLM as
+        # snapshot()'s sorted 'channels' list so it knows channel_say works.
+        self.channels: dict[str, dict] = {}
+
     def set_my_guid(self, guid: int):
         """Remember which GUID is our own character. Does not create an object;
         our player shows up through its update-object block like anything else."""
@@ -794,6 +800,27 @@ class WorldState:
         with self._lock:
             self.has_new_mail = True
 
+    def apply_channel_notify(self, data: dict):
+        """SMSG_CHANNEL_NOTIFY (agent.channels.parse_channel_notify): track
+        you_joined/you_left. A zone change re-joins General under the new
+        zone's name *without* a you_left for the old one
+        (Player::UpdateLocalChannels, sendRemove = false), so a you_joined
+        for a system channel replaces any entry with the same channel_id."""
+        notice = data.get("notice_name")
+        with self._lock:
+            if notice == "you_joined":
+                cid = data.get("channel_id", 0)
+                if cid:
+                    for full in [n for n, c in self.channels.items() if c["channel_id"] == cid]:
+                        del self.channels[full]
+                self.channels[data["channel"]] = {"channel_id": cid, "flags": data.get("flags", 0)}
+            elif notice == "you_left":
+                self.channels.pop(data["channel"], None)
+
+    def get_channels(self) -> dict[str, dict]:
+        with self._lock:
+            return dict(self.channels)
+
     def get_mailbox(self) -> dict | None:
         with self._lock:
             return self.mailbox
@@ -929,6 +956,7 @@ class WorldState:
             trade = self.trade
             mailbox = self.mailbox
             has_new_mail = self.has_new_mail
+            channels = sorted(self.channels)
 
         pos = my_position or (me.position if me else None)
         equipment, inventory = self.build_equipment_and_inventory()
@@ -948,6 +976,7 @@ class WorldState:
             "inventory": inventory,
             "pending_invite": pending_invite,
             "chat_inbox": list(chat_inbox) if chat_inbox is not None else [],
+            "channels": channels,  # UM-93: joined chat channels, for channel_say
             "quest_log": self.build_quest_log(),
         }
         if pos is None:

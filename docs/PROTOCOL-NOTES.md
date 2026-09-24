@@ -742,3 +742,84 @@ right at the Silvermoon mailbox (3 copper) — a future session with
 mailbox) can finish this test immediately without any more walking.
 
 builder with hand-built bytes instead.
+
+## UM-93: chat channels (General, custom channels)
+
+Verified against TrinityCore branch `3.3.5` (commit `48128f325ac5`) and live on
+2026-09-24 (Shadowblade + Luaprata). Code: `agent/channels.py`,
+`ChannelSayAction` in `agent/actions.py`, `WoWSession.join_channels`.
+
+Opcodes (`Opcodes.h`): `CMSG_JOIN_CHANNEL = 0x097`, `CMSG_LEAVE_CHANNEL = 0x098`,
+`SMSG_CHANNEL_NOTIFY = 0x099`. Chat into a channel reuses `CMSG_MESSAGECHAT = 0x095`.
+
+### The server never auto-joins General at login
+
+`Player::UpdateLocalChannels` returns early while the player is loading ("The
+client handles it automatically after loading"). A real client sends
+`CMSG_JOIN_CHANNEL` itself, so the agent does too, right after
+`login_character()` (`agent/__main__.py`). Channels come from `AGENT_CHANNELS`
+(comma-separated, default `General`, `none` disables).
+
+### `CMSG_JOIN_CHANNEL` (`JoinChannel::Read`, `ChannelPackets.cpp`)
+
+```
+int32   ChatChannelId       // ChatChannels.dbc ID for a system channel, 0 for custom
+uint8   CreateVoiceSession  // 0
+uint8   Internal            // 0
+cstring ChannelName
+cstring Password
+```
+
+`HandleJoinChannel` (`ChannelHandler.cpp`): with `ChatChannelId != 0` the name is
+**ignored** (only logged). The server picks the zone's instance via
+`ChannelMgr::GetSystemChannel(id, zone)` and names it from the DBC pattern, so
+no zone suffix is needed. General in Eversong Woods came back as
+`General - Eversong Woods`; in Silvermoon as `General - Silvermoon City`.
+These are **different channels**. With `ChatChannelId == 0` the name is a
+custom channel (created if missing). It can't be empty, start with a digit or
+exceed 31 characters (`CHAT_INVALID_NAME_NOTICE`). `PreserveCustomChannels = 1`
+on this realm, so a custom channel persists in `characters.channels`.
+
+Live `ChatChannels.dbc` IDs: General 1, Trade 2 (cities), LocalDefense 22,
+WorldDefense 23, GuildRecruitment 25 (cities), LookingForGroup 26
+(`Channel.RestrictedLfg = 1`). A system channel the zone can't have
+(`CanJoinConstantChannelInZone`) is dropped **silently**, so a join can only
+time out.
+
+Golden bytes: `/join General` = `01 00 00 00 00 00 "General\0" "\0"`;
+`/join world` = `00 00 00 00 00 00 "world\0" "\0"`.
+
+### `SMSG_CHANNEL_NOTIFY` (`ChannelNotify::Write`, `ChannelPackets.cpp`; `enum ChatNotify`, `Channel.h`)
+
+`uint8 Type`, `cstring Channel` (the full name, `Channel::GetName()`), then a
+tail that depends on Type (GUIDs are raw uint64):
+
+| Type | Tail |
+|---|---|
+| `YOU_JOINED` (0x02) | `uint8 flags`, `int32 channelId`, `int32 instanceId` (0) |
+| `YOU_LEFT` (0x03) | `int32 channelId`, `uint8 suspended` |
+| `JOINED`, `LEFT`, `PASSWORD_CHANGED`, `OWNER_CHANGED`, `ANNOUNCEMENTS_*`, `MODERATION_*`, `PLAYER_ALREADY_MEMBER`, `INVITE`, `VOICE_*` | `uint64 senderGuid` |
+| `PLAYER_NOT_FOUND`, `CHANNEL_OWNER`, `PLAYER_NOT_BANNED`, `PLAYER_INVITED`, `PLAYER_INVITE_BANNED` | `cstring senderName` |
+| `MODE_CHANGE` (0x0C) | `uint64 senderGuid`, `uint8 oldFlags`, `uint8 newFlags` |
+| `PLAYER_KICKED/BANNED/UNBANNED` | `uint64 targetGuid`, `uint64 senderGuid` |
+| everything else, including the errors `NOT_MEMBER` 0x05, `MUTED` 0x11, `BANNED` 0x13, `INVALID_NAME` 0x1B, `THROTTLED` 0x1F, `NOT_IN_AREA` 0x20 | nothing |
+
+Live: General joined with `flags = 0x18` (`CHANNEL_FLAG_GENERAL | NOT_LFG`),
+`channelId = 1`. The custom `world` channel joined with `flags = 0x01`
+(`CUSTOM`), `channelId = 0`. On a zone change the server re-joins General
+under the new zone's name **without** a `YOU_LEFT` for the old one
+(`UpdateLocalChannels`, `sendRemove = false`). `WorldState.apply_channel_notify`
+therefore replaces any entry with the same channel ID.
+
+### Sending: `CMSG_MESSAGECHAT` with `CHAT_MSG_CHANNEL` (0x11)
+
+`ChatMessage::Read`: `int32 type (0x11)`, `int32 language` (racial, never
+`LANG_UNIVERSAL`), `cstring channel`, `cstring text`. `HandleChatMessage` finds
+the channel with `ChannelMgr::GetChannelForPlayerByNamePart`, a
+**case-insensitive prefix** match over the channels the player has joined, so
+`General` works. It **silently drops** the message if nothing matches (no
+notice), so `channel_say` checks the snapshot's `channels` first.
+`ChatLevelReq.Channel = 1` on this realm. `Channel::Say` sends the resulting
+`SMSG_MESSAGECHAT` (shape in the section above: plain cstring channel name) to
+every member, **including the sender**. That echo is how `channel_say` confirms
+delivery. A refusal (`NOT_MEMBER`, `MUTED`, …) arrives as a notify.
