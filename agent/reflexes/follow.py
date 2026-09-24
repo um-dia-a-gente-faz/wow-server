@@ -236,6 +236,9 @@ class FollowAction(actions.Action):
     required = ("player_name",)
 
     def check(self, session, world, player_name: str, distance: float = DEFAULT_DISTANCE_YD, **_) -> str | None:
+        error = actions.player_name_error(player_name, field="player_name")
+        if error is not None:
+            return error
         if session.player_position is None:
             return "own position unknown"
         if _find_player_by_name(world, player_name) is None:

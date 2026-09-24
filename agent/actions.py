@@ -862,6 +862,41 @@ class TrainSpellAction(Action):
 # now they were only reachable by calling the free functions directly, so
 # the LLM (agent/think.py) had no way to invoke them at all.
 
+_JSON_DEBRIS = set('{}[]":,\\')
+
+
+def chat_text_error(text, field: str = "message") -> str | None:
+    """UM-92: reject model output that isn't a real chat line before it
+    reaches public chat — live, a tool call leaked `say "}"` into /say.
+    Accepts any text with at least one letter or digit and no control
+    characters that isn't JSON debris (e.g. `{"message": "hi"}`)."""
+    if not isinstance(text, str):
+        return f"{field} must be a string"
+    stripped = text.strip()
+    if not any(ch.isalnum() for ch in stripped):
+        return f"{field} {text!r} has no letters or digits — not a chat message"
+    if any(ord(ch) < 32 for ch in stripped):
+        return f"{field} contains control characters"
+    if stripped[0] in "{[" and stripped[-1] in "}]":
+        return f"{field} looks like JSON, not a chat message"
+    debris = sum(ch in _JSON_DEBRIS for ch in stripped)
+    if debris * 2 > len(stripped):
+        return f"{field} {text!r} is mostly punctuation — not a chat message"
+    return None
+
+
+def player_name_error(name, field: str = "name") -> str | None:
+    """UM-92: WoW character names are 2-12 letters, nothing else
+    (ObjectMgr::CheckPlayerName). Catches hallucinated names like
+    `}}dotspans` or `: ` before they reach a lookup or a packet."""
+    if not isinstance(name, str):
+        return f"{field} must be a string"
+    stripped = name.strip()
+    if not (2 <= len(stripped) <= 12) or not stripped.isalpha():
+        return f"{field} {name!r} is not a valid character name (2-12 letters)"
+    return None
+
+
 def _known_player_name(session, world, target_name: str) -> bool:
     """A whisper target is "resolvable" if its name has shown up either as a
     currently-perceived object (agent/perception.py's ObjectInfo.name,
@@ -889,6 +924,9 @@ class SayAction(Action):
     }
     required = ("message",)
 
+    def check(self, session, world, message: str, **_) -> str | None:
+        return chat_text_error(message)
+
     def execute(self, session, world, message: str, **_) -> ActionResult:
         say(session, message)
         return ActionResult(ok=True, detail={"message": message})
@@ -902,6 +940,9 @@ class YellAction(Action):
         "message": {"type": "string", "description": "The message to yell."},
     }
     required = ("message",)
+
+    def check(self, session, world, message: str, **_) -> str | None:
+        return chat_text_error(message)
 
     def execute(self, session, world, message: str, **_) -> ActionResult:
         yell(session, message)
@@ -923,6 +964,9 @@ class WhisperAction(Action):
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, target_name: str, message: str, **_) -> str | None:
+        error = player_name_error(target_name, field="target_name") or chat_text_error(message)
+        if error is not None:
+            return error
         if not _known_player_name(session, world, target_name):
             return f"{target_name!r} is not a known/resolvable player name"
         return None
@@ -960,6 +1004,9 @@ class EmoteAction(Action):
     }
     required = ("text",)
 
+    def check(self, session, world, text: str, **_) -> str | None:
+        return chat_text_error(text, field="text")
+
     def execute(self, session, world, text: str, **_) -> ActionResult:
         emote(session, text)
         return ActionResult(ok=True, detail={"text": text})
@@ -975,6 +1022,9 @@ class InviteToGroupAction(Action):
     required = ("name",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, name: str, **_) -> str | None:
+        return player_name_error(name)
 
     def execute(self, session, world, name: str, **_) -> ActionResult:
         sent_at = time.monotonic()
@@ -1952,6 +2002,9 @@ class SendMailAction(Action):
 
     def check(self, session, world, to: str, subject: str, body: str, gold: int = 0,
               bag: int | None = None, slot: int | None = None, **_) -> str | None:
+        error = player_name_error(to, field="to") or chat_text_error(subject, field="subject")
+        if error is not None:
+            return error
         if _find_nearby_mailbox(session, world) is None:
             return "no mailbox is within interact range — try move_towards a mailbox first"
         if gold < 0:
