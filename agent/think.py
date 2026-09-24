@@ -13,6 +13,7 @@ import time
 
 from . import actions as ac
 from . import trade as tr
+from .handles import UnknownHandle
 from .llm import LLMError
 
 log = logging.getLogger("agent.think")
@@ -138,8 +139,21 @@ def think_and_act(session, world, llm_client, persona: str = "",
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"missing required params: {missing}")
 
+    # UM-89: the model sees and sends short handles ("u3"), never raw
+    # GUIDs; map them back here, the one place tool-call params enter the
+    # game. `params` (handles) stays what the audit log/ThinkResult record.
+    handles = getattr(world, "handles", None)
+    run_params = params
+    if handles is not None:
+        try:
+            run_params = handles.resolve_params(params)
+        except UnknownHandle as e:
+            log.warning("action %s got an unknown handle (params=%r): %s", action_name, params, e)
+            _audit(action_name=action_name, params=params, valid=False, error=str(e))
+            return ThinkResult(ok=False, action_name=action_name, params=params, error=str(e))
+
     try:
-        result = action.run(session, world, **params)
+        result = action.run(session, world, **run_params)
     except TypeError as e:
         # Unexpected/extra kwargs the model hallucinated, or a param of the
         # wrong shape reaching execute()'s positional signature.
