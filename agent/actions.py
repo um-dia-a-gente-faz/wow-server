@@ -316,9 +316,9 @@ def send_chat_message(session, message: str, channel: str = "say", target: str |
 @register
 class SetTargetAction(Action):
     name = "set_target"
-    description = "Target a nearby unit, player, or object by its GUID from the perception snapshot."
+    description = "Target a nearby unit, player, or object by its handle from the perception snapshot."
     params = {
-        "guid": {"type": "integer", "description": "GUID of the object to target."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the object to target."},
     }
     required = ("guid",)
     # Overridable (class or instance attribute) so tests don't have to block
@@ -345,10 +345,10 @@ class SetTargetAction(Action):
 @register
 class FaceAction(Action):
     name = "face"
-    description = ("Turn in place to face a nearby object by GUID, or a specific x,y position, "
+    description = ("Turn in place to face a nearby object by handle, or a specific x,y position, "
                     "without otherwise moving.")
     params = {
-        "guid": {"type": "integer", "description": "GUID of the object to face. Mutually exclusive with x/y."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the object to face. Mutually exclusive with x/y."},
         "x": {"type": "number", "description": "Target X coordinate. Requires y; mutually exclusive with guid."},
         "y": {"type": "number", "description": "Target Y coordinate. Requires x; mutually exclusive with guid."},
     }
@@ -420,11 +420,11 @@ class MoveToAction(Action):
 @register
 class MoveTowardsAction(Action):
     name = "move_towards"
-    description = ("Chase a nearby unit or player by GUID, re-targeting its position every "
+    description = ("Chase a nearby unit or player by handle, re-targeting its position every "
                     "tick, stopping within stop_distance yards. Blocks until arrival, stuck, "
                     "the target leaving perception, or stopped.")
     params = {
-        "guid": {"type": "integer", "description": "GUID of the object to move towards."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the object to move towards."},
         "stop_distance": {"type": "number", "description": "How close counts as arrived, in yards. Default 1.0."},
     }
     required = ("guid",)
@@ -465,7 +465,7 @@ class AutoAttackAction(Action):
     name = "auto_attack"
     description = "Target and start melee auto-attack on a nearby hostile unit."
     params = {
-        "guid": {"type": "integer", "description": "GUID of the unit to attack."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the unit to attack."},
     }
     required = ("guid",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
@@ -533,7 +533,7 @@ class CastSpellAction(Action):
     description = "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted)."
     params = {
         "spell_id": {"type": "integer", "description": "Spell ID to cast — must be in the agent's spellbook."},
-        "target_guid": {"type": "integer", "description": "GUID to cast on. Omit to cast on self."},
+        "target_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the unit to cast on. Omit to cast on self."},
     }
     required = ("spell_id",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
@@ -625,12 +625,12 @@ class CastSpellAction(Action):
 @register
 class InteractAction(Action):
     name = "interact"
-    description = ("Interact with a nearby NPC or gameobject by GUID: opens its gossip, "
+    description = ("Interact with a nearby NPC or gameobject by handle: opens its gossip, "
                     "vendor, or trainer window (whichever its flags indicate), or activates "
                     "it directly if it's a gameobject. Must be within "
                     f"{npc.INTERACT_RANGE_YD} yd — use move_towards first if not.")
     params = {
-        "guid": {"type": "integer", "description": "GUID of the NPC or gameobject to interact with."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the NPC or gameobject to interact with."},
     }
     required = ("guid",)
 
@@ -721,7 +721,7 @@ class BuyItemAction(Action):
                     "Waits for the server's confirmation/failure response before returning, so "
                     "ok=True means the purchase actually went through.")
     params = {
-        "vendor_guid": {"type": "integer", "description": "GUID of the open vendor."},
+        "vendor_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the open vendor."},
         "slot": {"type": "integer", "description": "Vendor slot from the open window's items list."},
         "entry": {"type": "integer", "description": "Item entry, as an alternative to slot."},
         "count": {"type": "integer", "description": "How many to buy. Default 1."},
@@ -783,7 +783,7 @@ class SellItemAction(Action):
                     "model) and waits for the server's confirmation/failure response before "
                     "returning.")
     params = {
-        "vendor_guid": {"type": "integer", "description": "GUID of the vendor to sell to."},
+        "vendor_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the vendor to sell to."},
         "bag": {"type": "integer", "description": "Bag byte of the item (255 = equipped items/backpack)."},
         "slot": {"type": "integer", "description": "Inventory slot of the item."},
         "count": {"type": "integer", "description": "How many to sell from the stack. Default: whole stack."},
@@ -835,7 +835,7 @@ class TrainSpellAction(Action):
                     "Waits for the server's confirmation/failure response before returning, so "
                     "ok=True means the spell was actually learned.")
     params = {
-        "trainer_guid": {"type": "integer", "description": "GUID of the open trainer."},
+        "trainer_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the open trainer."},
         "spell_id": {"type": "integer", "description": "Spell ID from the open trainer window's spells list."},
     }
     required = ("trainer_guid", "spell_id")
@@ -1089,7 +1089,7 @@ class LootAction(Action):
                     "loot window, takes all money and every item (v1: take-everything, no "
                     "selective looting), then releases it. Must be within 5 yards.")
     params = {
-        "guid": {"type": "integer", "description": "GUID of the lootable corpse/creature."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the lootable corpse/creature."},
     }
     required = ("guid",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
@@ -1166,8 +1166,8 @@ class UseItemAction(Action):
                                                     "see CMSG_USE_ITEM's bag field)."},
         "slot": {"type": "integer", "description": "Slot within that bag (0-18 equipment, "
                                                      "19-22 equipped bags, 23-38 backpack)."},
-        "target_guid": {"type": "integer", "description": "Optional target GUID (e.g. a bandage "
-                                                            "used on an ally). Omit to target self."},
+        "target_guid": {"type": "string", "description": "Optional target snapshot handle (a string like \"p1\"), e.g. a bandage "
+                                                            "used on an ally. Omit to target self."},
     }
     required = ("bag", "slot")
 
@@ -1367,7 +1367,7 @@ class AcceptQuestAction(Action):
                     "already be open (interact() with the NPC first) and the quest to be "
                     "present in it.")
     params = {
-        "npc_guid": {"type": "integer", "description": "GUID of the questgiver NPC."},
+        "npc_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC."},
         "quest_id": {"type": "integer", "description": "Quest ID to accept, from the open "
                                                          "quest_list/quest_details/gossip "
                                                          "window."},
@@ -1425,7 +1425,7 @@ class CompleteQuestAction(Action):
                     "(check the perception snapshot's `window` after calling this); use "
                     "turn_in_quest to actually finish once that window is open.")
     params = {
-        "npc_guid": {"type": "integer", "description": "GUID of the questgiver NPC."},
+        "npc_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC."},
         "quest_id": {"type": "integer", "description": "Quest ID to complete, from quest_log."},
     }
     required = ("npc_guid", "quest_id")
@@ -1458,7 +1458,7 @@ class TurnInQuestAction(Action):
                     "Requires the offer-reward window to already be open (call complete_quest "
                     "first).")
     params = {
-        "npc_guid": {"type": "integer", "description": "GUID of the questgiver NPC."},
+        "npc_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC."},
         "quest_id": {"type": "integer", "description": "Quest ID to turn in."},
         "reward_choice": {"type": "integer", "description": "Index of the reward item to pick, "
                                                               "from the open window's "
@@ -1573,7 +1573,7 @@ class OpenTradeAction(Action):
     description = (f"Request a trade with a nearby player. Must be within {tr.TRADE_DISTANCE_YD:.1f} "
                     "yd. The other side sees the request and decides via accept_trade_request.")
     params = {
-        "guid": {"type": "integer", "description": "GUID of the player to trade with."},
+        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the player to trade with."},
     }
     required = ("guid",)
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S

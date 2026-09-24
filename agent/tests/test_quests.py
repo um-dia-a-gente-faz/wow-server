@@ -440,7 +440,7 @@ class QuestGiverStatusWiringTest(unittest.TestCase):
                                        fields={uf.UNIT_NPC_FLAGS: per.UNIT_NPC_FLAG_QUESTGIVER}))
         ws.apply_questgiver_status({"guid": 1, "status": 4, "status_name": "available"})
         snap = ws.snapshot(my_position=(0, 0.0, 0.0, 0.0, 0.0))
-        unit = next(u for u in snap["nearby_units"] if u["guid"] == 1)
+        unit = next(u for u in snap["nearby_units"] if ws.handles.resolve(u["guid"]) == 1)
         self.assertEqual(unit["quest_giver_status"], "available")
 
 

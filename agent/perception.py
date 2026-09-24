@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from . import handles as hd
 from . import items as it
 from . import names as nm
 from . import npc as npc_mod
@@ -233,6 +234,10 @@ class WorldState:
         self.mailbox: dict | None = None
         self.has_new_mail = False
 
+        # UM-89: short, stable string handles ("u3", "p1") shown to the LLM
+        # instead of raw 64-bit GUIDs, which don't survive a float64 JSON
+        # round-trip. snapshot() encodes, think.py resolves tool-call params.
+        self.handles = hd.HandleMap()
         # UM-93: chat channels we're in, full server name ("General -
         # Eversong Woods") -> {"channel_id", "flags"}. Filled from
         # SMSG_CHANNEL_NOTIFY (agent.channels); exposed to the LLM as
@@ -952,6 +957,10 @@ class WorldState:
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
         nearby_objects, sorted by distance and capped at `limit` each.
 
+        GUIDs never appear raw (UM-89): every `guid`/`*_guid`/`*_guids`
+        field holds a short handle like "u3" from self.handles instead,
+        stable for as long as this WorldState lives.
+
         `my_position` overrides the self object's own recorded position
         (useful right after login, before any update-object block has
         arrived for self) — defaults to the self object's position.
@@ -998,8 +1007,7 @@ class WorldState:
             "quest_log": self.build_quest_log(),
         }
         if pos is None:
-            return out
-
+            return self.handles.encode(out)
 
         scored = []
         for obj in objects:
@@ -1022,7 +1030,9 @@ class WorldState:
             if len(bucket) < limit:
                 bucket.append(entry)
 
-        return out
+        # UM-89: every GUID-valued field (guid, *_guid, *_guids) anywhere in
+        # the snapshot becomes a handle; see agent/handles.py.
+        return self.handles.encode(out)
 
 
 def _position_dict(pos):

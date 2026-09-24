@@ -110,14 +110,14 @@ What the agent currently sees/hears. Scoped to visible range and line-of-sight.
 {
   "position": {"map": 0, "x": -8945.3, "y": -132.7, "z": 83.5},
   "nearby_units": [
-    {"guid": 10342, "entry": 1547, "name": "Dire Wolf",
+    {"guid": "u1", "entry": 1547, "name": "Dire Wolf",
      "type": "creature", "faction": 14, "level": 11,
      "position": {"x": -8920.1, "y": -120.3, "z": 83.3},
      "distance": 27.4, "health_pct": 0.82,
-     "in_combat": false, "target_guid": 0}
+     "in_combat": false, "target_guid": null}
   ],
   "nearby_objects": [
-    {"guid": 50201, "entry": 176785, "name": "Ammo Crate",
+    {"guid": "o2", "entry": 176785, "name": "Ammo Crate",
      "type": "gameobject",
      "position": {"x": -8938.0, "y": -140.2, "z": 83.5},
      "distance": 10.1}
@@ -127,6 +127,12 @@ What the agent currently sees/hears. Scoped to visible range and line-of-sight.
   "minimap_pois": []
 }
 ```
+
+GUIDs are never shown raw (UM-89): a 64-bit GUID doesn't survive a float64 JSON
+round-trip through the model. Every `guid`, `*_guid` and `*_guids` field holds a short
+handle instead (`u` creature, `p` player, `o` gameobject, `i` item, `c` corpse, then a
+per-session counter), stable for the whole session (`agent/handles.py`). Actions take
+the handle as a string; `agent/think.py` maps it back to the GUID before running them.
 
 ### Additional perception endpoints
 

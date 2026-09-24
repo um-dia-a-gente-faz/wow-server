@@ -458,14 +458,14 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(len(snap["nearby_units"]), 1)
         self.assertEqual(snap["nearby_units"][0]["entry"], 6368)
         self.assertEqual(len(snap["nearby_players"]), 1)
-        self.assertEqual(snap["nearby_players"][0]["guid"], 3)
+        self.assertEqual(ws.handles.resolve(snap["nearby_players"][0]["guid"]), 3)
         # gameobject at distance 1000 is outside max_range=50
         self.assertEqual(snap["nearby_objects"], [])
 
     def test_snapshot_excludes_self(self):
         ws = self._ws_with_objects()
         snap = ws.snapshot(max_range=50)
-        all_guids = [o["guid"] for bucket in ("nearby_units", "nearby_players", "nearby_objects")
+        all_guids = [ws.handles.resolve(o["guid"]) for bucket in ("nearby_units", "nearby_players", "nearby_objects")
                      for o in snap[bucket]]
         self.assertNotIn(1, all_guids)
 
@@ -597,7 +597,7 @@ class NpcUiStateTest(unittest.TestCase):
         ws = per.WorldState()
         ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
         self.assertEqual(ws.get_ui_state()["kind"], "vendor")
-        self.assertEqual(ws.snapshot()["window"]["vendor_guid"], 5)
+        self.assertEqual(ws.handles.resolve(ws.snapshot()["window"]["vendor_guid"]), 5)
 
     def test_trainer_list_opens_trainer_window(self):
         ws = per.WorldState()
