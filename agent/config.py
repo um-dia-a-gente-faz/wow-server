@@ -55,6 +55,9 @@ class Config:
     think_interval: float = field(default_factory=lambda: _env_float("AGENT_THINK_INTERVAL_S", 3.0))
     run_duration: float = field(default_factory=lambda: _env_float("AGENT_RUN_DURATION_S", 0.0))  # 0 = forever
     persona: str = field(default_factory=lambda: _env_str("AGENT_PERSONA", ""))
+    # UM-93: chat channels to join after login, comma-separated ("General,world");
+    # "none" disables. See agent/channels.py::parse_channel_spec.
+    channels: str = field(default_factory=lambda: _env_str("AGENT_CHANNELS", "General"))
 
     # ── LLM (layer 3, unused until the brain lands) ────────────
     llm_base_url: str = field(default_factory=lambda: _env_str("LLM_BASE_URL", ""))
