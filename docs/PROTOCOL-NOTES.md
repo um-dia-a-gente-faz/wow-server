@@ -292,6 +292,49 @@ length prefix (`agent/packets.py::cstring`).
 top 16 bits of the raw 64-bit guid): `Player = 0x0000`, `Unit = 0xF130`,
 `Pet = 0xF140`, `GameObject = 0xF110`.
 
+### UM-47: `targetGuid` is not the listener, and not the addressee either
+
+`targetGuid` is `Chat::Initialize`'s `receiver` argument
+(`SetReceiver(receiver)` → `TargetGUID = receiver->GetGUID()`,
+`ChatPackets.cpp`), and for player chat TrinityCore passes **the same object
+twice**:
+
+```cpp
+// Player.cpp
+void Player::Say(...)   { packet.Initialize(CHAT_MSG_SAY,   language, this, this, _text); }
+void Player::Yell(...)  { packet.Initialize(CHAT_MSG_YELL,  language, this, this, _text); }
+void Player::TextEmote(...) { packet.Initialize(CHAT_MSG_EMOTE, LANG_UNIVERSAL, this, this, _text); }
+
+void Player::Whisper(std::string_view text, Language language, Player* target, bool)
+{
+    packet.Initialize(CHAT_MSG_WHISPER, Language(language), this, this, _text);
+    target->SendDirectMessage(packet.Write());                 // to the recipient
+    packet.Initialize(CHAT_MSG_WHISPER_INFORM, Language(language), target, target, _text);
+    SendDirectMessage(packet.Write());                         // echoed back to us
+}
+```
+
+So `targetGuid == senderGuid` for say/yell/emote/channel/whisper, and it
+never identifies who *heard* the message. Confirmed on the live realm: every
+capture in `agent/tests/fixtures/chat/` has the two fields equal.
+`agent/session.py::_handle_messagechat` therefore skips `targetGuid` rather
+than exporting a field that reads like an addressee but isn't one.
+
+The whisper pair is the one case where `slashCmd` alone doesn't tell you who
+is who, because `Initialize` is handed the same object for both roles:
+
+| Opcode seen by | `slashCmd` | `senderGuid` holds |
+|---|---|---|
+| the recipient | `CHAT_MSG_WHISPER` (0x07) | the **whisperer** |
+| the sender (echo) | `CHAT_MSG_WHISPER_INFORM` (0x09) | the **addressee** |
+
+`agent/chat_relay.py` uses that to render its own outgoing whispers as
+"this agent → that player" instead of attributing them to the addressee.
+
+A plain (non-GM) `SMSG_MESSAGECHAT` carries **no sender name at all** — only
+`senderGuid` — so anything that wants to display player chat has to resolve
+the name through `CMSG_NAME_QUERY` (see the name-resolution section above).
+
 ## The server does not echo our own position back via update-object during ordinary movement
 
 Found live-verifying UM-38's `move_to`: after sending `MSG_MOVE_START_FORWARD`/
