@@ -20,6 +20,9 @@ class ParserTests(unittest.TestCase):
     def test_say_preserves_colons(self):
         self.assertEqual(self.parse(0), {"id": "inode:42", "at": "2026-09-14T12:34:56Z",
                                          "kind": "say", "sender": "Alice", "channel": None,
+                                         # UM-47: same shape as a relayed event, so a
+                                         # consumer doesn't care which source produced it.
+                                         "target": None, "source": None,
                                          "text": "Hello: world"})
 
     def test_yell(self):
@@ -48,7 +51,9 @@ class ParserTests(unittest.TestCase):
         feed.publish_line("Loading Player Totem models...\n", "inode:43")
 
         self.assertEqual(feed.health(), {"ok": True, "events": 0,
-                                         "chat_candidates": 1, "parse_errors": 1})
+                                         "chat_candidates": 1, "parse_errors": 1,
+                                         "ingested": 0, "ingest_duplicates": 0,
+                                         "ingest_rejected": 0})
         self.assertEqual(feed.snapshot_after(""), [])
 
 
