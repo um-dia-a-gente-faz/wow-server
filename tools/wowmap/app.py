@@ -19,6 +19,7 @@ Env:
     DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc)
     MAPS_DIR    default /maps       (extracted PNGs)
     LISTEN_PORT default 9400
+    CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
 """
 import json
 import logging
@@ -51,6 +52,9 @@ CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
 )
 MAX_CALIBRATION_PAYLOAD_BYTES = 65536
+# Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
+# set this only when chat-feed isn't reachable on the same host as wowmap.
+CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -390,6 +394,111 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": str(exc)})
 
 
+# ---------------------------------------------------------------- page: chat panel
+# Chat comes from tools/chat-feed's SSE stream on a different port; wowmap only
+# renders it (see CHAT_FEED_URL / CHAT_JS below). Sender names and message text are
+# untrusted and always rendered with textContent, never innerHTML.
+CHAT_CSS = r"""
+  .side-tabs { display:flex; gap:6px; padding:0 16px 10px; }
+  .side-tabs button { flex:1; background:#141824; color:var(--dim); border:1px solid var(--line);
+                      border-radius:7px; padding:6px 4px; font:inherit; cursor:pointer; }
+  .side-tabs button.on { background:#2b3550; border-color:#46557a; color:var(--fg); }
+  .search-wrap { padding:0 16px 10px; }
+  .search-wrap input { width:100%; background:#141824; color:var(--fg); border:1px solid var(--line);
+                       border-radius:7px; padding:6px 9px; font:inherit; }
+  .chat { flex:1; overflow:auto; padding:0 12px 12px; display:flex; flex-direction:column; gap:4px; }
+  .chat-msg { font-size:12.5px; line-height:1.35; overflow-wrap:anywhere; }
+  .chat-msg .sender { cursor:pointer; font-weight:600; }
+  .chat-msg .sender:hover { text-decoration:underline; }
+  .chat-msg .kind-say .sender { color:#e6e9f0; }
+  .chat-msg .kind-yell .sender { color:#ff6b6b; }
+  .chat-msg .kind-channel .sender { color:#5fd0d8; }
+  .chat-msg .kind-guild .sender, .chat-msg .kind-party .sender,
+  .chat-msg .kind-raid .sender, .chat-msg .kind-officer .sender,
+  .chat-msg .kind-battleground .sender { color:#7ddf8a; }
+  .chat-msg .kind-whisper .sender { color:#d68cf5; }
+  .chat-msg .chan { color:var(--dim); font-size:11px; }
+  .chat-status { padding:6px 16px; color:var(--dim); font-size:11px; }
+  #resize-handle { position:absolute; top:0; right:-3px; width:6px; height:100%; cursor:col-resize; z-index:5; }
+  aside { position:relative; }
+  body.aside-collapsed aside { display:none; }
+"""
+
+CHAT_HTML = r"""
+<div class="chat" id="chat" hidden></div>
+<div class="chat-status" id="chat-status" hidden></div>
+"""
+
+CHAT_JS = r"""
+<script>
+const Chat = (() => {
+  const KIND_LABEL = {say: 'diz', yell: 'grita', channel: 'canal', guild: 'guilda',
+    party: 'grupo', raid: 'raide', officer: 'oficial', battleground: 'campo de batalha',
+    whisper: 'sussurro', unknown: '?'};
+  const list = document.getElementById('chat');
+  const status = document.getElementById('chat-status');
+  let source = null, autoscroll = true, backoffMs = 2000;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+
+  function append(ev) {
+    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 24;
+    const row = el('div', 'chat-msg kind-' + (ev.kind || 'unknown'));
+    if (ev.sender) {
+      const sender = el('span', 'sender', ev.sender);
+      sender.onclick = () => window.selectCharacter && window.selectCharacter(ev.sender);
+      row.append(sender, ' ');
+    }
+    if (ev.channel) row.append(el('span', 'chan', `[${ev.channel}] `));
+    row.append(document.createTextNode(ev.text || ''));
+    list.appendChild(row);
+    while (list.children.length > 300) list.removeChild(list.firstChild);
+    if (autoscroll || atBottom) list.scrollTop = list.scrollHeight;
+  }
+
+  function feedUrl() {
+    if (window.CHAT_FEED_URL) return window.CHAT_FEED_URL.replace(/\/$/, '') + '/api/chat/stream';
+    return `${location.protocol}//${location.hostname}:9500/api/chat/stream`;
+  }
+
+  function connect() {
+    if (source) return;
+    status.hidden = false;
+    status.textContent = 'conectando ao chat…';
+    try {
+      source = new EventSource(feedUrl());
+    } catch (e) {
+      status.textContent = 'chat indisponível: ' + e;
+      return;
+    }
+    source.addEventListener('chat', (e) => {
+      try { append(JSON.parse(e.data)); } catch (err) { /* malformed event, skip */ }
+    });
+    source.onopen = () => { status.hidden = true; backoffMs = 2000; };
+    source.onerror = () => {
+      status.hidden = false;
+      status.textContent = 'chat desconectado, tentando reconectar…';
+    };
+  }
+
+  function disconnect() {
+    if (source) { source.close(); source = null; }
+  }
+
+  list.addEventListener('scroll', () => {
+    autoscroll = list.scrollTop + list.clientHeight >= list.scrollHeight - 24;
+  });
+
+  return {connect, disconnect, shown: () => !list.hidden};
+})();
+</script>
+"""
+
 # ---------------------------------------------------------------- page: inspect drawer
 # The page is one embedded document; each panel keeps its CSS/HTML/JS in its own
 # constants and is spliced into PAGE at a named marker, so panels stay independent.
@@ -706,7 +815,11 @@ PAGE = r"""<!doctype html>
          display:flex; height:100vh; overflow:hidden; }
   aside { width:290px; flex:0 0 290px; background:var(--panel);
           border-right:1px solid var(--line); display:flex; flex-direction:column; }
-  aside h1 { font-size:15px; margin:0; padding:14px 16px 10px; letter-spacing:.3px; }
+  aside h1 { font-size:15px; margin:0; padding:14px 16px 10px; letter-spacing:.3px;
+             display:flex; align-items:center; justify-content:space-between; }
+  aside h1 button, #expand { background:#141824; color:var(--dim); border:1px solid var(--line);
+                             border-radius:6px; cursor:pointer; font:inherit; padding:2px 7px; }
+  #expand { position:fixed; top:12px; left:12px; z-index:10; }
   aside .sub { padding:0 16px 12px; color:var(--dim); font-size:12px; }
   .stats { display:flex; gap:8px; padding:0 16px 12px; }
   .stat { flex:1; background:#141824; border:1px solid var(--line); border-radius:8px;
@@ -757,19 +870,36 @@ PAGE = r"""<!doctype html>
   .stagewrap.calibrating { cursor:crosshair; }
   .pl.sel { background:#2b3550; }
   .marker { cursor:pointer; }
+  .marker.sel .ring { box-shadow:0 0 0 3px #f3b84b; }
+  aside { width:var(--sidebar-w, 290px); flex:0 0 var(--sidebar-w, 290px); }
+  @media (max-width: 480px) {
+    aside { width:180px; flex:0 0 180px; }
+    .stats, #resize-handle { display:none; }
+  }
 /* @inspect-css */
+/* @chat-css */
 </style></head>
 <body>
-<aside>
-  <h1>Mapa ao vivo</h1>
+<aside id="aside">
+  <h1>Mapa ao vivo <button id="collapse" title="Recolher barra lateral" aria-label="Recolher barra lateral">«</button></h1>
   <div class="sub" id="sub">carregando…</div>
   <div class="stats">
     <div class="stat"><b id="s-online">–</b><span>online</span></div>
     <div class="stat"><b id="s-world">–</b><span>no mundo</span></div>
     <div class="stat"><b id="s-inst">–</b><span>em instância</span></div>
   </div>
+  <div class="side-tabs">
+    <button id="tab-players" class="on">Jogadores</button>
+    <button id="tab-chat">Chat</button>
+  </div>
+  <div class="search-wrap" id="search-wrap">
+    <input id="search" type="text" placeholder="Buscar personagem (/)" autocomplete="off">
+  </div>
   <div class="list" id="list"></div>
+  <!-- @chat-html -->
+  <div id="resize-handle" title="Arraste para redimensionar"></div>
 </aside>
+<button id="expand" hidden title="Mostrar barra lateral" aria-label="Mostrar barra lateral">»</button>
 <main>
   <div class="bar">
     <label>Zona <select id="zone"></select></label>
@@ -797,6 +927,8 @@ PAGE = r"""<!doctype html>
 </main>
 <!-- @inspect-html -->
 <!-- @inspect-js -->
+<script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
+<!-- @chat-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -822,14 +954,48 @@ async function loadAreas() {
     o.textContent = a.name + (a.has_image ? '' : ' (sem imagem)');
     sel.appendChild(o);
   }
-  // default to a zone with players, else first
+  // default to the last-viewed zone, else a zone with players, else first
   const inuse = new Set((d.in_use || []).map(z => z.zone));
-  const pick = list.find(a => inuse.has(a.area_id)) || list[0];
+  const lastZone = loadState('lastZone');
+  const pick = list.find(a => String(a.area_id) === String(lastZone))
+    || list.find(a => inuse.has(a.area_id)) || list[0];
   if (pick) { sel.value = pick.area_id; currentArea = pick; }
-  sel.onchange = () => { currentArea = list.find(a => String(a.area_id) === sel.value); resetCalibration(); draw(); };
+  sel.onchange = () => {
+    currentArea = list.find(a => String(a.area_id) === sel.value);
+    resetCalibration(); draw();
+    if (currentArea) saveState('lastZone', currentArea.area_id);
+  };
 }
 
 function areaFor(zone) { return areas.find(a => a.area_id === zone); }
+
+// Toggle-only highlighting, safe to call from inside a click handler: rebuilding
+// #list or #markers here (as renderList()/place() do) would detach the very
+// element the click originated on before the event finishes bubbling, which
+// makes Inspect's click-away handler misfire and close the drawer it just opened.
+function markListAndMarkersSelected() {
+  for (const e of document.querySelectorAll('.pl')) e.classList.toggle('sel', e.dataset.name === selected);
+  for (const e of document.querySelectorAll('.marker')) e.classList.toggle('sel', e.dataset.name === selected);
+}
+
+// Unified selection: called from the player list, a map marker, or a chat sender —
+// highlights the character everywhere and pans the map to their zone.
+function selectCharacter(name) {
+  selected = name;
+  if (!calibrating) Inspect.open(name);
+  const p = players.find(pl => pl.name === name);
+  if (p && p.in_world) {
+    const a = areaFor(p.zone);
+    if (a && (!currentArea || currentArea.area_id !== a.area_id)) {
+      currentArea = a;
+      $('zone').value = a.area_id;
+      saveState('lastZone', a.area_id);
+      draw();
+    }
+  }
+  markListAndMarkersSelected();
+}
+window.selectCharacter = selectCharacter;
 
 function draw() {
   const a = currentArea;
@@ -888,7 +1054,8 @@ function place() {
   for (const p of here) {
     const [x, y] = px(p);
     const d = document.createElement('div');
-    d.className = 'marker';
+    d.className = 'marker' + (p.name === selected ? ' sel' : '');
+    d.dataset.name = p.name;
     d.style.left = x + 'px'; d.style.top = y + 'px';
     const ring = document.createElement('div');
     ring.className = 'ring';
@@ -903,8 +1070,7 @@ function place() {
     d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${p.zone_name}`;
     d.onclick = () => {
       if (calibrating) return;
-      selected = p.name;
-      Inspect.open(p.name);
+      selectCharacter(p.name);
     };
     m.appendChild(d);
     if (p.name === selected && follow) $('stage').scrollTo({left: x - 300, top: y - 200, behavior:'smooth'});
@@ -924,9 +1090,12 @@ function place() {
 
 function renderList() {
   const l = $('list');
+  const query = ($('search').value || '').trim().toLowerCase();
+  const filtered = query ? players.filter(p => p.name.toLowerCase().includes(query)) : players;
   if (!players.length) { l.innerHTML = '<div class="empty">Ninguém online</div>'; return; }
+  if (!filtered.length) { l.innerHTML = '<div class="empty">Nenhum personagem corresponde à busca</div>'; return; }
   l.innerHTML = '';
-  for (const p of players) {
+  for (const p of filtered) {
     const e = document.createElement('div');
     e.className = 'pl' + (p.name === Inspect.current() ? ' sel' : '');
     e.dataset.name = p.name;
@@ -940,14 +1109,7 @@ function renderList() {
     meta.className = 'meta';
     meta.textContent = `${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instância ' + p.instance}`;
     e.append(dot, nm, meta);
-    e.onclick = () => {
-      selected = p.name;
-      if (!calibrating) Inspect.open(p.name);
-      if (p.in_world) {
-        const a = areaFor(p.zone);
-        if (a) { currentArea = a; $('zone').value = a.area_id; draw(); }
-      }
-    };
+    e.onclick = () => selectCharacter(p.name);
     l.appendChild(e);
   }
 }
@@ -1022,6 +1184,99 @@ $('saveCalibration').onclick = async () => {
   place();
 };
 addEventListener('resize', () => place());
+
+// ---- UI state persisted in localStorage: sidebar width/collapse, active tab,
+// last zone (used above in loadAreas) and pinned character. Every access is
+// wrapped in try/catch: private-browsing / disabled storage must not break the page.
+const STATE_PREFIX = 'wowmap.';
+function loadState(key) {
+  try { return JSON.parse(localStorage.getItem(STATE_PREFIX + key)); }
+  catch (e) { return null; }
+}
+function saveState(key, value) {
+  try { localStorage.setItem(STATE_PREFIX + key, JSON.stringify(value)); }
+  catch (e) { /* storage unavailable, state just won't persist */ }
+}
+
+const MIN_ASIDE_W = 220, MAX_ASIDE_W = 560;
+function setAsideWidth(w) {
+  const clamped = Math.max(MIN_ASIDE_W, Math.min(MAX_ASIDE_W, w));
+  document.documentElement.style.setProperty('--sidebar-w', clamped + 'px');
+  return clamped;
+}
+(() => {
+  const saved = loadState('asideWidth');
+  if (saved) setAsideWidth(saved);
+})();
+let resizeDrag = null;
+$('resize-handle').addEventListener('pointerdown', (e) => {
+  resizeDrag = {startX: e.clientX, startW: $('aside').getBoundingClientRect().width};
+  $('resize-handle').setPointerCapture(e.pointerId);
+});
+$('resize-handle').addEventListener('pointermove', (e) => {
+  if (!resizeDrag) return;
+  setAsideWidth(resizeDrag.startW + (e.clientX - resizeDrag.startX));
+  place();
+});
+for (const event of ['pointerup', 'pointercancel']) {
+  $('resize-handle').addEventListener(event, () => {
+    if (resizeDrag) saveState('asideWidth', $('aside').getBoundingClientRect().width);
+    resizeDrag = null;
+  });
+}
+
+function setCollapsed(collapsed) {
+  document.body.classList.toggle('aside-collapsed', collapsed);
+  $('expand').hidden = !collapsed;
+  saveState('collapsed', collapsed);
+  dispatchEvent(new Event('resize'));
+}
+$('collapse').onclick = () => setCollapsed(true);
+$('expand').onclick = () => setCollapsed(false);
+if (loadState('collapsed')) setCollapsed(true);
+
+// Tabs: players list vs. chat panel share the sidebar; chat only connects (SSE)
+// while its tab is visible, so a viewer who never opens it costs nothing extra.
+function setTab(tab) {
+  const isChat = tab === 'chat';
+  $('tab-players').classList.toggle('on', !isChat);
+  $('tab-chat').classList.toggle('on', isChat);
+  $('list').hidden = isChat;
+  $('search-wrap').hidden = isChat;
+  $('chat').hidden = !isChat;
+  $('chat-status').hidden = !isChat || Chat.shown();
+  saveState('tab', tab);
+  if (isChat) Chat.connect(); else Chat.disconnect();
+}
+$('tab-players').onclick = () => setTab('players');
+$('tab-chat').onclick = () => setTab('chat');
+setTab(loadState('tab') === 'chat' ? 'chat' : 'players');
+
+// Keyboard: `/` focuses the character search, `c` toggles the chat tab, Esc for
+// the drawer is handled by Inspect itself. Ignore these while typing elsewhere.
+addEventListener('keydown', (e) => {
+  const typing = /^(input|textarea|select)$/i.test(e.target.tagName);
+  if (e.key === '/' && !typing) {
+    e.preventDefault();
+    setTab('players');
+    $('search').focus();
+  } else if (e.key === 'c' && !typing) {
+    setTab($('tab-chat').classList.contains('on') ? 'players' : 'chat');
+  }
+});
+$('search').addEventListener('input', renderList);
+
+// Remember the pinned (open) character across reloads.
+document.getElementById('inspect-close').addEventListener('click', () => saveState('pinned', null));
+addEventListener('keydown', (e) => { if (e.key === 'Escape') saveState('pinned', null); });
+const originalSelectCharacter = selectCharacter;
+selectCharacter = (name) => { originalSelectCharacter(name); saveState('pinned', name); };
+window.selectCharacter = selectCharacter;
+if (!location.hash) {
+  const pinned = loadState('pinned');
+  if (pinned) Inspect.open(pinned);
+}
+
 loadAreas().then(tick);
 setInterval(tick, 5000);
 </script>
@@ -1030,7 +1285,11 @@ setInterval(tick, 5000);
 PAGE = (PAGE
         .replace("/* @inspect-css */", INSPECT_CSS)
         .replace("<!-- @inspect-html -->", INSPECT_HTML)
-        .replace("<!-- @inspect-js -->", INSPECT_JS))
+        .replace("<!-- @inspect-js -->", INSPECT_JS)
+        .replace("/* @chat-css */", CHAT_CSS)
+        .replace("<!-- @chat-html -->", CHAT_HTML)
+        .replace("<!-- @chat-js -->", CHAT_JS)
+        .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 
 if __name__ == "__main__":

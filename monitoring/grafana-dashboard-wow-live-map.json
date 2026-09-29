@@ -33,7 +33,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "# [Abrir mapa ao vivo \u2192](http://192.168.1.64:9400)\n\nO mapa interativo mostra cada jogador online em posi\u00e7\u00e3o no mapa do WoW,\ncom cor de classe e seletor de zona. Atualiza\u00e7\u00e3o a cada 5 segundos.\n\nAbaixo, os mesmos dados como m\u00e9tricas no Grafana (sem o mapa de fundo \u2014\npara isso, use o link acima)."
+        "content": "# [Abrir console ao vivo \u2192](http://192.168.1.64:9400)\n\nO console mostra, numa s\u00f3 p\u00e1gina: mapa interativo com cada jogador online\n(cor de classe, seletor de zona), lista de jogadores, chat p\u00fablico ao vivo\n(aba Chat) e um painel de inspe\u00e7\u00e3o de personagem (clique num nome ou\nmarcador). Atualiza\u00e7\u00e3o a cada 5 segundos.\n\nAbaixo, os mesmos dados como m\u00e9tricas no Grafana (sem o mapa de fundo \u2014\npara isso, use o link acima)."
       }
     },
     {

@@ -350,28 +350,31 @@ yet (unlike zones, which have a small hardcoded `ZONES` dict in
 **Recommendation:** option 2, once Phase A/B prove the panel is worth the
 investment — don't build the DBC parser before there's a UI to put names in.
 
-### Phase D — live chat panel
+### Phase D — live chat panel (done, UM-94)
 
-Give `tools/chat-feed`'s SSE stream an actual viewer:
+`tools/wowmap`'s sidebar has a **Chat** tab consuming
+`EventSource('<CHAT_FEED_URL>/api/chat/stream')`, styled by `kind`
+(say/yell/channel/…), auto-scrolling, reconnect-safe (the server already
+replays from `Last-Event-ID`). The cross-origin gap is closed by adding
+`Access-Control-Allow-Origin: *` to every `tools/chat-feed` response, rather
+than a reverse proxy — simpler given this is a read-only, LAN-only stream with
+nothing sender-writable.
 
-1. A chat panel in the same page as the map/inspect drawer (or a toggleable
-   tab) consuming `EventSource('http://<host>:9500/api/chat/stream')` per
-   the snippet already in `tools/chat-feed/README.md`, styled by `kind`
-   (say/yell/channel), auto-scrolling, reconnect-safe (the server already
-   replays from `Last-Event-ID` — no extra backend work needed for that part).
-2. **Cross-origin gap, confirmed:** wowmap serves from :9400, chat-feed from
-   :9500, and `tools/chat-feed/app.py` sends no CORS headers at all today —
-   a page served from wowmap can't `EventSource()` chat-feed's stream as-is.
-   Either add `Access-Control-Allow-Origin` to chat-feed's response headers,
-   or reverse-proxy both through one origin (simpler long-term if Phase E
-   consolidates onto one page anyway).
+### Phase E — consolidate into one console (done, UM-94)
 
-### Phase E — consolidate into one console
+One page at :9400 — sidebar (player list + chat toggle), center (live map,
+unchanged), right-side drawer (inspect panel, opens on click, closes on
+click-away). Selecting a character anywhere (list, marker, chat sender)
+highlights it everywhere and pans the map to their zone. Sidebar width,
+collapsed state, active tab, last zone, and pinned character persist to
+`localStorage`. Keyboard: `/` search, `Esc` closes the drawer, `c` toggles
+chat. See `tools/wowmap/README.md`'s "Console layout" section for the
+click-away-detach pitfall this ran into and how it's avoided.
 
-Once A/B/D exist as working pieces: one page — sidebar (player list + chat
-toggle), center (live map, unchanged), right-side drawer (inspect panel,
-opens on click, closes on click-away). This is what makes it "a dashboard
-panel" rather than three separate features bolted together.
+Not done as part of this pass (left for a follow-up console-v1 issue):
+splitting the embedded HTML/JS out of `app.py` into `tools/wowmap/static/`
+(item 6 of the original issue — a large, separate refactor, not required by
+the acceptance criteria).
 
 ### Item icons — deliberately out of scope for now
 
