@@ -50,6 +50,13 @@ inode replacement while following the path.
 Browsers automatically reconnect and send `Last-Event-ID`; the sidecar replays
 the events after that ID when it is still in its bounded buffer.
 
+Every response (including `/healthz` and the SSE stream) sends
+`Access-Control-Allow-Origin: *`, so a page served from wowmap's origin
+(`:9400`) can call `EventSource()` against this service (`:9500`) directly —
+see the chat tab in `tools/wowmap`'s console page. There is nothing
+sender-writable here (this is a read-only tailer), so an open CORS policy adds
+no write surface.
+
 ## Run and test
 
 ```sh

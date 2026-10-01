@@ -24,6 +24,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
+| `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
 
 Tests (need the `requirements.txt` packages):
 
@@ -79,6 +80,35 @@ Health is current only, and so is power. The worldserver computes maximum
 health and power at runtime and never saves them, so there are no bars (see
 `docs/ROADMAP.md`, Operator dashboard panel, Phase B). With the 5 s
 `PlayerSaveInterval`, damage taken in game shows up within about 10 s.
+
+## Console layout (map + player list + chat + inspect drawer)
+
+The page is one console: left sidebar (player list, with a **Chat** tab toggled
+by the `c` key or the tab buttons), center live map, right-side inspect drawer.
+
+- **Chat tab**: connects an `EventSource` to `tools/chat-feed`'s SSE stream
+  (`CHAT_FEED_URL`, default `<page hostname>:9500`) only while the tab is
+  visible, so a viewer who never opens it costs nothing extra. Chat-feed adds
+  `Access-Control-Allow-Origin: *` to its responses so this cross-origin
+  `EventSource` call works without a reverse proxy. Every message is rendered
+  with `textContent`; clicking a sender name calls the same `selectCharacter()`
+  used by the list and map markers.
+- **Unified selection**: clicking a character in the list, on a map marker, or
+  as a chat sender highlights them everywhere and pans the map to their zone
+  (`selectCharacter()` in `app.py`'s main script). It only *toggles* CSS
+  classes on existing DOM nodes rather than rebuilding `#list`/`#markers` —
+  rebuilding while the click event that triggered it is still bubbling detaches
+  the clicked element, which makes the drawer's click-away handler misfire and
+  close the drawer it just opened.
+- **Search**: `/` focuses the character search box (filters the player list by
+  name); `Esc` closes the drawer; `c` toggles the chat tab.
+- **Sidebar**: resizable (drag the right edge) and collapsible (the `«`/`»`
+  buttons). Width, collapsed state, active tab, last-viewed zone, and the
+  pinned (open) character persist to `localStorage`, each access wrapped in
+  `try`/`catch` so private browsing or disabled storage never breaks the page.
+- **Shared polling**: one 5 s tick fetches `/api/players` and `/api/summary`
+  and also drives the open drawer's refresh — the chat tab doesn't add polling
+  since it's push-based (SSE).
 
 ## Character inspect endpoint
 
