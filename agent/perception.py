@@ -1037,6 +1037,13 @@ def _object_dict(obj: ObjectInfo, distance: float) -> dict:
     if obj.quest_giver_status is not None:
         d["quest_giver_status"] = obj.quest_giver_status_name or obj.quest_giver_status
     d["in_combat"] = bool(obj.unit_flags and (obj.unit_flags & 0x00080000))  # UNIT_FLAG_IN_COMBAT, UnitDefines.h
+    # UM-97: only set when true/non-zero, so existing snapshots (and the
+    # pruned LLM prompt) are unchanged for ordinary units. agent/candidates.py
+    # reads these to offer loot and to keep service NPCs out of attack options.
+    if obj.is_lootable():
+        d["lootable"] = True
+    if obj.npc_flags:
+        d["npc_flags"] = obj.npc_flags
     return d
 
 

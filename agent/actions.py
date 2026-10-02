@@ -514,6 +514,20 @@ class StopAttackAction(Action):
 
 
 @register
+class IdleAction(Action):
+    """UM-97: an explicit "do nothing this cycle" choice, so a brain that
+    picks from a fixed candidate list (agent/candidates.py, for Jev) always
+    has a safe option that maps to a real registered action. Sends nothing."""
+    name = "idle"
+    description = "Do nothing this cycle (wait and watch). Always a valid choice."
+    params = {}
+    required = ()
+
+    def execute(self, session, world, **_) -> ActionResult:
+        return ActionResult(ok=True, detail={"idle": True})
+
+
+@register
 class CastSpellAction(Action):
     name = "cast_spell"
     description = "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted)."
