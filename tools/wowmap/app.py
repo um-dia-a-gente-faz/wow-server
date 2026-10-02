@@ -16,7 +16,8 @@ extract_maps.py and served from MAPS_DIR.
 
 Env:
     MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD   as elsewhere in this repo
-    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc)
+    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc; names come
+                                     from Spell, Talent, TalentTab, Faction, Achievement)
     MAPS_DIR    default /maps       (extracted PNGs)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
@@ -25,6 +26,7 @@ import json
 import logging
 import math
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +35,10 @@ from urllib.parse import urlparse, parse_qs, unquote
 import pymysql
 
 from transform import DbcTables
+
+# The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from dbc.names import GameNames  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wowmap")
@@ -69,6 +75,8 @@ RACES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: "Taur
 POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
 
 _tables = None
+_names = None
+_names_lock = threading.Lock()
 _calibration_lock = threading.Lock()
 
 
@@ -115,6 +123,19 @@ def tables():
     if _tables is None:
         _tables = DbcTables(DBC_DIR)
     return _tables
+
+
+def names():
+    """Spell/talent/faction/achievement names, built once (~1 s, ~15 MB)."""
+    global _names
+    with _names_lock:
+        if _names is None:
+            t0 = time.monotonic()
+            _names = GameNames(DBC_DIR)
+            log.info("names: %d spells, %d talents, %d factions, %d achievements in %.1fs",
+                     len(_names.spells), len(_names.talent_spells), len(_names.factions),
+                     len(_names.achievements), time.monotonic() - t0)
+    return _names
 
 
 def db():
@@ -254,6 +275,7 @@ def fetch_character(name):
         """, (guid,), "achievements")
 
     t = tables()
+    n = names()
     return {
         "name": char_name,
         "level": level,
@@ -285,16 +307,28 @@ def fetch_character(name):
              "item_name": item_name, "count": count}
             for bag, slot, item_guid, item_entry, item_name, count in inventory
         ],
-        "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
+        # Names from the client DBCs (tools/dbc/names.py); null when an id is unknown.
+        "talents": [
+            {"spell": spell, "spec": spec, **_talent_names(n, spell)}
+            for spell, spec in talents
+        ],
         "reputation": [
-            {"faction": faction, "standing": standing}
+            {"faction": faction, "standing": standing,
+             **n.reputation(faction, standing, race, cls)}
             for faction, standing in reputation
         ],
         "achievements": [
-            {"achievement": achievement, "date": date}
+            {"achievement": achievement, "date": date,
+             **(n.achievement(achievement) or {"name": None, "points": None})}
             for achievement, date in achievements
         ],
     }
+
+
+def _talent_names(n, spell):
+    t = n.talent(spell) or {}
+    return {"name": t.get("name"), "tree": t.get("tree"), "tree_order": t.get("tree_order"),
+            "rank": t.get("rank")}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -668,6 +702,42 @@ const Inspect = (() => {
       el('div', 'line', c.zone_name));
   }
 
+  // Names come from the client DBCs (tools/dbc/names.py); unknown ids fall back to the raw id.
+  function talentSection(list) {
+    const d = collapsible('talents', `Talents (${list.length})`);
+    const groups = new Map();
+    for (const t of list) {
+      const key = `${t.spec}|${t.tree_order ?? 99}|${t.tree ?? ''}`;
+      if (!groups.has(key)) groups.set(key, {spec: t.spec, order: t.tree_order ?? 99, tree: t.tree, items: []});
+      groups.get(key).items.push(t);
+    }
+    const specs = new Set(list.map((t) => t.spec));
+    const sorted = [...groups.values()].sort((a, b) => a.spec - b.spec || a.order - b.order);
+    for (const g of sorted) {
+      const tree = g.tree || 'Unknown tree';
+      d.append(el('h4', null, specs.size > 1 ? `Spec ${g.spec + 1} · ${tree} (${g.items.length})` : `${tree} (${g.items.length})`));
+      for (const t of g.items) d.append(kv(t.name || `spell ${t.spell}`, t.rank ? `rank ${t.rank}` : ''));
+    }
+    return d;
+  }
+  function reputationSection(list) {
+    const d = collapsible('reputation', `Reputation (${list.length})`);
+    const value = (r) => r.value ?? r.standing;
+    for (const r of [...list].sort((a, b) => value(b) - value(a))) {
+      d.append(kv(r.faction_name || `faction ${r.faction}`, `${r.tier || ''} · ${nf.format(value(r))}`));
+    }
+    return d;
+  }
+  function achievementSection(list) {
+    const points = list.reduce((n, a) => n + (a.points || 0), 0);
+    const d = collapsible('achievements', `Achievements (${list.length} · ${nf.format(points)} pts)`);
+    for (const a of list) {
+      const pts = a.points != null ? `${a.points} pts · ` : '';
+      d.append(kv(a.name || `#${a.achievement}`, pts + when(a.date)));
+    }
+    return d;
+  }
+
   function renderBody(c) {
     const f = document.createDocumentFragment();
 
@@ -706,14 +776,8 @@ const Inspect = (() => {
       f.append(d);
     }
 
-    // Raw ids for now; names need the DBC loader (ROADMAP Phase C).
-    const talents = collapsible('talents', `Talentos (${(c.talents || []).length})`);
-    for (const t of c.talents || []) talents.append(kv(`spec ${t.spec + 1}`, `spell ${t.spell}`));
-    const reps = collapsible('reputation', `Reputação (${(c.reputation || []).length})`);
-    for (const r of c.reputation || []) reps.append(kv(`facção ${r.faction}`, nf.format(r.standing)));
-    const achs = collapsible('achievements', `Conquistas (${(c.achievements || []).length})`);
-    for (const a of c.achievements || []) achs.append(kv(`#${a.achievement}`, when(a.date)));
-    f.append(talents, reps, achs);
+    f.append(talentSection(c.talents || []), reputationSection(c.reputation || []),
+             achievementSection(c.achievements || []));
 
     const top = body.scrollTop;
     body.replaceChildren(f);
@@ -1294,4 +1358,5 @@ PAGE = (PAGE
 
 if __name__ == "__main__":
     log.info("wowmap on :%d (db=%s dbc=%s maps=%s)", LISTEN_PORT, MYSQL["host"], DBC_DIR, MAPS_DIR)
+    threading.Thread(target=names, name="load-names", daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()

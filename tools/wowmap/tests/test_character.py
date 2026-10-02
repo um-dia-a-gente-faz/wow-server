@@ -5,6 +5,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+from dbc.names import GameNames  # noqa: E402
 
 CHARACTER_ROW = (
     7, "Rubens", 2, 10, 2, 0, 3430, 530,
@@ -18,6 +19,26 @@ INVENTORY_ROWS = [
     (0, 24, 102, 20482, "Torn Wyrm Scale", 6),
     (200, 0, 103, 159, "Refreshing Spring Water", 5),
 ]
+TALENT_ROWS = [(12663, 0), (20262, 1), (99999, 0)]
+REPUTATION_ROWS = [(911, 500), (72, 0), (4242, -100)]
+ACHIEVEMENT_ROWS = [(6, 1789000000), (7777, 1788000000)]
+
+
+def fake_names():
+    """A real GameNames with hand-filled tables (no DBC files needed)."""
+    with mock.patch("dbc.names.log"):
+        n = GameNames("/nonexistent")
+    n.spells = {12663: ("Improved Heroic Strike", "Rank 2", 132),
+                20262: ("Divine Strength", "Rank 1", 1)}
+    n.talent_tabs = {161: ("Arms", 1, 0), 383: ("Protection", 2, 1)}
+    n.talent_spells = {12663: (124, 161, 2), 20262: (2185, 383, 1)}
+    # race 10 (Blood Elf) is bit 9 = 512 of the Horde mask 690
+    n.factions = {911: ("Silvermoon City", 4, (690, 1101, 0, 0), (0, 0, 0, 0),
+                        (4000, -42000, 0, 0), 1118),
+                  72: ("Stormwind", 7, (1101, 690, 0, 0), (0, 0, 0, 0),
+                       (4000, -42000, 0, 0), 469)}
+    n.achievements = {6: ("Level 10", 10, 92, -1)}
+    return n
 
 
 class FakeCursor:
@@ -31,7 +52,13 @@ class FakeCursor:
         return CHARACTER_ROW
 
     def fetchall(self):
-        return INVENTORY_ROWS if "character_inventory" in self.sql else []
+        for table, rows in (("character_inventory", INVENTORY_ROWS),
+                            ("character_talent", TALENT_ROWS),
+                            ("character_reputation", REPUTATION_ROWS),
+                            ("character_achievement", ACHIEVEMENT_ROWS)):
+            if table in self.sql:
+                return rows
+        return []
 
     def __enter__(self):
         return self
@@ -62,7 +89,8 @@ class FakeTables:
 class FetchCharacterTests(unittest.TestCase):
     def setUp(self):
         patches = [mock.patch.object(app, "db", return_value=FakeConnection()),
-                   mock.patch.object(app, "tables", return_value=FakeTables())]
+                   mock.patch.object(app, "tables", return_value=FakeTables()),
+                   mock.patch.object(app, "names", return_value=fake_names())]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -90,6 +118,30 @@ class FetchCharacterTests(unittest.TestCase):
         self.assertEqual(water["bag"], pouch["item_guid"])
         self.assertEqual(inventory[2], {"bag": 0, "slot": 24, "item_guid": 102, "item_entry": 20482,
                                         "item_name": "Torn Wyrm Scale", "count": 6})
+
+    def test_talents_carry_name_tree_and_rank(self):
+        talents = self.character["talents"]
+        self.assertEqual(talents[0], {"spell": 12663, "spec": 0, "name": "Improved Heroic Strike",
+                                      "tree": "Arms", "tree_order": 0, "rank": 2})
+        self.assertEqual((talents[1]["tree"], talents[1]["spec"]), ("Protection", 1))
+        self.assertEqual(talents[2], {"spell": 99999, "spec": 0, "name": None, "tree": None,
+                                      "tree_order": None, "rank": None})
+
+    def test_reputation_adds_race_base_and_tier(self):
+        reps = {r["faction"]: r for r in self.character["reputation"]}
+        self.assertEqual(reps[911], {"faction": 911, "standing": 500,
+                                     "faction_name": "Silvermoon City",
+                                     "value": 4500, "tier": "Friendly"})
+        self.assertEqual((reps[72]["value"], reps[72]["tier"]), (-42000, "Hated"))
+        self.assertEqual(reps[4242], {"faction": 4242, "standing": -100, "faction_name": None,
+                                      "value": -100, "tier": "Unfriendly"})
+
+    def test_achievements_carry_name_and_points(self):
+        achs = self.character["achievements"]
+        self.assertEqual(achs[0], {"achievement": 6, "date": 1789000000,
+                                   "name": "Level 10", "points": 10})
+        self.assertEqual(achs[1], {"achievement": 7777, "date": 1788000000,
+                                   "name": None, "points": None})
 
 
 class PageTests(unittest.TestCase):
