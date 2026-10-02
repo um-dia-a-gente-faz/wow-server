@@ -98,6 +98,13 @@ class PageTests(unittest.TestCase):
         self.assertIn('id="inspect"', app.PAGE)
         self.assertIn("const Inspect", app.PAGE)
 
+    def test_page_is_english(self):
+        self.assertIn('<html lang="en">', app.PAGE)
+        self.assertNotIn("pt-BR", app.PAGE)
+        self.assertIn("Intl.NumberFormat('en-US')", app.PAGE)
+        for label in ("Health", "Position", "Reputation", "Zone", "Calibrate: off"):
+            self.assertIn(label, app.PAGE)
+
 
 if __name__ == "__main__":
     unittest.main()
