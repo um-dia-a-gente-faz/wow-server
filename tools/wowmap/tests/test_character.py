@@ -58,8 +58,8 @@ class FakeTables:
     def map_name(self, map_id):
         return "Expansion01"
 
-    def continent_name(self, map_id):
-        return "Outland"
+    def continent_name(self, map_id, zone_id=None):
+        return "Eastern Kingdoms" if (map_id, zone_id) == (530, 3430) else "Outland"
 
     def game_coords(self, area_id, world_x, world_y):
         return (37.84, 23.16)
@@ -99,7 +99,7 @@ class FetchCharacterTests(unittest.TestCase):
 
     def test_position_block(self):
         c = self.character
-        self.assertEqual(c["continent_name"], "Outland")
+        self.assertEqual(c["continent_name"], "Eastern Kingdoms")
         self.assertEqual(c["zone_name"], "Eversong Woods")
         self.assertEqual(c["subzone"], 3431)
         self.assertEqual(c["map_coords"], {"x": 37.8, "y": 23.2})

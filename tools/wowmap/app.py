@@ -140,7 +140,7 @@ def position_fields(t, cmap, zone, x, y):
     sub = area if area and area != zone and t.area_parent.get(area) == zone else None
     coords = t.game_coords(zone, x, y) if zone else None
     return {
-        "continent_name": t.continent_name(cmap),
+        "continent_name": t.continent_name(cmap, zone),
         "subzone": sub,
         "subzone_name": t.zone_name(sub) if sub else None,
         "map_coords": {"x": round(coords[0], 1), "y": round(coords[1], 1)} if coords else None,

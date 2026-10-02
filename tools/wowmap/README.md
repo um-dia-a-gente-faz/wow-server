@@ -159,8 +159,10 @@ the character's base state.
 
 - `money` is in copper; `money_gold` is the same value divided by 10000.
 - Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
-  name ("Expansion01"), `continent_name` its display name ("Outland", or the
-  instance's name). `map_coords` are the in-game map coordinates (0-100) inside the
+  name ("Expansion01"). `continent_name` is the continent the game shows the zone
+  on: the map named by the zone's `WorldMapArea` DisplayMapID when set (Eversong
+  Woods on map 530 is "Eastern Kingdoms", Azuremyst Isle "Kalimdor"), else Map.dbc's
+  display name ("Outland", or the instance's name). `map_coords` are the in-game map coordinates (0-100) inside the
   zone's `WorldMapArea` rect, `null` when the zone has none (most instances).
   `subzone` comes from the area grid in the worldserver's `maps/*.map` (the same
   lookup as `GridMap::getArea`); it ignores the WMO override for building interiors,

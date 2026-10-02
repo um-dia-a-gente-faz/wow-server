@@ -55,9 +55,15 @@ class PositionTests(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         d = pathlib.Path(cls.tmp.name)
         # WorldMapArea: ID, MapID, AreaID, AreaName, then fields 4-7 as floats.
+        # Field 8 is DisplayMapID: real values are 0 (Eversong, Silvermoon), 1 (Azuremyst)
+        # and -1 (Hellfire Peninsula, and every zone not on map 530).
+        none = 0xFFFFFFFF
         write_dbc(d / "WorldMapArea.dbc", 11, [
             [462, 530, 3430, "EversongWoods",
-             f32(-4487.5), f32(-9412.5), f32(11041.667), f32(7758.333)],
+             f32(-4487.5), f32(-9412.5), f32(11041.667), f32(7758.333), 0],
+            [480, 530, 3487, "SilvermoonCity", 0, 0, 0, 0, 0],
+            [464, 530, 3524, "AzuremystIsle", 0, 0, 0, 0, 1],
+            [465, 530, 3483, "Hellfire", 0, 0, 0, 0, none],
         ])
         # AreaTable: ID, ContinentID, ParentAreaID, ..., field 11 = name (enUS).
         area = lambda aid, parent, name: [aid, 530, parent] + [0] * 8 + [name]  # noqa: E731
@@ -69,6 +75,8 @@ class PositionTests(unittest.TestCase):
         ])
         # Map: ID, Directory, ..., field 5 = MapName_lang[enUS].
         write_dbc(d / "Map.dbc", 66, [
+            [0, "Azeroth", 0, 0, 0, "Eastern Kingdoms"],
+            [1, "Kalimdor", 0, 0, 0, "Kalimdor"],
             [530, "Expansion01", 0, 0, 0, "Outland"],
             [36, "DeadminesInstance", 1, 0, 0, "Deadmines"],
         ])
@@ -91,6 +99,13 @@ class PositionTests(unittest.TestCase):
         self.assertEqual(self.t.continent_name(530), "Outland")
         self.assertEqual(self.t.continent_name(36), "Deadmines")
         self.assertEqual(self.t.continent_name(9999), "9999")
+
+    def test_continent_follows_the_zone_display_map(self):
+        self.assertEqual(self.t.continent_name(530, 3430), "Eastern Kingdoms")   # Eversong
+        self.assertEqual(self.t.continent_name(530, 3487), "Eastern Kingdoms")   # Silvermoon
+        self.assertEqual(self.t.continent_name(530, 3524), "Kalimdor")           # Azuremyst
+        self.assertEqual(self.t.continent_name(530, 3483), "Outland")            # Hellfire
+        self.assertEqual(self.t.continent_name(36, 1581), "Deadmines")           # instance
 
     def test_game_coords_match_the_in_game_map(self):
         # Sunstrider Isle reads about 38, 21 on the game's Eversong Woods map.

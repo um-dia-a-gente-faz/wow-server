@@ -63,6 +63,12 @@ class DbcTables:
             self.rects[r[2]] = (self._f(r[6]), self._f(r[7]),   # left, right
                                 self._f(r[4]), self._f(r[5]))   # top, bottom
 
+        # WorldMapArea field 8 is DisplayMapID (int32, TrinityCore WorldMapAreaEntry):
+        # -1 normally, else the map the client shows the zone on. Map 530 holds the
+        # Blood Elf zones (-> 0, Eastern Kingdoms) and the Draenei ones (-> 1, Kalimdor).
+        self.display_map = {r[2]: struct.unpack("<i", struct.pack("<I", r[8]))[0]
+                            for r in self._wm if r[2] and len(r) > 8}
+
         self.area_names = {r[0]: self._s(self._area_str, r[11]) for r in self._area
                            if len(r) > 11}
         self.map_names = {r[0]: self._s(self._map_str, r[1]) for r in self._map
@@ -106,8 +112,13 @@ class DbcTables:
     def map_name(self, map_id):
         return self.map_names.get(map_id) or str(map_id)
 
-    def continent_name(self, map_id):
-        """Display name of a map: "Eastern Kingdoms", "Outland", or an instance's name."""
+    def continent_name(self, map_id, zone_id=None):
+        """Continent the game shows a zone on: "Eastern Kingdoms", "Outland", or an
+        instance's name. Uses the zone's WorldMapArea DisplayMapID when it has one, so
+        Eversong Woods (map 530) is in Eastern Kingdoms, not Outland."""
+        display = self.display_map.get(zone_id, -1) if zone_id else -1
+        if display >= 0:
+            map_id = display
         return self.map_display_names.get(map_id) or self.map_name(map_id)
 
     def game_coords(self, area_id, world_x, world_y):
