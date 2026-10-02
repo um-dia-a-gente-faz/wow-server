@@ -18,6 +18,7 @@ Env:
     MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD   as elsewhere in this repo
     DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc)
     MAPS_DIR    default /maps       (extracted PNGs)
+    GRID_MAPS_DIR default /server-maps (the worldserver's maps/*.map, for subzones)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
 """
@@ -32,7 +33,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
-from transform import DbcTables
+from transform import DbcTables, GridAreas
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wowmap")
@@ -47,6 +48,7 @@ MYSQL: dict = dict(
 )
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
+GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
@@ -121,6 +123,30 @@ def db():
     return pymysql.connect(**MYSQL)
 
 
+_grid_areas = None
+
+
+def grid_areas():
+    global _grid_areas
+    if _grid_areas is None:
+        _grid_areas = GridAreas(GRID_MAPS_DIR)
+    return _grid_areas
+
+
+def position_fields(t, cmap, zone, x, y):
+    """Continent, subzone and in-game map coordinates for one saved position."""
+    area = grid_areas().area_id(cmap, x, y)
+    # Only a subzone of the saved zone; at zone borders the grid can disagree.
+    sub = area if area and area != zone and t.area_parent.get(area) == zone else None
+    coords = t.game_coords(zone, x, y) if zone else None
+    return {
+        "continent_name": t.continent_name(cmap),
+        "subzone": sub,
+        "subzone_name": t.zone_name(sub) if sub else None,
+        "map_coords": {"x": round(coords[0], 1), "y": round(coords[1], 1)} if coords else None,
+    }
+
+
 # ---------------------------------------------------------------- queries
 def fetch_players():
     sql = """
@@ -151,6 +177,7 @@ def fetch_players():
                 "norm_x": round(n[0], 4) if n else None,
                 "norm_y": round(n[1], 4) if n else None,
                 "playtime_seconds": totaltime,
+                **position_fields(t, cmap, zone, float(x), float(y)),
             })
     return out
 
@@ -271,6 +298,7 @@ def fetch_character(name):
         "position_y": round(float(y), 2),
         "position_z": round(float(z), 2),
         "orientation": round(float(orient), 3),
+        **position_fields(t, cmap, zone, float(x), float(y)),
         "money": money,
         "money_gold": float(money) / 10000.0,
         "totaltime": totaltime,
@@ -555,6 +583,17 @@ INSPECT_HTML = r"""
 # and item names come straight from the database.
 INSPECT_JS = r"""
 <script>
+// Position text shared by the inspect drawer, the player list and marker tooltips.
+function placeText(p) {
+  return [p.continent_name, p.zone_name, p.subzone_name].filter(Boolean).join(' › ');
+}
+function mapCoordsText(p) {
+  return p.map_coords ? `${p.map_coords.x.toFixed(1)}, ${p.map_coords.y.toFixed(1)}` : '';
+}
+function worldText(x, y, z) {
+  return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
+}
+
 const Inspect = (() => {
   const EQUIP_SLOTS = ['Cabeça', 'Pescoço', 'Ombros', 'Camisa', 'Peito', 'Cintura', 'Pernas',
     'Pés', 'Pulsos', 'Mãos', 'Dedo 1', 'Dedo 2', 'Berloque 1', 'Berloque 2', 'Costas',
@@ -665,7 +704,7 @@ const Inspect = (() => {
              el('span', 'badge' + (c.online ? ' on' : ''), c.online ? 'online' : 'offline'));
     head.replaceChildren(h,
       el('div', 'line', `Nível ${c.level} · ${c.race_name} · ${c.class_name}`),
-      el('div', 'line', c.zone_name));
+      el('div', 'line', placeText(c)));
   }
 
   function renderBody(c) {
@@ -681,7 +720,12 @@ const Inspect = (() => {
     f.append(kv('Ouro', money(c.money)));
     f.append(kv('Tempo de jogo', duration(c.totaltime)));
     f.append(kv('Último logout', when(c.logout_time)));
-    f.append(kv('Posição', `${c.map_name} (${c.map}) · ${c.position_x}, ${c.position_y}, ${c.position_z}`));
+
+    f.append(el('h3', null, 'Position'));
+    f.append(kv('Location', placeText(c)));
+    f.append(kv('Map coords', mapCoordsText(c) || '—'));
+    f.append(kv('World X, Y, Z', worldText(c.position_x, c.position_y, c.position_z)));
+    f.append(kv('Facing', `${c.orientation.toFixed(2)} rad`));
 
     const inv = groupInventory(c.inventory || []);
     f.append(el('h3', null, 'Equipado'));
@@ -1067,7 +1111,8 @@ function place() {
     lvl.textContent = p.level;
     lbl.append(p.name + ' ', lvl);
     d.append(ring, lbl);
-    d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${p.zone_name}`;
+    d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
+      + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
     d.onclick = () => {
       if (calibrating) return;
       selectCharacter(p.name);
@@ -1107,7 +1152,8 @@ function renderList() {
     nm.textContent = p.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instância ' + p.instance}`;
+    const where = p.map_coords ? `${p.zone_name} ${mapCoordsText(p)}` : p.zone_name;
+    meta.textContent = `${p.level} ${p.class_name} · ${p.in_world ? where : p.continent_name + ' (instance)'}`;
     e.append(dot, nm, meta);
     e.onclick = () => selectCharacter(p.name);
     l.appendChild(e);

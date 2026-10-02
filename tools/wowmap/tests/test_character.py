@@ -58,11 +58,25 @@ class FakeTables:
     def map_name(self, map_id):
         return "Expansion01"
 
+    def continent_name(self, map_id):
+        return "Outland"
+
+    def game_coords(self, area_id, world_x, world_y):
+        return (37.84, 23.16)
+
+    area_parent = {3431: 3430}
+
+
+class FakeGridAreas:
+    def area_id(self, map_id, world_x, world_y):
+        return 3431
+
 
 class FetchCharacterTests(unittest.TestCase):
     def setUp(self):
         patches = [mock.patch.object(app, "db", return_value=FakeConnection()),
-                   mock.patch.object(app, "tables", return_value=FakeTables())]
+                   mock.patch.object(app, "tables", return_value=FakeTables()),
+                   mock.patch.object(app, "grid_areas", return_value=FakeGridAreas())]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -83,6 +97,21 @@ class FetchCharacterTests(unittest.TestCase):
         self.assertEqual(c["money"], 30)
         self.assertAlmostEqual(c["money_gold"], 0.003)
 
+    def test_position_block(self):
+        c = self.character
+        self.assertEqual(c["continent_name"], "Outland")
+        self.assertEqual(c["zone_name"], "Eversong Woods")
+        self.assertEqual(c["subzone"], 3431)
+        self.assertEqual(c["map_coords"], {"x": 37.8, "y": 23.2})
+        self.assertEqual((c["position_x"], c["position_y"], c["position_z"]),
+                         (10350.3, -6348.67, 31.79))
+
+    def test_subzone_must_belong_to_the_saved_zone(self):
+        t = FakeTables()
+        with mock.patch.object(app, "grid_areas", return_value=FakeGridAreas()):
+            self.assertIsNone(app.position_fields(t, 530, 3433, 1.0, 2.0)["subzone"])
+            self.assertIsNone(app.position_fields(t, 530, 3431, 1.0, 2.0)["subzone"])
+
     def test_inventory_exposes_item_guid_to_resolve_bag_contents(self):
         inventory = self.character["inventory"]
         pouch = next(i for i in inventory if i["slot"] == 19)
@@ -97,6 +126,12 @@ class PageTests(unittest.TestCase):
         self.assertNotIn("@inspect-", app.PAGE)
         self.assertIn('id="inspect"', app.PAGE)
         self.assertIn("const Inspect", app.PAGE)
+
+    def test_position_text_helpers_are_shared_with_the_page(self):
+        for name in ("function placeText", "function mapCoordsText", "function worldText"):
+            self.assertIn(name, app.PAGE)
+        self.assertIn("placeText(p)", app.PAGE)   # marker tooltip
+        self.assertIn("mapCoordsText(p)", app.PAGE)   # player list
 
 
 if __name__ == "__main__":

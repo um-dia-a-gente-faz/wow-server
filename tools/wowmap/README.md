@@ -22,6 +22,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 |---|---|---|
 | `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
+| `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
@@ -136,6 +137,10 @@ the character's base state.
   "position_y": -4415.2,
   "position_z": 22.1,
   "orientation": 1.2,
+  "continent_name": "Kalimdor",
+  "subzone": null,
+  "subzone_name": null,
+  "map_coords": {"x": 52.4, "y": 82.5},
   "money": 1234500,
   "money_gold": 123.45,
   "totaltime": 86400,
@@ -153,6 +158,13 @@ the character's base state.
 ```
 
 - `money` is in copper; `money_gold` is the same value divided by 10000.
+- Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
+  name ("Expansion01"), `continent_name` its display name ("Outland", or the
+  instance's name). `map_coords` are the in-game map coordinates (0-100) inside the
+  zone's `WorldMapArea` rect, `null` when the zone has none (most instances).
+  `subzone` comes from the area grid in the worldserver's `maps/*.map` (the same
+  lookup as `GridMap::getArea`); it ignores the WMO override for building interiors,
+  and is `null` when the grid has no subzone of the saved zone at that spot.
 - `health` and `power` hold current values from `characters.health` and
   `power1`-`power7`. The `power` keys follow TrinityCore's `Powers` enum
   (`POWER_MANA = 0` … `POWER_RUNIC_POWER = 6`), so `power1` is mana and `power7`

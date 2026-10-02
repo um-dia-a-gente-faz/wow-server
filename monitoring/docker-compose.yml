@@ -95,6 +95,7 @@ services:
       - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in the repo-root .env}
       - DBC_DIR=/dbc
       - MAPS_DIR=/maps
+      - GRID_MAPS_DIR=/server-data/maps
       - LISTEN_PORT=9400
       - CALIBRATION_FILE=/app/calibration.json
     ports:
@@ -103,6 +104,8 @@ services:
       - /opt/wowmap-data/dbc:/dbc:ro
       - /opt/wowmap-data/maps:/maps:ro
       - /opt/wowmap-data/calibration.json:/app/calibration.json
+      # The worldserver's extracted maps/*.map, read-only: subzone at a position (UM-75).
+      - server_data:/server-data:ro
     networks:
       - wow-game
 
@@ -110,3 +113,8 @@ networks:
   wow-game:
     external: true
     name: wow-server_default
+
+volumes:
+  server_data:
+    external: true
+    name: wow-server_server_data
