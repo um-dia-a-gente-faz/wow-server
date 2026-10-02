@@ -37,6 +37,10 @@ jobs:
       - name: chat-feed unit tests
         run: python -m unittest discover -s tools/chat-feed/tests -v
 
+      # tools/dbc (the shared WDBC reader) is stdlib-only.
+      - name: dbc unit tests
+        run: python -m unittest discover -s tools/dbc/tests -v
+
       # wowmap needs PyMySQL + cryptography (see its requirements.txt).
       - name: wowmap unit tests
         run: |
