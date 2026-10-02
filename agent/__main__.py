@@ -21,7 +21,7 @@ from .config import load_config
 from .auth import auth_logon
 from .session import WoWSession
 from .llm import LLMClient
-from .think import think_and_act
+from .think import ThinkState, think_and_act
 from .audit import AuditLogger
 from .reflexes.follow import get_follow_reflex
 from .reflexes.rest import get_rest_reflex
@@ -308,6 +308,7 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
     supervisor should retry), False for a normal end (duration elapsed)."""
     log = logging.getLogger("agent")
     cycle = 0
+    think_state = ThinkState()  # UM-90: recent-action history + loop guard, per session attempt
     while duration is None or time.monotonic() - start < duration:
         if sess.unexpected_disconnect:
             log.warning("world connection dropped unexpectedly — ending this session attempt")
@@ -342,7 +343,7 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
             result = think_and_act(sess, sess.world_state, llm_client,
                                     persona=cfg.persona, my_position=sess.player_position,
                                     audit_logger=audit_logger, cycle=cycle,
-                                    reflex_state=_reflex_state(sess))
+                                    reflex_state=_reflex_state(sess), state=think_state)
             if not result.ok:
                 log.info("think cycle: no action taken (%s)", result.error)
 
