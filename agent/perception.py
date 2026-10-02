@@ -236,7 +236,8 @@ class WorldState:
         # UM-93: chat channels we're in, full server name ("General -
         # Eversong Woods") -> {"channel_id", "flags"}. Filled from
         # SMSG_CHANNEL_NOTIFY (agent.channels); exposed to the LLM as
-        # snapshot()'s sorted 'channels' list so it knows channel_say works.
+        # snapshot()'s sorted 'channels' list (channel_say is unregistered
+        # while chat is deferred, UM-98).
         self.channels: dict[str, dict] = {}
 
     def set_my_guid(self, guid: int):
