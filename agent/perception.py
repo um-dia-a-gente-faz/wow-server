@@ -537,12 +537,13 @@ class WorldState:
                     self.quest_texts.want(quest_id)
                 entry = {
                     "slot": slot["slot"], "quest_id": quest_id, "state": slot["state"],
+                    "state_name": qu.quest_slot_state_name(slot["state"]),
                     "counters": slot["counters"], "time": slot["time"],
                 }
                 if cached is not None:
                     entry["title"] = cached.get("title")
                     entry["objectives_text"] = cached.get("objectives")
-                    entry["objectives"] = _quest_objectives_progress(slot["counters"], cached)
+                    entry["objectives"] = _quest_objectives_progress(slot["counters"], cached, self.names)
                 out.append(entry)
             return out
 
@@ -1039,26 +1040,50 @@ def _object_dict(obj: ObjectInfo, distance: float) -> dict:
     return d
 
 
-def _quest_objectives_progress(counters: list, cached: dict) -> list:
-    """Best-effort per-objective progress strings, e.g. "Mana Wyrm slain:
-    3/8" for a kill-credit objective or "Linen Cloth: 2/5" for an item
-    objective — pairs the quest log's up-to-4 raw counters (agent.
-    update_fields.decode_quest_log) against the cached quest's
-    required_credit (creature/GO kill credit) then required_items
-    (agent.quests.parse_quest_query_response), in that order, since that's
-    the order TrinityCore's own quest-log UI lists them in. A counter with
-    no corresponding cached requirement (index beyond what the quest
-    actually needs) is skipped rather than guessed at."""
-    reqs = list(cached.get("required_credit") or []) + list(cached.get("required_items") or [])
+def _quest_objectives_progress(counters: list, cached: dict, names=None) -> list:
+    """Per-objective progress for one quest-log entry, e.g. {"name": "Mana
+    Wyrm", "count": 3, "needed": 8, "text": "Mana Wyrm slain: 3/8"}.
+
+    Quest-log counter i belongs to kill-credit objective i
+    (Player::SendQuestUpdateAddCreatureOrGo / SetQuestSlotCounter), so the
+    4 creature/GO slots of the cached SMSG_QUEST_QUERY_RESPONSE pair with
+    counters by index. Item objectives have no counter in the update fields
+    (the server tracks them from the bags), so their `count` is None.
+    Names come from the creature/gameobject name cache (`names`, an
+    agent.names.NameCache); an unknown entry is queued for a query and
+    shown by id until the answer arrives. Caller holds the WorldState lock.
+    """
     out = []
-    for i, req in enumerate(reqs):
-        if i >= len(counters) or not req.get("count"):
+    for i, req in enumerate(cached.get("required_credit") or []):
+        if not req.get("entry") or not req.get("count"):
             continue
-        out.append({
-            "entry": req["entry"], "count": counters[i], "needed": req["count"],
-            "text": f"{req['entry']}: {counters[i]}/{req['count']}",
-        })
+        is_go = bool(req.get("gameobject"))
+        name = _template_name(names, req["entry"], is_go)
+        label = req.get("text") or (f"{name} slain" if not is_go else name)
+        count = counters[i] if i < len(counters) else 0
+        out.append({"entry": req["entry"], "gameobject": is_go, "name": name,
+                    "count": count, "needed": req["count"],
+                    "text": f"{label}: {count}/{req['count']}"})
+    for req in cached.get("required_items") or []:
+        if not req.get("entry") or not req.get("count"):
+            continue
+        out.append({"item": req["entry"], "count": None, "needed": req["count"],
+                    "text": f"item {req['entry']}: ?/{req['count']}"})
     return out
+
+
+def _template_name(names, entry: int, is_go: bool) -> str:
+    kind = "gameobject" if is_go else "creature"
+    if names is not None:
+        cache = names.gameobjects if is_go else names.creatures
+        data = cache.get(entry)
+        if data and data.get("name"):
+            return data["name"]
+        if entry not in cache:
+            # CMSG_CREATURE_QUERY/CMSG_GAMEOBJECT_QUERY: the handler only
+            # uses the entry, so no sample guid is needed.
+            getattr(names, "want_" + kind)(entry, 0)
+    return f"{kind} {entry}"
 
 
 def _first_npc_text(data: dict) -> str:
