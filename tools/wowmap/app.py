@@ -246,6 +246,14 @@ def fetch_character(name):
             WHERE guid = %s
             ORDER BY faction
         """, (guid,), "reputation")
+        # Max health/power only exist when the worldserver persists them
+        # (PlayerSave.Stats.MinLevel > 0; Player::_SaveStats). No row -> None.
+        stats = best_effort(cur, """
+            SELECT maxhealth, maxpower1, maxpower2, maxpower3, maxpower4,
+                   maxpower5, maxpower6, maxpower7
+            FROM characters.character_stats
+            WHERE guid = %s
+        """, (guid,), "stats")
         achievements = best_effort(cur, """
             SELECT achievement, date
             FROM characters.character_achievement
@@ -276,10 +284,13 @@ def fetch_character(name):
         "totaltime": totaltime,
         "logout_time": logout_time,
         "online": bool(online),
-        # Current values only: max health/power are computed by the worldserver
-        # at runtime and never persisted (docs/ROADMAP.md, Phase B option 1).
         "health": health,
         "power": dict(zip(POWER_NAMES, powers)),
+        # From characters.character_stats, written in the same save as health/power
+        # above; None when the row doesn't exist (stat saving off, or the character
+        # hasn't been saved since it was turned on).
+        "max_health": stats[0][0] if stats else None,
+        "max_power": dict(zip(POWER_NAMES, stats[0][1:])) if stats else None,
         "inventory": [
             {"bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
              "item_name": item_name, "count": count}
@@ -534,6 +545,10 @@ INSPECT_CSS = r"""
   .drawer .kv .v, .drawer .item .v { flex:1; min-width:0; overflow-wrap:anywhere; }
   .drawer .item .n { color:var(--dim); }
   .drawer .none { color:var(--dim); font-size:12px; padding:3px 0; }
+  .drawer .bar { position:relative; height:16px; background:#20263a; border-radius:3px; overflow:hidden; }
+  .drawer .bar .fill { position:absolute; inset:0 auto 0 0; }
+  .drawer .bar .txt { position:relative; display:block; text-align:center; font-size:11px;
+                      line-height:16px; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
@@ -563,6 +578,9 @@ const Inspect = (() => {
     happiness: 'Felicidade', rune: 'Runas', runic_power: 'Poder rúnico'};
   // The server keeps rage and runic power in tenths (1000 is shown as 100 in game).
   const POWER_SCALE = {rage: 10, runic_power: 10};
+  // Bar colours roughly follow the default unit frames.
+  const BAR_COLORS = {health: '#1f9e3a', mana: '#2f5fd8', rage: '#c42f2f', focus: '#d98a3a',
+    energy: '#d6c22e', happiness: '#2fa88a', rune: '#7f7f7f', runic_power: '#1fa6c4'};
   const CLASS_POWERS = {1: ['rage'], 2: ['mana'], 3: ['mana'], 4: ['energy'], 5: ['mana'],
     6: ['runic_power'], 7: ['mana'], 8: ['mana'], 9: ['mana'], 11: ['mana', 'rage', 'energy']};
   const nf = new Intl.NumberFormat('pt-BR');
@@ -582,6 +600,22 @@ const Inspect = (() => {
   function kv(label, value, cls = 'kv') {
     const r = el('div', cls);
     r.append(el('span', 'k', label), el('span', 'v', value));
+    return r;
+  }
+  // A bar when the max is known (character_stats row), otherwise the plain number.
+  function meter(label, cur, max, color) {
+    const value = nf.format(cur);
+    if (!(max > 0)) return kv(label, value);
+    const b = el('div', 'bar');
+    const fill = el('span', 'fill');
+    fill.style.width = `${Math.max(0, Math.min(100, cur / max * 100))}%`;
+    fill.style.background = color;
+    b.append(fill, el('span', 'txt', `${value} / ${nf.format(max)}`));
+    const r = el('div', 'kv');
+    r.append(el('span', 'k', label));
+    const v = el('span', 'v');
+    v.append(b);
+    r.append(v);
     return r;
   }
   function money(copper) {
@@ -672,11 +706,13 @@ const Inspect = (() => {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(kv('Vida', nf.format(c.health)));
-    const power = c.power || {};
+    f.append(meter('Health', c.health, c.max_health, BAR_COLORS.health));
+    const power = c.power || {}, maxPower = c.max_power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
-      f.append(kv(POWER_LABELS[key], nf.format(Math.floor(power[key] / (POWER_SCALE[key] || 1)))));
+      const scale = POWER_SCALE[key] || 1;
+      f.append(meter(POWER_LABELS[key], Math.floor(power[key] / scale),
+                     Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]));
     }
     f.append(kv('Ouro', money(c.money)));
     f.append(kv('Tempo de jogo', duration(c.totaltime)));
