@@ -117,6 +117,22 @@ class EndpointsTest(_ServerCase):
         self.assertEqual(body["tokens"]["prompt_total"], 700)
         self.assertEqual(body["tokens"]["completion_total"], 70)
         self.assertEqual(body["history"][0]["action"], "move_to")
+        self.assertIsNone(body["brain"])
+
+    def test_brain_reports_which_brain_decided_and_jev_confidence(self):
+        # UM-101: the observer's configured brain until a decision says otherwise.
+        self.observer.brain_name = "jev"
+        self.assertEqual(json.loads(self.get("/brain")[1])["brain"], "jev")
+        self.observer.record_decision({
+            "cycle": 1, "model": "free-model", "brain": "llm", "confidence": None,
+            "fallback": "jev call failed: HTTP 402", "tool_call": {"name": "loot", "args": {}}})
+        self.observer.record_decision({
+            "cycle": 2, "model": "typesafe/jev-1.13", "brain": "jev", "confidence": 0.77,
+            "tool_call": {"name": "loot", "args": {}}})
+        body = json.loads(self.get("/brain?n=5")[1])
+        self.assertEqual((body["brain"], body["model"]), ("jev", "typesafe/jev-1.13"))
+        self.assertEqual(body["decisions"][0]["fallback"], "jev call failed: HTTP 402")
+        self.assertEqual(body["decisions"][1]["confidence"], 0.77)
 
     def test_detached_session_reports_disconnected(self):
         self.observer.detach()

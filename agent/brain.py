@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Brain seam (UM-101, ADR 0001): one place that decides which model picks
+this think cycle's action.
+
+Two brains sit behind `Brain.decide()`:
+
+- **Jev** (agent/jev.py, UM-99): the candidate generator (agent/candidates.py,
+  UM-97) turns the snapshot into concrete `(action, params)` options and Jev
+  picks one. Used whenever a JevClient is configured.
+- **LLM** (agent/llm.py, UM-44): the action catalog goes out as tools and the
+  model fills in the arguments. Used when Jev is not configured, and as the
+  per-cycle fallback when a Jev call fails.
+
+Fallback policy (Jev configured):
+
+- Any JevError (network error, any HTTP status, malformed answer, a choice we
+  did not offer) falls back to the LLM for that cycle, when an LLM is
+  configured. Without one, the cycle takes no action, like an LLM failure
+  does today.
+- 401/402/403 (bad key, out of credits) also start a JEV_AUTH_COOLDOWN_S
+  cooldown, and 429 (rate limited) a JEV_RATE_LIMIT_COOLDOWN_S one. During a
+  cooldown Jev is not called at all: the LLM decides, or, without an LLM, the
+  cycle is skipped. Retrying a dead key or an empty account every 3-5 s only
+  burns requests. Other failures have no cooldown: they are usually one-offs.
+
+`decide()` returns a Decision that carries everything the audit log needs
+(UM-51): which brain decided, Jev's confidence, model, token usage, latency,
+and why Jev was skipped when the LLM decided as a fallback.
+"""
+
+import logging
+import time
+from dataclasses import dataclass, field
+
+from . import actions as ac
+from . import candidates as cand
+from .jev import JevClient, JevError
+from .llm import LLMClient, LLMError
+
+log = logging.getLogger("agent.brain")
+
+BRAIN_JEV = "jev"
+BRAIN_LLM = "llm"
+
+JEV_AUTH_COOLDOWN_S = 300.0       # 401/402/403: key or credits, will not fix itself in seconds
+JEV_RATE_LIMIT_COOLDOWN_S = 30.0  # 429
+_COOLDOWNS = {401: JEV_AUTH_COOLDOWN_S, 402: JEV_AUTH_COOLDOWN_S,
+              403: JEV_AUTH_COOLDOWN_S, 429: JEV_RATE_LIMIT_COOLDOWN_S}
+
+# Actions the LLM never sees as tools. `idle` (UM-97) exists so a choice-only
+# brain always has a valid option; offered to a free tool-calling model it is
+# an escape hatch that turns "could not decide" into a successful no-op,
+# which hides exactly the failures UM-44's >=90% valid-call bar measures.
+# Leaving it out keeps the LLM path what it was before UM-97.
+LLM_EXCLUDED_ACTIONS = frozenset({"idle"})
+
+
+class BrainError(Exception):
+    """No brain produced an action this cycle. The message is ready for the
+    audit log / ThinkResult; `decision` carries the brain metadata gathered
+    before the failure (brain name, fallback reason, usage)."""
+
+    def __init__(self, message: str, decision: "Decision"):
+        super().__init__(message)
+        self.decision = decision
+
+
+@dataclass
+class Decision:
+    action: str | None = None
+    params: dict = field(default_factory=dict)
+    brain: str | None = None            # BRAIN_JEV / BRAIN_LLM: who decided (or was last tried)
+    model: str | None = None
+    confidence: float | None = None     # Jev only
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    latency_ms: float | None = None
+    fallback: str | None = None         # why Jev did not decide, when it was configured
+    candidates: int | None = None       # how many candidates Jev was offered
+
+
+def llm_catalog() -> list[dict]:
+    """The action catalog as the LLM sees it: every registered action except
+    LLM_EXCLUDED_ACTIONS."""
+    return [s for s in ac.catalog() if s["name"] not in LLM_EXCLUDED_ACTIONS]
+
+
+class Brain:
+    """Routes one decision to Jev or the LLM. Either client may be None; with
+    both None there is nothing to decide with (see `from_config`, which
+    returns None in that case so the main loop idles as before)."""
+
+    def __init__(self, jev=None, llm=None, clock=time.monotonic):
+        self.jev = jev
+        self.llm = llm
+        self._clock = clock
+        self._jev_cooldown_until = 0.0
+        self._jev_cooldown_reason = None
+
+    @classmethod
+    def from_config(cls, cfg) -> "Brain | None":
+        jev = llm = None
+        if cfg.jev_enabled:
+            jev = JevClient(cfg.jev_base_url, model=cfg.jev_model, api_key=cfg.jev_api_key)
+        if cfg.llm_base_url and cfg.llm_model:
+            llm = LLMClient(cfg.llm_base_url, cfg.llm_model, api_key=cfg.llm_api_key)
+        if jev is None and llm is None:
+            return None
+        return cls(jev=jev, llm=llm)
+
+    def describe(self) -> str:
+        parts = []
+        if self.jev is not None:
+            parts.append(f"jev {self.jev.model} @ {self.jev.base_url}")
+        if self.llm is not None:
+            parts.append(f"llm {self.llm.model} @ {self.llm.base_url}"
+                         + (" (fallback)" if self.jev is not None else ""))
+        return ", ".join(parts) or "(none)"
+
+    @property
+    def model(self) -> str | None:
+        """The primary brain's model, for the observability API's header."""
+        client = self.jev or self.llm
+        return getattr(client, "model", None)
+
+    def decide(self, snapshot: dict, *, persona: str = "", history: list | None = None,
+               my_guid: int | None = None, reflex_state: dict | None = None,
+               blocked=None) -> Decision:
+        """Pick one `(action, params)` for this cycle. Raises BrainError when
+        no configured brain produced one. `blocked(action, params) -> bool`
+        (ThinkState.repeat_blocked) drops candidates the loop guard would
+        refuse anyway, so Jev is not offered them (`idle` is always kept)."""
+        fallback = None
+        if self.jev is not None:
+            d = Decision(brain=BRAIN_JEV, model=getattr(self.jev, "model", None))
+            fallback = self._jev_skip_reason()
+            if fallback is None:
+                try:
+                    options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state)
+                    if blocked is not None:
+                        options = [c for c in options
+                                   if c["action"] == "idle" or not blocked(c["action"], c["params"])]
+                    d.candidates = len(options)
+                    d.action, d.params = self.jev.choose_action(snapshot, options, persona=persona,
+                                                                history=history)
+                    self._fill_jev(d)
+                    return d
+                except JevError as e:
+                    self._fill_jev(d)
+                    fallback = f"jev call failed: {e}"
+                    self._maybe_cool_down(e)
+                    log.warning("%s%s", fallback, " — falling back to the llm" if self.llm else "")
+            if self.llm is None:
+                d.fallback = fallback
+                raise BrainError(fallback, d)
+
+        d = Decision(brain=BRAIN_LLM, model=getattr(self.llm, "model", None), fallback=fallback)
+        try:
+            if history is not None:
+                d.action, d.params = self.llm.choose_action(snapshot, llm_catalog(), persona=persona,
+                                                            history=history)
+            else:
+                d.action, d.params = self.llm.choose_action(snapshot, llm_catalog(), persona=persona)
+        except LLMError as e:
+            self._fill_llm(d)
+            message = f"llm call failed: {e}"
+            if fallback:
+                message = f"{fallback}; {message}"
+            raise BrainError(message, d) from e
+        self._fill_llm(d)
+        return d
+
+    # ── internals ──────────────────────────────────────────────────
+    def _jev_skip_reason(self) -> str | None:
+        remaining = self._jev_cooldown_until - self._clock()
+        if remaining <= 0:
+            return None
+        return f"jev cooling down {remaining:.0f}s more ({self._jev_cooldown_reason})"
+
+    def _maybe_cool_down(self, e: JevError):
+        seconds = _COOLDOWNS.get(getattr(e, "status", None))
+        if seconds:
+            self._jev_cooldown_until = self._clock() + seconds
+            self._jev_cooldown_reason = f"HTTP {e.status}"
+            log.warning("jev returned HTTP %d — not calling it for %.0fs", e.status, seconds)
+
+    def _fill_jev(self, d: Decision):
+        usage = getattr(self.jev, "last_usage", None) or {}
+        d.prompt_tokens = usage.get("input_tokens")
+        d.completion_tokens = usage.get("output_tokens")
+        d.latency_ms = getattr(self.jev, "last_latency_ms", None)
+        d.confidence = getattr(self.jev, "last_confidence", None)
+
+    def _fill_llm(self, d: Decision):
+        usage = getattr(self.llm, "last_usage", None) or {}
+        d.prompt_tokens = usage.get("prompt_tokens")
+        d.completion_tokens = usage.get("completion_tokens")
+        d.latency_ms = getattr(self.llm, "last_latency_ms", None)
+        # UM-94: the model that actually answered (None on a failed call);
+        # clients without `last_model` keep the configured `model`.
+        if hasattr(self.llm, "last_model"):
+            d.model = self.llm.last_model

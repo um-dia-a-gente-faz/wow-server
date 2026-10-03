@@ -21,7 +21,7 @@ from .chat_relay import ChatRelay
 from .config import load_config
 from .auth import auth_logon
 from .session import WoWSession
-from .llm import LLMClient
+from .brain import Brain
 from .think import ThinkState, think_and_act
 from .audit import AuditLogger
 from .http_api import AgentObserver, start_server
@@ -91,25 +91,27 @@ def main():
         log.info("dry-run complete.")
         return
 
-    llm_client = None
-    if cfg.llm_base_url and cfg.llm_model:
-        llm_client = LLMClient(cfg.llm_base_url, cfg.llm_model, api_key=cfg.llm_api_key)
-        log.info("llm: %s @ %s", cfg.llm_model, cfg.llm_base_url)
+    # UM-101: Jev when JEV_* is configured, the LLM as its per-cycle
+    # fallback (or alone); neither -> no think step, the agent idles.
+    brain = Brain.from_config(cfg)
+    if brain is not None:
+        log.info("brain: %s", brain.describe())
     else:
-        log.warning("LLM_BASE_URL/LLM_MODEL not set — think step disabled, agent will idle")
+        log.warning("neither JEV_BASE_URL/JEV_API_KEY nor LLM_BASE_URL/LLM_MODEL set — "
+                    "think step disabled, agent will idle")
 
     audit_logger = AuditLogger(cfg.agent_name, base_dir=cfg.audit_dir,
                                 retention_days=cfg.audit_retention_days)
     log.info("audit log: %s (retention %d days)", audit_logger.agent_dir, audit_logger.retention_days)
 
-    observer, http_server = _start_observer(cfg, audit_logger, log)
+    observer, http_server = _start_observer(cfg, audit_logger, log, brain=brain)
 
     log.info("entering agent loop (ctrl+c to stop) ...")
     try:
         _supervise_connection(
             build_session=lambda: _connect_and_login(cfg, log, chat_relay),
             run_session=lambda sess: _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
-                                                llm_client=llm_client, audit_logger=audit_logger,
+                                                brain=brain, audit_logger=audit_logger,
                                                 observer=observer),
             log=log,
         )
@@ -122,13 +124,17 @@ def main():
     log.info("done.")
 
 
-def _start_observer(cfg, audit_logger, log):
+def _start_observer(cfg, audit_logger, log, brain=None):
     """UM-50: start the read-only observability API if AGENT_HTTP_PORT is
     set. Returns (observer, server), both None when it's off. A port that
     can't be bound is logged and the agent plays on without it."""
     if not cfg.http_port:
         return None, None
-    observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model)
+    if brain is not None:
+        observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=brain.model,
+                                 brain="jev" if brain.jev is not None else "llm")
+    else:
+        observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model)
     if audit_logger is not None:
         audit_logger.on_record = observer.record_decision
     try:
@@ -305,7 +311,7 @@ def _run_rest_reflex_loop(sess, stop_event: threading.Event,
         stop_event.wait(tick_interval)
 
 
-def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, llm_client=None,
+def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, brain=None,
               audit_logger=None, observer=None) -> bool:
     start = time.monotonic()
 
@@ -318,7 +324,7 @@ def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, 
         t.start()
     try:
         return _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump,
-                                llm_client=llm_client, audit_logger=audit_logger, observer=observer)
+                                brain=brain, audit_logger=audit_logger, observer=observer)
     finally:
         if observer is not None:
             observer.detach()
@@ -346,7 +352,7 @@ def _reflex_state(sess) -> dict:
 
 
 def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
-                     llm_client=None, audit_logger=None, observer=None) -> bool:
+                     brain=None, audit_logger=None, observer=None) -> bool:
     """Returns True if the loop ended because of an unexpected disconnect
     (agent.session.WoWSession.unexpected_disconnect, UM-43 — the reconnect
     supervisor should retry), False for a normal end (duration elapsed)."""
@@ -383,10 +389,10 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
             snapshot = sess.world_state.snapshot(my_position=sess.player_position)
             print(json.dumps(snapshot))
 
-        # ── think + act (LLM call → one validated action per cycle) ────
-        if llm_client is not None:
+        # ── think + act (brain call → one validated action per cycle) ────
+        if brain is not None:
             cycle += 1
-            result = think_and_act(sess, sess.world_state, llm_client,
+            result = think_and_act(sess, sess.world_state, brain,
                                     persona=cfg.persona, my_position=sess.player_position,
                                     audit_logger=audit_logger, cycle=cycle,
                                     reflex_state=_reflex_state(sess), state=think_state)

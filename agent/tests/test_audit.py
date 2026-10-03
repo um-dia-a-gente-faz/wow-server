@@ -36,6 +36,23 @@ class AuditLoggerWriteTest(unittest.TestCase):
         self.assertEqual(recs[0]["agent"], "TestAgent")
         self.assertEqual(recs[0]["cycle"], 1)
         self.assertEqual(recs[0]["tool_call"], {"name": "face", "args": {"guid": 5}})
+        self.assertIsNone(recs[0]["brain"])
+        self.assertIsNone(recs[0]["confidence"])
+
+    def test_records_brain_and_jev_confidence(self):
+        # UM-101: which brain decided, and Jev's confidence when it did.
+        rec = self.logger.record(
+            cycle=1, snapshot={}, tool_call={"name": "loot", "args": {"guid": 7}},
+            valid=True, result={"ok": True, "error": None}, model="typesafe/jev-1.13",
+            brain="jev", confidence=0.91, candidates=6, prompt_tokens=400, completion_tokens=0)
+        d = rec.to_dict()
+        self.assertEqual((d["brain"], d["confidence"], d["candidates"], d["fallback"]),
+                         ("jev", 0.91, 6, None))
+        rec = self.logger.record(
+            cycle=2, snapshot={}, tool_call={"name": "loot", "args": {"guid": 7}},
+            valid=True, result={"ok": True, "error": None}, brain="llm",
+            fallback="jev call failed: HTTP 429")
+        self.assertEqual(rec.to_dict()["fallback"], "jev call failed: HTTP 429")
 
     def test_full_snapshot_included_every_nth_cycle_only(self):
         logger = AuditLogger("A", base_dir=self.tmp.name, full_snapshot_every=3)
