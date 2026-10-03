@@ -20,6 +20,8 @@ from . import spells as sp
 from . import trade as tr
 from . import update_fields as uf
 from .brain import Brain, BrainError, Decision
+from .handles import UnknownHandle
+from .llm import LLMError
 
 log = logging.getLogger("agent.think")
 
@@ -273,7 +275,8 @@ def think_and_act(session, world, brain, persona: str = "",
             history=state.for_prompt() if state is not None else None,
             my_guid=getattr(world, "my_guid", None) or None,
             reflex_state=reflex_state,
-            blocked=state.repeat_blocked if state is not None else None)
+            blocked=state.repeat_blocked if state is not None else None,
+            handles=getattr(world, "handles", None))
     except BrainError as e:
         decision = e.decision
         log.warning("%s", e)
@@ -299,6 +302,20 @@ def think_and_act(session, world, brain, persona: str = "",
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"missing required params: {missing}")
 
+    # UM-89: the model sees and sends short handles ("u3"), never raw
+    # GUIDs; map them back here, the one place tool-call params enter the
+    # game. `params` (handles) stays what the audit log/ThinkResult record.
+    handles = getattr(world, "handles", None)
+    run_params = params
+    if handles is not None:
+        try:
+            run_params = handles.resolve_params(params)
+        except UnknownHandle as e:
+            log.warning("action %s got an unknown handle (params=%r): %s", action_name, params, e)
+            _audit(action_name=action_name, params=params, valid=False, error=str(e))
+            _remember(action_name, params, False, error=str(e))
+            return ThinkResult(ok=False, action_name=action_name, params=params, error=str(e))
+
     if state is not None and state.repeat_blocked(action_name, params):
         error = (f"loop guard: {action_name} with these exact args already failed or changed "
                  f"nothing {LOOP_GUARD_REPEATS} times in a row; not executed. Try something different.")
@@ -307,8 +324,9 @@ def think_and_act(session, world, brain, persona: str = "",
         _remember(action_name, params, False, error=error)
         return ThinkResult(ok=False, action_name=action_name, params=params, error=error)
 
+
     try:
-        result = action.run(session, world, **params)
+        result = action.run(session, world, **run_params)
     except TypeError as e:
         # Unexpected/extra kwargs the model hallucinated, or a param of the
         # wrong shape reaching execute()'s positional signature.
