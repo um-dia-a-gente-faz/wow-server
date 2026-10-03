@@ -63,11 +63,23 @@ class DbcTables:
             self.rects[r[2]] = (self._f(r[6]), self._f(r[7]),   # left, right
                                 self._f(r[4]), self._f(r[5]))   # top, bottom
 
+        # WorldMapArea field 8 is DisplayMapID (int32, TrinityCore WorldMapAreaEntry):
+        # -1 normally, else the map the client shows the zone on. Map 530 holds the
+        # Blood Elf zones (-> 0, Eastern Kingdoms) and the Draenei ones (-> 1, Kalimdor).
+        self.display_map = {r[2]: struct.unpack("<i", struct.pack("<I", r[8]))[0]
+                            for r in self._wm if r[2] and len(r) > 8}
+
         self.area_names = {r[0]: self._s(self._area_str, r[11]) for r in self._area
                            if len(r) > 11}
         self.map_names = {r[0]: self._s(self._map_str, r[1]) for r in self._map
                           if len(r) > 1}
+        # Map.dbc field 1 is the directory ("Expansion01"); field 5 is MapName_lang[enUS]
+        # ("Outland"), per TrinityCore's MapEntry (DBCStructure.h, fields 5-20).
+        self.map_display_names = {r[0]: self._s(self._map_str, r[5]) for r in self._map
+                                  if len(r) > 5}
         self.area_map = {r[0]: r[1] for r in self._area if len(r) > 1}
+        # AreaTable.dbc field 2 is ParentAreaID: 0 for a zone, else the zone a subzone is in.
+        self.area_parent = {r[0]: r[2] for r in self._area if len(r) > 2}
 
     # ---- decoding helpers -------------------------------------------------
     @staticmethod
@@ -100,6 +112,32 @@ class DbcTables:
     def map_name(self, map_id):
         return self.map_names.get(map_id) or str(map_id)
 
+    def continent_name(self, map_id, zone_id=None):
+        """Continent the game shows a zone on: "Eastern Kingdoms", "Outland", or an
+        instance's name. Uses the zone's WorldMapArea DisplayMapID when it has one, so
+        Eversong Woods (map 530) is in Eastern Kingdoms, not Outland."""
+        display = self.display_map.get(zone_id, -1) if zone_id else -1
+        if display >= 0:
+            map_id = display
+        return self.map_display_names.get(map_id) or self.map_name(map_id)
+
+    def game_coords(self, area_id, world_x, world_y):
+        """In-game map coordinates (0..100, 0..100) within a zone, like "38.0, 21.5".
+
+        The client's zone map is the WorldMapArea rect: its horizontal axis is world Y
+        (fields 4/5, `top`/`bottom` here) and its vertical axis is world X (fields 6/7,
+        `left`/`right` here). Checked against the Blood Elf start on Sunstrider Isle,
+        which the game shows at about 38, 21.
+        """
+        rect = self.rects.get(area_id)
+        if not rect:
+            return None
+        left, right, top, bottom = rect
+        if right == left or top == bottom:
+            return None
+        return ((top - world_y) / (top - bottom) * 100,
+                (left - world_x) / (left - right) * 100)
+
     def to_normalised(self, area_id, world_x, world_y):
         """World coords -> (0..1, 0..1) on that zone's map image, or None."""
         rect = self.rects.get(area_id)
@@ -123,6 +161,69 @@ class DbcTables:
             if r[1] == map_id and r[3]:
                 out.append((r[2], self._s(self._wm_str, r[3]), self.rects.get(r[2])))
         return out
+
+
+class GridAreas:
+    """Area (subzone) id at a world position, from the server's extracted `maps/*.map`.
+
+    `characters` stores only the zone, so the subzone is looked up the way the server's
+    terrain lookup does it (TrinityCore 3.3.5 `Map::GetGrid` + `GridMap::getArea`):
+    a map is 64x64 grids of 533.33 yards, the file for a grid is
+    `maps/<map:03><gx:02><gy:02>.map` with `gx = int(32 - x / 533.33)` (same for y), and
+    its AREA section is either one area id for the whole grid or a 16x16 uint16 table
+    (~33-yard cells) indexed `[lx * 16 + ly]`.
+
+    Best effort: the server also overrides the area from WMO data (vmaps) when a
+    player stands inside a building; this ignores that, so indoor subzones can differ.
+    Missing or unreadable files give 0.
+    """
+
+    SIZE_OF_GRIDS = 533.3333
+    CENTER_GRID_ID = 32
+    MAP_AREA_NO_AREA = 0x0001
+
+    def __init__(self, maps_dir):
+        self.maps_dir = maps_dir
+        self._grids = {}   # (map, gx, gy) -> int area | tuple of 256 ids | None
+
+    def area_id(self, map_id, world_x, world_y):
+        fx = self.CENTER_GRID_ID - world_x / self.SIZE_OF_GRIDS
+        fy = self.CENTER_GRID_ID - world_y / self.SIZE_OF_GRIDS
+        if not (0 <= fx < 64 and 0 <= fy < 64):
+            return 0
+        key = (map_id, int(fx), int(fy))
+        if key not in self._grids:
+            self._grids[key] = self._load(*key)
+        grid = self._grids[key]
+        if grid is None:
+            return 0
+        if isinstance(grid, int):
+            return grid
+        return grid[(int(16 * fx) & 15) * 16 + (int(16 * fy) & 15)]
+
+    def _load(self, map_id, gx, gy):
+        path = os.path.join(self.maps_dir, f"{map_id:03d}{gx:02d}{gy:02d}.map")
+        try:
+            with open(path, "rb") as f:
+                head = f.read(44)   # map_fileheader: magic, version, build, 8 offsets/sizes
+                if len(head) < 44 or head[:4] != b"MAPS":
+                    return None
+                area_offset = struct.unpack_from("<I", head, 12)[0]
+                if not area_offset:
+                    return None
+                f.seek(area_offset)
+                area_head = f.read(8)   # map_areaHeader: fourcc, uint16 flags, uint16 gridArea
+                if len(area_head) < 8 or area_head[:4] != b"AREA":
+                    return None
+                flags, grid_area = struct.unpack_from("<HH", area_head, 4)
+                if flags & self.MAP_AREA_NO_AREA:
+                    return grid_area
+                cells = f.read(512)
+                if len(cells) < 512:
+                    return None
+                return struct.unpack("<256H", cells)
+        except OSError:
+            return None
 
 
 if __name__ == "__main__":
