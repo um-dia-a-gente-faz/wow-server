@@ -83,6 +83,13 @@ class Config:
     # Directory to dump raw (decrypted, inflated) SMSG_UPDATE_OBJECT payloads into.
     dump_packets_dir: str = field(default_factory=lambda: _env_str("AGENT_DUMP_PACKETS"))
 
+    # ── Chat relay (UM-47) ────────────────────────────────────
+    # Where to mirror heard chat (tools/chat-feed, port 9500). Empty = off;
+    # either the base URL or the full /api/chat/ingest URL works.
+    chat_relay_url: str = field(default_factory=lambda: _env_str("AGENT_CHAT_RELAY_URL"))
+    chat_relay_token: str = field(default_factory=lambda: _env_str("AGENT_CHAT_RELAY_TOKEN"))
+    chat_relay_timeout: float = field(default_factory=lambda: _env_float("AGENT_CHAT_RELAY_TIMEOUT_S", 3.0))
+
     # ── Audit log (UM-51) ─────────────────────────────────────
     audit_dir: str = field(default_factory=lambda: _env_str("AGENT_AUDIT_DIR", "/data/audit"))
     audit_retention_days: int = field(default_factory=lambda: _env_int("AGENT_AUDIT_RETENTION_DAYS", 14))
@@ -129,6 +136,9 @@ class Config:
             "dump_packets": self.dump_packets_dir or "(off)",
             "audit_dir": self.audit_dir,
             "audit_retention_days": self.audit_retention_days,
+            "chat_relay_url": self.chat_relay_url or "(off)",
+            # The token itself is never logged (CLAUDE.md: no credentials in logs).
+            "chat_relay_token": "***" if self.chat_relay_token else "(unset)",
             "http": f"{self.http_bind}:{self.http_port}" if self.http_port else "(off)",
         }
 

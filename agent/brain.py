@@ -196,3 +196,7 @@ class Brain:
         d.prompt_tokens = usage.get("prompt_tokens")
         d.completion_tokens = usage.get("completion_tokens")
         d.latency_ms = getattr(self.llm, "last_latency_ms", None)
+        # UM-94: the model that actually answered (None on a failed call);
+        # clients without `last_model` keep the configured `model`.
+        if hasattr(self.llm, "last_model"):
+            d.model = self.llm.last_model

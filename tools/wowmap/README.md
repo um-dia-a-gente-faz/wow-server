@@ -20,18 +20,46 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 
 | Env | Default | Meaning |
 |---|---|---|
-| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` |
-| `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
+| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, and `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names) |
+| `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art (and `<area_id>_base.png`) |
+| `ICONS_DIR` | `/icons` | directory containing extracted item icon PNGs (see *Item icons*); `ItemDisplayInfo.dbc` is read from `DBC_DIR` |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
+| `ACTIVITY_DB` | `/data/activity.sqlite3` | activity feed store; empty disables the feed |
+| `ACTIVITY_CHAT_FEED_URL` | `http://chat-feed:9500` | chat-feed as seen from the wowmap process; empty = no chat events |
+| `AUDIT_DIR` | `/audit` | agents' UM-51 decision logs (`<agent>/<day>.jsonl`); empty = no agent events |
 
 Tests (need the `requirements.txt` packages):
 
 ```bash
 python3 -m unittest discover -s tools/wowmap/tests
 ```
+
+## Map art and subzones
+
+`extract_maps.py` writes two images per zone: `<area_id>_base.png`, the game's
+unexplored parchment, and `<area_id>.png`, the same art with every
+`WorldMapOverlay` explored-area texture composited on top (the zone fully
+explored, as the in-game map shows it). The page shows `<area_id>.png`; the base
+art is kept for per-character fog of war later. See `overlays.py` for the DBC
+layout and `docs/LIVE-MAP.md` for the pipeline and how to re-run it.
+
+`GET /api/areas` gives each zone a `subzones` list read from
+`WorldMapOverlay.dbc` at startup:
+
+```json
+{"id": 1127, "area_ids": [3431, 3432], "name": "Sunstrider Isle",
+ "names": ["Sunstrider Isle", "Shrine of Dath'Remar"],
+ "art": [195, 5, 512, 512], "hit": [226, 27, 176, 161], "label": [314, 108]}
+```
+
+`art` and `hit` are `[x, y, w, h]` in image pixels on the 1024x768 canvas (no
+world-coordinate transform, so calibration offsets don't apply). `hit` is the
+DBC's hit rect, `null` for 21 overlays, which then use `art`; `label` is the
+centre of `hit`, else of `art`. Hovering the map shows the name of the smallest
+rect under the cursor; **Labels** toggles every subzone name.
 
 ## Calibrating map art
 
@@ -51,6 +79,40 @@ area ID. It is safe to edit while the service is stopped. `calibrate.py` remains
 the offline helper for validating the underlying DBC transform against known
 spawn data; the UI stores only the final visual translation.
 
+## Item icons
+
+Inventory rows in the inspect drawer show the item's icon. The chain is
+`world.item_template.displayid` → `ItemDisplayInfo.dbc` record (field 5,
+`InventoryIcon`; layout in `item_icons.py`) → `Interface\Icons\<name>.blp` in the
+client MPQs → `<ICONS_DIR>/<name lowercased>.png` → `GET /icons/<file>.png`.
+
+The icons come from the user-supplied client, so like the map art they are
+extracted on the VM and never committed. Run once (and again only after a client
+change), on the VM, with `mpyq` and `Pillow` available:
+
+```bash
+cd /opt/wow-server/tools/wowmap
+python3 extract_icons.py --client /opt/wow-server/client \
+    --dbc /opt/wowmap-data/dbc --out /opt/wowmap-data/icons
+```
+
+It writes every icon ItemDisplayInfo.dbc names (about 4,700 PNGs, ~36 MB, about a
+minute); existing files are skipped unless `--force`. About 50 icon names in the DBC
+have no texture in the 3.3.5a client; those items show the placeholder, as does
+everything until the script has been run. `monitoring/docker-compose.yml` mounts
+`/opt/wowmap-data/icons` read-only at `/icons`; the files are served with a 30-day
+`Cache-Control`.
+
+If the host has no pip packages, a throwaway container works and writes nothing
+outside the output directory:
+
+```bash
+docker run --rm -v /opt/wow-server:/src:ro -v /opt/wowmap-data:/data \
+  --entrypoint sh monitoring-wowmap:latest -c \
+  "pip install -q mpyq Pillow && cd /src/tools/wowmap && python extract_icons.py \
+   --client /src/client --dbc /data/dbc --out /data/icons"
+```
+
 ## Inspect drawer
 
 Click a name in the sidebar list or a player marker on the map to open the
@@ -60,11 +122,23 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipped**: equipment slots 0-18 by slot name.
-- **Bags**: backpack slots 23-38, then each equipped bag's contents.
-- Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
-  **Talents**, **Reputation**, and **Achievements** as raw IDs (names come later
-  with the shared DBC loader).
+- **Equipped**: a paper doll laid out like the game's character window (head,
+  neck, shoulder, back, chest, shirt, tabard, wrist on the left; hands, waist,
+  legs, feet, rings, trinkets on the right; main hand, off hand, ranged below).
+- **Bags**: the bag bar (bag slots 19-22), then the backpack (slots 23-38) and
+  each equipped bag as a grid of squares, four wide and sized to the bag's
+  `container_slots`. Like the game's bag windows the slots fill from the bottom
+  right, so a bag whose size isn't a multiple of four has its gap top left.
+  Bag windows wrap onto a new row when the drawer is narrow.
+- Every item is a 36 px square with its icon (a `?` placeholder until
+  `extract_icons.py` has been run), a border in the item's quality colour and a
+  stack count badge. Empty slots are dimmed squares named after the slot.
+  Hovering (or focusing, or tapping) an item shows an in-game style tooltip built
+  by `item_tooltip.py`; it is kept inside the viewport.
+- Collapsible **Bank** (28 squares, seven wide, plus bank bags), **Keyring**, **Currency** (only when non-empty), and
+  **Talents** (grouped by spec and tree, with rank), **Reputation** (sorted by
+  value, with tier), and **Achievements** (title, points, date). Names come from
+  the client DBCs; an unknown id falls back to the raw id.
 
 The drawer re-fetches the character on the page's 5 s tick. It only re-renders
 when the response changed, and it keeps its scroll position and open sections.
@@ -81,6 +155,28 @@ Health is current only, and so is power. The worldserver computes maximum
 health and power at runtime and never saves them, so there are no bars (see
 `docs/ROADMAP.md`, Operator dashboard panel, Phase B). With the 5 s
 `PlayerSaveInterval`, damage taken in game shows up within about 10 s.
+
+## Recent activity (UM-76)
+
+`GET /api/character/<name>/activity?limit=50` (max 500) returns the newest events
+for one character, and the inspect drawer shows them under **Recent activity**.
+`activity.py` fills a SQLite store (`ACTIVITY_DB`, the newest 500 events per
+character, so history survives a restart) from three background sources:
+
+| Source | What | How |
+|---|---|---|
+| `db` | login/logout, level, zone, quests turned in, items gained/lost, money | every 5 s, one read-only consistent snapshot of the **online** characters: `characters` (money, level, zone, online), `character_inventory` ⨝ `item_instance` summed per `itemEntry`, `character_queststatus_rewarded`; diffed against the previous snapshot in memory. Names come from `world.item_template` / `world.quest_template` only for entries that changed (cached). |
+| `chat` | public chat (`say`, `yell`, `channel`) | chat-feed's SSE stream, resumed with `Last-Event-ID`. Anything else (whisper, party, guild, …) is dropped here even if chat-feed ever publishes it. Agents' chat comes from their audit log instead. |
+| `audit` | every agent decision except `idle`, with its result (attack, loot, sell, trade, chat including whispers/party) | new lines of `AUDIT_DIR/<agent>/<day>.jsonl`, the same records PR #113's live "Agent mind" tab shows. |
+
+The database does not record *why* something changed, so these are **inferred**
+and carry an `inferred` badge: an item that disappears while money goes up is
+*sold* (only items with a `SellPrice`); the same item and count leaving one
+character and reaching another in the same poll is a *trade*; items that
+disappear when a quest is turned in were *handed in*; any other disappearance is
+*used or destroyed* (mail and bank-free trades included); an item that appears
+while money goes down is *bought*. The first poll after a start is only a
+baseline, and changes made while a character is offline are not reported.
 
 ## Console layout (map + player list + chat + inspect drawer)
 
@@ -164,14 +260,63 @@ the character's base state.
   "health": 4231,
   "power": {"mana": 1020, "rage": 0, "focus": 0, "energy": 100,
             "happiness": 0, "rune": 0, "runic_power": 0},
-  "inventory": [{"bag": 0, "slot": 0, "item_guid": 42, "item_entry": 12345,
-                 "item_name": "Example Item", "count": 1}],
-  "talents": [{"spell": 12345, "spec": 0}],
-  "reputation": [{"faction": 72, "standing": 42000}],
-  "achievements": [{"achievement": 6, "date": 1710000000}]
+  "inventory": [{"bag": 0, "slot": 15, "item_guid": 42, "item_entry": 23346,
+                 "item_name": "Battleworn Claymore", "count": 1, "quality": 1,
+                 "icon": "/icons/inv_sword_04.png", "container_slots": 0,
+                 "tooltip": [{"left": "Battleworn Claymore", "color": "quality"},
+                             {"left": "Two-Hand", "right": "Sword", "color": "white"},
+                             {"left": "3 - 5 Damage", "right": "Speed 2.90", "color": "white"},
+                             {"left": "(1.4 damage per second)", "color": "white"},
+                             {"left": "Durability 25 / 25", "color": "white"},
+                             {"left": "Requires Level 1", "color": "white"},
+                             {"left": "Item Level 2", "color": "yellow"},
+                             {"left": "Sell Price:", "money": 9, "color": "white"}]}],
+  "talents": [{"spell": 12282, "spec": 0, "name": "Improved Heroic Strike",
+               "tree": "Arms", "tree_order": 0, "rank": 1}],
+  "reputation": [{"faction": 76, "standing": 2000, "flags": 17,
+                  "faction_name": "Orgrimmar", "value": 6000, "tier": "Friendly"}],
+  "reputation_panel": [{"faction": 1118, "name": "Classic", "header": true, "rep": null,
+    "children": [{"faction": 67, "name": "Horde", "header": true, "rep": null,
+      "children": [{"faction": 76, "name": "Orgrimmar", "header": false,
+        "rep": {"value": 6000, "rank": "Friendly", "rank_id": 5, "bar_value": 3000,
+                "bar_max": 6000, "at_war": false}}]}]}],
+  "achievements": [{"achievement": 6, "date": 1710000000, "name": "Level 10",
+                    "points": 10}]
 }
 ```
 
+- `container_slots` is the bag's `item_template.ContainerSlots` (0 for non-bags).
+  `tooltip` is the item's tooltip as lines (`left`, optional `right`, `color` one
+  of `quality`/`white`/`green`/`yellow`/`gray`/`red`, and `money` in copper for the
+  sell price line, which is for the whole stack). `item_tooltip.py` builds it from
+  `world.item_template` (column names as in TrinityCore's
+  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound) and
+  `.durability`. Not shown yet: spell lines (`Use:`/`Equip:` effects with a
+  spell), item set names, random suffixes, enchants and gems.
+- `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
+  same-origin URL for the item's icon, or `null` when the display id has no
+  icon or the PNG hasn't been extracted; clients draw a placeholder then.
+- Names come from the client DBCs in `DBC_DIR`, read by the shared stdlib reader
+  in `tools/dbc` (`wdbc.py` for the file format, `names.py` for the build-12340
+  record layouts and their TrinityCore citations). They load once in a
+  background thread at startup (about 1 s and 15 MB). A missing or
+  wrong-build DBC only leaves its names `null`.
+- `reputation[].standing` is the raw `character_reputation.standing`, which
+  TrinityCore stores without the faction's starting value. `value` adds the
+  race/class starting value from `Faction.dbc` the way `ReputationMgr` does, and
+  `tier` is its rank (Hated … Exalted). `flags` is `character_reputation.flags`
+  (ReputationMgr's `ReputationFlags`: 0x01 visible, 0x02 at war, 0x04 hidden,
+  0x08 header, 0x20 inactive, 0x80 header with its own bar). This list has every
+  row, hidden and header factions included.
+- `reputation_panel` is the in-game reputation window (#92), built by
+  `GameNames.reputation_panel`: only factions flagged visible and not hidden,
+  nested under the `Faction.dbc` ParentFactionID headers ("Classic" › "Horde" ›
+  "Orgrimmar"), siblings sorted by name. A header is listed when something under
+  it is, or when it has its own bar (0x80, e.g. Horde Expedition) and is visible.
+  Visible factions flagged inactive move to a trailing "Inactive" group. `rep` is
+  null for a header without a bar; `rank_id` is the client's standingID (1 Hated …
+  8 Exalted) and `bar_value`/`bar_max` the progress inside that rank (Exalted is
+  out of 1000). The drawer colours bars with the game's `FACTION_BAR_COLORS`.
 - `money` is in copper; `money_gold` is the same value divided by 10000.
 - Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
   name ("Expansion01"). `continent_name` is the continent the game shows the zone

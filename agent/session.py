@@ -509,6 +509,9 @@ class WoWSession:
         self.world_state = per.WorldState()  # nearby objects, players, etc.
         self.on_update_object = None  # callback(update_type, guid, fields)
         self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
+        # UM-47: optional agent.chat_relay.ChatRelay, set by the caller
+        # (agent/__main__.py) — mirrors heard chat to tools/chat-feed.
+        self.chat_relay = None
         self.pending_invite = None  # {"inviter_name": str} or None
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
@@ -1261,6 +1264,21 @@ class WoWSession:
         Then always: uint32 text_len + text, uint8 chat_tag, and — only for
         CHAT_KINDS_ACHIEVEMENT — a trailing uint32 achievement_id (not
         needed by callers yet, left unconsumed since it's the last field).
+
+        target_guid is deliberately not exported (UM-47). It is
+        Chat::Initialize's `receiver` argument, and TrinityCore passes the
+        *same object* as sender and receiver for player chat —
+        Player::Say/Yell/TextEmote and both halves of Player::Whisper all
+        call Initialize(..., X, X, ...). Live captures confirm it: every
+        payload in tests/fixtures/chat has target_guid == sender_guid. It
+        never identifies the listener, and for a whisper the addressee is
+        already in sender_guid (see below), so reading it only invites the
+        mistake of treating it as "who this was said to".
+
+        The whisper pair is the one place kind alone isn't enough to know
+        who is who: the recipient gets CHAT_MSG_WHISPER with the whisperer
+        in sender_guid, while the whisperer gets CHAT_MSG_WHISPER_INFORM
+        with the *addressee* in sender_guid.
         """
         off = 0
         slash_cmd = payload[off]; off += 1
@@ -1270,6 +1288,7 @@ class WoWSession:
 
         sender_name = ""
         target_name = ""
+        target_guid = 0
         channel = None
 
         if slash_cmd in CHAT_KINDS_MONSTER:
@@ -1279,7 +1298,7 @@ class WoWSession:
                 target_name, off = _read_len_string(payload, off)
         elif slash_cmd == CHAT_MSG_WHISPER_FOREIGN:
             sender_name, off = _read_len_string(payload, off)
-            off += 8  # target_guid — not needed by callers yet
+            off += 8  # target_guid — see the docstring; not exported
         elif slash_cmd in CHAT_KINDS_BG_SYSTEM:
             target_guid = pk.u64(payload, off); off += 8
             if target_guid and not _guid_is_player(target_guid):
@@ -1289,7 +1308,7 @@ class WoWSession:
                 sender_name, off = _read_len_string(payload, off)
             if slash_cmd == CHAT_MSG_CHANNEL:
                 channel, off = pk.cstring(payload, off)
-            off += 8  # target_guid — not needed by callers yet
+            off += 8  # target_guid — see the docstring; not exported
 
         text, off = _read_len_string(payload, off)
         off += 1  # chat_tag (uint8) — not needed by callers yet
@@ -1304,6 +1323,19 @@ class WoWSession:
         if target_name:
             entry["target_name"] = target_name
         self.chat_inbox.append(entry)
+        self._relay_chat(entry)
+
+    def _relay_chat(self, entry: dict):
+        """UM-47: mirror a heard message to tools/chat-feed, if a relay is
+        configured. Never raises and never blocks the recv loop — see
+        agent/chat_relay.py."""
+        relay = self.chat_relay
+        if relay is None:
+            return
+        try:
+            relay.submit(entry, resolve_name=self.world_state.resolve_player_name)
+        except Exception:  # noqa: BLE001 — chat must keep flowing to the agent itself
+            log.debug("chat relay submit failed", exc_info=True)
 
     def _handle_group_invite(self, payload: bytes):
         # PartyInvite::Write (PartyPackets.cpp): uint8 can_accept, cstring

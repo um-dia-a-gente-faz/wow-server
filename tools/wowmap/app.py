@@ -5,12 +5,14 @@ Serves:
     GET /                     the map page (single file, no build step)
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
-    GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
+    GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
+    GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available, subzones
     POST /api/calibrate       save a per-zone pixel offset
     GET /api/agents           names of agents with an observability API (UM-50)
     GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
                               (healthz, state, perception, brain)
     GET /maps/<file>          extracted zone map images (static)
+    GET /icons/<file>         extracted item icons (static, see item_icons.py)
     GET /healthz              liveness
 
 Coordinates come from `characters.characters`; the world->normalised transform comes
@@ -19,11 +21,18 @@ extract_maps.py and served from MAPS_DIR.
 
 Env:
     MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD   as elsewhere in this repo
-    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc)
+    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc,
+                                     optional WorldMapOverlay.dbc for subzones; names come
+                                     from Spell, Talent, TalentTab, Faction, Achievement)
     MAPS_DIR    default /maps       (extracted PNGs)
+    ICONS_DIR   default /icons      (item icon PNGs from extract_icons.py)
     GRID_MAPS_DIR default /server-maps (the worldserver's maps/*.map, for subzones)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
+    ACTIVITY_DB   default /data/activity.sqlite3   activity feed store ("" disables the feed)
+    ACTIVITY_CHAT_FEED_URL default http://chat-feed:9500  chat-feed as seen from this
+                                    process ("" = no chat in the activity feed)
+    AUDIT_DIR     default /audit    agents' UM-51 decision logs ("" = no agent events)
     AGENT_API_URLS default ""       "Name=http://host:9601,Name2=http://host:9602" — agent
                                     observability APIs (agent/http_api.py) to proxy
 """
@@ -31,6 +40,8 @@ import json
 import logging
 import math
 import os
+import re
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,7 +51,15 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
+import activity as activity_feed
+import item_icons
+import item_tooltip
+from overlays import load_overlays, subzones
 from transform import DbcTables, GridAreas
+
+# The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from dbc.names import GameNames  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wowmap")
@@ -55,6 +74,7 @@ MYSQL: dict = dict(
 )
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
+ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
 GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
@@ -64,6 +84,11 @@ MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
 CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
+ACTIVITY_DB = os.environ.get("ACTIVITY_DB", "/data/activity.sqlite3")
+ACTIVITY_CHAT_FEED_URL = os.environ.get("ACTIVITY_CHAT_FEED_URL", "http://chat-feed:9500")
+AUDIT_DIR = os.environ.get("AUDIT_DIR", "/audit")
+# Set in __main__ (see start_activity) so importing this module starts no threads.
+activity = None
 
 
 def parse_agent_urls(spec):
@@ -117,8 +142,15 @@ RACES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: "Taur
 # characters.power1..power7 in TrinityCore `Powers` enum order (SharedDefines.h:
 # POWER_MANA=0 .. POWER_RUNIC_POWER=6; Player::SaveToDB writes GetPower(i) to power<i+1>).
 POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
+# What item_icons.icon_file() produces; anything else under /icons/ is a 404.
+ICON_FILE_RE = re.compile(r"[a-z0-9_\-]+\.png")
 
 _tables = None
+_overlays = None
+_display_icons = None
+_icons_lock = threading.Lock()
+_names = None
+_names_lock = threading.Lock()
 _calibration_lock = threading.Lock()
 
 
@@ -165,6 +197,51 @@ def tables():
     if _tables is None:
         _tables = DbcTables(DBC_DIR)
     return _tables
+
+
+def overlays():
+    """WorldMapOverlay rows by WorldMapArea ID ({} without the DBC); see overlays.py."""
+    global _overlays
+    if _overlays is None:
+        _overlays = load_overlays(DBC_DIR)
+    return _overlays
+
+
+def display_icons():
+    """{ItemDisplayInfo id: icon name}, loaded once; empty if the DBC is unavailable."""
+    global _display_icons
+    with _icons_lock:
+        if _display_icons is None:
+            path = os.path.join(DBC_DIR, "ItemDisplayInfo.dbc")
+            try:
+                _display_icons = item_icons.load_display_icons(path)
+            except (OSError, ValueError) as e:
+                log.warning("item icons disabled: %s", e)
+                _display_icons = {}
+        return _display_icons
+
+
+def icon_url(display_id):
+    """`/icons/<file>.png` for an item_template.displayid, or None when there is no
+    icon (unknown display id, or the PNG wasn't extracted). The UI shows a placeholder."""
+    name = display_icons().get(display_id) if display_id else None
+    fn = item_icons.icon_file(name) if name else ""
+    if fn and os.path.isfile(os.path.join(ICONS_DIR, fn)):
+        return "/icons/" + fn
+    return None
+
+
+def names():
+    """Spell/talent/faction/achievement names, built once (~1 s, ~15 MB)."""
+    global _names
+    with _names_lock:
+        if _names is None:
+            t0 = time.monotonic()
+            _names = GameNames(DBC_DIR)
+            log.info("names: %d spells, %d talents, %d factions, %d achievements in %.1fs",
+                     len(_names.spells), len(_names.talent_spells), len(_names.factions),
+                     len(_names.achievements), time.monotonic() - t0)
+    return _names
 
 
 def db():
@@ -255,6 +332,9 @@ def fetch_areas(map_id=None):
             "ymin": round(ymin, 1), "ymax": round(ymax, 1),
             "image": img, "has_image": os.path.exists(os.path.join(MAPS_DIR, img)),
             "calibration": calibrations.get(str(area_id), {"dx": 0, "dy": 0}),
+            # Explored-area rects in image pixels (the 1024x768 canvas), not world
+            # coordinates, so they don't go through the marker transform.
+            "subzones": subzones(overlays().get(r[0], []), t.area_names),
         })
     rows.sort(key=lambda a: a["name"])
     return rows
@@ -302,7 +382,9 @@ def fetch_character(name):
         # of the container holding the item — `item_guid` lets callers resolve it.
         inventory = best_effort(cur, """
             SELECT ci.bag, ci.slot, ci.item, ii.itemEntry,
-                   COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
+                   COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count,
+                   it.displayid, it.Quality, ii.flags, ii.durability, """
+            + ", ".join(f"it.`{c}`" for c in item_tooltip.COLUMNS) + """
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
@@ -316,11 +398,19 @@ def fetch_character(name):
             ORDER BY talentGroup, spell
         """, (guid,), "talents")
         reputation = best_effort(cur, """
-            SELECT faction, standing
+            SELECT faction, standing, flags
             FROM characters.character_reputation
             WHERE guid = %s
             ORDER BY faction
         """, (guid,), "reputation")
+        # Max health/power only exist when the worldserver persists them
+        # (PlayerSave.Stats.MinLevel > 0; Player::_SaveStats). No row -> None.
+        stats = best_effort(cur, """
+            SELECT maxhealth, maxpower1, maxpower2, maxpower3, maxpower4,
+                   maxpower5, maxpower6, maxpower7
+            FROM characters.character_stats
+            WHERE guid = %s
+        """, (guid,), "stats")
         achievements = best_effort(cur, """
             SELECT achievement, date
             FROM characters.character_achievement
@@ -329,6 +419,7 @@ def fetch_character(name):
         """, (guid,), "achievements")
 
     t = tables()
+    n = names()
     return {
         "name": char_name,
         "level": level,
@@ -352,25 +443,56 @@ def fetch_character(name):
         "totaltime": totaltime,
         "logout_time": logout_time,
         "online": bool(online),
-        # Current values only: max health/power are computed by the worldserver
-        # at runtime and never persisted (docs/ROADMAP.md, Phase B option 1).
         "health": health,
         "power": dict(zip(POWER_NAMES, powers)),
-        "inventory": [
-            {"bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
-             "item_name": item_name, "count": count}
-            for bag, slot, item_guid, item_entry, item_name, count in inventory
+        # From characters.character_stats, written in the same save as health/power
+        # above; None when the row doesn't exist (stat saving off, or the character
+        # hasn't been saved since it was turned on).
+        "max_health": stats[0][0] if stats else None,
+        "max_power": dict(zip(POWER_NAMES, stats[0][1:])) if stats else None,
+        "inventory": [inventory_item(row) for row in inventory],
+        # Names from the client DBCs (tools/dbc/names.py); null when an id is unknown.
+        "talents": [
+            {"spell": spell, "spec": spec, **_talent_names(n, spell)}
+            for spell, spec in talents
         ],
-        "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
         "reputation": [
-            {"faction": faction, "standing": standing}
-            for faction, standing in reputation
+            {"faction": faction, "standing": standing, "flags": flags,
+             **n.reputation(faction, standing, race, cls)}
+            for faction, standing, flags in reputation
         ],
+        # The in-game reputation window: visible factions only, grouped and ordered
+        # by the Faction.dbc parent tree (GameNames.reputation_panel).
+        "reputation_panel": n.reputation_panel(reputation, race, cls),
         "achievements": [
-            {"achievement": achievement, "date": date}
+            {"achievement": achievement, "date": date,
+             **(n.achievement(achievement) or {"name": None, "points": None})}
             for achievement, date in achievements
         ],
     }
+
+
+def inventory_item(row):
+    """One inventory row: (bag, slot, item guid, entry, name, count, displayid, Quality,
+    item_instance.flags, item_instance.durability, *item_tooltip.COLUMNS)."""
+    (bag, slot, item_guid, item_entry, item_name, count, display_id, quality,
+     inst_flags, durability) = row[:10]
+    template = dict(zip(item_tooltip.COLUMNS, row[10:]))
+    return {
+        "bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
+        "item_name": item_name, "count": count,
+        # Quality is item_template.Quality (0 poor .. 7 heirloom), None if unknown.
+        "quality": quality, "icon": icon_url(display_id),
+        # A bag's size (item_template.ContainerSlots), for drawing its grid; 0 otherwise.
+        "container_slots": template.get("ContainerSlots") or 0,
+        "tooltip": item_tooltip.tooltip(item_name, template, count, inst_flags, durability),
+    }
+
+
+def _talent_names(n, spell):
+    t = n.talent(spell) or {}
+    return {"name": t.get("name"), "tree": t.get("tree"), "tree_order": t.get("tree_order"),
+            "rank": t.get("rank")}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -405,6 +527,14 @@ class Handler(BaseHTTPRequestHandler):
                     "server_time": int(time.time()),
                     "players": fetch_players(),
                 })
+
+            if path.startswith("/api/character/") and path.endswith("/activity"):
+                name = unquote(path[len("/api/character/"):-len("/activity")])
+                if activity is None:
+                    return self._send(503, {"error": "activity feed disabled"})
+                limit = qs.get("limit", ["50"])[0]
+                limit = int(limit) if limit.isdigit() else 50
+                return self._send(200, activity.feed(name, limit), cache="no-store")
 
             if path.startswith("/api/character/"):
                 name = unquote(path[len("/api/character/"):])
@@ -447,6 +577,16 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.isfile(fp) and fn.endswith(".png"):
                     with open(fp, "rb") as f:
                         return self._send(200, f.read(), "image/png", cache="max-age=86400")
+                return self._send(404, {"error": "not found"})
+
+            if path.startswith("/icons/"):
+                fn = path[len("/icons/"):]
+                fp = os.path.join(ICONS_DIR, fn)
+                if ICON_FILE_RE.fullmatch(fn) and os.path.isfile(fp):
+                    with open(fp, "rb") as f:
+                        # Icons never change for a given client build.
+                        return self._send(200, f.read(), "image/png",
+                                          cache="public, max-age=2592000, immutable")
                 return self._send(404, {"error": "not found"})
 
             if path in ("/", "/index.html"):
@@ -618,11 +758,79 @@ INSPECT_CSS = r"""
   .drawer .kv .k, .drawer .item .k { color:var(--dim); flex:0 0 118px; }
   .drawer .kv .v, .drawer .item .v { flex:1; min-width:0; overflow-wrap:anywhere; }
   .drawer .item .n { color:var(--dim); }
+  .drawer .item { align-items:center; }
+  /* Item icon: 36 px, border in the item's quality colour (set inline from Q_COLORS). */
+  .drawer .ico { position:relative; flex:0 0 36px; width:36px; height:36px; box-sizing:border-box;
+                 border:1px solid #555; border-radius:4px; overflow:hidden; background:#0b0e16; }
+  .drawer .ico img { display:block; width:100%; height:100%; }
+  .drawer .ico.ph::before { content:'?'; display:grid; place-items:center; height:100%;
+                            color:var(--dim); font-weight:600; }
+  .drawer .ico .cnt { position:absolute; right:2px; bottom:0; font-size:11px; font-weight:600;
+                      color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer .none { color:var(--dim); font-size:12px; padding:3px 0; }
+  .drawer .meter-bar { position:relative; height:16px; background:#20263a; border-radius:3px; overflow:hidden; }
+  .drawer .meter-bar .fill { position:absolute; inset:0 auto 0 0; }
+  .drawer .meter-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
+                      line-height:16px; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
+  /* UM-80: paper doll, bag bar and bag grids (38 px squares, game layout). */
+  .drawer .ico.empty { display:flex; align-items:center; justify-content:center;
+                       border-color:#2a3047; background:#0d111b; }
+  .drawer .ico .lbl { font-size:7.5px; line-height:1.1; text-align:center; color:#5b647e; }
+  .drawer .ico[tabindex] { cursor:default; }
+  .drawer .ico[tabindex]:focus-visible { outline:2px solid #ffd100; outline-offset:1px; }
+  .drawer .doll { display:grid; grid-template-columns:36px 1fr 36px; gap:4px 8px; }
+  .drawer .doll .col { display:flex; flex-direction:column; gap:4px; }
+  .drawer .doll .mid { display:flex; flex-direction:column; justify-content:center; align-items:center;
+                       gap:2px; border:1px solid #20263a; border-radius:6px; font-size:12px;
+                       color:var(--dim); text-align:center; min-width:0;
+                       background:radial-gradient(ellipse at center, #1a2033 0%, #0d111b 75%); }
+  .drawer .doll .mid .nm { font-size:14px; font-weight:600; overflow-wrap:anywhere; }
+  .drawer .doll .bottom { grid-column:1 / -1; display:flex; justify-content:center; gap:4px; }
+  .drawer .bag-bar { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
+  .drawer .bags { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }
+  .drawer .bag { border:1px solid #2a3047; border-radius:6px; padding:5px 6px 6px; background:#10141f;
+                 max-width:100%; }
+  .drawer .bag-title { font-size:11px; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis;
+                       white-space:nowrap; max-width:166px; }
+  .drawer .bag-grid { display:grid; gap:2px; max-width:100%; }
+  .drawer .bag-grid .ico { width:36px; height:36px; }
+  .item-tip { position:fixed; z-index:50; max-width:min(320px, calc(100vw - 12px)); pointer-events:none;
+              background:rgba(9,12,30,.95); border:1px solid #8a8fa8; border-radius:5px;
+              padding:6px 9px; font-size:12.5px; line-height:1.35;
+              box-shadow:0 4px 14px rgba(0,0,0,.6); }
+  .item-tip .tl { display:flex; gap:18px; justify-content:space-between; }
+  .item-tip .tl:first-child { font-size:14px; }
+  .item-tip .r { white-space:nowrap; }
+  .item-tip .coin { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:2px;
+                    vertical-align:-1px; }
+  .item-tip .coin.g { background:#e8c447; }
+  .item-tip .coin.s { background:#c7c7cf; }
+  .item-tip .coin.c { background:#c06a35; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
                     text-transform:uppercase; letter-spacing:.6px; }
+  /* Reputation window: nested headers, one bar per faction (name | rank bar | numbers). */
+  .drawer details.rep-group { margin:0; border:0; border-radius:0; padding:0 0 0 12px; }
+  .drawer details.rep-group[open] { padding-bottom:0; }
+  .drawer details.rep-group > summary { display:flex; align-items:center; gap:4px; margin-left:-12px;
+                                        padding:3px 0; list-style:none; text-transform:none;
+                                        letter-spacing:0; font-size:13px; color:var(--fg); }
+  .drawer details.rep-group > summary::-webkit-details-marker { display:none; }
+  .drawer details.rep-group > summary::before { content:'\25B8'; flex:0 0 8px; color:var(--dim); }
+  .drawer details.rep-group[open] > summary::before { content:'\25BE'; }
+  .drawer .rep-head { font-weight:600; }
+  .drawer .rep { display:flex; gap:6px; align-items:center; padding:2px 0; font-size:13px; }
+  .drawer summary > .rep { flex:1; min-width:0; padding:0; }
+  .drawer .rep-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drawer .rep-bar { position:relative; flex:0 0 72px; height:14px; background:#20263a;
+                     border-radius:3px; overflow:hidden; }
+  .drawer .rep-bar.war { outline:1px solid #e0402f; }
+  .drawer .rep-bar .fill { position:absolute; inset:0 auto 0 0; }
+  .drawer .rep-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
+                          line-height:14px; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
+  .drawer .rep-num { flex:0 0 72px; text-align:right; color:var(--dim); font-size:12px;
+                     font-variant-numeric:tabular-nums; }
 """
 
 INSPECT_HTML = r"""
@@ -651,6 +859,85 @@ function worldText(x, y, z) {
   return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
 }
 
+// In-game style item tooltip (UM-80). The API sends ready-made lines
+// (item_tooltip.py); this only draws them, with textContent, and keeps the box on screen.
+const ItemTip = (() => {
+  const TIP_COLORS = {white: '#ffffff', green: '#1eff00', yellow: '#ffd100', gray: '#9d9d9d',
+    red: '#ff2020'};
+  const QUALITY = ['#9d9d9d', '#ffffff', '#1eff00', '#0070dd', '#a335ee', '#ff8000', '#e6cc80', '#e6cc80'];
+  const tip = document.createElement('div');
+  tip.className = 'item-tip';
+  tip.hidden = true;
+  tip.setAttribute('role', 'tooltip');
+  document.body.append(tip);
+  let anchor = null;
+
+  function span(cls, text) {
+    const e = document.createElement('span');
+    if (cls) e.className = cls;
+    e.textContent = String(text);
+    return e;
+  }
+  // Copper as the game's coins: only the non-zero denominations.
+  function coins(copper) {
+    const out = document.createElement('span');
+    const parts = [[Math.floor(copper / 10000), 'g'], [Math.floor(copper / 100) % 100, 's'], [copper % 100, 'c']];
+    for (const [n, c] of parts) if (n) out.append(span(null, n), span('coin ' + c, ''), ' ');
+    return out;
+  }
+  function render(it) {
+    const lines = it.tooltip && it.tooltip.length ? it.tooltip : [{left: it.item_name, color: 'quality'}];
+    tip.replaceChildren();
+    for (const l of lines) {
+      const row = document.createElement('div');
+      row.className = 'tl';
+      row.style.color = l.color === 'quality' ? (QUALITY[it.quality] || '#fff') : (TIP_COLORS[l.color] || '#fff');
+      const left = span('l', l.left);
+      if (l.money !== undefined) left.append(' ', coins(Number(l.money) || 0));
+      row.append(left);
+      if (l.right) row.append(span('r', l.right));
+      tip.append(row);
+    }
+  }
+  // Beside the square (left first: the drawer sits on the right), else below or
+  // above it; always clamped to the viewport so narrow screens keep it visible.
+  function place() {
+    const r = anchor.getBoundingClientRect();
+    const w = tip.offsetWidth, h = tip.offsetHeight, vw = innerWidth, vh = innerHeight, m = 6;
+    let x = r.left - w - m, y = r.top;
+    if (x < m) x = r.right + m;
+    if (x + w > vw - m) {
+      x = Math.max(m, Math.min(r.left, vw - w - m));
+      y = r.bottom + m;
+      if (y + h > vh - m) y = r.top - h - m;
+    }
+    y = Math.max(m, Math.min(y, vh - h - m));
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }
+  function show(box, it) {
+    anchor = box;
+    render(it);
+    tip.hidden = false;
+    place();
+  }
+  function hide() { tip.hidden = true; anchor = null; }
+  function attach(box, it) {
+    box.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') show(box, it); });
+    box.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && anchor === box) hide(); });
+    box.addEventListener('focus', () => show(box, it));
+    box.addEventListener('blur', () => { if (anchor === box) hide(); });
+    // Touch: a tap shows it; tapping anywhere else (or scrolling) hides it.
+    box.addEventListener('click', () => show(box, it));
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (anchor && !anchor.contains(e.target)) hide();
+  });
+  addEventListener('scroll', () => { if (anchor) hide(); }, true);
+  addEventListener('resize', () => { if (anchor) hide(); });
+  return {attach, hide};
+})();
+
 const Inspect = (() => {
   const EQUIP_SLOTS = ['Head', 'Neck', 'Shoulder', 'Shirt', 'Chest', 'Waist', 'Legs',
     'Feet', 'Wrist', 'Hands', 'Finger 1', 'Finger 2', 'Trinket 1', 'Trinket 2', 'Back',
@@ -659,6 +946,9 @@ const Inspect = (() => {
     happiness: 'Happiness', rune: 'Runes', runic_power: 'Runic Power'};
   // The server keeps rage and runic power in tenths (1000 is shown as 100 in game).
   const POWER_SCALE = {rage: 10, runic_power: 10};
+  // Bar colours roughly follow the default unit frames.
+  const BAR_COLORS = {health: '#1f9e3a', mana: '#2f5fd8', rage: '#c42f2f', focus: '#d98a3a',
+    energy: '#d6c22e', happiness: '#2fa88a', rune: '#7f7f7f', runic_power: '#1fa6c4'};
   const CLASS_POWERS = {1: ['rage'], 2: ['mana'], 3: ['mana'], 4: ['energy'], 5: ['mana'],
     6: ['runic_power'], 7: ['mana'], 8: ['mana'], 9: ['mana'], 11: ['mana', 'rage', 'energy']};
   const nf = new Intl.NumberFormat('en-US');
@@ -678,6 +968,22 @@ const Inspect = (() => {
   function kv(label, value, cls = 'kv') {
     const r = el('div', cls);
     r.append(el('span', 'k', label), el('span', 'v', value));
+    return r;
+  }
+  // A bar when the max is known (character_stats row), otherwise the plain number.
+  function meter(label, cur, max, color) {
+    const value = nf.format(cur);
+    if (!(max > 0)) return kv(label, value);
+    const b = el('div', 'meter-bar');
+    const fill = el('span', 'fill');
+    fill.style.width = `${Math.max(0, Math.min(100, cur / max * 100))}%`;
+    fill.style.background = color;
+    b.append(fill, el('span', 'txt', `${value} / ${nf.format(max)}`));
+    const r = el('div', 'kv');
+    r.append(el('span', 'k', label));
+    const v = el('span', 'v');
+    v.append(b);
+    r.append(v);
     return r;
   }
   function money(copper) {
@@ -703,7 +1009,7 @@ const Inspect = (() => {
       if (s < 19) g.equipped.push(it);
       else if (s < 23 || (s >= 67 && s < 74)) {
         const bank = s >= 67;
-        const c = {label: bank ? `Bank bag ${s - 66}` : `Bag ${s - 18}`, bag: it, items: []};
+        const c = {slot: s, bag: it, items: []};
         (bank ? g.bankBags : g.bags).push(c);
         containers.set(it.item_guid, c);
       }
@@ -721,20 +1027,41 @@ const Inspect = (() => {
     return g;
   }
 
+  // item_template.Quality 0..7: poor, common, uncommon, rare, epic, legendary, artifact, heirloom.
+  const Q_COLORS = ['#9d9d9d', '#ffffff', '#1eff00', '#0070dd', '#a335ee', '#ff8000', '#e6cc80', '#e6cc80'];
+  // `it.icon` is a same-origin /icons/<file>.png URL from the API, or null (no icon
+  // extracted): then a '?' placeholder is drawn, as it is if the image fails to load.
+  function itemIcon(it) {
+    const q = Q_COLORS[it.quality];
+    const box = el('span', 'ico');
+    box.setAttribute('aria-label', it.count > 1 ? `${it.item_name} ×${it.count}` : it.item_name);
+    box.tabIndex = 0;
+    ItemTip.attach(box, it);
+    if (q) box.style.borderColor = q;
+    if (it.icon) {
+      const img = el('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.addEventListener('error', () => { img.remove(); box.classList.add('ph'); });
+      img.src = it.icon;
+      box.append(img);
+    } else box.classList.add('ph');
+    if (it.count > 1) box.append(el('span', 'cnt', it.count));
+    return box;
+  }
+
   function itemRows(parent, items, label) {
     if (!items.length) { parent.append(el('div', 'none', 'empty')); return; }
     for (const it of items) {
       const r = el('div', 'item');
-      r.append(el('span', 'k', label(it)));
+      r.append(el('span', 'k', label(it)), itemIcon(it));
       const v = el('span', 'v', it.item_name);
+      if (Q_COLORS[it.quality]) v.style.color = Q_COLORS[it.quality];
       v.append(' ', el('span', 'n', '×' + it.count));
       r.append(v);
       parent.append(r);
     }
   }
-  const slotLabel = (it) => EQUIP_SLOTS[it.slot] || `slot ${it.slot}`;
-  const bagSlotLabel = (it) => `slot ${it.slot + 1}`;
-  const packSlotLabel = (first) => (it) => `slot ${it.slot - first + 1}`;
 
   function collapsible(key, title) {
     const d = el('details');
@@ -746,11 +1073,62 @@ const Inspect = (() => {
     });
     return d;
   }
-  function containerList(parent, containers) {
-    for (const c of containers) {
-      parent.append(el('h4', null, `${c.label}: ${c.bag.item_name}`));
-      itemRows(parent, c.items, bagSlotLabel);
+
+  // ---- In-game style equipment and bags (UM-80) ----------------------------------
+  // Paper doll: the character window's slot columns (EquipmentSlots ids, Player.h).
+  const DOLL_LEFT = [0, 1, 2, 14, 4, 3, 18, 8];      // head neck shoulder back chest shirt tabard wrist
+  const DOLL_RIGHT = [9, 5, 6, 7, 10, 11, 12, 13];   // hands waist legs feet finger×2 trinket×2
+  const DOLL_BOTTOM = [15, 16, 17];                  // main hand, off hand, ranged
+  // An empty slot: a dimmed square named after the slot, like the game's slot art.
+  function emptySlot(label) {
+    const e = el('span', 'ico empty');
+    if (label) { e.title = label; e.append(el('span', 'lbl', label)); }
+    return e;
+  }
+  function paperDoll(equipped, c) {
+    const by = new Map(equipped.map((it) => [it.slot, it]));
+    const sq = (s) => by.has(s) ? itemIcon(by.get(s)) : emptySlot(EQUIP_SLOTS[s]);
+    const doll = el('div', 'doll');
+    const left = el('div', 'col'), right = el('div', 'col'), bottom = el('div', 'bottom');
+    left.append(...DOLL_LEFT.map(sq));
+    right.append(...DOLL_RIGHT.map(sq));
+    bottom.append(...DOLL_BOTTOM.map(sq));
+    const mid = el('div', 'mid');
+    mid.append(el('div', 'nm', c.name), el('div', null, `Level ${c.level} ${c.race_name}`),
+               el('div', null, c.class_name));
+    mid.firstChild.style.color = c.class_color;
+    doll.append(left, mid, right, bottom);
+    return doll;
+  }
+  // One bag window: `size` squares, `cols` wide. Like the game's container frames
+  // the slots fill from the bottom right, so a partial row sits top right.
+  function bagGrid(title, quality, size, items, first, cols) {
+    const box = el('div', 'bag');
+    const h = el('div', 'bag-title', title);
+    if (Q_COLORS[quality]) h.style.color = Q_COLORS[quality];
+    const grid = el('div', 'bag-grid');
+    grid.style.gridTemplateColumns = `repeat(${cols}, 36px)`;
+    const by = new Map(items.map((it) => [it.slot - first, it]));
+    const n = Math.max(size, ...[...by.keys()].map((k) => k + 1), 0);
+    for (let i = 0; i < (cols - n % cols) % cols; i++) grid.append(el('span', 'gap'));
+    for (let i = 0; i < n; i++) grid.append(by.has(i) ? itemIcon(by.get(i)) : emptySlot());
+    box.append(h, grid);
+    return box;
+  }
+  // The bag bar (the four bag slots, InventorySlots 19-22, or bank bags 67-73)
+  // followed by a grid per equipped bag.
+  function bagWindows(parent, packTitle, pack, packSize, packFirst, packCols, bags, firstBagSlot, nBags) {
+    const bySlot = new Map(bags.map((b) => [b.slot, b]));
+    const bar = el('div', 'bag-bar');
+    for (let s = firstBagSlot; s < firstBagSlot + nBags; s++) {
+      bar.append(bySlot.has(s) ? itemIcon(bySlot.get(s).bag) : emptySlot('Bag'));
     }
+    const wrap = el('div', 'bags');
+    wrap.append(bagGrid(packTitle, 1, packSize, pack, packFirst, packCols));
+    for (const b of [...bags].sort((x, y) => x.slot - y.slot)) {
+      wrap.append(bagGrid(b.bag.item_name, b.bag.quality, b.bag.container_slots, b.items, 0, 4));
+    }
+    parent.append(bar, wrap);
   }
 
   function renderHead(c) {
@@ -764,15 +1142,86 @@ const Inspect = (() => {
       el('div', 'line', placeText(c)));
   }
 
+  // Names come from the client DBCs (tools/dbc/names.py); unknown ids fall back to the raw id.
+  function talentSection(list) {
+    const d = collapsible('talents', `Talents (${list.length})`);
+    const groups = new Map();
+    for (const t of list) {
+      const key = `${t.spec}|${t.tree_order ?? 99}|${t.tree ?? ''}`;
+      if (!groups.has(key)) groups.set(key, {spec: t.spec, order: t.tree_order ?? 99, tree: t.tree, items: []});
+      groups.get(key).items.push(t);
+    }
+    const specs = new Set(list.map((t) => t.spec));
+    const sorted = [...groups.values()].sort((a, b) => a.spec - b.spec || a.order - b.order);
+    for (const g of sorted) {
+      const tree = g.tree || 'Unknown tree';
+      d.append(el('h4', null, specs.size > 1 ? `Spec ${g.spec + 1} · ${tree} (${g.items.length})` : `${tree} (${g.items.length})`));
+      for (const t of g.items) d.append(kv(t.name || `spell ${t.spell}`, t.rank ? `rank ${t.rank}` : ''));
+    }
+    return d;
+  }
+  // The in-game reputation window (GameNames.reputation_panel): headers from the
+  // Faction.dbc tree, only factions the character has discovered. Bar colours are
+  // FACTION_BAR_COLORS from the 3.3.5 FrameXML ReputationFrame.lua, keyed by rank_id.
+  const REP_COLORS = {1: '#cc4d38', 2: '#cc4d38', 3: '#bf4500', 4: '#e6b300',
+    5: '#00991a', 6: '#00991a', 7: '#00991a', 8: '#00991a'};
+  const closedReps = new Set();
+  function repRow(name, r) {
+    const row = el('div', 'rep');
+    row.append(el('span', 'rep-name', name));
+    const b = el('span', 'rep-bar' + (r.at_war ? ' war' : ''));
+    const fill = el('span', 'fill');
+    fill.style.width = `${Math.max(0, Math.min(100, r.bar_value / r.bar_max * 100))}%`;
+    fill.style.background = REP_COLORS[r.rank_id] || '#888';
+    b.append(fill, el('span', 'txt', r.rank));
+    if (r.at_war) b.title = 'At war';
+    row.append(b, el('span', 'rep-num', `${r.bar_value}/${r.bar_max}`));  // as in game: 562/3000
+    return row;
+  }
+  function repNodes(parent, nodes) {
+    for (const n of nodes) {
+      if (!n.header) { parent.append(repRow(n.name, n.rep)); continue; }
+      const key = String(n.faction ?? n.name);
+      const d = el('details', 'rep-group');
+      d.open = !closedReps.has(key);
+      const s = el('summary');
+      s.append(n.rep ? repRow(n.name, n.rep) : el('span', 'rep-head', n.name));
+      d.append(s);
+      d.addEventListener('toggle', () => { d.open ? closedReps.delete(key) : closedReps.add(key); });
+      repNodes(d, n.children || []);
+      parent.append(d);
+    }
+  }
+  function countReps(nodes) {
+    return nodes.reduce((k, n) => k + (n.rep ? 1 : 0) + countReps(n.children || []), 0);
+  }
+  function reputationSection(panel) {
+    const d = collapsible('reputation', `Reputation (${countReps(panel)})`);
+    if (!panel.length) d.append(el('div', 'none', 'No factions discovered'));
+    repNodes(d, panel);
+    return d;
+  }
+  function achievementSection(list) {
+    const points = list.reduce((n, a) => n + (a.points || 0), 0);
+    const d = collapsible('achievements', `Achievements (${list.length} · ${nf.format(points)} pts)`);
+    for (const a of list) {
+      const pts = a.points != null ? `${a.points} pts · ` : '';
+      d.append(kv(a.name || `#${a.achievement}`, pts + when(a.date)));
+    }
+    return d;
+  }
+
   function renderBody(c) {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(kv('Health', nf.format(c.health)));
-    const power = c.power || {};
+    f.append(meter('Health', c.health, c.max_health, BAR_COLORS.health));
+    const power = c.power || {}, maxPower = c.max_power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
-      f.append(kv(POWER_LABELS[key], nf.format(Math.floor(power[key] / (POWER_SCALE[key] || 1)))));
+      const scale = POWER_SCALE[key] || 1;
+      f.append(meter(POWER_LABELS[key], Math.floor(power[key] / scale),
+                     Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]));
     }
     f.append(kv('Gold', money(c.money)));
     f.append(kv('Played time', duration(c.totaltime)));
@@ -783,19 +1232,19 @@ const Inspect = (() => {
     f.append(kv('Map coords', mapCoordsText(c) || '—'));
     f.append(kv('World X, Y, Z', worldText(c.position_x, c.position_y, c.position_z)));
     f.append(kv('Facing', `${c.orientation.toFixed(2)} rad`));
+    if (window.ActivityFeed) f.append(window.ActivityFeed.section(c.name));
 
     const inv = groupInventory(c.inventory || []);
     f.append(el('h3', null, 'Equipped'));
-    itemRows(f, inv.equipped, slotLabel);
+    f.append(paperDoll(inv.equipped, c));
     f.append(el('h3', null, 'Bags'));
-    f.append(el('h4', null, 'Backpack'));
-    itemRows(f, inv.backpack, packSlotLabel(23));
-    containerList(f, inv.bags);
+    // Backpack: InventoryPackSlots 23-38; bags in InventorySlots 19-22 (Player.h).
+    bagWindows(f, 'Backpack', inv.backpack, 16, 23, 4, inv.bags, 19, 4);
 
     if (inv.bank.length || inv.bankBags.length) {
       const d = collapsible('bank', `Bank (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
-      itemRows(d, inv.bank, packSlotLabel(39));
-      containerList(d, inv.bankBags);
+      // Bank: BankItemSlots 39-66 (28 squares, 7 wide in game); bank bags in 67-73.
+      bagWindows(d, 'Bank', inv.bank, 28, 39, 7, inv.bankBags, 67, 7);
       f.append(d);
     }
     for (const [key, title, items] of [['keyring', 'Keyring', inv.keyring],
@@ -807,16 +1256,11 @@ const Inspect = (() => {
       f.append(d);
     }
 
-    // Raw ids for now; names need the DBC loader (ROADMAP Phase C).
-    const talents = collapsible('talents', `Talents (${(c.talents || []).length})`);
-    for (const t of c.talents || []) talents.append(kv(`spec ${t.spec + 1}`, `spell ${t.spell}`));
-    const reps = collapsible('reputation', `Reputation (${(c.reputation || []).length})`);
-    for (const r of c.reputation || []) reps.append(kv(`faction ${r.faction}`, nf.format(r.standing)));
-    const achs = collapsible('achievements', `Achievements (${(c.achievements || []).length})`);
-    for (const a of c.achievements || []) achs.append(kv(`#${a.achievement}`, when(a.date)));
-    f.append(talents, reps, achs);
+    f.append(talentSection(c.talents || []), reputationSection(c.reputation_panel || []),
+             achievementSection(c.achievements || []));
 
     const top = body.scrollTop;
+    ItemTip.hide();
     body.replaceChildren(f);
     body.scrollTop = top;
   }
@@ -1085,6 +1529,117 @@ const AgentMind = (() => {
 </script>
 """
 
+# ---------------------------------------------------------------- page: activity feed
+# UM-76: "Recent activity" section of the inspect drawer, fed by
+# GET /api/character/<name>/activity (see activity.py). Inspect.renderBody appends
+# this module's persistent node; the module polls on its own every 5 s. Event text
+# comes from chat and the database, so it is rendered with textContent only.
+ACTIVITY_CSS = r"""
+  .activity .act { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #20263a;
+                   font-size:12.5px; line-height:1.35; }
+  .activity .act .ic { flex:0 0 18px; text-align:center; color:var(--dim); }
+  .activity .act .tx { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .activity .act .meta { color:var(--dim); font-size:11px; }
+  .activity .act.failed .tx { color:#ff8b8b; }
+  .activity .inferred { font-size:10px; border:1px solid #6b5a2f; color:#f3b84b; border-radius:999px;
+                        padding:0 6px; margin-left:6px; white-space:nowrap; }
+  .activity .note { color:var(--dim); font-size:11px; padding:3px 0; }
+  .activity .ic.k-combat { color:#ff6b6b; } .activity .ic.k-loot, .activity .ic.k-item { color:#7ddf8a; }
+  .activity .ic.k-sell, .activity .ic.k-buy, .activity .ic.k-money { color:#f3b84b; }
+  .activity .ic.k-chat, .activity .ic.k-whisper { color:#5fd0d8; }
+  .activity .ic.k-level, .activity .ic.k-quest { color:#d68cf5; }
+"""
+
+ACTIVITY_JS = r"""
+<script>
+window.ActivityFeed = (() => {
+  const ICONS = {combat: '⚔', loot: '✚', item: '✚', item_lost: '✖', sell: '$', buy: '$',
+    money: '¤', trade: '⇄', chat: '“', whisper: '“', level: '▲', zone: '➜', quest: '!',
+    mail: '✉', move: '→', group: '◆', session: '●', action: '•'};
+  const SOURCES = {db: 'database', chat: 'public chat', audit: 'agent log'};
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  const box = el('div', 'activity');
+  const list = el('div');
+  box.append(el('h3', null, 'Recent activity'), list);
+  let shownFor = null, seq = 0, data = null;
+
+  function ago(t) {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - t));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  }
+
+  function render() {
+    const f = document.createDocumentFragment();
+    const src = (data && data.sources) || {};
+    if (!data) f.append(el('div', 'none', 'loading…'));
+    else if (data.error) f.append(el('div', 'none', data.error));
+    else {
+      for (const [key, label] of [['db', 'database'], ['chat', 'chat feed']]) {
+        if (src[key] && !src[key].ok) f.append(el('div', 'note', `${label} unreachable, events may be missing`));
+      }
+      if (!data.events.length) f.append(el('div', 'none', 'no activity recorded yet'));
+      for (const e of data.events) {
+        const failed = e.detail && e.detail.ok === false;
+        const r = el('div', 'act' + (failed ? ' failed' : ''));
+        r.append(el('span', 'ic k-' + e.kind, ICONS[e.kind] || '•'));
+        const tx = el('div', 'tx', e.text);
+        if (e.inferred) {
+          const b = el('span', 'inferred', 'inferred');
+          b.title = 'Not recorded by the server: deduced from database changes';
+          tx.append(b);
+        }
+        const meta = el('div', 'meta', `${ago(e.t)} · ${SOURCES[e.source] || e.source}`);
+        meta.title = new Date(e.t * 1000).toLocaleString();
+        tx.append(meta);
+        r.append(tx);
+        f.append(r);
+      }
+    }
+    list.replaceChildren(f);
+  }
+
+  async function refresh() {
+    const who = Inspect.current();
+    if (!who || who !== shownFor) return;
+    const mine = ++seq;
+    try {
+      const r = await fetch(`/api/character/${encodeURIComponent(who)}/activity?limit=50`);
+      const j = await r.json().catch(() => ({}));
+      if (mine !== seq || who !== shownFor) return;
+      data = r.ok ? j : {error: j.error || 'error ' + r.status};
+    } catch (e) {
+      if (mine !== seq) return;
+      data = {error: 'activity unavailable: ' + e};
+    }
+    render();
+  }
+
+  // Called by Inspect.renderBody on every re-render; the node is reused.
+  function section(name) {
+    if (name !== shownFor) {
+      shownFor = name;
+      data = null;
+      seq++;
+      render();
+      refresh();
+    }
+    return box;
+  }
+
+  setInterval(refresh, 5000);
+  return {section, refresh};
+})();
+</script>
+"""
+
 PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><title>WoW — Live map</title>
@@ -1135,6 +1690,11 @@ PAGE = r"""<!doctype html>
                  background:rgba(10,13,20,.82); padding:1px 6px; border-radius:5px;
                  border:1px solid var(--line); }
   .trail { position:absolute; inset:0; pointer-events:none; }
+  #subzones { position:absolute; inset:0; pointer-events:none; }
+  .subzone-label, #subzone-hover { position:absolute; transform:translate(-50%,-50%); white-space:nowrap;
+      color:#ffd25e; text-shadow:0 0 3px #000,0 0 3px #000,0 0 2px #000; pointer-events:none; }
+  #subzone-hover { transform:translate(12px,-130%); background:rgba(10,13,20,.82); color:var(--fg);
+      text-shadow:none; padding:1px 7px; border-radius:5px; border:1px solid var(--line); }
   .nogrid { padding:40px; color:var(--dim); text-align:center; }
   .grid-fallback { position:absolute; inset:0;
       background-image:linear-gradient(#232b3d 1px,transparent 1px),
@@ -1160,6 +1720,7 @@ PAGE = r"""<!doctype html>
   }
 /* @inspect-css */
 /* @chat-css */
+/* @activity-css */
 /* @agent-css */
 </style></head>
 <body>
@@ -1187,6 +1748,7 @@ PAGE = r"""<!doctype html>
   <div class="bar">
     <label>Zone <select id="zone"></select></label>
     <button id="fit">Fit</button>
+    <button id="tglLabels" title="Show every subzone name (from WorldMapOverlay.dbc)">Labels: off</button>
     <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
     <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
     <button id="saveCalibration" hidden>Save calibration</button>
@@ -1199,6 +1761,7 @@ PAGE = r"""<!doctype html>
       <div class="grid-fallback" id="fallback"></div>
       <img id="mapimg" alt="">
       <svg class="trail" id="trailsvg"></svg>
+      <div id="subzones"><div id="subzone-hover" hidden></div></div>
       <div id="markers"></div>
     </div>
   </div>
@@ -1210,6 +1773,7 @@ PAGE = r"""<!doctype html>
 </main>
 <!-- @inspect-html -->
 <!-- @inspect-js -->
+<!-- @activity-js -->
 <script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
 <!-- @chat-js -->
 <!-- @agent-js -->
@@ -1217,6 +1781,7 @@ PAGE = r"""<!doctype html>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
 let areas = [], players = [], selected = null, follow = false, showTrail = false;
+let showLabels = false, stageScale = 1;
 let currentArea = null, imgW = 1002, imgH = 668;
 let calibrating = false, draftCalibration = null, calibrationReference = null, calibrationDrag = null;
 
@@ -1307,9 +1872,12 @@ function calibration() {
 }
 
 // Keep calibration at the final world->normalised->pixel step: offsets are image pixels.
+// Normalised coords are fractions of the game's 1002x668 map frame, which the 1024x768
+// tile sheet overflows (transform.MAP_FRAME_W/H, #109), so scale by the frame.
+const MAP_FRAME_W = 1002, MAP_FRAME_H = 668;
 function px(p) {
   const c = calibration();
-  return [p.norm_x * imgW + c.dx, p.norm_y * imgH + c.dy];
+  return [p.norm_x * MAP_FRAME_W + c.dx, p.norm_y * MAP_FRAME_H + c.dy];
 }
 
 function resetCalibration() {
@@ -1329,6 +1897,7 @@ function place() {
     const st = $('stage');
     const s = Math.min(st.clientWidth / imgW, st.clientHeight / imgH, 1);
     wrap.style.transform = `scale(${s})`;
+    stageScale = s;
     wrap.style.transformOrigin = 'top left';
     wrap.style.margin = '0';
     st.scrollLeft = 0; st.scrollTop = 0;
@@ -1370,7 +1939,35 @@ function place() {
     m.appendChild(ref);
   }
   wrap.classList.toggle('calibrating', calibrating);
+  drawLabels();
   $('f-note').textContent = `${here.length} in this zone`;
+}
+
+// ---- subzones: WorldMapOverlay hit rects, already in image pixels (see /api/areas)
+function drawLabels() {
+  const layer = $('subzones');
+  for (const e of layer.querySelectorAll('.subzone-label')) e.remove();
+  const a = currentArea;
+  if (!showLabels || !a || !a.has_image) return;
+  for (const sz of a.subzones || []) {
+    const e = document.createElement('div');
+    e.className = 'subzone-label';
+    e.textContent = sz.name;
+    e.style.left = sz.label[0] + 'px'; e.style.top = sz.label[1] + 'px';
+    e.style.fontSize = (12 / stageScale) + 'px';   // stay readable when the stage is scaled down
+    layer.appendChild(e);
+  }
+}
+
+// The smallest rect under the point wins: Ruins of Silvermoon sits inside Silvermoon City.
+function subzoneAt(x, y) {
+  let best = null, bestArea = Infinity;
+  for (const sz of (currentArea && currentArea.subzones) || []) {
+    const r = sz.hit || sz.art;
+    if (!r || x < r[0] || y < r[1] || x > r[0] + r[2] || y > r[1] + r[3]) continue;
+    if (r[2] * r[3] < bestArea) { best = sz; bestArea = r[2] * r[3]; }
+  }
+  return best;
 }
 
 function renderList() {
@@ -1455,6 +2052,26 @@ $('wrap').addEventListener('pointermove', (e) => {
   draftCalibration.dy = Math.round((calibrationDrag.dy + y - calibrationDrag.y) * 100) / 100;
   place();
 });
+$('wrap').addEventListener('pointermove', (e) => {
+  const hover = $('subzone-hover');
+  if (calibrating || !currentArea || !currentArea.has_image) { hover.hidden = true; return; }
+  const box = $('wrap').getBoundingClientRect();
+  const x = (e.clientX - box.left) * imgW / box.width;
+  const y = (e.clientY - box.top) * imgH / box.height;
+  const sz = subzoneAt(x, y);
+  hover.hidden = !sz;
+  if (!sz) return;
+  hover.textContent = sz.name;
+  hover.style.left = x + 'px'; hover.style.top = y + 'px';
+  hover.style.fontSize = (12 / stageScale) + 'px';
+});
+$('wrap').addEventListener('pointerleave', () => { $('subzone-hover').hidden = true; });
+$('tglLabels').onclick = (e) => {
+  showLabels = !showLabels;
+  e.target.textContent = 'Labels: ' + (showLabels ? 'on' : 'off');
+  e.target.classList.toggle('on', showLabels);
+  drawLabels();
+};
 for (const event of ['pointerup', 'pointercancel']) {
   $('wrap').addEventListener(event, () => { calibrationDrag = null; });
 }
@@ -1563,7 +2180,9 @@ if (!location.hash) {
   if (pinned) Inspect.open(pinned);
 }
 
-loadAreas().then(tick);
+// draw() loads the zone art; tick() alone only places markers, which left the stage
+// an empty grid on first load until the zone was changed.
+loadAreas().then(() => { draw(); return tick(); });
 setInterval(tick, 5000);
 </script>
 </body></html>
@@ -1572,6 +2191,8 @@ PAGE = (PAGE
         .replace("/* @inspect-css */", INSPECT_CSS)
         .replace("<!-- @inspect-html -->", INSPECT_HTML)
         .replace("<!-- @inspect-js -->", INSPECT_JS)
+        .replace("/* @activity-css */", ACTIVITY_CSS)
+        .replace("<!-- @activity-js -->", ACTIVITY_JS)
         .replace("/* @chat-css */", CHAT_CSS)
         .replace("<!-- @chat-html -->", CHAT_HTML)
         .replace("<!-- @chat-js -->", CHAT_JS)
@@ -1580,6 +2201,28 @@ PAGE = (PAGE
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 
+def start_activity():
+    """Open the activity store and start its pollers; the feed is optional, so a
+    store that can't be opened only disables it."""
+    global activity
+    if not ACTIVITY_DB:
+        return None
+    try:
+        store = activity_feed.ActivityStore(ACTIVITY_DB)
+    except Exception as e:  # noqa: BLE001 - OSError, sqlite3.Error, ...
+        log.error("activity feed disabled, cannot open %s: %s", ACTIVITY_DB, e)
+        return None
+    activity = activity_feed.Activity(
+        store, connect=db, zone_name=lambda z: tables().zone_name(z),
+        chat_url=ACTIVITY_CHAT_FEED_URL, audit_dir=AUDIT_DIR)
+    activity.start()
+    log.info("activity feed: store=%s chat=%s audit=%s", ACTIVITY_DB,
+             ACTIVITY_CHAT_FEED_URL or "off", AUDIT_DIR or "off")
+    return activity
+
+
 if __name__ == "__main__":
+    start_activity()
     log.info("wowmap on :%d (db=%s dbc=%s maps=%s)", LISTEN_PORT, MYSQL["host"], DBC_DIR, MAPS_DIR)
+    threading.Thread(target=names, name="load-names", daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()

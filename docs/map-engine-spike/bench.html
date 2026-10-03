@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- UM-77 spike: Leaflet vs MapLibre GL with N moving markers over the same minimap raster pyramid.
+     Query: ?lib=leaflet-dom|leaflet-canvas|maplibre-dom|maplibre-gl&n=25
+     Results land in window.__result (read by the headless driver). Throwaway. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UM-77 bench</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<style>
+  html, body, #map { margin: 0; width: 100%; height: 100%; background: #001d28; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; box-sizing: border-box; background: #e33; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script src="vendor/leaflet.js"></script>
+<script type="module">
+import * as maplibregl from "./vendor/maplibre-gl.mjs";
+const q = new URLSearchParams(location.search);
+const lib = q.get("lib"), N = +q.get("n") || 25;
+const G = 533.3333, TILE_URL = `${location.origin}/tiles/Kalimdor/{z}/{x}/{y}.jpg`;
+// world (x north, y west) -> fractional tile coords at the native zoom (col = east-west, row = north-south)
+const tile = (x, y) => [32 - y / G, 32 - x / G];
+const start = [1629, -4373];                       // Orgrimmar
+const rnd = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+const pts = Array.from({ length: N }, () => ({ x: start[0] + (rnd() - .5) * 6000, y: start[1] + (rnd() - .5) * 6000,
+                                                vx: (rnd() - .5) * 40, vy: (rnd() - .5) * 40 }));
+const step = () => { for (const p of pts) { p.x += p.vx; p.y += p.vy; if (Math.abs(p.x - start[0]) > 3000) p.vx = -p.vx; if (Math.abs(p.y - start[1]) > 3000) p.vy = -p.vy; } };
+
+let move, pan, create, screenPos;
+const t0 = performance.now();
+if (lib.startsWith("leaflet")) {
+  const canvas = lib === "leaflet-canvas";
+  const map = L.map("map", { crs: L.CRS.Simple, zoomSnap: 0, preferCanvas: canvas, attributionControl: false });
+  L.tileLayer(`tiles/Kalimdor/{z}/{x}/{y}.jpg`, { tileSize: 256, maxNativeZoom: 6, maxZoom: 8, noWrap: true }).addTo(map);
+  const ll = (x, y) => { const [c, r] = tile(x, y); return [-r * 4, c * 4]; };
+  map.setView(ll(...start), 5, { animate: false });
+  const ms = pts.map(p => canvas ? L.circleMarker(ll(p.x, p.y), { radius: 5, color: "#fff", weight: 2, fillColor: "#e33", fillOpacity: 1 })
+                                 : L.marker(ll(p.x, p.y), { icon: L.divIcon({ className: "", html: '<div class="dot"></div>', iconSize: [10, 10] }) }));
+  ms.forEach(m => m.addTo(map));
+  create = () => 0;
+  move = () => { step(); pts.forEach((p, i) => ms[i].setLatLng(ll(p.x, p.y))); };
+  pan = d => map.panBy([d, 0], { animate: false });
+  screenPos = () => pts.map(p => { const c = map.latLngToContainerPoint(ll(p.x, p.y)); return [+c.x.toFixed(1), +c.y.toFixed(1)]; });
+} else {
+  const merc = (x, y) => { const [c, r] = tile(x, y); return new maplibregl.MercatorCoordinate(c / 64, r / 64, 0).toLngLat(); };
+  const map = new maplibregl.Map({
+    container: "map", interactive: true, attributionControl: false, fadeDuration: 0,
+    style: { version: 8, sources: { sat: { type: "raster", tiles: [TILE_URL], tileSize: 256, minzoom: 0, maxzoom: 6 } },
+             layers: [{ id: "bg", type: "background", paint: { "background-color": "#001d28" } }, { id: "sat", type: "raster", source: "sat" }] },
+    center: merc(...start).toArray(), zoom: 4, // MapLibre draws a 256 px source tile at 1:1 on zoom z+1 (512 px world at zoom 0): 128 css px per tile, as Leaflet zoom 5
+  });
+  await new Promise(r => map.on("load", r));
+  if (lib === "maplibre-dom") {
+    const ms = pts.map(p => { const el = document.createElement("div"); el.className = "dot"; return new maplibregl.Marker({ element: el }).setLngLat(merc(p.x, p.y)).addTo(map); });
+    move = () => { step(); pts.forEach((p, i) => ms[i].setLngLat(merc(p.x, p.y))); };
+  } else {
+    const fc = () => ({ type: "FeatureCollection", features: pts.map(p => ({ type: "Feature", geometry: { type: "Point", coordinates: merc(p.x, p.y).toArray() }, properties: {} })) });
+    map.addSource("p", { type: "geojson", data: fc() });
+    map.addLayer({ id: "p", type: "circle", source: "p", paint: { "circle-radius": 5, "circle-color": "#e33", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+    move = () => { step(); map.getSource("p").setData(fc()); };
+  }
+  pan = d => map.panBy([d, 0], { animate: false });
+  screenPos = () => pts.map(p => { const c = map.project(merc(p.x, p.y)); return [+c.x.toFixed(1), +c.y.toFixed(1)]; });
+}
+const createMs = performance.now() - t0;
+
+if (q.get("still")) { await new Promise(r => setTimeout(r, 1500)); window.__result = { lib, positions: screenPos().slice(0, 5) }; window.__phase = "end"; throw 0; }
+// 1) marker-update cost alone: 200 ticks, JS time per tick (what the 5 s refresh pays)
+await new Promise(r => setTimeout(r, 1500));
+const tms = [];
+for (let i = 0; i < 200; i++) { const a = performance.now(); move(); tms.push(performance.now() - a); }
+tms.sort((a, b) => a - b);
+// 2) frames while panning and moving every marker every frame for 4 s (a worst-case "smooth 60 fps" page)
+const frames = [];
+window.__phase = "anim";
+await new Promise(res => {
+  let last = performance.now(), end = last + 4000, dir = 6;
+  const f = now => { frames.push(now - last); last = now; const a = performance.now(); move(); pan(dir); dir = -dir; frames.work = (frames.work || 0) + performance.now() - a;
+                     if (now < end) requestAnimationFrame(f); else res(); };
+  requestAnimationFrame(f);
+});
+window.__phase = "end";
+const fs = frames.slice(5).sort((a, b) => a - b);
+window.__result = { lib, n: N, createMs: +createMs.toFixed(1),
+  moveMedianMs: +tms[100].toFixed(3), moveP95Ms: +tms[190].toFixed(3),
+  frames: fs.length, fpsMean: +(1000 / (fs.reduce((a, b) => a + b, 0) / fs.length)).toFixed(1),
+  frameP95Ms: +fs[Math.floor(fs.length * .95)].toFixed(1), frameMaxMs: +fs[fs.length - 1].toFixed(1),
+  jsWorkPerFrameMs: +(frames.work / fs.length).toFixed(3),
+  heapMB: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(1) : null };
+document.title = "done";
+</script>
+</body>
+</html>
