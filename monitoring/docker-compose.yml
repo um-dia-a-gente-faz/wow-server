@@ -101,6 +101,11 @@ services:
       - GRID_MAPS_DIR=/server-data/maps
       - LISTEN_PORT=9400
       - CALIBRATION_FILE=/app/calibration.json
+      # UM-76 activity feed: SQLite store (last 500 events per character), the
+      # chat-feed container on the shared wow-game network, and the agents' audit logs.
+      - ACTIVITY_DB=/data/activity.sqlite3
+      - ACTIVITY_CHAT_FEED_URL=http://chat-feed:9500
+      - AUDIT_DIR=/audit
       # UM-50: agents' read-only APIs, "Name=http://host:9601,..." (empty = no agent mind tab)
       - AGENT_API_URLS=${AGENT_API_URLS:-}
     ports:
@@ -112,6 +117,8 @@ services:
       # creates this directory empty and the inspect drawer shows placeholders.
       - /opt/wowmap-data/icons:/icons:ro
       - /opt/wowmap-data/calibration.json:/app/calibration.json
+      - /opt/wowmap-data/activity:/data
+      - /opt/wow-server-metrics/audit:/audit:ro
       # The worldserver's extracted maps/*.map, read-only: subzone at a position (UM-75).
       - server_data:/server-data:ro
     networks:

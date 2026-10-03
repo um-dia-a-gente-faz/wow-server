@@ -27,6 +27,9 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
+| `ACTIVITY_DB` | `/data/activity.sqlite3` | activity feed store; empty disables the feed |
+| `ACTIVITY_CHAT_FEED_URL` | `http://chat-feed:9500` | chat-feed as seen from the wowmap process; empty = no chat events |
+| `AUDIT_DIR` | `/audit` | agents' UM-51 decision logs (`<agent>/<day>.jsonl`); empty = no agent events |
 
 Tests (need the `requirements.txt` packages):
 
@@ -119,6 +122,28 @@ Health is current only, and so is power. The worldserver computes maximum
 health and power at runtime and never saves them, so there are no bars (see
 `docs/ROADMAP.md`, Operator dashboard panel, Phase B). With the 5 s
 `PlayerSaveInterval`, damage taken in game shows up within about 10 s.
+
+## Recent activity (UM-76)
+
+`GET /api/character/<name>/activity?limit=50` (max 500) returns the newest events
+for one character, and the inspect drawer shows them under **Recent activity**.
+`activity.py` fills a SQLite store (`ACTIVITY_DB`, the newest 500 events per
+character, so history survives a restart) from three background sources:
+
+| Source | What | How |
+|---|---|---|
+| `db` | login/logout, level, zone, quests turned in, items gained/lost, money | every 5 s, one read-only consistent snapshot of the **online** characters: `characters` (money, level, zone, online), `character_inventory` ⨝ `item_instance` summed per `itemEntry`, `character_queststatus_rewarded`; diffed against the previous snapshot in memory. Names come from `world.item_template` / `world.quest_template` only for entries that changed (cached). |
+| `chat` | public chat (`say`, `yell`, `channel`) | chat-feed's SSE stream, resumed with `Last-Event-ID`. Anything else (whisper, party, guild, …) is dropped here even if chat-feed ever publishes it. Agents' chat comes from their audit log instead. |
+| `audit` | every agent decision except `idle`, with its result (attack, loot, sell, trade, chat including whispers/party) | new lines of `AUDIT_DIR/<agent>/<day>.jsonl`, the same records PR #113's live "Agent mind" tab shows. |
+
+The database does not record *why* something changed, so these are **inferred**
+and carry an `inferred` badge: an item that disappears while money goes up is
+*sold* (only items with a `SellPrice`); the same item and count leaving one
+character and reaching another in the same poll is a *trade*; items that
+disappear when a quest is turned in were *handed in*; any other disappearance is
+*used or destroyed* (mail and bank-free trades included); an item that appears
+while money goes down is *bought*. The first poll after a start is only a
+baseline, and changes made while a character is offline are not reported.
 
 ## Console layout (map + player list + chat + inspect drawer)
 
