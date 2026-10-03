@@ -114,6 +114,41 @@ class PositionTests(unittest.TestCase):
         self.assertAlmostEqual(y, 21.46, places=2)
         self.assertIsNone(self.t.game_coords(1581, 0.0, 0.0))
 
+    def test_markers_use_the_client_axes(self):
+        # Issue #109: horizontal from world Y (fields 4/5), vertical from world X (6/7).
+        # Transposed, Rubens lands in the sea west of Sunstrider Isle at (0.215, 0.380).
+        nx, ny = self.t.to_normalised(3430, RUBENS[1], RUBENS[2])
+        self.assertAlmostEqual(nx, 0.380, delta=0.002)
+        self.assertAlmostEqual(ny, 0.215, delta=0.002)
+        # Walking north (world X up) moves the marker up, west (world Y up) moves it left.
+        nx_n, ny_n = self.t.to_normalised(3430, RUBENS[1] + 100, RUBENS[2])
+        self.assertAlmostEqual(nx_n, nx)
+        self.assertLess(ny_n, ny)
+        nx_w, ny_w = self.t.to_normalised(3430, RUBENS[1], RUBENS[2] + 100)
+        self.assertLess(nx_w, nx)
+        self.assertAlmostEqual(ny_w, ny)
+        # The rect's corners are the map's corners.
+        for (x, y), corner in (((11041.667, -4487.5), (0, 0)), ((7758.333, -9412.5), (1, 1))):
+            for got, want in zip(self.t.to_normalised(3430, x, y), corner):
+                self.assertAlmostEqual(got, want, places=6)
+        self.assertIsNone(self.t.to_normalised(3487, 0.0, 0.0))   # degenerate rect
+        self.assertIsNone(self.t.to_normalised(1581, 0.0, 0.0))   # no rect
+
+    def test_game_coords_are_the_normalised_position(self):
+        n = self.t.to_normalised(3430, RUBENS[1], RUBENS[2])
+        g = self.t.game_coords(3430, RUBENS[1], RUBENS[2])
+        self.assertEqual(g, (n[0] * 100, n[1] * 100))
+
+    def test_pixels_are_on_the_1002x668_map_frame(self):
+        # The 1024x768 tile sheet overflows the game's 1002x668 frame; Rubens is on
+        # Sunstrider Isle at about (381, 143) of the extracted 3430.png.
+        x, y = self.t.to_pixel(3430, RUBENS[1], RUBENS[2])
+        self.assertAlmostEqual(x, 381, delta=1)
+        self.assertAlmostEqual(y, 143, delta=1)
+        x, y = self.t.to_pixel(3430, 7758.333, -9412.5)
+        self.assertAlmostEqual(x, 1002, places=4)
+        self.assertAlmostEqual(y, 668, places=4)
+
     def test_subzone_from_the_area_grid(self):
         area = self.grid.area_id(*RUBENS)
         self.assertEqual(area, 3431)

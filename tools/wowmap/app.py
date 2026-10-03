@@ -1304,9 +1304,12 @@ function calibration() {
 }
 
 // Keep calibration at the final world->normalised->pixel step: offsets are image pixels.
+// Normalised coords are fractions of the game's 1002x668 map frame, which the 1024x768
+// tile sheet overflows (transform.MAP_FRAME_W/H, #109), so scale by the frame.
+const MAP_FRAME_W = 1002, MAP_FRAME_H = 668;
 function px(p) {
   const c = calibration();
-  return [p.norm_x * imgW + c.dx, p.norm_y * imgH + c.dy];
+  return [p.norm_x * MAP_FRAME_W + c.dx, p.norm_y * MAP_FRAME_H + c.dy];
 }
 
 function resetCalibration() {

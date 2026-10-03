@@ -57,29 +57,34 @@ def is_land(x, y):
     return r > b + 8          # warm = land, cool = sea
 
 
+FW, FH = 1002, 668   # the game's map frame; the 1024x768 sheet overflows it (#109)
 results = []
-# which field pair is the X extent (the other pair is Y), and axis orientation
-for xpair, ypair in (("67", "45"), ("45", "67")):
-    xa, xb = (f6, f7) if xpair == "67" else (f4, f5)
-    ya, yb = (f4, f5) if xpair == "67" else (f6, f7)
-    for flipx in (False, True):
-        for flipy in (False, True):
-            hits = 0
-            for wx, wy in pts:
-                nx = (wx - xa) / (xb - xa)
-                ny = (wy - ya) / (yb - ya)
-                if flipx:
-                    nx = 1 - nx
-                if flipy:
-                    ny = 1 - ny
-                if is_land(nx * W, ny * H):
-                    hits += 1
-            results.append((hits / len(pts), xpair, ypair, flipx, flipy))
+# which world axis is horizontal on the image, which field pair is the horizontal extent
+# (the other pair is vertical), and axis orientation. The client uses horizontal = world
+# Y with fields 4/5, i.e. horiz "Y", pair "45", no flips (#109).
+for horiz in ("X", "Y"):
+    for xpair, ypair in (("67", "45"), ("45", "67")):
+        xa, xb = (f6, f7) if xpair == "67" else (f4, f5)
+        ya, yb = (f4, f5) if xpair == "67" else (f6, f7)
+        for flipx in (False, True):
+            for flipy in (False, True):
+                hits = 0
+                for wx, wy in pts:
+                    h, v = (wx, wy) if horiz == "X" else (wy, wx)
+                    nx = (h - xa) / (xb - xa)
+                    ny = (v - ya) / (yb - ya)
+                    if flipx:
+                        nx = 1 - nx
+                    if flipy:
+                        ny = 1 - ny
+                    if is_land(nx * FW, ny * FH):
+                        hits += 1
+                results.append((hits / len(pts), horiz, xpair, ypair, flipx, flipy))
 
 results.sort(reverse=True)
 print(f"area {AREA}: {len(pts)} real points, image {W}x{H}")
 print(f"raw fields f4..f7 = {f4}, {f5}, {f6}, {f7}\n")
-print(f"{'land%':>7s}  Xpair  Ypair  flipX  flipY")
-for frac, xp, yp, fx, fy in results:
+print(f"{'land%':>7s}  horiz  Hpair  Vpair  flipH  flipV")
+for frac, hz, xp, yp, fx, fy in results:
     mark = "  <-- best" if frac == results[0][0] else ""
-    print(f"{frac * 100:6.1f}%  {xp:5s}  {yp:5s}  {str(fx):5s}  {str(fy):5s}{mark}")
+    print(f"{frac * 100:6.1f}%  {hz:5s}  {xp:5s}  {yp:5s}  {str(fx):5s}  {str(fy):5s}{mark}")
