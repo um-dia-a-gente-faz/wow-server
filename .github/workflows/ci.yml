@@ -37,10 +37,11 @@ jobs:
       - name: chat-feed unit tests
         run: python -m unittest discover -s tools/chat-feed/tests -v
 
-      # wowmap needs PyMySQL + cryptography (see its requirements.txt).
+      # wowmap needs PyMySQL + cryptography (see its requirements.txt), and Pillow
+      # for the extract_maps.py tests (an offline tool, so not in the image).
       - name: wowmap unit tests
         run: |
-          pip install -r tools/wowmap/requirements.txt
+          pip install -r tools/wowmap/requirements.txt Pillow
           python -m unittest discover -s tools/wowmap/tests -v
 
       - name: agent unit tests
