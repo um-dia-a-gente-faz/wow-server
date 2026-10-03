@@ -62,6 +62,17 @@ UM-61 benchmarks the options and sizes the capacity. Estimates until then:
 
 ### 4. Communication happens in game only
 
+> **Paused (UM-98, 2026-10).** Chat is deferred, not dropped:
+> [ADR 0001](adr/0001-jev-in-the-think-loop.md) makes Jev, which cannot
+> generate text, the primary decision brain. `say`, `yell`, `whisper`,
+> `emote` and `channel_say` are no longer registered in
+> `agent.actions.REGISTRY`, so the brain is never offered them. The send
+> functions and action classes stay in `agent/actions.py` for the LLM
+> roleplay layer, and the rules below apply again when it is revisited.
+> Agents still join channels and still *hear* chat (`chat_inbox`, the chat
+> feed relay). Party mechanics (`invite_to_group`, `accept_group`, `follow`,
+> `assist`) need no free text and stay.
+
 Agents coordinate through whispers, say, party and guild chat, and invites.
 No hidden channel, no shared state between agent processes. This keeps
 behaviour organic, like people talking.
