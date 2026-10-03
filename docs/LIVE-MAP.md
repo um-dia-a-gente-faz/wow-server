@@ -172,6 +172,8 @@ row/column is drawn `size % 256` pixels from a file padded to a power of two
 (FrameXML `WorldMapFrame_Update`). `extract_maps.py` pastes every overlay at its
 offset, so `<area_id>.png` is the zone fully explored and `<area_id>_base.png` the
 parchment alone. Overlays are placed by pixel offset, not through `transform.py`.
+Each overlay's own art also goes to `overlays/<overlay_id>.png` (one per overlay that has a texture); the site
+stacks a character's revealed ones on the base art for fog of war (`tools/wowmap/fog.py`).
 
 Overlay tiles are DXT3/DXT5 (alpha encoding 1/7), base tiles DXT1; the BLP decoder
 picks the DDS FourCC from the BLP's alpha-encoding byte.
@@ -236,6 +238,8 @@ Three earlier calibration attempts, from before the axis fix, are in `tools/wowm
 | `GET /api/areas?map=<id>` | JSON: zone tiles with rect, name, whether an image exists, subzones (overlay rects + names) |
 | `GET /api/summary` | `{online, in_world, in_instance, zones}` |
 | `GET /maps/<area_id>.png` | the zone map image, fully explored (static, cached 24 h); `<area_id>_base.png` is the unexplored art |
+| `GET /maps/<area_id>.png?explored=<overlay ids>` | the base art with only those overlays revealed (fog of war) |
+| `GET /api/character/<name>/explored` | JSON: the overlays a character has revealed, per zone |
 | `GET /static/leaflet.js`, `/static/leaflet.css` | the vendored Leaflet 1.9.4 the page loads (cached 24 h) |
 | `GET /healthz` | `{"ok": true}` |
 

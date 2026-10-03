@@ -2,3 +2,5 @@ PyMySQL==1.1.1
 # MySQL 8.4 defaults to caching_sha2_password; PyMySQL needs this for the full
 # auth path once the server's auth cache expires. See exporters/README.md.
 cryptography==43.0.3
+# Composes a character's fog-of-war zone art (fog.py). The extraction scripts use it too.
+Pillow==12.3.0

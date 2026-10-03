@@ -7,6 +7,9 @@ Writes, per zone (`<area_id>` = WorldMapArea field 2, an AreaTable ID):
     <area_id>.png        base art + every WorldMapOverlay explored-area texture,
                          i.e. the zone as the game shows it fully explored
 
+and, per overlay with a texture, `overlays/<overlay_id>.png`: that texture alone,
+which the site stacks on the base art for a character's fog of war (fog.py).
+
 Non-obvious things this handles:
 
 1. The world map art lives in the **locale** MPQs (`<locale>/locale-XXxx.MPQ`, with
@@ -165,29 +168,48 @@ def base_sheet(archive, name):
     return sheet
 
 
-def composite_overlays(sheet, archive, name, overlays):
+def overlay_image(archive, name, o):
+    """One overlay's texture, its tiles stitched into a width x height RGBA image.
+
+    Returns (image, drawn, missing): tiles pasted and tile files not found. The
+    image is None when the overlay has no texture or none of its tiles exist.
+    """
+    if not o["texture"]:
+        return None, 0, 0
+    art = Image.new("RGBA", (o["width"], o["height"]), (0, 0, 0, 0))
+    drawn = missing = 0
+    for n, x, y, w, h, _fw, _fh in ovl.tile_layout(o["width"], o["height"]):
+        tile = read_blp(archive, f"Interface\\WorldMap\\{name}\\{o['texture']}{n}.blp")
+        if tile is None:
+            missing += 1
+            continue
+        # Draw the file 1:1 and clip it to the pixels FrameXML shows: some edge
+        # tiles are bigger than the power of two the client assumes, with the
+        # extra rows/columns transparent.
+        art.paste(tile.crop((0, 0, min(w, tile.width), min(h, tile.height))), (x, y))
+        drawn += 1
+    return (art if drawn else None), drawn, missing
+
+
+def composite_overlays(sheet, archive, name, overlays, save_dir=None):
     """Alpha-composite every overlay texture onto a copy of `sheet`.
 
-    Returns (image, drawn, missing): tiles pasted and tile files not found.
+    Returns (image, drawn, missing): tiles pasted and tile files not found. With
+    `save_dir`, each overlay's own art is also written there as `<overlay_id>.png`.
     """
     out = sheet.copy()
     drawn = missing = 0
     for o in overlays:
-        if not o["texture"]:
+        art, d, m = overlay_image(archive, name, o)
+        drawn += d
+        missing += m
+        if art is None:
             continue
-        for n, x, y, w, h, _fw, _fh in ovl.tile_layout(o["width"], o["height"]):
-            tile = read_blp(archive, f"Interface\\WorldMap\\{name}\\{o['texture']}{n}.blp")
-            if tile is None:
-                missing += 1
-                continue
-            # Draw the file 1:1 and clip it to the pixels FrameXML shows: some edge
-            # tiles are bigger than the power of two the client assumes, with the
-            # extra rows/columns transparent.
-            tile = tile.crop((0, 0, min(w, tile.width), min(h, tile.height)))
-            layer = Image.new("RGBA", out.size, (0, 0, 0, 0))
-            layer.paste(tile, (o["offset_x"] + x, o["offset_y"] + y))
-            out = Image.alpha_composite(out, layer)
-            drawn += 1
+        if save_dir:
+            art.save(os.path.join(save_dir, f"{o['id']}.png"), "PNG", optimize=True)
+        layer = Image.new("RGBA", out.size, (0, 0, 0, 0))
+        layer.paste(art, (o["offset_x"], o["offset_y"]))
+        out = Image.alpha_composite(out, layer)
     return out, drawn, missing
 
 
@@ -224,6 +246,8 @@ def main():
              if os.path.exists(os.path.join(locale_dir, n))]
     archive = ArchiveChain([MPQArchive(p, listfile=False) for p in paths])
     os.makedirs(args.out, exist_ok=True)
+    overlay_dir = os.path.join(args.out, "overlays")    # fog.OVERLAY_DIR
+    os.makedirs(overlay_dir, exist_ok=True)
 
     # Continents share area 0; as before, the last WorldMapArea row for an area wins.
     by_area = {area_id: (wma_id, name) for wma_id, area_id, name in rows}
@@ -236,7 +260,7 @@ def main():
             continue
         sheet.save(os.path.join(args.out, f"{area_id}_base.png"), "PNG", optimize=True)
         coloured, drawn, missing = composite_overlays(
-            sheet, archive, name, overlays_by_zone.get(wma_id, []))
+            sheet, archive, name, overlays_by_zone.get(wma_id, []), save_dir=overlay_dir)
         coloured.save(os.path.join(args.out, f"{area_id}.png"), "PNG", optimize=True)
         note = f", {missing} overlay tiles missing" if missing else ""
         print(f"  {name:24s} area {area_id:5d} -> {area_id}.png ({drawn} overlay tiles{note})")

@@ -85,6 +85,9 @@ class DbcTables:
         self.area_map = {r[0]: r[1] for r in self._area if len(r) > 1}
         # AreaTable.dbc field 2 is ParentAreaID: 0 for a zone, else the zone a subzone is in.
         self.area_parent = {r[0]: r[2] for r in self._area if len(r) > 2}
+        # AreaTable.dbc field 3 is the explore bit (AreaBit): its index into the
+        # character's PLAYER_EXPLORED_ZONES bitfield. See fog.py.
+        self.area_bits = {r[0]: r[3] for r in self._area if len(r) > 3}
 
     # ---- decoding helpers -------------------------------------------------
     @staticmethod

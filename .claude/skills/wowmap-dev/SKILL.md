@@ -41,6 +41,8 @@ wowmap reads `AreaTable`, `Map`, `WorldMapArea` and `WorldMapOverlay` from
 `/opt/wowmap-data/dbc`. `<area_id>.png` is the zone fully explored (base parchment +
 every `WorldMapOverlay` texture); `<area_id>_base.png` is the unexplored parchment.
 Subzone rects/names come from `overlays.py` and are image pixels, not world coordinates.
+`overlays/<overlay_id>.png` is each overlay's own art; `fog.py` stacks the ones a
+character has explored (`characters.exploredZones`) on the base art.
 
 ## Coordinates
 
