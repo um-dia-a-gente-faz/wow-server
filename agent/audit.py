@@ -18,10 +18,11 @@ Record shape (one JSON object per line):
                       omitted (hash + this cycle's own record are enough to
                       tell "did perception change" without repeating ~40
                       nearby objects every 3s)
-    prompt_tokens    int or None (only known LLM providers report usage)
+    prompt_tokens    int or None (only known LLM providers report usage;
+                      Jev's usage.input_tokens)
     completion_tokens int or None
     model            str or None
-    latency_ms       float or None (LLM call latency)
+    latency_ms       float or None (LLM/Jev call latency)
     tool_call        {"name": str or None, "args": dict}
     valid            bool — the tool call resolved to a registered action
                       with all required params (mirrors ThinkResult.ok up
@@ -30,6 +31,13 @@ Record shape (one JSON object per line):
     reflex           free-form dict describing reflex state (e.g. follow
                       reflex enabled/leader), or {} if none is active
     goal             str or None — the agent's current persona/goal, if any
+    brain            "jev", "llm" or None (UM-101): the brain that decided this
+                      cycle, or the last one tried when none did
+    confidence       float or None: Jev's confidence in its choice (Jev only)
+    fallback         str or None: why Jev did not decide (call failed or
+                      cooling down) when it is configured and the LLM was
+                      used or the cycle was skipped
+    candidates       int or None: how many candidates Jev was offered
 
 Never writes the LLM API key or account password — nothing in this module
 ever touches `Config.llm_api_key`/`password`; only `Config.redacted()`-safe
@@ -109,6 +117,10 @@ class AuditRecord:
     result: dict = field(default_factory=lambda: {"ok": False, "error": None})
     reflex: dict = field(default_factory=dict)
     goal: str | None = None
+    brain: str | None = None
+    confidence: float | None = None
+    fallback: str | None = None
+    candidates: int | None = None
     snapshot: dict | None = None  # only set when this cycle carries the full snapshot
 
     def to_dict(self) -> dict:
@@ -126,6 +138,10 @@ class AuditRecord:
             "result": self.result,
             "reflex": self.reflex,
             "goal": self.goal,
+            "brain": self.brain,
+            "confidence": self.confidence,
+            "fallback": self.fallback,
+            "candidates": self.candidates,
         }
         if self.snapshot is not None:
             d["snapshot"] = self.snapshot
@@ -172,6 +188,8 @@ class AuditLogger:
                result: dict, reflex: dict | None = None, goal: str | None = None,
                prompt_tokens: int | None = None, completion_tokens: int | None = None,
                model: str | None = None, latency_ms: float | None = None,
+               brain: str | None = None, confidence: float | None = None,
+               fallback: str | None = None, candidates: int | None = None,
                ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snapshot = snapshot or {}
@@ -187,6 +205,7 @@ class AuditLogger:
             tool_call=tool_call or {"name": None, "args": {}},
             valid=valid, result=result or {"ok": False, "error": None},
             reflex=reflex or {}, goal=goal,
+            brain=brain, confidence=confidence, fallback=fallback, candidates=candidates,
             snapshot=snapshot if include_full else None,
         )
 

@@ -66,11 +66,16 @@ class Config:
 
     # ── Jev decision model (UM-99, ADR 0001) ──────────────────
     # OpenRouter Decisions API. The key is JEV_API_KEY, else OPENROUTER_API_KEY.
+    # Jev is the think step's brain (UM-101, agent/brain.py) when a key or an
+    # explicit JEV_BASE_URL is set (tools/jev-mock needs no key); see jev_enabled.
+    # `or`, not a default: compose passes unset vars through as "".
     jev_base_url: str = field(default_factory=lambda: _env_str(
-        "JEV_BASE_URL", "https://openrouter.ai/api/alpha"))
+        "JEV_BASE_URL") or "https://openrouter.ai/api/alpha")
     jev_api_key: str = field(default_factory=lambda: _env_str(
         "JEV_API_KEY") or _env_str("OPENROUTER_API_KEY"))
-    jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL", "typesafe/jev-1.13"))
+    jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL") or "typesafe/jev-1.13")
+    jev_enabled: bool = field(default_factory=lambda: bool(
+        _env_str("JEV_BASE_URL") or _env_str("JEV_API_KEY") or _env_str("OPENROUTER_API_KEY")))
 
     # ── Logging ───────────────────────────────────────────────
     log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
@@ -116,6 +121,7 @@ class Config:
             "think_interval": self.think_interval,
             "run_duration": self.run_duration or "forever",
             "llm_model": self.llm_model or "(unset)",
+            "jev": "on" if self.jev_enabled else "(off)",
             "jev_base_url": self.jev_base_url,
             "jev_model": self.jev_model,
             "jev_api_key": "***" if self.jev_api_key else "(unset)",

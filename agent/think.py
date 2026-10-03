@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Think step (UM-44): perception snapshot + action catalog -> one LLM call
--> one validated action executed, per think cycle.
+"""Think step (UM-44): perception snapshot -> one brain decision (UM-101:
+Jev over generated candidates, or the LLM over the action catalog; see
+agent/brain.py) -> one validated action executed, per think cycle.
 
 Wired into agent/__main__.py::_run_loop between the perceive and act
 comments that Phase 3 (docs/ROADMAP.md) left as placeholders. Kept in its
@@ -18,7 +19,7 @@ from . import actions as ac
 from . import spells as sp
 from . import trade as tr
 from . import update_fields as uf
-from .llm import LLMError
+from .brain import Brain, BrainError, Decision
 
 log = logging.getLogger("agent.think")
 
@@ -187,7 +188,7 @@ class ThinkResult:
         return f"<ThinkResult error={self.error!r} action={self.action_name}>"
 
 
-def think_and_act(session, world, llm_client, persona: str = "",
+def think_and_act(session, world, brain, persona: str = "",
                    my_position=None, registry: dict | None = None,
                    audit_logger=None, cycle: int = 0,
                    reflex_state: dict | None = None,
@@ -195,8 +196,11 @@ def think_and_act(session, world, llm_client, persona: str = "",
     """One full think cycle:
 
     1. Build a perception snapshot (world.snapshot()).
-    2. Ask the LLM to pick exactly one action, from the action catalog
-       exposed as tools (agent.actions.catalog()).
+    2. Ask the brain (agent.brain.Brain, UM-101) for exactly one action:
+       Jev picking from agent.candidates.generate(), or the LLM picking
+       from the action catalog exposed as tools, with the LLM as Jev's
+       per-cycle fallback. A bare LLM client (anything with LLMClient's
+       choose_action) is accepted too and wrapped as an LLM-only Brain.
     3. Validate the model's choice against the action registry — unknown
        action name, or an action whose check() rejects the params, never
        reaches the game.
@@ -218,6 +222,8 @@ def think_and_act(session, world, llm_client, persona: str = "",
     not executed.
     """
     registry = registry if registry is not None else ac.REGISTRY
+    if not isinstance(brain, Brain):
+        brain = Brain(llm=brain)
     _maybe_cancel_idle_trade(session, world)
     # corpse_position (UM-43) is session-scoped (MSG_CORPSE_QUERY), not part
     # of WorldState — pass it through so the snapshot exposes it alongside
@@ -235,10 +241,11 @@ def think_and_act(session, world, llm_client, persona: str = "",
         if state is not None:
             state.record(action_name, params, ok, fingerprint, error=error, detail=detail)
 
+    decision = Decision()
+
     def _audit(action_name=None, params=None, valid=False, ok=False, error=None):
         if audit_logger is None:
             return
-        usage = getattr(llm_client, "last_usage", None) or {}
         try:
             audit_logger.record(
                 cycle=cycle,
@@ -248,24 +255,31 @@ def think_and_act(session, world, llm_client, persona: str = "",
                 result={"ok": ok, "error": error},
                 reflex=reflex_state or {},
                 goal=persona or None,
-                prompt_tokens=usage.get("prompt_tokens"),
-                completion_tokens=usage.get("completion_tokens"),
-                model=getattr(llm_client, "model", None),
-                latency_ms=getattr(llm_client, "last_latency_ms", None),
+                prompt_tokens=decision.prompt_tokens,
+                completion_tokens=decision.completion_tokens,
+                model=decision.model,
+                latency_ms=decision.latency_ms,
+                brain=decision.brain,
+                confidence=decision.confidence,
+                fallback=decision.fallback,
+                candidates=decision.candidates,
             )
         except OSError as e:  # never let audit I/O crash a think cycle
             log.warning("audit log write failed: %s", e)
 
     try:
-        if state is not None:
-            action_name, params = llm_client.choose_action(snapshot, ac.catalog(), persona=persona,
-                                                           history=state.for_prompt())
-        else:
-            action_name, params = llm_client.choose_action(snapshot, ac.catalog(), persona=persona)
-    except LLMError as e:
-        log.warning("llm call failed: %s", e)
-        _audit(error=f"llm call failed: {e}")
-        return ThinkResult(ok=False, error=f"llm call failed: {e}")
+        decision = brain.decide(
+            snapshot, persona=persona,
+            history=state.for_prompt() if state is not None else None,
+            my_guid=getattr(world, "my_guid", None) or None,
+            reflex_state=reflex_state,
+            blocked=state.repeat_blocked if state is not None else None)
+    except BrainError as e:
+        decision = e.decision
+        log.warning("%s", e)
+        _audit(error=str(e))
+        return ThinkResult(ok=False, error=str(e))
+    action_name, params = decision.action, decision.params
 
     action = registry.get(action_name)
     if action is None:
