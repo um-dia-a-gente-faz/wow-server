@@ -6,7 +6,7 @@ Serves:
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
-    GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
+    GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available, subzones
     POST /api/calibrate       save a per-zone pixel offset
     GET /api/agents           names of agents with an observability API (UM-50)
     GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
@@ -21,7 +21,8 @@ extract_maps.py and served from MAPS_DIR.
 
 Env:
     MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD   as elsewhere in this repo
-    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc; names come
+    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc,
+                                     optional WorldMapOverlay.dbc for subzones; names come
                                      from Spell, Talent, TalentTab, Faction, Achievement)
     MAPS_DIR    default /maps       (extracted PNGs)
     ICONS_DIR   default /icons      (item icon PNGs from extract_icons.py)
@@ -52,6 +53,7 @@ import pymysql
 
 import activity as activity_feed
 import item_icons
+from overlays import load_overlays, subzones
 from transform import DbcTables, GridAreas
 
 # The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
@@ -143,6 +145,7 @@ POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_po
 ICON_FILE_RE = re.compile(r"[a-z0-9_\-]+\.png")
 
 _tables = None
+_overlays = None
 _display_icons = None
 _icons_lock = threading.Lock()
 _names = None
@@ -193,6 +196,14 @@ def tables():
     if _tables is None:
         _tables = DbcTables(DBC_DIR)
     return _tables
+
+
+def overlays():
+    """WorldMapOverlay rows by WorldMapArea ID ({} without the DBC); see overlays.py."""
+    global _overlays
+    if _overlays is None:
+        _overlays = load_overlays(DBC_DIR)
+    return _overlays
 
 
 def display_icons():
@@ -320,6 +331,9 @@ def fetch_areas(map_id=None):
             "ymin": round(ymin, 1), "ymax": round(ymax, 1),
             "image": img, "has_image": os.path.exists(os.path.join(MAPS_DIR, img)),
             "calibration": calibrations.get(str(area_id), {"dx": 0, "dy": 0}),
+            # Explored-area rects in image pixels (the 1024x768 canvas), not world
+            # coordinates, so they don't go through the marker transform.
+            "subzones": subzones(overlays().get(r[0], []), t.area_names),
         })
     rows.sort(key=lambda a: a["name"])
     return rows
@@ -1441,6 +1455,11 @@ PAGE = r"""<!doctype html>
                  background:rgba(10,13,20,.82); padding:1px 6px; border-radius:5px;
                  border:1px solid var(--line); }
   .trail { position:absolute; inset:0; pointer-events:none; }
+  #subzones { position:absolute; inset:0; pointer-events:none; }
+  .subzone-label, #subzone-hover { position:absolute; transform:translate(-50%,-50%); white-space:nowrap;
+      color:#ffd25e; text-shadow:0 0 3px #000,0 0 3px #000,0 0 2px #000; pointer-events:none; }
+  #subzone-hover { transform:translate(12px,-130%); background:rgba(10,13,20,.82); color:var(--fg);
+      text-shadow:none; padding:1px 7px; border-radius:5px; border:1px solid var(--line); }
   .nogrid { padding:40px; color:var(--dim); text-align:center; }
   .grid-fallback { position:absolute; inset:0;
       background-image:linear-gradient(#232b3d 1px,transparent 1px),
@@ -1494,6 +1513,7 @@ PAGE = r"""<!doctype html>
   <div class="bar">
     <label>Zone <select id="zone"></select></label>
     <button id="fit">Fit</button>
+    <button id="tglLabels" title="Show every subzone name (from WorldMapOverlay.dbc)">Labels: off</button>
     <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
     <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
     <button id="saveCalibration" hidden>Save calibration</button>
@@ -1506,6 +1526,7 @@ PAGE = r"""<!doctype html>
       <div class="grid-fallback" id="fallback"></div>
       <img id="mapimg" alt="">
       <svg class="trail" id="trailsvg"></svg>
+      <div id="subzones"><div id="subzone-hover" hidden></div></div>
       <div id="markers"></div>
     </div>
   </div>
@@ -1525,6 +1546,7 @@ PAGE = r"""<!doctype html>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
 let areas = [], players = [], selected = null, follow = false, showTrail = false;
+let showLabels = false, stageScale = 1;
 let currentArea = null, imgW = 1002, imgH = 668;
 let calibrating = false, draftCalibration = null, calibrationReference = null, calibrationDrag = null;
 
@@ -1637,6 +1659,7 @@ function place() {
     const st = $('stage');
     const s = Math.min(st.clientWidth / imgW, st.clientHeight / imgH, 1);
     wrap.style.transform = `scale(${s})`;
+    stageScale = s;
     wrap.style.transformOrigin = 'top left';
     wrap.style.margin = '0';
     st.scrollLeft = 0; st.scrollTop = 0;
@@ -1678,7 +1701,35 @@ function place() {
     m.appendChild(ref);
   }
   wrap.classList.toggle('calibrating', calibrating);
+  drawLabels();
   $('f-note').textContent = `${here.length} in this zone`;
+}
+
+// ---- subzones: WorldMapOverlay hit rects, already in image pixels (see /api/areas)
+function drawLabels() {
+  const layer = $('subzones');
+  for (const e of layer.querySelectorAll('.subzone-label')) e.remove();
+  const a = currentArea;
+  if (!showLabels || !a || !a.has_image) return;
+  for (const sz of a.subzones || []) {
+    const e = document.createElement('div');
+    e.className = 'subzone-label';
+    e.textContent = sz.name;
+    e.style.left = sz.label[0] + 'px'; e.style.top = sz.label[1] + 'px';
+    e.style.fontSize = (12 / stageScale) + 'px';   // stay readable when the stage is scaled down
+    layer.appendChild(e);
+  }
+}
+
+// The smallest rect under the point wins: Ruins of Silvermoon sits inside Silvermoon City.
+function subzoneAt(x, y) {
+  let best = null, bestArea = Infinity;
+  for (const sz of (currentArea && currentArea.subzones) || []) {
+    const r = sz.hit || sz.art;
+    if (!r || x < r[0] || y < r[1] || x > r[0] + r[2] || y > r[1] + r[3]) continue;
+    if (r[2] * r[3] < bestArea) { best = sz; bestArea = r[2] * r[3]; }
+  }
+  return best;
 }
 
 function renderList() {
@@ -1763,6 +1814,26 @@ $('wrap').addEventListener('pointermove', (e) => {
   draftCalibration.dy = Math.round((calibrationDrag.dy + y - calibrationDrag.y) * 100) / 100;
   place();
 });
+$('wrap').addEventListener('pointermove', (e) => {
+  const hover = $('subzone-hover');
+  if (calibrating || !currentArea || !currentArea.has_image) { hover.hidden = true; return; }
+  const box = $('wrap').getBoundingClientRect();
+  const x = (e.clientX - box.left) * imgW / box.width;
+  const y = (e.clientY - box.top) * imgH / box.height;
+  const sz = subzoneAt(x, y);
+  hover.hidden = !sz;
+  if (!sz) return;
+  hover.textContent = sz.name;
+  hover.style.left = x + 'px'; hover.style.top = y + 'px';
+  hover.style.fontSize = (12 / stageScale) + 'px';
+});
+$('wrap').addEventListener('pointerleave', () => { $('subzone-hover').hidden = true; });
+$('tglLabels').onclick = (e) => {
+  showLabels = !showLabels;
+  e.target.textContent = 'Labels: ' + (showLabels ? 'on' : 'off');
+  e.target.classList.toggle('on', showLabels);
+  drawLabels();
+};
 for (const event of ['pointerup', 'pointercancel']) {
   $('wrap').addEventListener(event, () => { calibrationDrag = null; });
 }
@@ -1871,7 +1942,9 @@ if (!location.hash) {
   if (pinned) Inspect.open(pinned);
 }
 
-loadAreas().then(tick);
+// draw() loads the zone art; tick() alone only places markers, which left the stage
+// an empty grid on first load until the zone was changed.
+loadAreas().then(() => { draw(); return tick(); });
 setInterval(tick, 5000);
 </script>
 </body></html>

@@ -35,10 +35,10 @@ mounted, and the site is served at http://192.168.1.64:9400.
 | Public chat | `tools/chat-feed` SSE on :9500 |
 | Agent decisions | the audit JSONL under `/opt/wow-server-metrics/audit` |
 
-Only `AreaTable`, `Map` and `WorldMapArea` are extracted today; anything else
-(`Faction`, `WorldMapOverlay`, `ItemDisplayInfo`, `Spell`, …) has to be added to the
-extraction step first. Art is the game's *unexplored* parchment; the coloured detail
-comes from `WorldMapOverlay` textures that we don't extract yet.
+wowmap reads `AreaTable`, `Map`, `WorldMapArea` and `WorldMapOverlay` from
+`/opt/wowmap-data/dbc`. `<area_id>.png` is the zone fully explored (base parchment +
+every `WorldMapOverlay` texture); `<area_id>_base.png` is the unexplored parchment.
+Subzone rects/names come from `overlays.py` and are image pixels, not world coordinates.
 
 ## Coordinates
 
