@@ -84,11 +84,8 @@ class DbcTables:
                 self.continent_rects[r[1]] = (self._f(r[6]), self._f(r[7]),
                                               self._f(r[4]), self._f(r[5]))
                 self.continent_dirs[r[1]] = self._s(self._wm_str, r[3])
-        # area_id -> MapID of the zone's first WorldMapArea row (the one the page shows).
-        self.zone_map = {}
-        for r in self._wm:
-            if r[2] and r[3]:
-                self.zone_map.setdefault(r[2], r[1])
+        # area_id -> MapID, from the same WorldMapArea row as `rects` (the last one).
+        self.zone_map = {r[2]: r[1] for r in self._wm if r[2] and r[3]}
 
         self.area_names = {r[0]: self._s(self._area_str, r[11]) for r in self._area
                            if len(r) > 11}

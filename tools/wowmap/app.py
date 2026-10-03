@@ -2062,6 +2062,8 @@ function continentOf(a) {
 // zone on the continent to open it and right-click (or "Continent") to go back out.
 function showArea(a) {
   if (!a) return;
+  // Calibration is per zone: leave it before a continent disables its button.
+  if (a.continent_view && calibrating) $('calibrate').click();
   currentArea = a;
   $('zone').value = a.area_id;
   saveState('lastZone', a.area_id);
@@ -2443,7 +2445,10 @@ $('map').addEventListener('pointermove', (e) => {
   const at = map.mouseEventToContainerPoint(e);
   hover.style.left = at.x + 'px'; hover.style.top = at.y + 'px';
 });
-$('map').addEventListener('pointerleave', () => { $('subzone-hover').hidden = true; });
+$('map').addEventListener('pointerleave', () => {
+  $('subzone-hover').hidden = true;
+  if (zoneGlow) { zoneGlow.remove(); zoneGlow = null; }
+});
 $('tglLabels').onclick = (e) => {
   showLabels = !showLabels;
   e.target.textContent = 'Labels: ' + (showLabels ? 'on' : 'off');
@@ -2479,7 +2484,7 @@ map.on('click', (e) => {
   if (currentArea && currentArea.continent_view) {
     const z = zoneAt(e.latlng.lng, -e.latlng.lat);
     const a = z && areaFor(z.area_id);
-    if (a) return showArea(a);
+    if (a && a.has_image) return showArea(a);     // only zones the selector offers
   }
   Inspect.close();
 });
