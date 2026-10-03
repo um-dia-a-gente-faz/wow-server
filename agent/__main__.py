@@ -168,7 +168,8 @@ def _connect_and_login(cfg, log) -> WoWSession:
     log.info("online — guid %d, position %s", sess.player_guid, sess.player_position)
     # UM-93: the server doesn't auto-join General at login (a real client
     # asks for it), so join the configured channels now. A failed join is
-    # logged and otherwise ignored; channel_say just won't list it.
+    # logged and otherwise ignored. Joining is kept with chat sending deferred
+    # (UM-98) so channel chat is still heard (chat_inbox, chat-feed relay).
     sess.join_channels(parse_channel_spec(getattr(cfg, "channels", None)))
     return sess
 
