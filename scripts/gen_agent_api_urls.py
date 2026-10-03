@@ -30,12 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gen_agents_compose as gen  # noqa: E402
 
 # A DNS name or IPv4 address; anything with '=', ',', '/', ':' or spaces would
-# corrupt the "Name=url,Name=url" list that wowmap splits on.
-HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$")
+# corrupt the "Name=url,Name=url" list that wowmap splits on. fullmatch, not
+# match: `$` alone would let a trailing newline through into the .env line.
+HOST_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?")
 
 
 def render(agents: list[dict], host: str) -> str:
-    if not HOST_RE.match(host or ""):
+    if not HOST_RE.fullmatch(host or ""):
         raise ValueError(f"bad agent host {host!r}: want a hostname or IPv4 address, no port or scheme")
     names = [a["character"] for a in agents]
     if len({n.lower() for n in names}) != len(names):

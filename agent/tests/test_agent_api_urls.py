@@ -55,7 +55,7 @@ class AgentApiUrlsTests(unittest.TestCase):
         self.assertEqual(parsed["luaprata"], ("Luaprata", "http://agents.test:9601"))
 
     def test_bad_hosts_are_rejected(self):
-        for bad in ("", "http://h", "h:9601", "a,b", "a=b", "a b", "h/", "-h"):
+        for bad in ("", "http://h", "h:9601", "a,b", "a=b", "a b", "h/", "-h", "abc\n", "abc\r\n"):
             with self.assertRaises(ValueError, msg=bad):
                 urls.render(gen.load_roster(), bad)
 
