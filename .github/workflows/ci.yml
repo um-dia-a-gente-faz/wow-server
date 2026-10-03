@@ -44,6 +44,18 @@ jobs:
       - name: jev-mock unit tests
         run: python -m unittest discover -s tools/jev-mock/tests -v
 
+      # UM-100: the real JevClient against jev-mock as a separate process, over
+      # real HTTP. Real Jev (paid, needs a key) never runs in CI.
+      - name: JevClient against a running jev-mock
+        run: |
+          PORT=8090 python tools/jev-mock/server.py &
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8090/healthz && break
+            sleep 0.5
+          done
+          JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha \
+            python -m unittest -v tools/jev-mock/tests/test_external.py
+
       # wowmap needs PyMySQL + cryptography (see its requirements.txt), and Pillow
       # for the extract_maps.py / extract_icons.py tests (offline tools, not in the image).
       - name: wowmap unit tests
