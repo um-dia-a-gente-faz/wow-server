@@ -122,11 +122,20 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipped**: equipment slots 0-18 by slot name. Every item row has a 36 px
-  icon with a border in the item's quality colour, a count badge for stacks, and
-  the name (and count) as a tooltip; the item name is quality coloured too.
-- **Bags**: backpack slots 23-38, then each equipped bag's contents.
-- Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
+- **Equipped**: a paper doll laid out like the game's character window (head,
+  neck, shoulder, back, chest, shirt, tabard, wrist on the left; hands, waist,
+  legs, feet, rings, trinkets on the right; main hand, off hand, ranged below).
+- **Bags**: the bag bar (bag slots 19-22), then the backpack (slots 23-38) and
+  each equipped bag as a grid of squares, four wide and sized to the bag's
+  `container_slots`. Like the game's bag windows the slots fill from the bottom
+  right, so a bag whose size isn't a multiple of four has its gap top left.
+  Bag windows wrap onto a new row when the drawer is narrow.
+- Every item is a 36 px square with its icon (a `?` placeholder until
+  `extract_icons.py` has been run), a border in the item's quality colour and a
+  stack count badge. Empty slots are dimmed squares named after the slot.
+  Hovering (or focusing, or tapping) an item shows an in-game style tooltip built
+  by `item_tooltip.py`; it is kept inside the viewport.
+- Collapsible **Bank** (28 squares, seven wide, plus bank bags), **Keyring**, **Currency** (only when non-empty), and
   **Talents** (grouped by spec and tree, with rank), **Reputation** (sorted by
   value, with tier), and **Achievements** (title, points, date). Names come from
   the client DBCs; an unknown id falls back to the raw id.
@@ -251,9 +260,17 @@ the character's base state.
   "health": 4231,
   "power": {"mana": 1020, "rage": 0, "focus": 0, "energy": 100,
             "happiness": 0, "rune": 0, "runic_power": 0},
-  "inventory": [{"bag": 0, "slot": 0, "item_guid": 42, "item_entry": 12345,
-                 "item_name": "Example Item", "count": 1, "quality": 2,
-                 "icon": "/icons/inv_sword_04.png"}],
+  "inventory": [{"bag": 0, "slot": 15, "item_guid": 42, "item_entry": 23346,
+                 "item_name": "Battleworn Claymore", "count": 1, "quality": 1,
+                 "icon": "/icons/inv_sword_04.png", "container_slots": 0,
+                 "tooltip": [{"left": "Battleworn Claymore", "color": "quality"},
+                             {"left": "Two-Hand", "right": "Sword", "color": "white"},
+                             {"left": "3 - 5 Damage", "right": "Speed 2.90", "color": "white"},
+                             {"left": "(1.4 damage per second)", "color": "white"},
+                             {"left": "Durability 25 / 25", "color": "white"},
+                             {"left": "Requires Level 1", "color": "white"},
+                             {"left": "Item Level 2", "color": "yellow"},
+                             {"left": "Sell Price:", "money": 9, "color": "white"}]}],
   "talents": [{"spell": 12282, "spec": 0, "name": "Improved Heroic Strike",
                "tree": "Arms", "tree_order": 0, "rank": 1}],
   "reputation": [{"faction": 76, "standing": 2000, "flags": 17,
@@ -268,6 +285,14 @@ the character's base state.
 }
 ```
 
+- `container_slots` is the bag's `item_template.ContainerSlots` (0 for non-bags).
+  `tooltip` is the item's tooltip as lines (`left`, optional `right`, `color` one
+  of `quality`/`white`/`green`/`yellow`/`gray`/`red`, and `money` in copper for the
+  sell price line, which is for the whole stack). `item_tooltip.py` builds it from
+  `world.item_template` (column names as in TrinityCore's
+  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound) and
+  `.durability`. Not shown yet: spell lines (`Use:`/`Equip:` effects with a
+  spell), item set names, random suffixes, enchants and gems.
 - `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
   same-origin URL for the item's icon, or `null` when the display id has no
   icon or the PNG hasn't been extracted; clients draw a placeholder then.
