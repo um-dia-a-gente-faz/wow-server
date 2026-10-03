@@ -53,8 +53,32 @@ Record here once created:
 ## How to start a run
 
 ```sh
-docker compose -f docker-compose.agents.yml up -d agent-<name>
+docker compose -f docker-compose.agents.yml up -d --build agent-<name>
 ```
+
+**Always pass `--build`.** Without it compose reuses whatever `wow-agent:latest`
+is already on the host. The 5-minute auto-deploy does not build this compose
+file, so that image can be weeks old. A stale one still starts and still
+publishes its port, but the observability API (UM-50) never binds, and the
+console's "Agent mind" tab, `/state`, `/perception` and `/brain` all stay dead
+(issue #131). To rebuild without starting anything, or to check freshness:
+
+```sh
+scripts/build-agent-image.sh           # rebuild wow-agent:latest, print next steps
+scripts/build-agent-image.sh --check   # exit 1 if the image predates agent/ or the Dockerfile
+```
+
+Rebuilding does not touch running containers; recreate each one afterwards with
+the `up -d` command above. Then confirm the API is bound before you rely on it
+(`AGENT_HTTP_PORT` is 9601-9625):
+
+```sh
+curl -s localhost:<AGENT_HTTP_PORT>/healthz    # expect {"ok": true, ...}
+```
+
+"Container up, API not bound" is the stale-image signature: the container's
+startup `config:` log line has no `jev` or `http` keys, and a connect to the
+API port from inside the container is refused.
 
 Note the start time (wall clock) in the results log the moment the
 container comes up.
