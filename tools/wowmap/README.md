@@ -20,7 +20,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 
 | Env | Default | Meaning |
 |---|---|---|
-| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` |
+| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc`, plus `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, and `Achievement.dbc` for names |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
@@ -63,8 +63,9 @@ inspect drawer on the right. It shows:
 - **Equipped**: equipment slots 0-18 by slot name.
 - **Bags**: backpack slots 23-38, then each equipped bag's contents.
 - Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
-  **Talents**, **Reputation**, and **Achievements** as raw IDs (names come later
-  with the shared DBC loader).
+  **Talents** (grouped by spec and tree, with rank), **Reputation** (sorted by
+  value, with tier), and **Achievements** (title, points, date). Names come from
+  the client DBCs; an unknown id falls back to the raw id.
 
 The drawer re-fetches the character on the page's 5 s tick. It only re-renders
 when the response changed, and it keeps its scroll position and open sections.
@@ -166,11 +167,25 @@ the character's base state.
             "happiness": 0, "rune": 0, "runic_power": 0},
   "inventory": [{"bag": 0, "slot": 0, "item_guid": 42, "item_entry": 12345,
                  "item_name": "Example Item", "count": 1}],
-  "talents": [{"spell": 12345, "spec": 0}],
-  "reputation": [{"faction": 72, "standing": 42000}],
-  "achievements": [{"achievement": 6, "date": 1710000000}]
+  "talents": [{"spell": 12282, "spec": 0, "name": "Improved Heroic Strike",
+               "tree": "Arms", "tree_order": 0, "rank": 1}],
+  "reputation": [{"faction": 76, "standing": 2000, "faction_name": "Orgrimmar",
+                  "value": 6000, "tier": "Friendly"}],
+  "achievements": [{"achievement": 6, "date": 1710000000, "name": "Level 10",
+                    "points": 10}]
 }
 ```
+
+- Names come from the client DBCs in `DBC_DIR`, read by the shared stdlib reader
+  in `tools/dbc` (`wdbc.py` for the file format, `names.py` for the build-12340
+  record layouts and their TrinityCore citations). They load once in a
+  background thread at startup (about 1 s and 15 MB). A missing or
+  wrong-build DBC only leaves its names `null`.
+- `reputation[].standing` is the raw `character_reputation.standing`, which
+  TrinityCore stores without the faction's starting value. `value` adds the
+  race/class starting value from `Faction.dbc` the way `ReputationMgr` does, and
+  `tier` is its rank (Hated … Exalted). Hidden and header factions are still
+  listed; grouping and hiding them is left to the reputation panel (#92).
 
 - `money` is in copper; `money_gold` is the same value divided by 10000.
 - Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
