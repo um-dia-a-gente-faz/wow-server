@@ -432,9 +432,9 @@ CHAT_HTML = r"""
 CHAT_JS = r"""
 <script>
 const Chat = (() => {
-  const KIND_LABEL = {say: 'diz', yell: 'grita', channel: 'canal', guild: 'guilda',
-    party: 'grupo', raid: 'raide', officer: 'oficial', battleground: 'campo de batalha',
-    whisper: 'sussurro', unknown: '?'};
+  const KIND_LABEL = {say: 'says', yell: 'yells', channel: 'channel', guild: 'guild',
+    party: 'party', raid: 'raid', officer: 'officer', battleground: 'battleground',
+    whisper: 'whisper', unknown: '?'};
   const list = document.getElementById('chat');
   const status = document.getElementById('chat-status');
   let source = null, autoscroll = true, backoffMs = 2000;
@@ -469,11 +469,11 @@ const Chat = (() => {
   function connect() {
     if (source) return;
     status.hidden = false;
-    status.textContent = 'conectando ao chat…';
+    status.textContent = 'connecting to chat…';
     try {
       source = new EventSource(feedUrl());
     } catch (e) {
-      status.textContent = 'chat indisponível: ' + e;
+      status.textContent = 'chat unavailable: ' + e;
       return;
     }
     source.addEventListener('chat', (e) => {
@@ -482,7 +482,7 @@ const Chat = (() => {
     source.onopen = () => { status.hidden = true; backoffMs = 2000; };
     source.onerror = () => {
       status.hidden = false;
-      status.textContent = 'chat desconectado, tentando reconectar…';
+      status.textContent = 'chat disconnected, reconnecting…';
     };
   }
 
@@ -541,10 +541,10 @@ INSPECT_CSS = r"""
 """
 
 INSPECT_HTML = r"""
-<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspecionar personagem">
+<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspect character">
   <div class="drawer-head">
     <div class="dh-main" id="inspect-head"></div>
-    <button id="inspect-close" title="Fechar (Esc)" aria-label="Fechar">✕</button>
+    <button id="inspect-close" title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <div class="drawer-body" id="inspect-body"></div>
   <div class="drawer-foot" id="inspect-status"></div>
@@ -556,16 +556,16 @@ INSPECT_HTML = r"""
 INSPECT_JS = r"""
 <script>
 const Inspect = (() => {
-  const EQUIP_SLOTS = ['Cabeça', 'Pescoço', 'Ombros', 'Camisa', 'Peito', 'Cintura', 'Pernas',
-    'Pés', 'Pulsos', 'Mãos', 'Dedo 1', 'Dedo 2', 'Berloque 1', 'Berloque 2', 'Costas',
-    'Mão principal', 'Mão secundária', 'À distância', 'Tabardo'];
-  const POWER_LABELS = {mana: 'Mana', rage: 'Raiva', focus: 'Foco', energy: 'Energia',
-    happiness: 'Felicidade', rune: 'Runas', runic_power: 'Poder rúnico'};
+  const EQUIP_SLOTS = ['Head', 'Neck', 'Shoulder', 'Shirt', 'Chest', 'Waist', 'Legs',
+    'Feet', 'Wrist', 'Hands', 'Finger 1', 'Finger 2', 'Trinket 1', 'Trinket 2', 'Back',
+    'Main Hand', 'Off Hand', 'Ranged', 'Tabard'];
+  const POWER_LABELS = {mana: 'Mana', rage: 'Rage', focus: 'Focus', energy: 'Energy',
+    happiness: 'Happiness', rune: 'Runes', runic_power: 'Runic Power'};
   // The server keeps rage and runic power in tenths (1000 is shown as 100 in game).
   const POWER_SCALE = {rage: 10, runic_power: 10};
   const CLASS_POWERS = {1: ['rage'], 2: ['mana'], 3: ['mana'], 4: ['energy'], 5: ['mana'],
     6: ['runic_power'], 7: ['mana'], 8: ['mana'], 9: ['mana'], 11: ['mana', 'rage', 'energy']};
-  const nf = new Intl.NumberFormat('pt-BR');
+  const nf = new Intl.NumberFormat('en-US');
   const drawer = document.getElementById('inspect');
   const head = document.getElementById('inspect-head');
   const body = document.getElementById('inspect-body');
@@ -593,7 +593,7 @@ const Inspect = (() => {
     const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
   }
-  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('pt-BR') : 'nunca'; }
+  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('en-US') : 'never'; }
 
   // bag 0 = the character's own slots (TrinityCore Player.h EquipmentSlots, InventorySlots, …);
   // any other bag value is the item_instance guid of the container holding the item.
@@ -607,7 +607,7 @@ const Inspect = (() => {
       if (s < 19) g.equipped.push(it);
       else if (s < 23 || (s >= 67 && s < 74)) {
         const bank = s >= 67;
-        const c = {label: bank ? `Bolsa do banco ${s - 66}` : `Bolsa ${s - 18}`, bag: it, items: []};
+        const c = {label: bank ? `Bank bag ${s - 66}` : `Bag ${s - 18}`, bag: it, items: []};
         (bank ? g.bankBags : g.bags).push(c);
         containers.set(it.item_guid, c);
       }
@@ -626,7 +626,7 @@ const Inspect = (() => {
   }
 
   function itemRows(parent, items, label) {
-    if (!items.length) { parent.append(el('div', 'none', 'vazio')); return; }
+    if (!items.length) { parent.append(el('div', 'none', 'empty')); return; }
     for (const it of items) {
       const r = el('div', 'item');
       r.append(el('span', 'k', label(it)));
@@ -664,7 +664,7 @@ const Inspect = (() => {
     h.append(dot, el('span', 'nm', c.name),
              el('span', 'badge' + (c.online ? ' on' : ''), c.online ? 'online' : 'offline'));
     head.replaceChildren(h,
-      el('div', 'line', `Nível ${c.level} · ${c.race_name} · ${c.class_name}`),
+      el('div', 'line', `Level ${c.level} · ${c.race_name} · ${c.class_name}`),
       el('div', 'line', c.zone_name));
   }
 
@@ -672,34 +672,34 @@ const Inspect = (() => {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(kv('Vida', nf.format(c.health)));
+    f.append(kv('Health', nf.format(c.health)));
     const power = c.power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
       f.append(kv(POWER_LABELS[key], nf.format(Math.floor(power[key] / (POWER_SCALE[key] || 1)))));
     }
-    f.append(kv('Ouro', money(c.money)));
-    f.append(kv('Tempo de jogo', duration(c.totaltime)));
-    f.append(kv('Último logout', when(c.logout_time)));
-    f.append(kv('Posição', `${c.map_name} (${c.map}) · ${c.position_x}, ${c.position_y}, ${c.position_z}`));
+    f.append(kv('Gold', money(c.money)));
+    f.append(kv('Played time', duration(c.totaltime)));
+    f.append(kv('Last logout', when(c.logout_time)));
+    f.append(kv('Position', `${c.map_name} (${c.map}) · ${c.position_x}, ${c.position_y}, ${c.position_z}`));
 
     const inv = groupInventory(c.inventory || []);
-    f.append(el('h3', null, 'Equipado'));
+    f.append(el('h3', null, 'Equipped'));
     itemRows(f, inv.equipped, slotLabel);
-    f.append(el('h3', null, 'Bolsas'));
-    f.append(el('h4', null, 'Mochila'));
+    f.append(el('h3', null, 'Bags'));
+    f.append(el('h4', null, 'Backpack'));
     itemRows(f, inv.backpack, packSlotLabel(23));
     containerList(f, inv.bags);
 
     if (inv.bank.length || inv.bankBags.length) {
-      const d = collapsible('bank', `Banco (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
+      const d = collapsible('bank', `Bank (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
       itemRows(d, inv.bank, packSlotLabel(39));
       containerList(d, inv.bankBags);
       f.append(d);
     }
-    for (const [key, title, items] of [['keyring', 'Chaveiro', inv.keyring],
-                                       ['currency', 'Moedas', inv.currency],
-                                       ['other', 'Outros itens', inv.other]]) {
+    for (const [key, title, items] of [['keyring', 'Keyring', inv.keyring],
+                                       ['currency', 'Currency', inv.currency],
+                                       ['other', 'Other items', inv.other]]) {
       if (!items.length) continue;
       const d = collapsible(key, `${title} (${items.length})`);
       itemRows(d, items, (it) => `bag ${it.bag} / ${it.slot}`);
@@ -707,11 +707,11 @@ const Inspect = (() => {
     }
 
     // Raw ids for now; names need the DBC loader (ROADMAP Phase C).
-    const talents = collapsible('talents', `Talentos (${(c.talents || []).length})`);
+    const talents = collapsible('talents', `Talents (${(c.talents || []).length})`);
     for (const t of c.talents || []) talents.append(kv(`spec ${t.spec + 1}`, `spell ${t.spell}`));
-    const reps = collapsible('reputation', `Reputação (${(c.reputation || []).length})`);
-    for (const r of c.reputation || []) reps.append(kv(`facção ${r.faction}`, nf.format(r.standing)));
-    const achs = collapsible('achievements', `Conquistas (${(c.achievements || []).length})`);
+    const reps = collapsible('reputation', `Reputation (${(c.reputation || []).length})`);
+    for (const r of c.reputation || []) reps.append(kv(`faction ${r.faction}`, nf.format(r.standing)));
+    const achs = collapsible('achievements', `Achievements (${(c.achievements || []).length})`);
     for (const a of c.achievements || []) achs.append(kv(`#${a.achievement}`, when(a.date)));
     f.append(talents, reps, achs);
 
@@ -720,7 +720,7 @@ const Inspect = (() => {
     body.scrollTop = top;
   }
 
-  function stamp() { status.textContent = 'atualizado ' + new Date().toLocaleTimeString(); }
+  function stamp() { status.textContent = 'updated ' + new Date().toLocaleTimeString(); }
 
   function markSelected() {
     for (const e of document.querySelectorAll('.pl')) e.classList.toggle('sel', e.dataset.name === name);
@@ -736,7 +736,7 @@ const Inspect = (() => {
       if (!r.ok) {
         lastJson = null;
         head.replaceChildren(el('h2', null, who));
-        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Personagem não encontrado' : 'erro ' + r.status));
+        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Character not found' : 'error ' + r.status));
         stamp();
         return;
       }
@@ -748,7 +748,7 @@ const Inspect = (() => {
       }
       stamp();
     } catch (e) {
-      if (mine === seq) status.textContent = 'erro: ' + e;
+      if (mine === seq) status.textContent = 'error: ' + e;
     }
   }
 
@@ -757,7 +757,7 @@ const Inspect = (() => {
       name = who;
       lastJson = null;
       head.replaceChildren(el('h2', null, who));
-      body.replaceChildren(el('div', 'empty', 'carregando…'));
+      body.replaceChildren(el('div', 'empty', 'loading…'));
       body.scrollTop = 0;
       status.textContent = '';
     }
@@ -795,7 +795,7 @@ const Inspect = (() => {
     const m = location.hash.match(/^#inspect=(.+)$/);
     if (m) open(decodeURIComponent(m[1]));
   } catch (e) {
-    console.warn('hash de inspeção inválido:', e);
+    console.warn('invalid inspect hash:', e);
   }
 
   return {open, close, refresh, current: () => name};
@@ -804,8 +804,8 @@ const Inspect = (() => {
 """
 
 PAGE = r"""<!doctype html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"><title>WoW — Mapa ao vivo</title>
+<html lang="en"><head>
+<meta charset="utf-8"><title>WoW — Live map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { --bg:#10131a; --panel:#1a1f2b; --line:#2a3244; --fg:#e6e9f0; --dim:#8b93a7; }
@@ -881,34 +881,34 @@ PAGE = r"""<!doctype html>
 </style></head>
 <body>
 <aside id="aside">
-  <h1>Mapa ao vivo <button id="collapse" title="Recolher barra lateral" aria-label="Recolher barra lateral">«</button></h1>
-  <div class="sub" id="sub">carregando…</div>
+  <h1>Live map <button id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">«</button></h1>
+  <div class="sub" id="sub">loading…</div>
   <div class="stats">
     <div class="stat"><b id="s-online">–</b><span>online</span></div>
-    <div class="stat"><b id="s-world">–</b><span>no mundo</span></div>
-    <div class="stat"><b id="s-inst">–</b><span>em instância</span></div>
+    <div class="stat"><b id="s-world">–</b><span>in world</span></div>
+    <div class="stat"><b id="s-inst">–</b><span>in instance</span></div>
   </div>
   <div class="side-tabs">
-    <button id="tab-players" class="on">Jogadores</button>
+    <button id="tab-players" class="on">Players</button>
     <button id="tab-chat">Chat</button>
   </div>
   <div class="search-wrap" id="search-wrap">
-    <input id="search" type="text" placeholder="Buscar personagem (/)" autocomplete="off">
+    <input id="search" type="text" placeholder="Search characters (/)" autocomplete="off">
   </div>
   <div class="list" id="list"></div>
   <!-- @chat-html -->
-  <div id="resize-handle" title="Arraste para redimensionar"></div>
+  <div id="resize-handle" title="Drag to resize"></div>
 </aside>
-<button id="expand" hidden title="Mostrar barra lateral" aria-label="Mostrar barra lateral">»</button>
+<button id="expand" hidden title="Show sidebar" aria-label="Show sidebar">»</button>
 <main>
   <div class="bar">
-    <label>Zona <select id="zone"></select></label>
-    <button id="fit">Ajustar</button>
-    <button id="tglTrail" title="Mostra o rastro recente (requer histórico ligado)">Rastro: off</button>
-    <button id="calibrate" title="Clique num ponto de referência e arraste para ajustar os marcadores">Calibrar: off</button>
-    <button id="saveCalibration" hidden>Salvar calibração</button>
+    <label>Zone <select id="zone"></select></label>
+    <button id="fit">Fit</button>
+    <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
+    <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
+    <button id="saveCalibration" hidden>Save calibration</button>
     <div class="tabs">
-      <button id="follow" title="Centraliza no personagem selecionado">Seguir: off</button>
+      <button id="follow" title="Center on the selected character">Follow: off</button>
     </div>
   </div>
   <div class="stage" id="stage">
@@ -921,7 +921,7 @@ PAGE = r"""<!doctype html>
   </div>
   <footer>
     <span class="pill" id="f-refresh">–</span>
-    <span class="pill" id="f-src">fonte: characters.position_*</span>
+    <span class="pill" id="f-src">source: characters.position_*</span>
     <span class="pill" id="f-note"></span>
   </footer>
 </main>
@@ -951,7 +951,7 @@ async function loadAreas() {
   for (const a of list) {
     const o = document.createElement('option');
     o.value = a.area_id;
-    o.textContent = a.name + (a.has_image ? '' : ' (sem imagem)');
+    o.textContent = a.name + (a.has_image ? '' : ' (no image)');
     sel.appendChild(o);
   }
   // default to the last-viewed zone, else a zone with players, else first
@@ -1081,19 +1081,19 @@ function place() {
     ref.className = 'calibration-marker';
     ref.style.left = (calibrationReference.x + c.dx) + 'px';
     ref.style.top = (calibrationReference.y + c.dy) + 'px';
-    ref.title = 'Ponto de referência — arraste para ajustar';
+    ref.title = 'Landmark — drag to adjust';
     m.appendChild(ref);
   }
   wrap.classList.toggle('calibrating', calibrating);
-  $('f-note').textContent = `${here.length} nesta zona`;
+  $('f-note').textContent = `${here.length} in this zone`;
 }
 
 function renderList() {
   const l = $('list');
   const query = ($('search').value || '').trim().toLowerCase();
   const filtered = query ? players.filter(p => p.name.toLowerCase().includes(query)) : players;
-  if (!players.length) { l.innerHTML = '<div class="empty">Ninguém online</div>'; return; }
-  if (!filtered.length) { l.innerHTML = '<div class="empty">Nenhum personagem corresponde à busca</div>'; return; }
+  if (!players.length) { l.innerHTML = '<div class="empty">Nobody online</div>'; return; }
+  if (!filtered.length) { l.innerHTML = '<div class="empty">No character matches the search</div>'; return; }
   l.innerHTML = '';
   for (const p of filtered) {
     const e = document.createElement('div');
@@ -1107,7 +1107,7 @@ function renderList() {
     nm.textContent = p.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instância ' + p.instance}`;
+    meta.textContent = `${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instance ' + p.instance}`;
     e.append(dot, nm, meta);
     e.onclick = () => selectCharacter(p.name);
     l.appendChild(e);
@@ -1122,29 +1122,29 @@ async function tick() {
     $('s-online').textContent = s.online;
     $('s-world').textContent = s.in_world;
     $('s-inst').textContent = s.in_instance;
-    $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'sem ninguém no mundo';
-    $('f-refresh').textContent = 'atualizado ' + new Date().toLocaleTimeString();
+    $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'nobody in the world';
+    $('f-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
     renderList(); place();
-  } catch (e) { $('sub').textContent = 'erro: ' + e; }
+  } catch (e) { $('sub').textContent = 'error: ' + e; }
   Inspect.refresh();
 }
 
 $('fit').onclick = () => place();
 $('tglTrail').onclick = (e) => {
   showTrail = !showTrail;
-  e.target.textContent = 'Rastro: ' + (showTrail ? 'on' : 'off');
+  e.target.textContent = 'Trail: ' + (showTrail ? 'on' : 'off');
   draw();
 };
 $('follow').onclick = (e) => {
   follow = !follow;
-  e.target.textContent = 'Seguir: ' + (follow ? 'on' : 'off');
+  e.target.textContent = 'Follow: ' + (follow ? 'on' : 'off');
   e.target.classList.toggle('on', follow);
   place();
 };
 $('calibrate').onclick = (e) => {
   calibrating = !calibrating;
   if (calibrating) resetCalibration();
-  e.target.textContent = 'Calibrar: ' + (calibrating ? 'on' : 'off');
+  e.target.textContent = 'Calibrate: ' + (calibrating ? 'on' : 'off');
   e.target.classList.toggle('on', calibrating);
   $('saveCalibration').hidden = !calibrating;
   place();
@@ -1177,10 +1177,10 @@ $('saveCalibration').onclick = async () => {
   const r = await fetch('/api/calibrate', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({area_id: currentArea.area_id, ...draftCalibration})});
   const saved = await r.json();
-  if (!r.ok) { $('f-note').textContent = 'erro ao salvar: ' + saved.error; return; }
+  if (!r.ok) { $('f-note').textContent = 'save failed: ' + saved.error; return; }
   currentArea.calibration = {dx: saved.dx, dy: saved.dy};
   draftCalibration = {...currentArea.calibration};
-  $('f-note').textContent = `calibração salva: ${saved.dx}px, ${saved.dy}px`;
+  $('f-note').textContent = `calibration saved: ${saved.dx}px, ${saved.dy}px`;
   place();
 };
 addEventListener('resize', () => place());

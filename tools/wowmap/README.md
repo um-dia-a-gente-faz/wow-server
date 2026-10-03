@@ -38,11 +38,11 @@ WorldMapArea rects do not always line up exactly with the visible map art. The
 map page therefore supports a small, per-zone translation after the normalised
 world-coordinate transform has been converted to image pixels.
 
-1. Select the affected zone and click **Calibrar: off** to enter calibration mode.
+1. Select the affected zone and click **Calibrate: off** to enter calibration mode.
 2. Click a known point on the map (for example, one identified with `.gps` or a
    creature spawn) and drag the reference crosshair until the player markers line up.
    The preview moves the markers immediately.
-3. Click **Salvar calibração**. This writes that zone's `{dx, dy}` pixel delta to
+3. Click **Save calibration**. This writes that zone's `{dx, dy}` pixel delta to
    `calibration.json`; future page loads use it automatically.
 
 The file is intentionally a tiny operator-maintained JSON dictionary keyed by
@@ -59,10 +59,10 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipado**: equipment slots 0-18 by slot name.
-- **Bolsas**: backpack slots 23-38, then each equipped bag's contents.
-- Collapsible **Banco**, **Chaveiro**, **Moedas** (only when non-empty), and
-  **Talentos**, **Reputação**, and **Conquistas** as raw IDs (names come later
+- **Equipped**: equipment slots 0-18 by slot name.
+- **Bags**: backpack slots 23-38, then each equipped bag's contents.
+- Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
+  **Talents**, **Reputation**, and **Achievements** as raw IDs (names come later
   with the shared DBC loader).
 
 The drawer re-fetches the character on the page's 5 s tick. It only re-renders

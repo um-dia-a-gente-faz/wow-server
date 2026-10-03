@@ -69,7 +69,7 @@ for y in range(0, H, 4):
         if mask[x, y] >= thresh:
             dv.point((x, y), fill=(0, 255, 0))
 vis.save(f"/opt/wowmap-test/{AREA}_mask.png")
-print(f"mask salvo: /opt/wowmap-test/{AREA}_mask.png")
+print(f"mask saved: /opt/wowmap-test/{AREA}_mask.png")
 
 
 def score(ix0, ix1, iy0, iy1):
@@ -98,7 +98,7 @@ for iy0 in [i / 20 for i in range(0, 9)]:
                 if s > best[0]:
                     best = (s, ix0, ix1, iy0, iy1)
 
-print(f"\nmelhor: {best[0] * 100:.1f}% dos {len(pts)} pontos em area texturada")
-print(f"  x: {best[1]:.2f} .. {best[2]:.2f} da imagem")
-print(f"  y: {best[3]:.2f} .. {best[4]:.2f} da imagem")
+print(f"\nbest: {best[0] * 100:.1f}% of {len(pts)} points on textured area")
+print(f"  x: {best[1]:.2f} .. {best[2]:.2f} of the image")
+print(f"  y: {best[3]:.2f} .. {best[4]:.2f} of the image")
 print(f"  baseline (0..1): {score(0, 1, 0, 1) * 100:.1f}%")
