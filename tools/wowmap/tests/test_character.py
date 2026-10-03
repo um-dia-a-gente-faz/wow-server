@@ -13,11 +13,12 @@ CHARACTER_ROW = (
     19281, 1789510926, 1,
     4231, 1020, 0, 0, 100, 0, 8, 0,
 )
+# bag, slot, item_guid, itemEntry, name, count, item_template.displayid, Quality
 INVENTORY_ROWS = [
-    (0, 3, 101, 45, "Initiate's Shirt", 1),
-    (0, 19, 200, 4496, "Small Brown Pouch", 1),
-    (0, 24, 102, 20482, "Torn Wyrm Scale", 6),
-    (200, 0, 103, 159, "Refreshing Spring Water", 5),
+    (0, 3, 101, 45, "Initiate's Shirt", 1, 36789, 0),
+    (0, 19, 200, 4496, "Small Brown Pouch", 1, 1168, 1),
+    (0, 24, 102, 20482, "Torn Wyrm Scale", 6, 26375, 0),
+    (200, 0, 103, 159, "Refreshing Spring Water", 5, None, None),
 ]
 TALENT_ROWS = [(12663, 0), (20262, 1), (99999, 0)]
 REPUTATION_ROWS = [(911, 500), (72, 0), (4242, -100)]
@@ -110,7 +111,8 @@ class FetchCharacterTests(unittest.TestCase):
         patches = [mock.patch.object(app, "db", return_value=FakeConnection()),
                    mock.patch.object(app, "tables", return_value=FakeTables()),
                    mock.patch.object(app, "names", return_value=fake_names()),
-                   mock.patch.object(app, "grid_areas", return_value=FakeGridAreas())]
+                   mock.patch.object(app, "grid_areas", return_value=FakeGridAreas()),
+                   mock.patch.object(app, "icon_url", lambda d: f"/icons/{d}.png" if d else None)]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -152,7 +154,16 @@ class FetchCharacterTests(unittest.TestCase):
         water = next(i for i in inventory if i["bag"] != 0)
         self.assertEqual(water["bag"], pouch["item_guid"])
         self.assertEqual(inventory[2], {"bag": 0, "slot": 24, "item_guid": 102, "item_entry": 20482,
-                                        "item_name": "Torn Wyrm Scale", "count": 6})
+                                        "item_name": "Torn Wyrm Scale", "count": 6,
+                                        "quality": 0, "icon": "/icons/26375.png"})
+
+    def test_inventory_icon_and_quality(self):
+        inventory = self.character["inventory"]
+        self.assertEqual(inventory[1]["quality"], 1)
+        self.assertEqual(inventory[1]["icon"], "/icons/1168.png")
+        # An item missing from item_template has no display id: no icon, no quality.
+        self.assertIsNone(inventory[3]["icon"])
+        self.assertIsNone(inventory[3]["quality"])
 
     def test_talents_carry_name_tree_and_rank(self):
         talents = self.character["talents"]

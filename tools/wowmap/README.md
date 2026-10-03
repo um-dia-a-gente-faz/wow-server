@@ -22,6 +22,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 |---|---|---|
 | `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc`, plus `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, and `Achievement.dbc` for names |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
+| `ICONS_DIR` | `/icons` | directory containing extracted item icon PNGs (see *Item icons*); `ItemDisplayInfo.dbc` is read from `DBC_DIR` |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
@@ -51,6 +52,40 @@ area ID. It is safe to edit while the service is stopped. `calibrate.py` remains
 the offline helper for validating the underlying DBC transform against known
 spawn data; the UI stores only the final visual translation.
 
+## Item icons
+
+Inventory rows in the inspect drawer show the item's icon. The chain is
+`world.item_template.displayid` → `ItemDisplayInfo.dbc` record (field 5,
+`InventoryIcon`; layout in `item_icons.py`) → `Interface\Icons\<name>.blp` in the
+client MPQs → `<ICONS_DIR>/<name lowercased>.png` → `GET /icons/<file>.png`.
+
+The icons come from the user-supplied client, so like the map art they are
+extracted on the VM and never committed. Run once (and again only after a client
+change), on the VM, with `mpyq` and `Pillow` available:
+
+```bash
+cd /opt/wow-server/tools/wowmap
+python3 extract_icons.py --client /opt/wow-server/client \
+    --dbc /opt/wowmap-data/dbc --out /opt/wowmap-data/icons
+```
+
+It writes every icon ItemDisplayInfo.dbc names (about 4,700 PNGs, ~36 MB, about a
+minute); existing files are skipped unless `--force`. About 50 icon names in the DBC
+have no texture in the 3.3.5a client; those items show the placeholder, as does
+everything until the script has been run. `monitoring/docker-compose.yml` mounts
+`/opt/wowmap-data/icons` read-only at `/icons`; the files are served with a 30-day
+`Cache-Control`.
+
+If the host has no pip packages, a throwaway container works and writes nothing
+outside the output directory:
+
+```bash
+docker run --rm -v /opt/wow-server:/src:ro -v /opt/wowmap-data:/data \
+  --entrypoint sh monitoring-wowmap:latest -c \
+  "pip install -q mpyq Pillow && cd /src/tools/wowmap && python extract_icons.py \
+   --client /src/client --dbc /data/dbc --out /data/icons"
+```
+
 ## Inspect drawer
 
 Click a name in the sidebar list or a player marker on the map to open the
@@ -60,7 +95,9 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipped**: equipment slots 0-18 by slot name.
+- **Equipped**: equipment slots 0-18 by slot name. Every item row has a 36 px
+  icon with a border in the item's quality colour, a count badge for stacks, and
+  the name (and count) as a tooltip; the item name is quality coloured too.
 - **Bags**: backpack slots 23-38, then each equipped bag's contents.
 - Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
   **Talents** (grouped by spec and tree, with rank), **Reputation** (sorted by
@@ -166,7 +203,8 @@ the character's base state.
   "power": {"mana": 1020, "rage": 0, "focus": 0, "energy": 100,
             "happiness": 0, "rune": 0, "runic_power": 0},
   "inventory": [{"bag": 0, "slot": 0, "item_guid": 42, "item_entry": 12345,
-                 "item_name": "Example Item", "count": 1}],
+                 "item_name": "Example Item", "count": 1, "quality": 2,
+                 "icon": "/icons/inv_sword_04.png"}],
   "talents": [{"spell": 12282, "spec": 0, "name": "Improved Heroic Strike",
                "tree": "Arms", "tree_order": 0, "rank": 1}],
   "reputation": [{"faction": 76, "standing": 2000, "faction_name": "Orgrimmar",
@@ -176,6 +214,9 @@ the character's base state.
 }
 ```
 
+- `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
+  same-origin URL for the item's icon, or `null` when the display id has no
+  icon or the PNG hasn't been extracted; clients draw a placeholder then.
 - Names come from the client DBCs in `DBC_DIR`, read by the shared stdlib reader
   in `tools/dbc` (`wdbc.py` for the file format, `names.py` for the build-12340
   record layouts and their TrinityCore citations). They load once in a
@@ -186,7 +227,6 @@ the character's base state.
   race/class starting value from `Faction.dbc` the way `ReputationMgr` does, and
   `tier` is its rank (Hated … Exalted). Hidden and header factions are still
   listed; grouping and hiding them is left to the reputation panel (#92).
-
 - `money` is in copper; `money_gold` is the same value divided by 10000.
 - Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
   name ("Expansion01"). `continent_name` is the continent the game shows the zone

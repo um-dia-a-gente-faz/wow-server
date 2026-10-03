@@ -97,6 +97,7 @@ services:
       - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in the repo-root .env}
       - DBC_DIR=/dbc
       - MAPS_DIR=/maps
+      - ICONS_DIR=/icons
       - GRID_MAPS_DIR=/server-data/maps
       - LISTEN_PORT=9400
       - CALIBRATION_FILE=/app/calibration.json
@@ -107,6 +108,9 @@ services:
     volumes:
       - /opt/wowmap-data/dbc:/dbc:ro
       - /opt/wowmap-data/maps:/maps:ro
+      # Item icons from tools/wowmap/extract_icons.py. Until it has been run, Docker
+      # creates this directory empty and the inspect drawer shows placeholders.
+      - /opt/wowmap-data/icons:/icons:ro
       - /opt/wowmap-data/calibration.json:/app/calibration.json
       # The worldserver's extracted maps/*.map, read-only: subzone at a position (UM-75).
       - server_data:/server-data:ro
