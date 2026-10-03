@@ -1,0 +1,215 @@
+<!doctype html>
+<!-- UM-77 spike prototype: in-game-style continent <-> zone zoom (painted art) and a
+     satellite (minimap tile) view behind one toggle, on ONE Leaflet map, with stub players.
+     No server, no DB. Serve the build_art.py output dir (see docs/MAP_ENGINE_SPIKE.md).
+     Throwaway: not part of wowmap. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UM-77 map engine prototype</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 13px system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; background: #001d28; }
+  #bar { position: absolute; z-index: 1000; top: 8px; left: 56px; display: flex; gap: 6px; align-items: center;
+         background: rgba(20,20,20,.85); padding: 6px 8px; border-radius: 6px; }
+  #bar button { font: inherit; padding: 3px 9px; cursor: pointer; }
+  #bar button.on { background: #c8a24a; }
+  #hud { color: #cfcfcf; min-width: 260px; }
+  .zoneart { transition: opacity .35s; }
+  .marker { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; box-sizing: border-box; }
+  .zonetip { background: rgba(0,0,0,.8); color: #ffd36a; border: 0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar">
+  <button id="bPainted" class="on">Map</button>
+  <button id="bSat">Satellite</button>
+  <button id="bOut">&larr; Continent</button>
+  <span id="hud"></span>
+</div>
+<script src="vendor/leaflet.js"></script>
+<script>
+"use strict";
+const CONT = "Kalimdor";                 // the one continent this prototype loads
+const FW = 1002, FH = 668;               // the world-map frame (transform.MAP_FRAME_W/H)
+const SHEET_W = 1024, SHEET_H = 768;     // art sheet (4x3 tiles of 256)
+const G = 533.3333;                      // yards per ADT / minimap tile
+const SAT_NATIVE = 6;                    // minimap tiles are z6 of the pyramid (64 tiles = 2^6)
+
+fetch("data.json").then(r => r.json()).then(start);
+
+function start(data) {
+  const c = data.continents[CONT];
+  const mini = data.minimap[CONT];
+
+  // ---- the two transforms: world (x north, y west, yards) -> map units ----------------
+  // painted: the WorldMapArea rect of the continent turned on its side (transform.py), units = frame px
+  const wp = (x, y) => [-(c.x1 - x) / (c.x1 - c.x2) * FH, (c.y1 - y) / (c.y1 - c.y2) * FW];
+  // satellite: one global linear map, units = 4 per tile (so 64 tiles = 256 = z0 of the pyramid)
+  const ws = (x, y) => [-(32 - x / G) * 4, (32 - y / G) * 4];
+  const worldFromPainted = ll => [c.x1 + (ll.lat / FH) * (c.x1 - c.x2), c.y1 - (ll.lng / FW) * (c.y1 - c.y2)];
+  const worldFromSat = ll => [(32 + ll.lat / 4) * G, (32 - ll.lng / 4) * G];
+  // yards on screen per px at map zoom 0
+  const ydPerPx = { painted: (c.y1 - c.y2) / FW, sat: G / 4 };
+
+  // a zone's rect in continent-frame units, [[lat1,lng1],[lat2,lng2]]
+  const zones = data.zones.filter(z => z.map === c.map)
+    .map(z => ({...z, painted: [wp(z.x1, z.y1), wp(z.x2, z.y2)]}));
+
+  const map = L.map("map", { crs: L.CRS.Simple, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 90,
+                             attributionControl: false, zoomControl: true });
+  let view = "painted";
+  let pz0 = 0;                              // zoom at which the continent frame fits (set at start)
+
+  // ---- painted layers ------------------------------------------------------------
+  const frame = L.latLngBounds([[-FH, 0], [0, FW]]);
+  const contArt = L.imageOverlay(`continents/${CONT}.png`, [[-SHEET_H, 0], [0, SHEET_W]]);
+  const zoneArt = new Map();               // area id -> overlay (nested in the continent frame)
+  for (const z of zones) {
+    const [[la, lo], [lb, lp]] = z.painted;
+    const w = Math.abs(lp - lo), h = Math.abs(lb - la);
+    const top = Math.max(la, lb), left = Math.min(lo, lp);
+    const b = [[top - h * SHEET_H / FH, left], [top, left + w * SHEET_W / FW]];
+    const o = L.imageOverlay(`zones/${z.id}.png`, b, { opacity: 0, className: "zoneart", interactive: false });
+    o._z = z; o._bounds = L.latLngBounds(z.painted);
+    zoneArt.set(z.id, o);
+  }
+  const hover = L.rectangle([[0, 0], [0, 0]], { color: "#ffd36a", weight: 2, fill: true, fillOpacity: .12, interactive: false });
+  const tip = L.tooltip({ className: "zonetip", direction: "top", permanent: true, offset: [0, -4] });
+
+  // ---- satellite layer --------------------------------------------------------------
+  const satLayer = L.tileLayer(`tiles/${CONT}/{z}/{x}/{y}.jpg`, { tileSize: 256, minNativeZoom: 0, maxNativeZoom: SAT_NATIVE,
+    maxZoom: SAT_NATIVE + 2, noWrap: true, bounds: [[-256, 0], [0, 256]],
+    errorTileUrl: "data:image/gif;base64,R0lGODlhAQABAAAAACw=" });
+
+  // ---- stub players (fake positions around towns checked by eye on the minimap) --------
+  const towns = [["Orgrimmar", 1629, -4373], ["Thunder Bluff", -1196, 29], ["Crossroads", -437, -2596],
+                 ["Ratchet", -956, -3754], ["Dolanaar", 9821, 947], ["Darnassus", 9947, 2570]];
+  const colors = ["#c79c6e", "#f58cba", "#abd473", "#fff569", "#69ccf0", "#9482c9", "#ff7d0a", "#c41f3b"];
+  const players = [];
+  for (let i = 0; i < 25; i++) {
+    const t = towns[i % towns.length];
+    players.push({ name: `Stub${i}`, x: t[1] + (Math.random() - .5) * 400, y: t[2] + (Math.random() - .5) * 400,
+                   vx: (Math.random() - .5) * 6, vy: (Math.random() - .5) * 6, trail: [], color: colors[i % colors.length] });
+  }
+  for (const p of players) {
+    p.marker = L.marker([0, 0], { icon: L.divIcon({ className: "", html: `<div class="marker" style="background:${p.color}"></div>`, iconSize: [10, 10] }) })
+      .bindTooltip(p.name);
+    p.line = L.polyline([], { color: p.color, weight: 2, opacity: .7, interactive: false });
+  }
+  const proj = () => (view === "painted" ? wp : ws);
+  function placePlayers() {
+    const f = proj();
+    for (const p of players) {
+      p.marker.setLatLng(f(p.x, p.y));
+      p.line.setLatLngs(p.trail.map(t => f(t[0], t[1])));
+    }
+  }
+  function tick() {                         // the real page does this from /api/players every 5 s
+    for (const p of players) {
+      p.trail.push([p.x, p.y]); if (p.trail.length > 60) p.trail.shift();
+      p.x += p.vx * 5; p.y += p.vy * 5;
+    }
+    placePlayers();
+  }
+  players.forEach(p => { p.marker.addTo(map); p.line.addTo(map); });
+  setInterval(tick, 1000);
+
+  // ---- painted behaviour: hit-test, click-to-zoom, crossfade --------------------------
+  const rectArea = z => Math.abs((z.painted[1][0] - z.painted[0][0]) * (z.painted[1][1] - z.painted[0][1]));
+  function zonesAt(ll) {                    // every zone rect containing the point, smallest first
+    return zones.filter(z => zoneArt.get(z.id)._bounds.contains(ll)).sort((a, b) => rectArea(a) - rectArea(b));
+  }
+  const ZONE_ZOOM_FRAC = 1.0;               // fully zone art once the zone fills the view this much
+  function focusedZone() { const hits = zonesAt(map.getCenter()); return hits[0] || null; }
+  function updateArt() {
+    if (view !== "painted") return;
+    const f = focusedZone();
+    for (const [id, o] of zoneArt) {
+      let op = 0;
+      if (f && f.id === id) {
+        const fit = map.getBoundsZoom(o._bounds, false, L.point(20, 20));
+        op = Math.max(0, Math.min(1, (map.getZoom() - (fit - 1.4)) / ZONE_ZOOM_FRAC));
+      }
+      o.setOpacity(op);
+    }
+    const hits = zonesAt(map.getCenter());
+    hud(`painted | zoom ${map.getZoom().toFixed(2)} | level: ${currentLevel()}`);
+  }
+  function currentLevel() {
+    const f = focusedZone();
+    if (!f) return "continent";
+    const o = zoneArt.get(f.id);
+    return o.options.opacity > 0.5 ? `zone ${f.name}` : "continent";
+  }
+  map.on("mousemove", e => {
+    if (view !== "painted" || map.getZoom() > map.getBoundsZoom(frame) + 1.2) { map.removeLayer(hover); map.removeLayer(tip); return; }
+    const hit = zonesAt(e.latlng)[0];
+    if (!hit) { map.removeLayer(hover); map.removeLayer(tip); return; }
+    const o = zoneArt.get(hit.id);
+    hover.setBounds(o._bounds).addTo(map);
+    tip.setLatLng(o._bounds.getCenter()).setContent(`${hit.name} (${zonesAt(e.latlng).length} rect${zonesAt(e.latlng).length > 1 ? "s" : ""} here)`).addTo(map);
+  });
+  map.on("click", e => {
+    if (view !== "painted" || map.getZoom() > map.getBoundsZoom(frame) + 1.2) return;
+    const hit = zonesAt(e.latlng)[0];
+    if (hit) zoomToZone(hit.name);
+  });
+  map.on("contextmenu", () => zoomOut());
+  function zoomToZone(name, animate = true) {
+    const z = zones.find(q => q.name === name); if (!z) return;
+    map.removeLayer(hover); map.removeLayer(tip);
+    map.flyToBounds(zoneArt.get(z.id)._bounds, { padding: [24, 24], duration: animate ? .9 : 0, animate });
+  }
+  function zoomOut(animate = true) { map.flyToBounds(frame, { duration: animate ? .9 : 0, animate }); }
+  map.on("zoom move zoomend moveend", updateArt);
+
+  // ---- view toggle, keeping the world position and the yards-per-pixel scale ------------
+  function setView(v) {
+    if (v === view) return;
+    const world = view === "painted" ? worldFromPainted(map.getCenter()) : worldFromSat(map.getCenter());
+    const ydpp = ydPerPx[view] / Math.pow(2, map.getZoom());       // yards per screen px now
+    map.removeLayer(hover); map.removeLayer(tip);
+    if (v === "sat") { contArt.remove(); zoneArt.forEach(o => o.remove()); satLayer.addTo(map); }
+    else { satLayer.remove(); contArt.addTo(map); zoneArt.forEach(o => o.addTo(map)); }
+    view = v;
+    const range = v === "sat" ? [1.8, SAT_NATIVE + 2] : [pz0, pz0 + 3.2];
+    // assign the limits directly: setMinZoom() would start a zoom animation that overrides setView below
+    map.options.minZoom = range[0]; map.options.maxZoom = range[1];
+    map.setMaxBounds(null);                  // else it pans/zooms with the old zoom on the next frame
+    const z = Math.max(range[0], Math.min(range[1], Math.log2(ydPerPx[v] / ydpp)));
+    map.setView(proj()(world[0], world[1]), z, { animate: false });
+    map.setMaxBounds(v === "sat" ? [[-256, 0], [0, 256]] : [[-FH - 40, -40], [40, FW + 40]]);
+    placePlayers();
+    document.getElementById("bPainted").classList.toggle("on", v === "painted");
+    document.getElementById("bSat").classList.toggle("on", v === "sat");
+    document.getElementById("bOut").style.display = v === "painted" ? "" : "none";
+    updateArt();
+    if (v === "sat") hud(`satellite | zoom ${z.toFixed(2)} (native tiles at ${SAT_NATIVE})`);
+  }
+  map.on("zoomend", () => { if (view === "sat") hud(`satellite | zoom ${map.getZoom().toFixed(2)} (native tiles at ${SAT_NATIVE})`); });
+  document.getElementById("bPainted").onclick = () => setView("painted");
+  document.getElementById("bSat").onclick = () => setView("sat");
+  document.getElementById("bOut").onclick = () => zoomOut();
+  const hudEl = document.getElementById("hud");
+  function hud(t) { hudEl.textContent = t; }
+
+  // ---- start in the painted continent view ------------------------------------------------
+  contArt.addTo(map); zoneArt.forEach(o => o.addTo(map));
+  const z0 = pz0 = map.getBoundsZoom(frame);
+  map.setMinZoom(z0); map.setMaxZoom(z0 + 3.2); map.setMaxBounds([[-FH - 40, -40], [40, FW + 40]]);
+  map.fitBounds(frame, { animate: false });
+  placePlayers(); updateArt();
+
+  // handles for the headless checks in docs/MAP_ENGINE_SPIKE.md
+  window.__proto = {
+    map, zoomToZone, zoomOut, setView, zonesAt, players, zones, wp, ws,
+    state: () => ({ view, zoom: map.getZoom(), level: view === "painted" ? currentLevel() : "satellite",
+                    zoneOpacities: [...zoneArt].filter(([, o]) => o.options.opacity > 0).map(([id, o]) => [o._z.name, +o.options.opacity.toFixed(2)]) }),
+  };
+}
+</script>
+</body>
+</html>
