@@ -40,8 +40,13 @@ def fake_names():
     n.achievements = {6: ("Level 10", 10, 92, -1)}
     return n
 
+# characters.character_stats: maxhealth, maxpower1..maxpower7 (Player::_SaveStats).
+STATS_ROW = (4500, 1100, 1000, 0, 100, 0, 8, 1000)
+
 
 class FakeCursor:
+    stats_rows = []
+
     def __init__(self):
         self.sql = ""
 
@@ -55,7 +60,8 @@ class FakeCursor:
         for table, rows in (("character_inventory", INVENTORY_ROWS),
                             ("character_talent", TALENT_ROWS),
                             ("character_reputation", REPUTATION_ROWS),
-                            ("character_achievement", ACHIEVEMENT_ROWS)):
+                            ("character_achievement", ACHIEVEMENT_ROWS),
+                            ("character_stats", self.stats_rows)):
             if table in self.sql:
                 return rows
         return []
@@ -172,12 +178,59 @@ class FetchCharacterTests(unittest.TestCase):
         self.assertEqual(achs[1], {"achievement": 7777, "date": 1788000000,
                                    "name": None, "points": None})
 
+    def test_no_character_stats_row_means_no_max_values(self):
+        self.assertIsNone(self.character["max_health"])
+        self.assertIsNone(self.character["max_power"])
+
+
+class CharacterStatsTests(unittest.TestCase):
+    def fetch(self, stats_rows):
+        with mock.patch.object(app, "db", return_value=FakeConnection()), \
+                mock.patch.object(app, "tables", return_value=FakeTables()), \
+                mock.patch.object(FakeCursor, "stats_rows", stats_rows):
+            return app.fetch_character("Rubens")
+
+    def test_stats_row_gives_max_health_and_max_power_by_name(self):
+        c = self.fetch([STATS_ROW])
+        self.assertEqual(c["max_health"], 4500)
+        self.assertEqual(c["max_power"], {
+            "mana": 1100, "rage": 1000, "focus": 0, "energy": 100,
+            "happiness": 0, "rune": 8, "runic_power": 1000,
+        })
+        # Current values still come from characters.characters.
+        self.assertEqual(c["health"], 4231)
+        self.assertEqual(c["power"]["mana"], 1020)
+
+    def test_missing_table_degrades_to_no_max_values(self):
+        class BrokenStatsCursor(FakeCursor):
+            def execute(self, sql, args=None):
+                super().execute(sql, args)
+                if "character_stats" in sql:
+                    raise RuntimeError("Table 'characters.character_stats' doesn't exist")
+
+        class Conn(FakeConnection):
+            def cursor(self):
+                return BrokenStatsCursor()
+
+        with mock.patch.object(app, "db", return_value=Conn()), \
+                mock.patch.object(app, "tables", return_value=FakeTables()), \
+                self.assertLogs(app.log, "WARNING"):
+            c = app.fetch_character("Rubens")
+        self.assertIsNone(c["max_health"])
+        self.assertIsNone(c["max_power"])
+        self.assertEqual(len(c["inventory"]), len(INVENTORY_ROWS))
+
 
 class PageTests(unittest.TestCase):
     def test_inspect_panel_is_spliced_in(self):
         self.assertNotIn("@inspect-", app.PAGE)
         self.assertIn('id="inspect"', app.PAGE)
         self.assertIn("const Inspect", app.PAGE)
+
+    def test_drawer_draws_bars_from_max_values(self):
+        self.assertIn("function meter(", app.PAGE)
+        self.assertIn("c.max_health", app.PAGE)
+        self.assertIn("c.max_power", app.PAGE)
 
     def test_position_text_helpers_are_shared_with_the_page(self):
         for name in ("function placeText", "function mapCoordsText", "function worldText"):
