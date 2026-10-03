@@ -62,6 +62,48 @@ DBC's hit rect, `null` for 21 overlays, which then use `art`; `label` is the
 centre of `hit`, else of `art`. Hovering the map shows the name of the smallest
 rect under the cursor; **Labels** toggles every subzone name.
 
+## Continent maps
+
+The zone selector lists the four continents above the zones. A continent is shown
+on the same stage as a zone, and navigation works like the game's world map:
+
+- **Left-click a zone** on the continent to open it. Hovering shows its name and
+  outlines its `WorldMapArea` rect; **Labels** shows every zone name.
+- **Right-click** the map, or **Continent** in the toolbar, to go back out from a
+  zone to its continent.
+- Players are drawn on both levels. On a continent a marker click opens the
+  inspect drawer and stays on the continent. With **Follow** on, the stage opens
+  the selected character's zone when it leaves the one shown.
+
+`GET /api/areas` returns the continents next to `areas`, as
+`continents: [{"area_id": "c1", "continent_view": true, "map": 1, "name": "Kalimdor",
+"image": "continent_1.png", "has_image", "zones": [{"area_id", "name", "box"}]}]`.
+`box` is the zone's rect in the continent's map-frame pixels, `[x, y, w, h]`.
+`/api/players` gives each player `continent` (`"c1"`), `cont_x` and `cont_y`
+(fractions of the 1002x668 frame), or `null` in an instance.
+
+How it works and what it does not do:
+
+- The continents are the four `WorldMapArea.dbc` rows with AreaID 0; they use the
+  same transform as a zone, with the continent's rect (`transform.py`).
+- Zone rects are bounding boxes and overlap heavily, so the zone under the pointer
+  is chosen by its land: a zone counts when one of its own explored-area rects
+  (`subzones`) is under the pointer, and the nearest box centre breaks ties. That
+  picked the right zone for 37 towns tried against the client DBCs; it can still
+  be wrong near a border.
+- **Seven zones have no box**: Eversong Woods, Ghostlands, Silvermoon City, Isle of
+  Quel'Danas, Azuremyst Isle, The Exodar and Bloodmyst Isle live on map 530 but
+  are drawn on Eastern Kingdoms or Kalimdor, and their rect does not land on that
+  art. They are reached from the selector, right-click from them goes to the right
+  continent, and players in them are not drawn on any continent. Hrothgar's
+  Landing (outside the Northrend frame) and Dalaran (an empty rect) are the same.
+- Continents have no fog of war (the client has no overlays for them), no
+  calibration and no trails. There is no level above the continents.
+
+**After deploying this, re-run `extract_maps.py`**: it now also writes
+`continent_<map_id>.png`. Until then the continents are left out of the selector
+and the page behaves as before.
+
 ## The map stage (Leaflet)
 
 The stage is a [Leaflet](https://leafletjs.com) map in `L.CRS.Simple`, with the
