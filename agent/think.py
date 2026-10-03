@@ -8,11 +8,16 @@ own module (not inlined in __main__.py) so it can be unit-tested against a
 fake LLM client without booting a real WoWSession.
 """
 
+import hashlib
+import json
 import logging
 import time
+from collections import deque
 
 from . import actions as ac
+from . import spells as sp
 from . import trade as tr
+from . import update_fields as uf
 from .llm import LLMError
 
 log = logging.getLogger("agent.think")
@@ -40,6 +45,127 @@ def _maybe_cancel_idle_trade(session, world):
     trade["last_activity_at"] = time.monotonic()
 
 
+HISTORY_LEN = 8          # UM-90: recent cycles shown to the model
+LOOP_GUARD_REPEATS = 3   # UM-90: identical failed/no-op calls before the guard blocks the next one
+_DETAIL_MAX_CHARS = 160  # keep each history line short; the prompt is token-budgeted
+
+# Snapshot keys whose change means an action did something. Deliberately
+# leaves out things that drift on their own (own health/mana regen, chat,
+# other units' positions) so "changed" means progress, not noise.
+_PROGRESS_KEYS = ("position", "is_dead", "is_ghost", "window", "trade", "mailbox",
+                  "equipment", "inventory", "quest_log", "pending_invite")
+
+
+def _args_key(params: dict) -> str:
+    return json.dumps(params or {}, sort_keys=True, default=str)
+
+
+def progress_fingerprint(snapshot: dict) -> str:
+    """Digest of the parts of a snapshot an action can change (UM-90's
+    "returned no state change" test): the _PROGRESS_KEYS (position rounded
+    to 1 yd so float jitter doesn't count), own level/xp, and the health of
+    units in combat (so a fight in progress counts as a change)."""
+    view = {k: snapshot.get(k) for k in _PROGRESS_KEYS}
+    pos = snapshot.get("position")
+    if isinstance(pos, dict):
+        view["position"] = {k: round(v) if isinstance(v, float) else v for k, v in pos.items()}
+    me = snapshot.get("me") or {}
+    view["me"] = {"level": me.get("level"), "xp": me.get("xp")}
+    view["fights"] = sorted(
+        (str(u.get("guid")), u.get("health_pct"))
+        for u in snapshot.get("nearby_units") or [] if u.get("in_combat"))
+    raw = json.dumps(view, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()
+
+
+def _short(value) -> str | None:
+    if value is None or value == {} or value == "":
+        return None
+    text = value if isinstance(value, str) else json.dumps(value, default=str, separators=(",", ":"))
+    return text if len(text) <= _DETAIL_MAX_CHARS else text[:_DETAIL_MAX_CHARS - 3] + "..."
+
+
+class ThinkState:
+    """Think-loop memory across cycles (UM-90), owned by the main loop and
+    passed into every think_and_act() call. Holds the last HISTORY_LEN
+    executed-or-rejected actions, args exactly as the model sent them.
+    LLM-failed cycles (no tool call) are not recorded: they carry nothing
+    the model could learn from. Kept out of WorldState on purpose: this is
+    the agent's own record, not protocol state."""
+
+    def __init__(self, maxlen: int = HISTORY_LEN):
+        self.history: deque = deque(maxlen=maxlen)
+
+    def observe(self, fingerprint: str) -> None:
+        """Called once per cycle with the fresh snapshot's fingerprint:
+        settles whether the previous action changed anything."""
+        if self.history and self.history[-1]["changed"] is None:
+            last = self.history[-1]
+            last["changed"] = fingerprint != last["fingerprint"]
+
+    def record(self, action: str, args: dict, ok: bool, fingerprint: str,
+               error: str | None = None, detail=None) -> None:
+        self.history.append({"action": action, "args": dict(args or {}), "ok": ok,
+                             "error": error, "detail": detail,
+                             "fingerprint": fingerprint, "changed": None})
+
+    def repeat_blocked(self, action: str, args: dict, n: int = LOOP_GUARD_REPEATS) -> bool:
+        """True when each of the last `n` recorded cycles was this exact
+        action with these exact args and either failed or changed nothing."""
+        if len(self.history) < n:
+            return False
+        key = _args_key(args)
+        for h in list(self.history)[-n:]:
+            if h["action"] != action or _args_key(h["args"]) != key:
+                return False
+            if h["ok"] and h["changed"] is not False:
+                return False
+        return True
+
+    def for_prompt(self) -> list[dict]:
+        """Compact oldest-first view for agent.llm.build_messages."""
+        out = []
+        for h in self.history:
+            e = {"action": h["action"], "args": h["args"], "ok": h["ok"]}
+            if h["error"]:
+                e["error"] = _short(h["error"])
+            elif (d := _short(h["detail"])) is not None:
+                e["result"] = d
+            if h["changed"] is False:
+                e["changed"] = False
+            out.append(e)
+        return out
+
+
+def _self_status(session, world) -> dict:
+    """Own level/health/power/xp and castable spells, which the goal prompt
+    needs ("mobs of your level", "rest when low", "cast_spell from your
+    spellbook") and WorldState.snapshot() doesn't carry."""
+    out = {}
+    me = world.get_my_object()
+    if me is not None:
+        mine = {"level": me.level}
+        if me.health is not None and me.max_health:
+            mine["health"] = f"{me.health}/{me.max_health}"
+        for name, cur in (me.power or {}).items():
+            top = (me.max_power or {}).get(name)
+            mine[name] = f"{cur}/{top}" if top else cur
+        raw = me.raw_fields or {}
+        if uf.PLAYER_XP in raw:
+            mine["xp"] = raw[uf.PLAYER_XP]
+        if uf.PLAYER_NEXT_LEVEL_XP in raw:
+            mine["next_level_xp"] = raw[uf.PLAYER_NEXT_LEVEL_XP]
+        out["me"] = mine
+    known = getattr(session, "spellbook", None) or ()
+    # Only spells agent.spells has metadata for: the raw spellbook is
+    # mostly passives (languages, weapon skills) that would waste tokens.
+    spell_list = [{"id": i.spell_id, "name": i.name}
+                  for i in (sp.get_spell_info(s) for s in sorted(known)) if i is not None]
+    if spell_list:
+        out["spells"] = spell_list
+    return out
+
+
 class ThinkResult:
     """Outcome of one think_and_act() call, for logging/tests. Never raises
     for expected failure modes (LLM error, unknown action, bad params,
@@ -64,7 +190,8 @@ class ThinkResult:
 def think_and_act(session, world, llm_client, persona: str = "",
                    my_position=None, registry: dict | None = None,
                    audit_logger=None, cycle: int = 0,
-                   reflex_state: dict | None = None) -> ThinkResult:
+                   reflex_state: dict | None = None,
+                   state: ThinkState | None = None) -> ThinkResult:
     """One full think cycle:
 
     1. Build a perception snapshot (world.snapshot()).
@@ -83,6 +210,12 @@ def think_and_act(session, world, llm_client, persona: str = "",
     is appended for this cycle regardless of outcome — that's the whole
     point of an audit log: it must capture failed/invalid cycles too, not
     just successful ones.
+
+    If `state` (ThinkState, UM-90) is given, its recent history goes into
+    the prompt, this cycle's outcome is appended to it, and the loop guard
+    applies: an action+args identical to each of the last
+    LOOP_GUARD_REPEATS cycles, all of which failed or changed nothing, is
+    not executed.
     """
     registry = registry if registry is not None else ac.REGISTRY
     _maybe_cancel_idle_trade(session, world)
@@ -93,6 +226,14 @@ def think_and_act(session, world, llm_client, persona: str = "",
     snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None),
                                pending_invite=getattr(session, "pending_invite", None),
                                chat_inbox=getattr(session, "chat_inbox", None))
+    snapshot.update(_self_status(session, world))
+    fingerprint = progress_fingerprint(snapshot)
+    if state is not None:
+        state.observe(fingerprint)
+
+    def _remember(action_name, params, ok, error=None, detail=None):
+        if state is not None:
+            state.record(action_name, params, ok, fingerprint, error=error, detail=detail)
 
     def _audit(action_name=None, params=None, valid=False, ok=False, error=None):
         if audit_logger is None:
@@ -119,7 +260,11 @@ def think_and_act(session, world, llm_client, persona: str = "",
             log.warning("audit log write failed: %s", e)
 
     try:
-        action_name, params = llm_client.choose_action(snapshot, ac.catalog(), persona=persona)
+        if state is not None:
+            action_name, params = llm_client.choose_action(snapshot, ac.catalog(), persona=persona,
+                                                           history=state.for_prompt())
+        else:
+            action_name, params = llm_client.choose_action(snapshot, ac.catalog(), persona=persona)
     except LLMError as e:
         log.warning("llm call failed: %s", e)
         _audit(error=f"llm call failed: {e}")
@@ -130,6 +275,7 @@ def think_and_act(session, world, llm_client, persona: str = "",
         log.warning("model chose unknown action %r (params=%r)", action_name, params)
         _audit(action_name=action_name, params=params, valid=False,
                error=f"unknown action: {action_name!r}")
+        _remember(action_name, params, False, error=f"unknown action: {action_name!r}")
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"unknown action: {action_name!r}")
 
@@ -138,8 +284,17 @@ def think_and_act(session, world, llm_client, persona: str = "",
         log.warning("action %s missing required params %r (got %r)", action_name, missing, params)
         _audit(action_name=action_name, params=params, valid=False,
                error=f"missing required params: {missing}")
+        _remember(action_name, params, False, error=f"missing required params: {missing}")
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"missing required params: {missing}")
+
+    if state is not None and state.repeat_blocked(action_name, params):
+        error = (f"loop guard: {action_name} with these exact args already failed or changed "
+                 f"nothing {LOOP_GUARD_REPEATS} times in a row; not executed. Try something different.")
+        log.warning("loop guard blocked %s %r", action_name, params)
+        _audit(action_name=action_name, params=params, valid=False, error=error)
+        _remember(action_name, params, False, error=error)
+        return ThinkResult(ok=False, action_name=action_name, params=params, error=error)
 
     try:
         result = action.run(session, world, **params)
@@ -149,15 +304,18 @@ def think_and_act(session, world, llm_client, persona: str = "",
         log.warning("action %s rejected params %r: %s", action_name, params, e)
         _audit(action_name=action_name, params=params, valid=True,
                error=f"bad params: {e}")
+        _remember(action_name, params, False, error=f"bad params: {e}")
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"bad params: {e}")
 
     if not result.ok:
         log.info("action %s failed validation/execution: %s", action_name, result.error)
         _audit(action_name=action_name, params=params, valid=True, ok=False, error=result.error)
+        _remember(action_name, params, False, error=result.error)
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=result.error, detail=result.detail)
 
     log.info("action %s executed: %s", action_name, result.detail)
     _audit(action_name=action_name, params=params, valid=True, ok=True)
+    _remember(action_name, params, True, detail=result.detail)
     return ThinkResult(ok=True, action_name=action_name, params=params, detail=result.detail)

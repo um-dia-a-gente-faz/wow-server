@@ -53,6 +53,69 @@ clearly helps, prefer a low-risk action (e.g. face/set_target) over guessing.
 above to do so.
 """
 
+# UM-90: the standing goal. A persona (AGENT_PERSONA) is appended after it
+# and may replace it — the prompt says the persona wins on conflict.
+GOAL_PROMPT = """Goal: level up efficiently, on your own.
+- Quests: nearby NPCs with quest_giver_status offer or accept quests. \
+interact with them, accept_quest, then do the objectives (kill and loot the \
+named mobs), then go back and complete_quest/turn_in_quest. Never re-accept a \
+quest already in quest_log; work on its objectives instead.
+- Fighting: attack mobs close to your level (see "me"). set_target, then \
+cast_spell with a spell from "spells" or auto_attack. After a kill, loot the \
+corpse. Rest when your health or mana is low, before the next pull.
+- Gear: when you get an item, compare_items and equip_item if it is an upgrade. \
+Sell junk to vendors when your bags fill.
+- "history" lists your recent actions and their results, oldest first. If an \
+action failed or changed nothing, do not repeat it unchanged; try something \
+different. Fields that are empty, null or false are omitted from the snapshot.
+"""
+
+# UM-90: prompt-size caps. The full snapshot keeps up to 40 of each bucket
+# (perception.WorldState.snapshot) and prompts ran 4-8k tokens every 15 s,
+# which the free LLM tier rate-limits; the nearest few are what matters.
+PROMPT_BUCKET_CAPS = {"nearby_units": 15, "nearby_players": 10, "nearby_objects": 10}
+
+
+def _prune(value):
+    """Drop None/""/False/[]/{} dict entries recursively (list elements are
+    kept in place; only their own dict fields are pruned)."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            v = _prune(v)
+            if v is None or v is False or v == "" or v == [] or v == {}:
+                continue
+            out[k] = v
+        return out
+    if isinstance(value, list):
+        return [_prune(v) for v in value]
+    return value
+
+
+def _round_positions(value):
+    """Round x/y/z of every position-shaped dict to 0.1 yd."""
+    if isinstance(value, dict):
+        out = {k: _round_positions(v) for k, v in value.items()}
+        if "x" in out and "y" in out:
+            for axis in ("x", "y", "z"):
+                if isinstance(out.get(axis), float):
+                    out[axis] = round(out[axis], 1)
+        return out
+    if isinstance(value, list):
+        return [_round_positions(v) for v in value]
+    return value
+
+
+def compact_snapshot(snapshot: dict) -> dict:
+    """The snapshot as sent to the model (UM-90): nearest N per bucket,
+    positions rounded, empty/null/false fields dropped. The audit log keeps
+    the full snapshot; this only shapes the prompt."""
+    out = dict(snapshot)
+    for key, cap in PROMPT_BUCKET_CAPS.items():
+        if isinstance(out.get(key), list):
+            out[key] = out[key][:cap]
+    return _prune(_round_positions(out))
+
 
 class LLMError(Exception):
     """The LLM call failed, or returned something that isn't a usable tool
@@ -86,18 +149,22 @@ def build_tools(catalog: list[dict]) -> list[dict]:
     return [{"type": "function", "function": schema} for schema in catalog]
 
 
-def build_messages(snapshot: dict, persona: str = "") -> list[dict]:
-    """System prompt (+ optional persona) and one user message carrying the
-    perception snapshot as JSON. Kept as two short messages (no running
-    history) — the think loop is stateless per cycle by design (see
-    docs/ROADMAP.md Phase 3: "one LLM call per think cycle → one action")."""
-    system = SYSTEM_PROMPT
+def build_messages(snapshot: dict, persona: str = "", history: list | None = None) -> list[dict]:
+    """System prompt (rules + standing goal + optional persona) and one user
+    message carrying the recent action history (UM-90) and the compacted
+    perception snapshot. The history is the only memory between cycles;
+    it comes from agent.think.ThinkState, not from chat turns."""
+    system = SYSTEM_PROMPT + "\n" + GOAL_PROMPT
     if persona:
-        system += f"\nPersona: {persona}\n"
-    user = "Current perception snapshot:\n" + json.dumps(snapshot, default=str)
+        system += f"\nPersona: {persona}\nIf the persona sets a different goal, follow the persona.\n"
+    parts = []
+    if history:
+        parts.append("history:\n" + "\n".join(json.dumps(h, default=str, separators=(",", ":"))
+                                                for h in history))
+    parts.append("snapshot:\n" + json.dumps(compact_snapshot(snapshot), default=str, separators=(",", ":")))
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": user},
+        {"role": "user", "content": "\n\n".join(parts)},
     ]
 
 
@@ -207,7 +274,7 @@ class LLMClient:
         return seconds
 
     def choose_action(self, snapshot: dict, catalog: list[dict],
-                       persona: str = "") -> tuple[str, dict]:
+                       persona: str = "", history: list | None = None) -> tuple[str, dict]:
         """One chat-completions call with the action catalog as tools.
         Returns (action_name, params) for the single tool call the model
         made. Raises LLMError for anything that isn't exactly one valid
@@ -224,7 +291,7 @@ class LLMClient:
         if not self.models:
             raise LLMError("no LLM model configured")
 
-        messages = build_messages(snapshot, persona=persona)
+        messages = build_messages(snapshot, persona=persona, history=history)
         tools = build_tools(catalog)
         failures: list[str] = []
         attempts = 0

@@ -12,6 +12,7 @@ import threading
 import zlib
 
 from . import packets as pk
+from . import channels as ch_mod
 from . import crypt as cr
 from . import loot as lo
 from . import mail as mail_mod
@@ -923,14 +924,14 @@ class WoWSession:
             data = qu.parse_questupdate_add_kill(payload)
         except (IndexError, struct.error) as e:
             raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_KILL ({len(payload)} B): {e}") from e
-        self._record_event("quest_progress", kind="kill", **data)
+        self._record_event("quest_progress", objective="kill", **data)
 
     def _handle_questupdate_add_item(self, payload: bytes):
         try:
             data = qu.parse_questupdate_add_item(payload)
         except (IndexError, struct.error) as e:
             raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_ITEM ({len(payload)} B): {e}") from e
-        self._record_event("quest_progress", kind="item", **data)
+        self._record_event("quest_progress", objective="item", **data)
 
     def _handle_questupdate_complete(self, payload: bytes):
         try:
@@ -1323,6 +1324,69 @@ class WoWSession:
         target_name, _ = pk.cstring(payload, 0)
         self._record_event("whisper_failed", target_name=target_name)
 
+    def join_channels(self, names, timeout: float = 5.0) -> dict:
+        """UM-93: join chat channels (CMSG_JOIN_CHANNEL, agent.channels) and
+        wait for each one's you_joined notice or error. The server doesn't
+        auto-join General at login (a real client asks for it itself, see
+        agent/channels.py), so callers do this right after
+        login_character(). Returns {requested name: full joined name, or
+        None if it didn't join in time / was refused}. A system channel
+        the zone doesn't have (e.g. Trade outside a city) is dropped
+        silently by the server, so it just times out."""
+        results = {}
+        for name in names:
+            sent_at = time.monotonic()
+            try:
+                payload = ch_mod.build_join_channel(name)
+            except ValueError as e:
+                log.warning("not joining channel %r: %s", name, e)
+                results[name] = None
+                continue
+            self._send_packet(ch_mod.CMSG_JOIN_CHANNEL, payload)
+            cid = ch_mod.system_channel_id(name)
+            deadline = sent_at + timeout
+            joined = None
+            while joined is None and time.monotonic() < deadline:
+                for e in list(self.events):
+                    if e.get("t", 0) < sent_at:
+                        continue
+                    if e.get("kind") == "channel_joined" and (
+                            (cid and e.get("channel_id") == cid)
+                            or e.get("channel", "").lower() == name.lower()):
+                        joined = e["channel"]
+                        break
+                    if e.get("kind") == "channel_error" and e.get("channel", "").lower().startswith(name.lower()):
+                        joined = False
+                        break
+                else:
+                    time.sleep(0.1)
+            results[name] = joined or None
+            if joined:
+                log.info("joined channel %r", joined)
+            else:
+                log.warning("could not join channel %r", name)
+        return results
+
+    def _handle_channel_notify(self, payload: bytes):
+        """SMSG_CHANNEL_NOTIFY (0x099, agent.channels.parse_channel_notify).
+        you_joined/you_left update world_state.channels; they and every
+        error notice (not_member, muted, throttled, ...) are also recorded
+        as channel_joined / channel_left / channel_error events so
+        join_channels() and ChannelSayAction can confirm the outcome."""
+        try:
+            data = ch_mod.parse_channel_notify(payload)
+        except (IndexError, ValueError, struct.error) as e:
+            raise per.PerceptionParseError(f"malformed SMSG_CHANNEL_NOTIFY ({len(payload)} B): {e}") from e
+        self.world_state.apply_channel_notify(data)
+        if data["notice"] == ch_mod.CHAT_YOU_JOINED_NOTICE:
+            self._record_event("channel_joined", channel=data["channel"],
+                                channel_id=data["channel_id"], flags=data["flags"])
+        elif data["notice"] == ch_mod.CHAT_YOU_LEFT_NOTICE:
+            self._record_event("channel_left", channel=data["channel"], channel_id=data["channel_id"])
+        elif data["notice"] in ch_mod.ERROR_NOTICES:
+            self._record_event("channel_error", channel=data["channel"],
+                                notice=data["notice"], reason=data["notice_name"])
+
     def _handle_party_command_result(self, payload: bytes):
         """SMSG_PARTY_COMMAND_RESULT (0x07F): WorldSession::SendPartyResult
         (GroupHandler.cpp) — uint32 operation, cstring member_name, uint32
@@ -1409,6 +1473,8 @@ class WoWSession:
             self._handle_group_invite(payload)
         elif opcode == SMSG_CHAT_PLAYER_NOT_FOUND:
             self._handle_chat_player_not_found(payload)
+        elif opcode == ch_mod.SMSG_CHANNEL_NOTIFY:
+            self._handle_channel_notify(payload)
         elif opcode == SMSG_PARTY_COMMAND_RESULT:
             self._handle_party_command_result(payload)
         elif opcode == SMSG_DESTROY_OBJECT:

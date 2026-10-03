@@ -77,9 +77,9 @@ for xpair, ypair in (("67", "45"), ("45", "67")):
             results.append((hits / len(pts), xpair, ypair, flipx, flipy))
 
 results.sort(reverse=True)
-print(f"area {AREA}: {len(pts)} pontos reais, imagem {W}x{H}")
-print(f"campos brutos f4..f7 = {f4}, {f5}, {f6}, {f7}\n")
+print(f"area {AREA}: {len(pts)} real points, image {W}x{H}")
+print(f"raw fields f4..f7 = {f4}, {f5}, {f6}, {f7}\n")
 print(f"{'land%':>7s}  Xpair  Ypair  flipX  flipY")
 for frac, xp, yp, fx, fy in results:
-    mark = "  <-- melhor" if frac == results[0][0] else ""
+    mark = "  <-- best" if frac == results[0][0] else ""
     print(f"{frac * 100:6.1f}%  {xp:5s}  {yp:5s}  {str(fx):5s}  {str(fy):5s}{mark}")

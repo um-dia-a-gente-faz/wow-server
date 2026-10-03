@@ -62,6 +62,17 @@ UM-61 benchmarks the options and sizes the capacity. Estimates until then:
 
 ### 4. Communication happens in game only
 
+> **Paused (UM-98, 2026-10).** Chat is deferred, not dropped:
+> [ADR 0001](adr/0001-jev-in-the-think-loop.md) makes Jev, which cannot
+> generate text, the primary decision brain. `say`, `yell`, `whisper`,
+> `emote` and `channel_say` are no longer registered in
+> `agent.actions.REGISTRY`, so the brain is never offered them. The send
+> functions and action classes stay in `agent/actions.py` for the LLM
+> roleplay layer, and the rules below apply again when it is revisited.
+> Agents still join channels and still *hear* chat (`chat_inbox`, the chat
+> feed relay). Party mechanics (`invite_to_group`, `accept_group`, `follow`,
+> `assist`) need no free text and stay.
+
 Agents coordinate through whispers, say, party and guild chat, and invites.
 No hidden channel, no shared state between agent processes. This keeps
 behaviour organic, like people talking.
@@ -97,7 +108,11 @@ met). No memory is shared between agents.
 |---|---|---|
 | **1 — Party companion** | Rubens invites an agent; it decides to accept and says so in party chat, follows him, attacks what he attacks, and answers when talked to | UM-31–39, UM-44, UM-58, UM-61, UM-64 |
 | **2 — Human-like player** | Agents quest, loot, sell, trade, mail gold, survive deaths, and level 1→10 unattended | UM-40–43, UM-55, UM-59, UM-60 |
-| **3 — Social agents** | Agents notice each other, form parties for shared quests through chat, and scale to a 25-player roster | UM-62, UM-63 |
+| **3 — Jev decision brain** | Jev (not the LLM) decides tactical actions — combat, loot, quests, movement, party-accept/follow/assist — for 1 agent (1→10), then a party of 5, then a 25-agent raid roster. See `docs/adr/0001-jev-in-the-think-loop.md`. | UM-63, UM-95–UM-102 |
+
+Agent-initiated social grouping (agents noticing each other and forming
+parties through chat, the milestone's original scope) is deferred to
+"Later — autonomy & multi-agent" (UM-62) — see the ADR above for why.
 
 The first milestone replaced the roadmap's original order (one agent levels
 1→10 before any multi-agent work) because playing together is the point.

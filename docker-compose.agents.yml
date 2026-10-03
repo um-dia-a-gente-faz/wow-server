@@ -24,6 +24,13 @@ x-agent: &agent-defaults
     LLM_API_KEY: ${LLM_API_KEY:-}
     LLM_MODEL: ${LLM_MODEL:-}  # one id, or a comma-separated fallback list (UM-94, see .env.example)
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
+    # UM-50 read-only observability API (agent/http_api.py). Each service
+    # sets its own AGENT_HTTP_PORT and publishes it (9601-9605). Bound to
+    # all interfaces inside the container so the published port works; the
+    # data (position, perception, chat heard, decisions) is visible to the
+    # whole LAN, but no secrets and no write endpoints. Set
+    # AGENT_HTTP_PUBLISH_IP=127.0.0.1 in .env to keep it host-local.
+    AGENT_HTTP_BIND: 0.0.0.0
   # Decision audit log (UM-51) — one JSONL file per agent per day. Host path
   # matches monitoring/docker-compose.yml's node-exporter textfile mount
   # input (see monitoring/agent_metrics_textfile.py), so the same directory
@@ -40,6 +47,12 @@ services:
       WOW_ACCOUNT: AGENT01
       WOW_CHARACTER: Luaprata
       AGENT_NAME: Luaprata
+      AGENT_HTTP_PORT: 9601
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9601:9601"
+    labels:
+      wow.agent.name: Luaprata
+      wow.agent.http-port: "9601"
 
   agent-farstrider:
     <<: *agent-defaults
@@ -49,6 +62,12 @@ services:
       WOW_ACCOUNT: AGENT02
       WOW_CHARACTER: Farstrider
       AGENT_NAME: Farstrider
+      AGENT_HTTP_PORT: 9602
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9602:9602"
+    labels:
+      wow.agent.name: Farstrider
+      wow.agent.http-port: "9602"
 
   agent-shadowblade:
     <<: *agent-defaults
@@ -58,6 +77,12 @@ services:
       WOW_ACCOUNT: AGENT03
       WOW_CHARACTER: Shadowblade
       AGENT_NAME: Shadowblade
+      AGENT_HTTP_PORT: 9603
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9603:9603"
+    labels:
+      wow.agent.name: Shadowblade
+      wow.agent.http-port: "9603"
 
   agent-sunspeaker:
     <<: *agent-defaults
@@ -67,6 +92,12 @@ services:
       WOW_ACCOUNT: AGENT04
       WOW_CHARACTER: Sunspeaker
       AGENT_NAME: Sunspeaker
+      AGENT_HTTP_PORT: 9604
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9604:9604"
+    labels:
+      wow.agent.name: Sunspeaker
+      wow.agent.http-port: "9604"
 
   agent-spellweaver:
     <<: *agent-defaults
@@ -76,3 +107,9 @@ services:
       WOW_ACCOUNT: AGENT05
       WOW_CHARACTER: Spellweaver
       AGENT_NAME: Spellweaver
+      AGENT_HTTP_PORT: 9605
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9605:9605"
+    labels:
+      wow.agent.name: Spellweaver
+      wow.agent.http-port: "9605"
