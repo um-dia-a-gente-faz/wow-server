@@ -93,7 +93,8 @@ class EndpointsTest(_ServerCase):
     def test_perception_is_world_snapshot(self):
         body = json.loads(self.get("/perception")[1])
         self.assertEqual(body["position"], {"map": 530, "x": 10.0, "y": 20.0, "z": 30.0})
-        self.assertEqual([u["guid"] for u in body["nearby_units"]], [0x20])
+        # UM-89: snapshot encodes GUIDs as handles, not raw numbers
+        self.assertEqual([u["guid"] for u in body["nearby_units"]], ["p1"])
         self.assertEqual(body["chat_inbox"], [{"kind": "say", "text": "hi"}])
 
     def test_state_has_stats_spellbook_quests_inventory(self):
