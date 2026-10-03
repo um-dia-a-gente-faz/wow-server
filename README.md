@@ -177,8 +177,10 @@ pv1 (Proxmox @ 192.168.1.75)
 - **AI agents:** `agent/` is the Python 3.3.5a protocol client (SRP6 auth, world
   login, chat/target actions). `Dockerfile` + `docker-compose.agents.yml` run one
   container per agent character. Agents are outbound clients of :3724/:8085 and
-  expose no ports. They aren't part of `scripts/deploy.sh`. See
-  `docs/AI-AGENT-SPEC.md` and `docs/ROADMAP.md`.
+  publish only a read-only observability API. They run on the `wow-agents` VM,
+  not on the wow-server VM, and aren't part of `scripts/deploy.sh`. See
+  `docs/adr/0002-agent-host-topology.md`, `docs/AI-AGENT-SPEC.md` and
+  `docs/ROADMAP.md`.
 
 Full component and port reference: `docs/ARCHITECTURE.md`.
 

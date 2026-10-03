@@ -124,7 +124,15 @@ Horde characters. The compose file is generated from it
 (`scripts/gen_agents_compose.py`) and has profiles `party` (the first 5) and
 `raid` (all 25). Agents connect out to :3724/:8085, publish only their read-only
 observability API (9601..9625), and aren't started by `scripts/deploy.sh`; they
-run on a separate small VM, see `docs/DEPLOYMENT.md` ("Agent roster").
+run on their own `pv1` guest, the **`wow-agents`** VM (not VM 305, which is the
+coding-CLI dev host that happens to be called `agents`), see
+`docs/DEPLOYMENT.md` ("Agent roster") and `docs/adr/0002-agent-host-topology.md`.
+
+| Component | Host | Port | Role |
+|---|---|---|---|
+| Agent containers | `wow-agents` | 9601..9625 | one per character; read-only observability API |
+| `tools/agent-runner` | `wow-agents` | 9700 | control plane: fleet status, start/stop, character creation; shared-token HTTP, LAN only, owns the Docker socket (#136) |
+| `tools/wowmap` fleet panel | wow-server VM | 9400 | UI only; calls the runner over the LAN, never holds the Docker socket |
 Perception (parsing update-object packets) is in progress. See `docs/ROADMAP.md`
 and `docs/PROTOCOL-NOTES.md`.
 
@@ -161,7 +169,7 @@ All traffic is LAN-only. No external exposure, no TLS. Every port published on
 | 9100 | `node-exporter` (host network) | `monitoring/docker-compose.yml` | HTTP (Prometheus scrape) |
 | 8080 | `cadvisor` | `monitoring/docker-compose.yml` | HTTP (Prometheus scrape) |
 
-`docker-compose.agents.yml` publishes only the agents' read-only API, 9601..9625 (agent N on 9600+N).
+`docker-compose.agents.yml` publishes only the agents' read-only API, 9601..9625 (agent N on 9600+N). Those ports, and the agent runner on :9700, are on the `wow-agents` VM, not on 192.168.1.64.
 
 ## Bootstrap sequence
 

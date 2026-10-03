@@ -256,13 +256,42 @@ existing level 55 character on the account). `docker-compose.agents.yml` is
 **generated** from the roster, so never edit its services by hand.
 
 **Where they run.** Not on the 6 GB `wow-server` VM, which has no room (see
-*Resource limits*). Run the agents on a separate small VM on the Proxmox host
-(`pv1`) with Docker and a checkout of this repo plus its own `.env`
-(`AGENT_PASSWORD`, `LLM_*`). The compose file points `WOW_HOST` at
-`192.168.1.64`, so the agents only need LAN access to it. Each container has
-`mem_limit: 128m` and `cpus: 0.25`, so 25 of them need about 3.2 GB of RAM
-(limit, not measured use) and 6 CPUs at the cap; size the VM from `docker stats`
-once they run.
+*Resource limits*): the fleet lives on its own guest on `pv1`, a VM named
+**`wow-agents`** (2 vCPU / 4 GiB / 40 GB, `cpu host`, Docker + compose) with a
+checkout of this repo plus its own `.env` (`AGENT_PASSWORD`, `LLM_*`,
+`AGENT_RUNNER_TOKEN`). Decision record: `docs/adr/0002-agent-host-topology.md`.
+The compose file points `WOW_HOST` at `192.168.1.64`, so the agents only need
+LAN access to it. Each container has `mem_limit: 128m` and `cpus: 0.25`, so 25
+of them need about 3.2 GB of RAM (limit, not measured use) and 6 CPUs at the
+cap; size the VM from `docker stats` once they run.
+
+> **Do not confuse `wow-agents` with VM 305.** VM 305 is *called* `agents`, but
+> it is the coding-CLI dev host (claude/codex/antigravity/opencode/kimi users,
+> Ubuntu 26.04, no Docker). Nothing from the WoW fleet runs there.
+
+**What runs where.**
+
+| Thing | Host |
+|---|---|
+| Realm, MySQL, `chat-feed`, **`wowmap`** (the website, incl. the fleet panel), exporters | wow-server VM, 192.168.1.64 |
+| Agent containers, `tools/agent-runner` (:9700), the audit directory's source copy | `wow-agents` VM |
+
+`wowmap` still lives on the wow-server VM; it reaches the runner over the LAN.
+The runner is the only thing that touches the Docker socket on `wow-agents`
+(a host systemd unit, not a container) and writes runtime state, including its
+own generated compose file and the audit dir, under `/opt/wow-agent-runtime/`,
+never into the git checkout.
+
+**Audit pull.** The agents write `<agent>/<day>.jsonl` to
+`/opt/wow-agent-runtime/audit/` on `wow-agents`. A systemd timer on the
+wow-server VM pulls it every ~30 s with `rsync -a` over SSH (read-only key,
+never `--delete`) into `/opt/wow-server-metrics/audit/`, where wowmap's
+activity feed, the node-exporter textfile metrics and Grafana read it
+unchanged. If the pull fails, the game is unaffected: those views go stale and
+catch up on the next successful pull (files are append-only). To tell
+"agent silent" from "pull broken", compare the audit age at the source
+(`GET /agents` on the runner) with the mirror's newest file. Details of the
+timer and key are in the `wow-agents` provisioning ticket (#135).
 
 **Create the accounts and characters** (needs `AGENT_PASSWORD` in the
 environment and the realm and console reachable; the script uses the same
@@ -288,7 +317,7 @@ python3 scripts/gen_agents_compose.py                 # rewrite docker-compose.a
 python3 scripts/gen_agents_compose.py --check         # CI-style check that it is up to date
 ```
 
-**Start agents** (from the agents VM, in the checkout):
+**Start agents** (on `wow-agents`, in the checkout):
 
 ```bash
 docker compose -f docker-compose.agents.yml --profile party up -d   # AGENT01..05
