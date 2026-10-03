@@ -55,6 +55,16 @@ class WdbcFileTests(unittest.TestCase):
         self.assertEqual(self.f.string(0, 3), "Stormwind")
         self.assertEqual(self.f.string(1, 3), "")  # offset 0 is the empty string
 
+    def test_open_can_memory_map_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "T.dbc")
+            with open(path, "wb") as fh:
+                fh.write(build_wdbc(4, [{0: 7, 3: "Stormwind"}]))
+            f = WdbcFile.open(path, use_mmap=True)
+            self.assertEqual((f.uint(0, 0), f.string(0, 3)), (7, "Stormwind"))
+            self.assertEqual(f.string(0, 3), WdbcFile.open(path).string(0, 3))
+            del f
+
     def test_out_of_range(self):
         with self.assertRaises(IndexError):
             self.f.uint(2, 0)

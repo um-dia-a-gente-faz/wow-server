@@ -9,10 +9,17 @@ src/server/game/Entities/Item/ItemTemplate.h of the same commit: ItemModType
 ItemSubclass* enums. Damage schools are SpellSchools in
 src/server/shared/DataStores/SharedDefines.h.
 
-The line wording follows the 3.3.5a client's tooltip strings as best we know them
-without the client's GlobalStrings.lua at hand; spell effects ("Use:", "Equip:"
-with a spell), item set names and random "of the ..." suffixes need more DBC data
-and are not shown yet.
+The line wording follows the 3.3.5a client's GlobalStrings.lua (ITEM_SPELL_TRIGGER_*,
+ITEM_SET_NAME, ITEM_SET_BONUS, ITEM_SOCKET_BONUS, EMPTY_SOCKET_*, ITEM_MIN_SKILL,
+ITEM_REQ_REPUTATION, ITEM_ENCHANT_TIME_LEFT_*). The DBC-backed lines (spell effects
+with "Use:"/"Equip:"/"Chance on hit:", item sets, random "of the ..." suffixes and
+their stats, enchants, gems and socket bonuses, required skill/reputation) need
+`names`, a dbc.names.GameNames; without it they are left out.
+
+Not shown yet: cooldown and charge suffixes on spell lines, spell triggers 4/5/6
+(soulstone, no-delay use, learn), `$` variables the spell text resolver refuses
+(dbc/spelltext.py: such a line is skipped, never guessed), set bonuses' required
+skill, and "Requires ..." lines in red when the viewer doesn't meet them.
 
 A tooltip is a list of lines, each a dict:
     {"left": str, "right": str (optional), "color": one of COLORS}
@@ -23,12 +30,16 @@ or a sell price line {"left": "Sell Price:", "money": copper, "color": "white"}.
 COLORS = ("quality", "white", "green", "yellow", "gray", "red")
 
 # Columns read from world.item_template, in this order, after the fixed ones in
-# app.fetch_character. Names verified against ObjectMgr::LoadItemTemplates and the
-# live world database.
+# app.fetch_character. Names verified against ObjectMgr::LoadItemTemplates (the
+# SELECT lists spellid_1, spelltrigger_1, itemset, socketColor_1..3, socketBonus,
+# RequiredSkill, RequiredSkillRank, RequiredReputationFaction/Rank and the rest).
 COLUMNS = (
     ["class", "subclass", "InventoryType", "Flags", "bonding", "SellPrice",
      "ItemLevel", "RequiredLevel", "AllowableClass", "AllowableRace", "maxcount",
-     "ContainerSlots", "StatsCount"]
+     "ContainerSlots", "StatsCount", "Quality", "itemset", "RequiredSkill",
+     "RequiredSkillRank", "RequiredReputationFaction", "RequiredReputationRank",
+     "socketColor_1", "socketColor_2", "socketColor_3", "socketBonus"]
+    + [f"{k}_{i}" for i in range(1, 6) for k in ("spellid", "spelltrigger")]
     + [f"{k}{i}" for i in range(1, 11) for k in ("stat_type", "stat_value")]
     + ["dmg_min1", "dmg_max1", "dmg_type1", "dmg_min2", "dmg_max2", "dmg_type2",
        "armor", "holy_res", "fire_res", "nature_res", "frost_res", "shadow_res",
@@ -128,6 +139,26 @@ RACE_NAMES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: 
 CLASSMASK_ALL = sum(1 << (c - 1) for c in CLASS_NAMES)
 RACEMASK_ALL = sum(1 << (r - 1) for r in RACE_NAMES)
 
+# item_template.spelltrigger_N (ItemSpelltriggerType, ItemTemplate.h) -> GlobalStrings
+# ITEM_SPELL_TRIGGER_ONUSE / ONEQUIP / ONPROC. 4 (soulstone), 5 (no-delay use) and 6
+# (learn spell) are not shown: how the client words them isn't verified.
+SPELL_TRIGGERS = {0: "Use:", 1: "Equip:", 2: "Chance on hit:"}
+
+# EnchantmentSlot (src/server/game/Entities/Item/ItemDefines.h) and the layout of
+# item_instance.enchantments: MAX_ENCHANTMENT_SLOT (12) groups of "id duration charges"
+# (Item::LoadFromDB -> _LoadIntoDataField; ENCHANTMENT_*_OFFSET in Item.h).
+PERM_SLOT, TEMP_SLOT, SOCK_SLOTS, PRISMATIC_SLOT = 0, 1, (2, 3, 4), 6
+ENCHANT_SLOTS = 12
+# ITEM_ENCHANTMENT_TYPE_PRISMATIC_SOCKET (DBCEnums.h): SpellItemEnchantment.Effect
+# of the permanent enchant that adds a socket (Eternal Belt Buckle).
+ENCHANT_PRISMATIC_SOCKET = 8
+# SocketColor (ItemTemplate.h) -> GlobalStrings EMPTY_SOCKET_*
+SOCKET_NAMES = {1: "Meta Socket", 2: "Red Socket", 4: "Yellow Socket", 8: "Blue Socket"}
+
+
+def _get(t, key):
+    return t.get(key) or 0
+
 
 def _num(v):
     """Damage values are floats in the DB; print 3.0 as 3."""
@@ -142,11 +173,144 @@ def _restriction(label, mask, names, all_mask):
     return {"left": f"{label}: " + ", ".join(picked), "color": "white"}
 
 
-def tooltip(name, t, count=1, instance_flags=0, durability=None):
+def parse_enchantments(text):
+    """item_instance.enchantments -> {slot: (enchant id, duration ms, charges)} for the
+    slots that hold an enchantment. Malformed text gives what parsed cleanly."""
+    try:
+        nums = [int(x) for x in (text or "").split()]
+    except ValueError:
+        return {}
+    out = {}
+    for slot in range(min(len(nums) // 3, ENCHANT_SLOTS)):
+        ench, duration, charges = nums[slot * 3:slot * 3 + 3]
+        if ench:
+            out[slot] = (ench, duration, charges)
+    return out
+
+
+def _time_left(ms):
+    """GlobalStrings ITEM_ENCHANT_TIME_LEFT_*: "(59 min)", "(30 sec)", "(2 hours)"."""
+    secs = ms // 1000
+    for unit, size in (("day", 86400), ("hour", 3600), ("min", 60)):
+        if secs >= size:
+            n = secs // size
+            return f"({n} {unit}{'s' if n != 1 and unit != 'min' else ''})"
+    return f"({secs} sec)"
+
+
+def _enchant_lines(t, names, enchants, random_property):
+    """(enchant lines, socket lines, socket bonus line) for the DBC-backed part of the
+    tooltip. Everything is green except empty sockets and an inactive socket bonus."""
+    g = lambda k: _get(t, k)  # noqa: E731
+    stats, sockets, bonus = [], [], None
+    if random_property:
+        stats += [{"left": text, "color": "green"} for text in names.random_property_lines(
+            random_property, g("ItemLevel"), g("Quality"), g("InventoryType"))]
+
+    perm = enchants.get(PERM_SLOT)
+    extra_socket = False
+    if perm:
+        enchant = names.enchants.get(perm[0])
+        if enchant and any(e[0] == ENCHANT_PRISMATIC_SOCKET for e in enchant[1]):
+            extra_socket = True
+        elif enchant and enchant[0]:
+            stats.append({"left": enchant[0], "color": "green"})
+    temp = enchants.get(TEMP_SLOT)
+    if temp and names.enchant_name(temp[0]):
+        text = names.enchant_name(temp[0]) + (f" {_time_left(temp[1])}" if temp[1] else "")
+        stats.append({"left": text, "color": "green"})
+
+    # Sockets: the template says the colours, the enchantment slots hold the gems
+    # (a gem's enchantment id, GemProperties.EnchantID).
+    fits = True
+    colors = [g(f"socketColor_{i}") for i in (1, 2, 3)]
+    for slot, color in zip(SOCK_SLOTS, colors):
+        if not color:
+            continue
+        gem = enchants.get(slot)
+        gem_name = names.enchant_name(gem[0]) if gem else None
+        if gem_name:
+            sockets.append({"left": gem_name, "color": "white"})
+            fits = fits and bool(names.gem_colors.get(gem[0], 0) & color)
+        else:
+            sockets.append({"left": SOCKET_NAMES.get(color, "Prismatic Socket"), "color": "gray"})
+            fits = False
+    if extra_socket or PRISMATIC_SLOT in enchants:
+        gem = enchants.get(PRISMATIC_SLOT)
+        gem_name = names.enchant_name(gem[0]) if gem else None
+        sockets.append({"left": gem_name, "color": "white"} if gem_name
+                       else {"left": "Prismatic Socket", "color": "gray"})
+    if g("socketBonus") and any(colors) and names.enchant_name(g("socketBonus")):
+        bonus = {"left": f"Socket Bonus: {names.enchant_name(g('socketBonus'))}",
+                 "color": "green" if fits else "gray"}
+    return stats, sockets, bonus
+
+
+def _spell_lines(t, names):
+    lines = []
+    for i in range(1, 6):
+        label, spell = SPELL_TRIGGERS.get(_get(t, f"spelltrigger_{i}")), _get(t, f"spellid_{i}")
+        text = names.spell_text(spell) if label and spell else None
+        if text:
+            lines.append({"left": f"{label} {text}", "color": "green"})
+    return lines
+
+
+def _requirement_lines(t, names):
+    """"Requires Blacksmithing (300)" and "Requires Scryers - Honored" (ITEM_MIN_SKILL,
+    ITEM_REQ_SKILL, ITEM_REQ_REPUTATION)."""
+    lines = []
+    skill = names.skill_name(_get(t, "RequiredSkill")) if _get(t, "RequiredSkill") else None
+    if skill:
+        rank = _get(t, "RequiredSkillRank")
+        lines.append({"left": f"Requires {skill} ({rank})" if rank else f"Requires {skill}",
+                      "color": "white"})
+    faction = _get(t, "RequiredReputationFaction")
+    if faction:
+        fname, rname = names.faction_name(faction), names.reputation_rank_name(
+            _get(t, "RequiredReputationRank"))
+        if fname and rname:
+            lines.append({"left": f"Requires {fname} - {rname}", "color": "white"})
+    return lines
+
+
+def _set_lines(t, names, equipped, item_names):
+    """The item set block: "Name (2/5)", the pieces (equipped ones lit) and the
+    "(2) Set: ..." bonuses (green once enough pieces are equipped)."""
+    item_set = names.item_set(_get(t, "itemset")) if _get(t, "itemset") else None
+    if not item_set:
+        return []
+    have = sum(1 for i in item_set["items"] if i in equipped)
+    lines = [{"left": f"{item_set['name']} ({have}/{len(item_set['items'])})", "color": "yellow"}]
+    for entry in item_set["items"]:
+        lines.append({"left": (item_names or {}).get(entry) or f"Item {entry}",
+                      "color": "yellow" if entry in equipped else "gray"})
+    for threshold, spell in item_set["bonuses"]:
+        text = names.spell_text(spell)
+        if text:
+            lines.append({"left": f"({threshold}) Set: {text}",
+                          "color": "green" if have >= threshold else "gray"})
+    return lines
+
+
+def set_piece_entries(set_ids, names):
+    """Item entries of the given item sets (ItemSet.dbc), for looking up their names."""
+    return sorted({e for i in set_ids for e in (names.item_set(i) or {"items": ()})["items"]})
+
+
+def tooltip(name, t, count=1, instance_flags=0, durability=None, names=None,
+            random_property=0, enchantments="", equipped=(), item_names=None):
     """Tooltip lines for one item. `t` maps COLUMNS to values; every value may be None
-    (an item_instance whose entry is missing from item_template gets just its name)."""
+    (an item_instance whose entry is missing from item_template gets just its name).
+
+    `names` is a dbc.names.GameNames: with it the tooltip gets the DBC-backed lines
+    (see the module docstring). `random_property` and `enchantments` are the
+    item_instance columns of the same names; `equipped` is the set of item entries
+    the character has equipped and `item_names` maps entries to names, both for the
+    item set block."""
     g = lambda k: t.get(k) or 0  # noqa: E731
-    lines = [{"left": name, "color": "quality"}]
+    suffix = names.random_property_name(random_property) if names and random_property else None
+    lines = [{"left": f"{name} {suffix}" if suffix else name, "color": "quality"}]
     if not t or t.get("class") is None:
         return lines
 
@@ -215,6 +379,10 @@ def tooltip(name, t, count=1, instance_flags=0, durability=None):
     for col, school in RESISTANCES:
         if g(col):
             lines.append({"left": f"{g(col):+d} {school} Resistance", "color": "white"})
+    if names:
+        enchant_lines, socket_lines, socket_bonus = _enchant_lines(
+            t, names, parse_enchantments(enchantments), random_property)
+        lines += enchant_lines + socket_lines + ([socket_bonus] if socket_bonus else [])
 
     if g("MaxDurability"):
         cur = g("MaxDurability") if durability is None else durability
@@ -225,11 +393,17 @@ def tooltip(name, t, count=1, instance_flags=0, durability=None):
             lines.append(line)
     if g("RequiredLevel") > 0:
         lines.append({"left": f"Requires Level {g('RequiredLevel')}", "color": "white"})
+    if names:
+        lines += _requirement_lines(t, names)
     if inv and g("ItemLevel"):
         lines.append({"left": f"Item Level {g('ItemLevel')}", "color": "yellow"})
     lines += [{"left": e, "color": "green"} for e in equip]
+    if names:
+        lines += _spell_lines(t, names)
     if t.get("description"):
         lines.append({"left": f"“{t['description']}”", "color": "yellow"})
+    if names:
+        lines += _set_lines(t, names, set(equipped), item_names)
     if g("SellPrice"):
         # The game shows the price of the whole stack.
         lines.append({"left": "Sell Price:", "money": g("SellPrice") * max(count or 1, 1),
