@@ -187,5 +187,88 @@ class JevClientErrorTest(ServerCase):
         self.assertEqual(cm.exception.status, 429)
 
 
+try:
+    from agent import actions as ac
+    from agent import brain
+    from agent import perception as per
+    from agent.think import think_and_act
+except ImportError:
+    brain = None
+
+
+class _Recording(ac.Action if brain else object):
+    name = "test_action"
+    description = "records the params it ran with"
+    params = {"value": {"type": "integer"}}
+    required = ()
+
+    def __init__(self):
+        self.ran = []
+
+    def execute(self, session, world, **params):
+        self.ran.append(params)
+        return ac.ActionResult(ok=True, detail=params)
+
+
+class _FallbackLLM:
+    model = "fallback-llm"
+
+    def __init__(self):
+        self.calls = 0
+
+    def choose_action(self, snapshot, catalog, persona="", history=None):
+        self.calls += 1
+        return "test_action", {"value": 99}
+
+
+class _BrainSeamCase(ServerCase):
+    """UM-101 end to end: think_and_act -> Brain -> real JevClient -> this mock."""
+
+    CANDIDATES = [{"id": f"test_action:value={v}", "label": f"value {v}",
+                   "action": "test_action", "params": {"value": v}} for v in (1, 2, 3)]
+
+    def think(self, b):
+        from types import SimpleNamespace
+        from unittest import mock
+        world = per.WorldState()
+        sess = SimpleNamespace(_send_packet=lambda *a: None)
+        action = _Recording()
+        records = []
+        audit = SimpleNamespace(record=lambda **kw: records.append(kw))
+        with mock.patch("agent.brain.cand.generate", return_value=list(self.CANDIDATES)):
+            result = think_and_act(sess, world, b, registry={"test_action": action},
+                                   audit_logger=audit, cycle=1)
+        return result, action, records[-1]
+
+
+@unittest.skipIf(brain is None, "agent/brain.py not on this branch (UM-101)")
+class BrainSeamJevTest(_BrainSeamCase):
+    def test_jev_mock_decides_and_audit_has_confidence(self):
+        llm = _FallbackLLM()
+        b = brain.Brain(jev=jev.JevClient(self.base, "typesafe/jev-1.13"), llm=llm)
+        result, action, rec = self.think(b)
+        self.assertTrue(result.ok, result.error)
+        self.assertIn(action.ran[0]["value"], (1, 2, 3))
+        self.assertEqual(llm.calls, 0)
+        self.assertEqual(rec["brain"], "jev")
+        self.assertTrue(0.0 <= rec["confidence"] <= 1.0)
+        self.assertEqual(rec["candidates"], 3)
+        self.assertIsNotNone(rec["prompt_tokens"])
+
+
+@unittest.skipIf(brain is None, "agent/brain.py not on this branch (UM-101)")
+class BrainSeamFallbackTest(_BrainSeamCase):
+    server_kwargs = {"force_status": 402}
+
+    def test_402_from_mock_falls_back_to_llm(self):
+        llm = _FallbackLLM()
+        b = brain.Brain(jev=jev.JevClient(self.base, "typesafe/jev-1.13"), llm=llm)
+        result, action, rec = self.think(b)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(action.ran, [{"value": 99}])
+        self.assertEqual(rec["brain"], "llm")
+        self.assertIn("HTTP 402", rec["fallback"])
+
+
 if __name__ == "__main__":
     unittest.main()

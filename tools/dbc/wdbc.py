@@ -18,6 +18,7 @@ followed by a flags field. A client only fills the slot of its own locale,
 so `detect_locale` picks the most populated slot and `loc_string` falls back
 to slot 0 (enUS) when the chosen slot is empty for a record.
 """
+import mmap
 import struct
 
 HEADER = struct.Struct("<4sIIII")
@@ -49,8 +50,12 @@ class WdbcFile:
         self._strings_end = self._strings_at + str_size
 
     @classmethod
-    def open(cls, path):
+    def open(cls, path, use_mmap=False):
+        """Read `path`. With `use_mmap` the bytes stay on disk (the page cache backs
+        them) instead of in the process: for a file you keep open, like Spell.dbc."""
         with open(path, "rb") as f:
+            if use_mmap:
+                return cls(mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ), name=str(path))
             return cls(f.read(), name=str(path))
 
     # ---- typed field access ------------------------------------------------

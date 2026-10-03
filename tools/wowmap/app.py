@@ -77,6 +77,11 @@ DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
 ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
 GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
+# Vendored front-end files (Leaflet), served under /static/. An explicit list, so
+# nothing else in the directory is ever reachable.
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+STATIC_FILES = {"leaflet.js": "text/javascript; charset=utf-8",
+                "leaflet.css": "text/css; charset=utf-8"}
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
@@ -435,13 +440,15 @@ def fetch_character(name):
             SELECT ci.bag, ci.slot, ci.item, ii.itemEntry,
                    COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count,
                    it.displayid, it.Quality, ii.flags, ii.durability, """
-            + ", ".join(f"it.`{c}`" for c in item_tooltip.COLUMNS) + """
+            + ", ".join(f"it.`{c}`" for c in item_tooltip.COLUMNS) + """,
+                   ii.randomPropertyId, ii.enchantments
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
             WHERE ci.guid = %s
             ORDER BY ci.bag, ci.slot
         """, (guid,), "inventory")
+        set_context = item_set_context(cur, inventory)
         talents = best_effort(cur, """
             SELECT spell, talentGroup
             FROM characters.character_talent
@@ -501,7 +508,7 @@ def fetch_character(name):
         # hasn't been saved since it was turned on).
         "max_health": stats[0][0] if stats else None,
         "max_power": dict(zip(POWER_NAMES, stats[0][1:])) if stats else None,
-        "inventory": [inventory_item(row) for row in inventory],
+        "inventory": [inventory_item(row, n, *set_context) for row in inventory],
         # Names from the client DBCs (tools/dbc/names.py); null when an id is unknown.
         "talents": [
             {"spell": spell, "spec": spec, **_talent_names(n, spell)}
@@ -523,12 +530,31 @@ def fetch_character(name):
     }
 
 
-def inventory_item(row):
+def item_set_context(cur, rows):
+    """(entries the character has equipped, {item set piece entry: name}) for the item
+    set block of the tooltips. Equipped = bag 0, slots 0..18 (Player.h EQUIPMENT_SLOT_*);
+    piece names come from world.item_template (ItemSet.dbc only has the entries)."""
+    equipped = {r[3] for r in rows if r[0] == 0 and 0 <= r[1] < 19}
+    col = 10 + item_tooltip.COLUMNS.index("itemset")
+    entries = item_tooltip.set_piece_entries({r[col] for r in rows if r[col]}, names())
+    if not entries:
+        return equipped, {}
+    found = best_effort(
+        cur, "SELECT entry, name FROM world.item_template WHERE entry IN (%s)"
+        % ", ".join(["%s"] * len(entries)), entries, "item set pieces")
+    return equipped, dict(found)
+
+
+def inventory_item(row, n=None, equipped=(), set_names=None):
     """One inventory row: (bag, slot, item guid, entry, name, count, displayid, Quality,
-    item_instance.flags, item_instance.durability, *item_tooltip.COLUMNS)."""
+    item_instance.flags, item_instance.durability, *item_tooltip.COLUMNS,
+    item_instance.randomPropertyId, item_instance.enchantments). `n` (GameNames) adds
+    the DBC-backed tooltip lines; `equipped`/`set_names` feed the item set block."""
     (bag, slot, item_guid, item_entry, item_name, count, display_id, quality,
      inst_flags, durability) = row[:10]
-    template = dict(zip(item_tooltip.COLUMNS, row[10:]))
+    n_cols = len(item_tooltip.COLUMNS)
+    template = dict(zip(item_tooltip.COLUMNS, row[10:10 + n_cols]))
+    random_property, enchantments = (tuple(row[10 + n_cols:]) + (0, ""))[:2]
     return {
         "bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
         "item_name": item_name, "count": count,
@@ -536,7 +562,10 @@ def inventory_item(row):
         "quality": quality, "icon": icon_url(display_id),
         # A bag's size (item_template.ContainerSlots), for drawing its grid; 0 otherwise.
         "container_slots": template.get("ContainerSlots") or 0,
-        "tooltip": item_tooltip.tooltip(item_name, template, count, inst_flags, durability),
+        "tooltip": item_tooltip.tooltip(
+            item_name, template, count, inst_flags, durability, names=n,
+            random_property=random_property or 0, enchantments=enchantments or "",
+            equipped=equipped, item_names=set_names),
     }
 
 
@@ -641,6 +670,14 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.isfile(fp) and fn.endswith(".png"):
                     with open(fp, "rb") as f:
                         return self._send(200, f.read(), "image/png", cache="max-age=86400")
+                return self._send(404, {"error": "not found"})
+
+            if path.startswith("/static/"):
+                fn = path[len("/static/"):]
+                if fn in STATIC_FILES:
+                    with open(os.path.join(STATIC_DIR, fn), "rb") as f:
+                        return self._send(200, f.read(), STATIC_FILES[fn],
+                                          cache="public, max-age=86400")
                 return self._send(404, {"error": "not found"})
 
             if path.startswith("/icons/"):
@@ -1394,9 +1431,11 @@ const Inspect = (() => {
   document.getElementById('inspect-close').onclick = close;
   addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
   // Click-away: anything outside the drawer, except the controls that open it
-  // (list, markers) and the map toolbar, closes it.
+  // (list, markers) and the map toolbar, closes it. The map reports its own
+  // clicks (the page calls Inspect.close()), because the DOM click that ends a
+  // pan or a zoom-button press must not close the drawer.
   document.addEventListener('click', (e) => {
-    if (name && !e.target.closest('#inspect, #list, .marker, .bar')) close();
+    if (name && !e.target.closest('#inspect, #list, #map, .marker, .bar')) close();
   });
   // Deep link: /#inspect=<name> opens the drawer, handy for offline characters.
   // A malformed hash must not take the rest of the page down with it.
@@ -1502,6 +1541,7 @@ const AgentMind = (() => {
     f.append(el('h3', null, 'Brain'));
     f.append(kv('Status', brain.connected ? 'in game' : 'not connected'));
     f.append(kv('Goal', brain.goal || '(none)'));
+    if (brain.brain) f.append(kv('Brain', brain.brain));
     f.append(kv('Model', brain.model || '(none)'));
     f.append(kv('Cycle', brain.cycle ?? '-'));
     const t = brain.tokens || {};
@@ -1515,7 +1555,9 @@ const AgentMind = (() => {
       const ok = d.result && d.result.ok;
       const r = el('div', 'dec' + (ok ? '' : ' fail'));
       const tc = d.tool_call || {};
-      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}`),
+      // UM-101: which brain picked it, Jev's confidence, and a fallback marker.
+      const who = d.brain ? ` · ${d.brain}${d.confidence != null ? ' ' + Math.round(d.confidence * 100) + '%' : ''}${d.fallback && d.brain === 'llm' ? ' (jev fallback)' : ''}` : '';
+      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}${who}`),
                el('div', 'act', `${tc.name || '(no action)'} ${args(tc.args)}`));
       if (!ok && d.result && d.result.error) r.append(el('div', 'err', d.result.error));
       f.append(r);
@@ -1575,17 +1617,16 @@ const AgentMind = (() => {
       sync();
     } catch (e) { /* no agents configured or wowmap restarting */ }
   }
-  // Markers and the player list are rebuilt on every tick; tag the new nodes.
-  for (const id of ['markers', 'list']) {
-    const root = document.getElementById(id);
-    if (root) new MutationObserver(() => tag(root)).observe(root, {childList: true});
-  }
+  // The player list is rebuilt on every tick; tag the new nodes. Map markers live in
+  // Leaflet's marker pane, so the page calls AgentMind.tag() when it places them.
+  const list = document.getElementById('list');
+  if (list) new MutationObserver(() => tag(list)).observe(list, {childList: true});
 
   loadAgents();
   setInterval(loadAgents, 60000);
   setInterval(sync, 500);
   setInterval(refresh, 3000);
-  return {refresh, agents: () => [...agents.values()]};
+  return {refresh, tag, agents: () => [...agents.values()]};
 })();
 </script>
 """
@@ -1705,6 +1746,8 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><title>WoW — Live map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/leaflet.css">
+<script src="/static/leaflet.js"></script>
 <style>
   :root { --bg:#10131a; --panel:#1a1f2b; --line:#2a3244; --fg:#e6e9f0; --dim:#8b93a7; }
   * { box-sizing:border-box; }
@@ -1742,35 +1785,39 @@ PAGE = r"""<!doctype html>
   .tabs { display:flex; gap:6px; margin-left:auto; }
   .tabs button.on { background:#2b3550; border-color:#46557a; }
   button.on { background:#2b3550; border-color:#46557a; }
-  .stage { flex:1; position:relative; overflow:auto; }
-  .stagewrap { position:relative; margin:auto; }
-  #mapimg { display:block; max-width:none; pointer-events:none; }
-  .marker { position:absolute; transform:translate(-50%,-50%); }
-  .marker .ring { width:13px; height:13px; border-radius:50%; border:2px solid rgba(0,0,0,.65); }
-  .marker .lbl { position:absolute; left:16px; top:-2px; white-space:nowrap; font-size:12px;
-                 background:rgba(10,13,20,.82); padding:1px 6px; border-radius:5px;
-                 border:1px solid var(--line); }
-  .trail { position:absolute; inset:0; pointer-events:none; }
-  #subzones { position:absolute; inset:0; pointer-events:none; }
-  .subzone-label, #subzone-hover { position:absolute; transform:translate(-50%,-50%); white-space:nowrap;
-      color:#ffd25e; text-shadow:0 0 3px #000,0 0 3px #000,0 0 2px #000; pointer-events:none; }
-  #subzone-hover { transform:translate(12px,-130%); background:rgba(10,13,20,.82); color:var(--fg);
-      text-shadow:none; padding:1px 7px; border-radius:5px; border:1px solid var(--line); }
-  .nogrid { padding:40px; color:var(--dim); text-align:center; }
-  .grid-fallback { position:absolute; inset:0;
+  /* isolate: Leaflet's panes and controls use z-index up to 1000, which must stay
+     under the inspect drawer. */
+  .stage { flex:1; position:relative; overflow:hidden; isolation:isolate; }
+  /* The Leaflet map (L.CRS.Simple, map units = zone art pixels). */
+  #map { position:absolute; inset:0; background:var(--bg); font:inherit; }
+  #map.grid-fallback {
       background-image:linear-gradient(#232b3d 1px,transparent 1px),
                        linear-gradient(90deg,#232b3d 1px,transparent 1px);
       background-size:64px 64px; }
+  #map.calibrating { cursor:crosshair; }
+  .leaflet-bar a, .leaflet-bar a:hover { background:#141824; color:var(--fg); border-color:var(--line); }
+  .leaflet-bar a.leaflet-disabled { background:#141824; color:var(--dim); }
+  /* Leaflet positions a marker's top-left corner on its point (iconSize: null), so
+     the icon is a zero-size box and its children are centred on it. */
+  .marker, .subzone-label { width:0; height:0; }
+  .marker .ring { position:absolute; left:-6.5px; top:-6.5px; width:13px; height:13px;
+                  border-radius:50%; border:2px solid rgba(0,0,0,.65); }
+  .marker .lbl { position:absolute; left:9.5px; top:-8.5px; white-space:nowrap; font-size:12px;
+                 background:rgba(10,13,20,.82); padding:1px 6px; border-radius:5px;
+                 border:1px solid var(--line); color:var(--fg); }
+  .subzone-label span, #subzone-hover { position:absolute; white-space:nowrap; font-size:12px;
+      color:#ffd25e; text-shadow:0 0 3px #000,0 0 3px #000,0 0 2px #000; pointer-events:none; }
+  .subzone-label span { transform:translate(-50%,-50%); }
+  #subzone-hover { z-index:1000; transform:translate(12px,-130%); background:rgba(10,13,20,.82);
+      color:var(--fg); text-shadow:none; padding:1px 7px; border-radius:5px; border:1px solid var(--line); }
   footer { padding:8px 14px; border-top:1px solid var(--line); color:var(--dim);
            font-size:12px; background:var(--panel); display:flex; gap:14px; }
   .pill { border:1px solid var(--line); border-radius:999px; padding:2px 9px; }
-  .calibration-marker { position:absolute; width:18px; height:18px; transform:translate(-50%,-50%);
-                        border:2px solid #f3b84b; border-radius:50%; pointer-events:none;
+  .calibration-marker { border:2px solid #f3b84b; border-radius:50%; pointer-events:none;
                         box-shadow:0 0 0 2px rgba(0,0,0,.5); }
   .calibration-marker::before, .calibration-marker::after { content:""; position:absolute; background:#f3b84b; }
   .calibration-marker::before { width:2px; height:28px; left:6px; top:-7px; }
   .calibration-marker::after { height:2px; width:28px; left:-7px; top:6px; }
-  .stagewrap.calibrating { cursor:crosshair; }
   .pl.sel { background:#2b3550; }
   .marker { cursor:pointer; }
   .marker.sel .ring { box-shadow:0 0 0 3px #f3b84b; }
@@ -1808,10 +1855,10 @@ PAGE = r"""<!doctype html>
 <main>
   <div class="bar">
     <label>Zone <select id="zone"></select></label>
-    <button id="fit">Fit</button>
+    <button id="fit" title="Fit the whole zone in view">Fit zone</button>
     <button id="tglLabels" title="Show every subzone name (from WorldMapOverlay.dbc)">Labels: off</button>
     <button id="tglFog" class="on" title="With a character open, colour only the areas that character has explored, as its in-game map does">Fog of war: on</button>
-    <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
+    <button id="tglTrail" title="Show the path each character took since this page was opened">Trail: off</button>
     <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
     <button id="saveCalibration" hidden>Save calibration</button>
     <div class="tabs">
@@ -1819,13 +1866,8 @@ PAGE = r"""<!doctype html>
     </div>
   </div>
   <div class="stage" id="stage">
-    <div class="stagewrap" id="wrap">
-      <div class="grid-fallback" id="fallback"></div>
-      <img id="mapimg" alt="">
-      <svg class="trail" id="trailsvg"></svg>
-      <div id="subzones"><div id="subzone-hover" hidden></div></div>
-      <div id="markers"></div>
-    </div>
+    <div id="map"></div>
+    <div id="subzone-hover" hidden></div>
   </div>
   <footer>
     <span class="pill" id="f-refresh">–</span>
@@ -1843,16 +1885,72 @@ PAGE = r"""<!doctype html>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
 let areas = [], players = [], selected = null, follow = false, showTrail = false;
-let showLabels = false, stageScale = 1;
-let currentArea = null, imgW = 1002, imgH = 668;
+let showLabels = false;
+let currentArea = null;
 let calibrating = false, draftCalibration = null, calibrationReference = null, calibrationDrag = null;
 // Fog of war: with a character open in the inspect drawer the zone art shows only
 // what that character has explored. `fog` is its /api/character/<name>/explored
 // answer, null with nobody open (then the art is the fully explored zone).
 let fogOn = true, fogFor = null, fog = null;
 
-function setImgSize(a) {
-  if (!a || !a.has_image) { imgW = 1002; imgH = 668; }
+// ---- the map: Leaflet with L.CRS.Simple. Map units are zone-art pixels with y
+// pointing down, so image point (x, y) is LatLng(-y, x) and nothing else on the page
+// has to know about Leaflet's axes. Normalised coords are fractions of the game's
+// 1002x668 map frame, which the 1024x768 tile sheet overflows (transform.MAP_FRAME_W/H,
+// #109), so positions scale by the frame and the art is laid over the whole sheet.
+const MAP_FRAME_W = 1002, MAP_FRAME_H = 668, SHEET_W = 1024, SHEET_H = 768;
+const ll = (x, y) => L.latLng(-y, x);
+const FRAME = L.latLngBounds(ll(0, MAP_FRAME_H), ll(MAP_FRAME_W, 0));
+const ZOOM_OUT = 1, ZOOM_IN = 3;          // zoom levels around "fit zone": half size to 8x
+const map = L.map('map', {
+  crs: L.CRS.Simple, attributionControl: false, zoomSnap: 0, zoomDelta: 1,
+  maxBounds: FRAME.pad(0.5), maxBoundsViscosity: 0.8,
+});
+map.setView(FRAME.getCenter(), 0);
+map.createPane('art').style.zIndex = 300;        // under trails (overlayPane, 400)
+map.createPane('labels').style.zIndex = 550;     // under player markers (markerPane, 600)
+const trailLayer = L.layerGroup().addTo(map);
+const labelLayer = L.layerGroup().addTo(map);
+const playerLayer = L.layerGroup().addTo(map);
+const markers = new Map();                       // character name -> L.marker
+let art = null, artKey = '', shownZone = null, lastFit = null, calibrationPin = null;
+
+// The zoom at which the zone's map frame fills the stage. getBoundsZoom clamps to the
+// current zoom range, which belongs to the previous stage size, so lift it first.
+function fitZoom() {
+  map.setMinZoom(-Infinity); map.setMaxZoom(Infinity);
+  return map.getBoundsZoom(FRAME);
+}
+// Fit the zone's map frame in the stage and allow zooming around that level.
+function fitZone() {
+  // A zoom animation in flight sets its own view when it ends, undoing the fit, and
+  // Leaflet has no public way to cancel one (vendored 1.9.4), so fit after it.
+  if (map._animatingZoom) { map.once('zoomend', fitZone); return; }
+  map.invalidateSize({pan: false});
+  const z = fitZoom();
+  map.fitBounds(FRAME, {animate: false});
+  map.setMinZoom(z - ZOOM_OUT); map.setMaxZoom(z + ZOOM_IN);
+  lastFit = {zoom: map.getZoom(), center: map.getCenter()};
+}
+// True until the user zooms or pans away from the fitted view.
+function atFit() {
+  if (!lastFit) return true;
+  const c = map.getCenter();
+  return Math.abs(map.getZoom() - lastFit.zoom) < 1e-6
+    && Math.abs(c.lat - lastFit.center.lat) < 0.5 && Math.abs(c.lng - lastFit.center.lng) < 0.5;
+}
+// The stage changed size (window, sidebar, inspect drawer). A fitted view stays
+// fitted; a view the user chose is kept, with the zoom range moved to the new fit.
+function onResize() {
+  if (atFit()) return fitZone();
+  map.invalidateSize({pan: false});
+  const z = fitZoom();
+  map.setMinZoom(z - ZOOM_OUT); map.setMaxZoom(z + ZOOM_IN);
+}
+// A DOM pointer event -> zone-art pixels.
+function eventPoint(e) {
+  const p = map.mouseEventToLatLng(e);
+  return {x: p.lng, y: -p.lat};
 }
 
 async function loadAreas() {
@@ -1943,24 +2041,28 @@ function syncFog() {
   loadFog();
 }
 
+// Zone art and view. The view is only re-fitted when the zone changes, so the 5 s
+// refresh (tick -> place) never resets the user's zoom or pan.
 function draw() {
   const a = currentArea;
-  const img = $('mapimg');
-  if (!a) { $('fallback').style.display = 'block'; img.style.display = 'none'; return; }
-  if (a.has_image) {
-    const src = artUrl(a);
-    if (img.dataset.src !== src) {
-      img.dataset.src = src;
-      img.onload = () => { imgW = img.naturalWidth; imgH = img.naturalHeight; place(); };
-      img.src = src;
+  const key = a && a.has_image ? artUrl(a) : '';
+  if (key !== artKey) {
+    if (art) art.remove();
+    art = null;
+    artKey = key;
+    if (key) {
+      art = L.imageOverlay(key, [ll(0, SHEET_H), ll(SHEET_W, 0)], {pane: 'art'}).addTo(map);
+      const layer = art;
+      // The extractor writes the whole 1024x768 sheet; follow the file if that changes.
+      layer.on('load', () => {
+        const im = layer.getElement();
+        if (im.naturalWidth) layer.setBounds([ll(0, im.naturalHeight), ll(im.naturalWidth, 0)]);
+      });
     }
-    img.style.display = 'block';
-    $('fallback').style.display = 'none';
-  } else {
-    img.style.display = 'none';
-    $('fallback').style.display = 'block';
-    imgW = 1002; imgH = 668;
   }
+  $('map').classList.toggle('grid-fallback', !key);
+  const zone = a ? a.area_id : null;
+  if (zone !== shownZone) { shownZone = zone; fitZone(); }
   place();
 }
 
@@ -1969,45 +2071,27 @@ function calibration() {
   return (currentArea && currentArea.calibration) || {dx: 0, dy: 0};
 }
 
-// Keep calibration at the final world->normalised->pixel step: offsets are image pixels.
-// Normalised coords are fractions of the game's 1002x668 map frame, which the 1024x768
-// tile sheet overflows (transform.MAP_FRAME_W/H, #109), so scale by the frame.
-const MAP_FRAME_W = 1002, MAP_FRAME_H = 668;
-function px(p) {
+// Keep calibration at the final world->normalised->pixel step: offsets are zone-art
+// pixels, which are also the map's units, so they hold at every zoom level.
+function pxOf(nx, ny) {
   const c = calibration();
-  return [p.norm_x * MAP_FRAME_W + c.dx, p.norm_y * MAP_FRAME_H + c.dy];
+  return [nx * MAP_FRAME_W + c.dx, ny * MAP_FRAME_H + c.dy];
 }
+function px(p) { return pxOf(p.norm_x, p.norm_y); }
 
 function resetCalibration() {
   draftCalibration = currentArea ? {...(currentArea.calibration || {dx: 0, dy: 0})} : null;
   calibrationReference = null;
 }
 
-function place() {
-  const a = currentArea;
-  const wrap = $('wrap'), m = $('markers');
-  wrap.style.width = imgW + 'px'; wrap.style.height = imgH + 'px';
-  m.innerHTML = '';
-  if (!a) return;
-  const here = players.filter(p => p.in_world && p.zone === a.area_id && p.norm_x !== null);
-
-  const fit = () => {
-    const st = $('stage');
-    const s = Math.min(st.clientWidth / imgW, st.clientHeight / imgH, 1);
-    wrap.style.transform = `scale(${s})`;
-    stageScale = s;
-    wrap.style.transformOrigin = 'top left';
-    wrap.style.margin = '0';
-    st.scrollLeft = 0; st.scrollTop = 0;
-  };
-  fit();
-
-  for (const p of here) {
-    const [x, y] = px(p);
-    const d = document.createElement('div');
-    d.className = 'marker' + (p.name === selected ? ' sel' : '');
-    d.dataset.name = p.name;
-    d.style.left = x + 'px'; d.style.top = y + 'px';
+// Fill a marker's icon. The children are only rebuilt when what they show changes:
+// replacing them during a click would detach the click target (see
+// markListAndMarkersSelected).
+function fillMarker(e, p) {
+  const shown = `${p.name}|${p.level}|${p.class_color}`;
+  if (e.dataset.shown !== shown) {
+    e.dataset.shown = shown;
+    e.dataset.name = p.name;
     const ring = document.createElement('div');
     ring.className = 'ring';
     ring.style.background = ring.style.color = p.class_color;
@@ -2017,43 +2101,92 @@ function place() {
     lvl.style.opacity = '.6';
     lvl.textContent = p.level;
     lbl.append(p.name + ' ', lvl);
-    d.append(ring, lbl);
-    d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
-      + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
-    d.onclick = () => {
-      if (calibrating) return;
-      selectCharacter(p.name);
-    };
-    m.appendChild(d);
-    if (p.name === selected && follow) $('stage').scrollTo({left: x - 300, top: y - 200, behavior:'smooth'});
+    e.replaceChildren(ring, lbl);
   }
+  e.classList.toggle('sel', p.name === selected);
+  e.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
+    + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
+}
+
+function place() {
+  const a = currentArea;
+  const here = a ? players.filter(p => p.in_world && p.zone === a.area_id && p.norm_x !== null) : [];
+  const seen = new Set();
+  for (const p of here) {
+    const [x, y] = px(p);
+    seen.add(p.name);
+    let m = markers.get(p.name);
+    if (!m) {
+      m = L.marker(ll(x, y), {icon: L.divIcon({className: 'marker', iconSize: null, html: ''}),
+                              keyboard: false, riseOnHover: true}).addTo(playerLayer);
+      m.on('click', () => { if (!calibrating) selectCharacter(p.name); });
+      markers.set(p.name, m);
+    } else {
+      m.setLatLng(ll(x, y));
+    }
+    fillMarker(m.getElement(), p);
+    if (p.name === selected && follow && !calibrating) map.panTo(ll(x, y));
+  }
+  for (const [name, m] of markers) {
+    if (!seen.has(name)) { m.remove(); markers.delete(name); }
+  }
+  if (calibrationPin) { calibrationPin.remove(); calibrationPin = null; }
   if (calibrating && calibrationReference) {
     const c = calibration();
-    const ref = document.createElement('div');
-    ref.className = 'calibration-marker';
-    ref.style.left = (calibrationReference.x + c.dx) + 'px';
-    ref.style.top = (calibrationReference.y + c.dy) + 'px';
-    ref.title = 'Landmark — drag to adjust';
-    m.appendChild(ref);
+    calibrationPin = L.marker(ll(calibrationReference.x + c.dx, calibrationReference.y + c.dy), {
+      icon: L.divIcon({className: 'calibration-marker', iconSize: [18, 18], html: ''}),
+      interactive: false, keyboard: false, title: 'Landmark — drag to adjust'}).addTo(map);
   }
-  wrap.classList.toggle('calibrating', calibrating);
+  $('map').classList.toggle('calibrating', calibrating);
+  if (calibrating) map.dragging.disable(); else map.dragging.enable();
+  AgentMind.tag($('map'));
   drawLabels();
+  drawTrails();
   $('f-note').textContent = `${here.length} in this zone`;
+}
+
+// ---- trails: where each character has been since this page was opened. The server
+// keeps no position history, so points are collected from the 5 s refresh, as
+// normalised coords (calibration is applied when drawing).
+const TRAIL_MAX_POINTS = 720;                    // an hour at one point per refresh
+const trails = new Map();                        // name -> {zone, color, pts: [[nx, ny], ...]}
+function recordTrails() {
+  const online = new Set();
+  for (const p of players) {
+    online.add(p.name);
+    if (!p.in_world || p.norm_x === null) continue;
+    let t = trails.get(p.name);
+    if (!t || t.zone !== p.zone) { t = {zone: p.zone, pts: []}; trails.set(p.name, t); }
+    t.color = p.class_color;
+    const last = t.pts[t.pts.length - 1];
+    if (last && last[0] === p.norm_x && last[1] === p.norm_y) continue;
+    t.pts.push([p.norm_x, p.norm_y]);
+    if (t.pts.length > TRAIL_MAX_POINTS) t.pts.shift();
+  }
+  for (const name of trails.keys()) if (!online.has(name)) trails.delete(name);
+}
+function drawTrails() {
+  trailLayer.clearLayers();
+  if (!showTrail || !currentArea) return;
+  for (const t of trails.values()) {
+    if (t.zone !== currentArea.area_id || t.pts.length < 2) continue;
+    L.polyline(t.pts.map(([nx, ny]) => ll(...pxOf(nx, ny))),
+               {color: t.color || CLASS_DEFAULT, weight: 2, opacity: 0.85, interactive: false})
+      .addTo(trailLayer);
+  }
 }
 
 // ---- subzones: WorldMapOverlay hit rects, already in image pixels (see /api/areas)
 function drawLabels() {
-  const layer = $('subzones');
-  for (const e of layer.querySelectorAll('.subzone-label')) e.remove();
+  labelLayer.clearLayers();
   const a = currentArea;
   if (!showLabels || !a || !a.has_image) return;
   for (const sz of a.subzones || []) {
-    const e = document.createElement('div');
-    e.className = 'subzone-label';
-    e.textContent = sz.name;
-    e.style.left = sz.label[0] + 'px'; e.style.top = sz.label[1] + 'px';
-    e.style.fontSize = (12 / stageScale) + 'px';   // stay readable when the stage is scaled down
-    layer.appendChild(e);
+    const text = document.createElement('span');
+    text.textContent = sz.name;
+    L.marker(ll(sz.label[0], sz.label[1]), {
+      icon: L.divIcon({className: 'subzone-label', iconSize: null, html: text}),
+      pane: 'labels', interactive: false, keyboard: false}).addTo(labelLayer);
   }
 }
 
@@ -2105,17 +2238,19 @@ async function tick() {
     $('s-inst').textContent = s.in_instance;
     $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'nobody in the world';
     $('f-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
+    recordTrails();
     renderList(); place();
   } catch (e) { $('sub').textContent = 'error: ' + e; }
   Inspect.refresh();
   if (fogFor) loadFog();                       // the character may have explored more
 }
 
-$('fit').onclick = () => place();
+$('fit').onclick = () => fitZone();
 $('tglTrail').onclick = (e) => {
   showTrail = !showTrail;
   e.target.textContent = 'Trail: ' + (showTrail ? 'on' : 'off');
-  draw();
+  e.target.classList.toggle('on', showTrail);
+  drawTrails();
 };
 $('follow').onclick = (e) => {
   follow = !follow;
@@ -2131,40 +2266,37 @@ $('calibrate').onclick = (e) => {
   $('saveCalibration').hidden = !calibrating;
   place();
 };
-$('wrap').addEventListener('pointerdown', (e) => {
-  if (!calibrating || !currentArea) return;
-  const box = $('wrap').getBoundingClientRect();
-  const point = {x: (e.clientX - box.left) * imgW / box.width,
-                 y: (e.clientY - box.top) * imgH / box.height};
+// Calibration: press on a landmark and drag it to where it should be. Dragging the
+// map is off meanwhile (see place()); wheel and pinch zoom still work, so the
+// offset can be set zoomed in.
+$('map').addEventListener('pointerdown', (e) => {
+  if (!calibrating || !currentArea || e.target.closest('.leaflet-control')) return;
+  const point = eventPoint(e);
   const c = calibration();
   calibrationReference = {x: point.x - c.dx, y: point.y - c.dy};
   calibrationDrag = {x: point.x, y: point.y, dx: c.dx, dy: c.dy};
-  $('wrap').setPointerCapture(e.pointerId);
+  $('map').setPointerCapture(e.pointerId);
   place();
 });
-$('wrap').addEventListener('pointermove', (e) => {
+$('map').addEventListener('pointermove', (e) => {
   if (!calibrationDrag || !draftCalibration) return;
-  const box = $('wrap').getBoundingClientRect();
-  const x = (e.clientX - box.left) * imgW / box.width;
-  const y = (e.clientY - box.top) * imgH / box.height;
+  const {x, y} = eventPoint(e);
   draftCalibration.dx = Math.round((calibrationDrag.dx + x - calibrationDrag.x) * 100) / 100;
   draftCalibration.dy = Math.round((calibrationDrag.dy + y - calibrationDrag.y) * 100) / 100;
   place();
 });
-$('wrap').addEventListener('pointermove', (e) => {
+$('map').addEventListener('pointermove', (e) => {
   const hover = $('subzone-hover');
   if (calibrating || !currentArea || !currentArea.has_image) { hover.hidden = true; return; }
-  const box = $('wrap').getBoundingClientRect();
-  const x = (e.clientX - box.left) * imgW / box.width;
-  const y = (e.clientY - box.top) * imgH / box.height;
+  const {x, y} = eventPoint(e);
   const sz = subzoneAt(x, y);
   hover.hidden = !sz;
   if (!sz) return;
   hover.textContent = sz.name;
-  hover.style.left = x + 'px'; hover.style.top = y + 'px';
-  hover.style.fontSize = (12 / stageScale) + 'px';
+  const at = map.mouseEventToContainerPoint(e);
+  hover.style.left = at.x + 'px'; hover.style.top = at.y + 'px';
 });
-$('wrap').addEventListener('pointerleave', () => { $('subzone-hover').hidden = true; });
+$('map').addEventListener('pointerleave', () => { $('subzone-hover').hidden = true; });
 $('tglLabels').onclick = (e) => {
   showLabels = !showLabels;
   e.target.textContent = 'Labels: ' + (showLabels ? 'on' : 'off');
@@ -2179,7 +2311,7 @@ $('tglFog').onclick = (e) => {
 };
 setInterval(syncFog, 300);
 for (const event of ['pointerup', 'pointercancel']) {
-  $('wrap').addEventListener(event, () => { calibrationDrag = null; });
+  $('map').addEventListener(event, () => { calibrationDrag = null; });
 }
 $('saveCalibration').onclick = async () => {
   if (!currentArea || !draftCalibration) return;
@@ -2189,10 +2321,12 @@ $('saveCalibration').onclick = async () => {
   if (!r.ok) { $('f-note').textContent = 'save failed: ' + saved.error; return; }
   currentArea.calibration = {dx: saved.dx, dy: saved.dy};
   draftCalibration = {...currentArea.calibration};
-  $('f-note').textContent = `calibration saved: ${saved.dx}px, ${saved.dy}px`;
   place();
+  $('f-note').textContent = `calibration saved: ${saved.dx}px, ${saved.dy}px`;
 };
-addEventListener('resize', () => place());
+addEventListener('resize', onResize);
+// A plain click on the map closes the inspect drawer; Leaflet fires no click after a drag.
+map.on('click', () => { if (!calibrating) Inspect.close(); });
 
 // ---- UI state persisted in localStorage: sidebar width/collapse, active tab,
 // last zone (used above in loadAreas) and pinned character. Every access is
@@ -2225,7 +2359,7 @@ $('resize-handle').addEventListener('pointerdown', (e) => {
 $('resize-handle').addEventListener('pointermove', (e) => {
   if (!resizeDrag) return;
   setAsideWidth(resizeDrag.startW + (e.clientX - resizeDrag.startX));
-  place();
+  onResize();
 });
 for (const event of ['pointerup', 'pointercancel']) {
   $('resize-handle').addEventListener(event, () => {

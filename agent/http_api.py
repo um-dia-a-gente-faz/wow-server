@@ -9,7 +9,7 @@ stay inside the agent loop.
     GET /healthz     liveness, agent name, whether a session is attached
     GET /state       own stats, spellbook, quest log, equipment, inventory
     GET /perception  WorldState.snapshot(), the same view the LLM gets
-    GET /brain       goal, model, last decisions (from the audit records),
+    GET /brain       goal, brain (jev/llm), model, last decisions (from the audit records),
                      recent-action history, reflexes, token usage
     GET /events      Server-Sent Events: session.events + decisions
 
@@ -67,10 +67,11 @@ class AgentObserver:
     reconnect); the think loop's audit logger feeds record_decision()."""
 
     def __init__(self, agent_name: str, goal: str | None = None, model: str | None = None,
-                 decisions_maxlen: int = DECISIONS_MAXLEN):
+                 decisions_maxlen: int = DECISIONS_MAXLEN, brain: str | None = None):
         self.agent_name = agent_name
         self.goal = goal or None
         self.model = model or None
+        self.brain_name = brain or None  # UM-101: "jev"/"llm", until a decision says otherwise
         self.started_at = time.time()
         self.session = None
         self.think_state = None
@@ -194,6 +195,7 @@ class AgentObserver:
             "agent": self.agent_name,
             "connected": self.session is not None,
             "goal": (last or {}).get("goal") or self.goal,
+            "brain": (last or {}).get("brain") or self.brain_name,
             "model": (last or {}).get("model") or self.model,
             "cycle": (last or {}).get("cycle"),
             "decisions": decisions[len(decisions) - n:] if n else [],

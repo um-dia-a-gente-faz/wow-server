@@ -20,7 +20,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 
 | Env | Default | Meaning |
 |---|---|---|
-| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, and `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names) |
+| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names, and for item tooltips `SpellDuration.dbc`, `SpellRadius.dbc`, `ItemSet.dbc`, `ItemRandomProperties.dbc`, `ItemRandomSuffix.dbc`, `SpellItemEnchantment.dbc`, `GemProperties.dbc`, `SkillLine.dbc`, `RandPropPoints.dbc`; a missing file is logged and only its tooltip lines are left out) |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art (and `<area_id>_base.png`) |
 | `ICONS_DIR` | `/icons` | directory containing extracted item icon PNGs (see *Item icons*); `ItemDisplayInfo.dbc` is read from `DBC_DIR` |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
@@ -61,6 +61,31 @@ world-coordinate transform, so calibration offsets don't apply). `hit` is the
 DBC's hit rect, `null` for 21 overlays, which then use `art`; `label` is the
 centre of `hit`, else of `art`. Hovering the map shows the name of the smallest
 rect under the cursor; **Labels** toggles every subzone name.
+
+## The map stage (Leaflet)
+
+The stage is a [Leaflet](https://leafletjs.com) map in `L.CRS.Simple`, with the
+zone art as an `L.imageOverlay`. Map units are zone-art pixels with y pointing
+down, so image point `(x, y)` is `LatLng(-y, x)` (`ll()` in the page).
+
+- **Zoom and pan:** mouse wheel or pinch, drag, double-click, and the +/−
+  buttons. The range is one level out to three levels in (8×) around the level
+  that fits the zone. **Fit zone** returns to the fitted view.
+- The 5 s refresh moves markers in place and never changes the view. Switching
+  zones fits the new zone. Resizing the window (or the sidebar, or opening the
+  inspect drawer) re-fits only if the view was still the fitted one.
+- **Markers** are Leaflet markers with a `divIcon`; clicking one opens the
+  inspect drawer. A plain click on the map closes the drawer; dragging does not.
+- **Trail** draws each character's path as a polyline in its class colour. The
+  server keeps no position history, so a trail holds what this page has seen
+  since it was opened (at most 720 points per character, one zone at a time).
+- **Follow** pans to the selected character on every refresh.
+
+Leaflet 1.9.4 is vendored in `static/` (`leaflet.js`, `leaflet.css`, unmodified
+npm `dist` files, BSD-2-Clause, licence in `static/leaflet-LICENSE`) and served
+by `app.py` under `/static/`. The realm is LAN-only, so the page loads nothing
+from a CDN, and there is still no build step. `tests/test_static.py` pins the
+files' SHA-256; update the hashes when upgrading Leaflet.
 
 ## Fog of war
 
@@ -106,8 +131,13 @@ world-coordinate transform has been converted to image pixels.
 2. Click a known point on the map (for example, one identified with `.gps` or a
    creature spawn) and drag the reference crosshair until the player markers line up.
    The preview moves the markers immediately.
+   Dragging the map is off while calibrating; zooming still works, so zoom in
+   first for a finer offset.
 3. Click **Save calibration**. This writes that zone's `{dx, dy}` pixel delta to
    `calibration.json`; future page loads use it automatically.
+
+The offset is in zone-art pixels, which are the map's units, so it means the
+same at every zoom level and files saved before the Leaflet stage still apply.
 
 The file is intentionally a tiny operator-maintained JSON dictionary keyed by
 area ID. It is safe to edit while the service is stopped. `calibrate.py` remains
@@ -325,9 +355,20 @@ the character's base state.
   of `quality`/`white`/`green`/`yellow`/`gray`/`red`, and `money` in copper for the
   sell price line, which is for the whole stack). `item_tooltip.py` builds it from
   `world.item_template` (column names as in TrinityCore's
-  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound) and
-  `.durability`. Not shown yet: spell lines (`Use:`/`Equip:` effects with a
-  spell), item set names, random suffixes, enchants and gems.
+  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound),
+  `.durability`, `.randomPropertyId` ("of the Bear" and its stats) and
+  `.enchantments` (enchants and gems), and the client DBCs in `DBC_DIR`:
+  `Use:`/`Equip:`/`Chance on hit:` lines from `spellid_N`/`spelltrigger_N` (the
+  spell's `Description` with its `$` variables filled in, `tools/dbc/spelltext.py`),
+  the item set block (`itemset` → `ItemSet.dbc`; equipped pieces are the
+  character's bag 0 slots 0-18, piece names come from `world.item_template`),
+  random suffix/property names and stats, permanent/temporary enchants, socketed
+  gems, empty sockets and the socket bonus, and `Requires <skill> (<rank>)` /
+  `Requires <faction> - <rank>`. Not shown yet: cooldown and charge suffixes on spell
+  lines, spell triggers 4/5/6, and any spell whose description uses a `$` variable
+  the resolver doesn't know (that line is left out rather than guessed; about 89% of
+  the client's described spells resolve, the level-scaled ones do not). `$z` (the
+  Hearthstone's bind point) reads "your home location".
 - `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
   same-origin URL for the item's icon, or `null` when the display id has no
   icon or the PNG hasn't been extracted; clients draw a placeholder then.

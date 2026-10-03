@@ -1,15 +1,20 @@
-"""Unit tests for agent.think.think_and_act: LLM tool call -> registry
-validation -> exactly one action executed per cycle, with a mocked LLM
-client (agent.llm.LLMClient is never instantiated here)."""
+"""Unit tests for agent.think.think_and_act: brain decision (UM-101: Jev
+over candidates, or an LLM tool call) -> registry validation -> exactly one
+action executed per cycle, with mocked Jev/LLM clients (no network)."""
 
+import os
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from agent import actions as ac
+from agent import brain
+from agent import config
 from agent import perception as per
 from agent import think
 from agent import trade as tr
 from agent import update_object as uo
+from agent.jev import JevError
 from agent.llm import LLMError
 from agent.think import think_and_act
 
@@ -356,6 +361,250 @@ class LoopGuardTest(unittest.TestCase):
         for _ in range(5):
             result = think_and_act(self.sess, self.world, llm, registry={"test_action": action})
             self.assertEqual(result.error, "nope")
+
+
+# ── UM-101: brain seam (Jev first, LLM fallback) ─────────────────────
+
+class FakeJevClient:
+    """JevClient stand-in: records the candidates it was offered and picks
+    one by index (default: the first), or raises a pre-programmed JevError.
+    Sets the same last_* attributes the real client does."""
+
+    model = "typesafe/jev-test"
+    base_url = "http://jev.test/api/alpha"
+
+    def __init__(self, pick=0, error=None, confidence=0.83):
+        self.pick = pick
+        self.error = error
+        self.confidence = confidence
+        self.calls = []
+        self.last_usage, self.last_latency_ms, self.last_confidence = {}, None, None
+
+    def choose_action(self, snapshot, candidates, persona="", history=None):
+        self.calls.append({"snapshot": snapshot, "candidates": candidates,
+                           "persona": persona, "history": history})
+        if self.error is not None:
+            self.last_usage, self.last_confidence = {}, None
+            raise self.error
+        self.last_usage = {"input_tokens": 321, "output_tokens": 0, "cost": 0.0}
+        self.last_latency_ms = 12.5
+        self.last_confidence = self.confidence
+        chosen = candidates[self.pick]
+        return chosen["action"], dict(chosen["params"])
+
+
+TEST_CANDIDATES = [
+    {"id": "test_action:value=1", "label": "one", "action": "test_action", "params": {"value": 1}},
+    {"id": "test_action:value=2", "label": "two", "action": "test_action", "params": {"value": 2}},
+    {"id": "idle", "label": "do nothing", "action": "idle", "params": {}},
+]
+
+
+class RecordingAudit:
+    def __init__(self):
+        self.records = []
+
+    def record(self, **kwargs):
+        self.records.append(kwargs)
+
+
+class BrainSeamTest(unittest.TestCase):
+    def setUp(self):
+        self.world = _world_with_self()
+        self.sess = fake_session(player_position=(0, 0.0, 0.0, 0.0, 0.0))
+        self.action = RecordingAction()
+        self.registry = {"test_action": self.action, "idle": ac.REGISTRY["idle"]}
+        self.audit = RecordingAudit()
+        patcher = mock.patch("agent.brain.cand.generate",
+                             side_effect=lambda *a, **k: [dict(c) for c in TEST_CANDIDATES])
+        self.generate = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _think(self, b, state=None):
+        return think_and_act(self.sess, self.world, b, my_position=self.sess.player_position,
+                             registry=self.registry, audit_logger=self.audit, cycle=1,
+                             reflex_state={"follow": {"enabled": True}}, state=state)
+
+    def test_jev_path_executes_the_chosen_candidate_and_audits_brain_and_confidence(self):
+        jev = FakeJevClient(pick=1)
+        llm = FakeLLMClient(action_name="test_action", params={"value": 99})
+        result = self._think(brain.Brain(jev=jev, llm=llm))
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(self.action.executed_with, {"value": 2})
+        self.assertEqual(llm.calls, [])  # the LLM is only a fallback
+        self.assertEqual(len(jev.calls), 1)
+        self.generate.assert_called_once()
+        _, kwargs = self.generate.call_args
+        self.assertEqual(kwargs["my_guid"], 1)
+        self.assertEqual(kwargs["reflex_state"], {"follow": {"enabled": True}})
+
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["brain"], "jev")
+        self.assertEqual(rec["confidence"], 0.83)
+        self.assertEqual(rec["model"], "typesafe/jev-test")
+        self.assertEqual(rec["prompt_tokens"], 321)
+        self.assertEqual(rec["completion_tokens"], 0)
+        self.assertEqual(rec["latency_ms"], 12.5)
+        self.assertEqual(rec["candidates"], 3)
+        self.assertIsNone(rec["fallback"])
+        self.assertEqual(rec["tool_call"], {"name": "test_action", "args": {"value": 2}})
+
+    def test_llm_only_path_is_unchanged_and_audits_brain_llm(self):
+        llm = FakeLLMClient(action_name="test_action", params={"value": 7})
+        llm.model = "free-model"
+        llm.last_usage = {"prompt_tokens": 50, "completion_tokens": 9}
+        llm.last_latency_ms = 80.0
+        result = self._think(brain.Brain(llm=llm))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(self.action.executed_with, {"value": 7})
+        self.generate.assert_not_called()  # no candidates without Jev
+        rec = self.audit.records[-1]
+        self.assertEqual((rec["brain"], rec["model"], rec["prompt_tokens"], rec["completion_tokens"]),
+                         ("llm", "free-model", 50, 9))
+        self.assertIsNone(rec["confidence"])
+        self.assertIsNone(rec["fallback"])
+
+    def test_bare_llm_client_is_wrapped_as_llm_brain(self):
+        llm = FakeLLMClient(action_name="test_action", params={"value": 3})
+        self.assertTrue(self._think(llm).ok)
+        self.assertEqual(self.audit.records[-1]["brain"], "llm")
+
+    def test_llm_catalog_leaves_out_idle(self):
+        llm = FakeLLMClient(action_name="test_action", params={"value": 7})
+        self._think(brain.Brain(llm=llm))
+        names = {t["name"] for t in llm.calls[0]["catalog"]}
+        self.assertNotIn("idle", names)
+        self.assertIn("auto_attack", names)
+        self.assertIn("idle", ac.REGISTRY)  # still registered for Jev's candidates
+
+    def test_jev_error_falls_back_to_llm_for_the_cycle(self):
+        jev = FakeJevClient(error=JevError("HTTP 500 from x: boom", status=500))
+        llm = FakeLLMClient(action_name="test_action", params={"value": 5})
+        b = brain.Brain(jev=jev, llm=llm)
+
+        result = self._think(b)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(self.action.executed_with, {"value": 5})
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["brain"], "llm")
+        self.assertIn("jev call failed: HTTP 500", rec["fallback"])
+
+        # A 500 has no cooldown: the next cycle tries Jev again.
+        self._think(b)
+        self.assertEqual(len(jev.calls), 2)
+
+    def test_auth_and_rate_limit_statuses_cool_jev_down_then_retry(self):
+        for status, cooldown in ((402, brain.JEV_AUTH_COOLDOWN_S), (401, brain.JEV_AUTH_COOLDOWN_S),
+                                 (429, brain.JEV_RATE_LIMIT_COOLDOWN_S)):
+            with self.subTest(status=status):
+                now = [1000.0]
+                jev = FakeJevClient(error=JevError(f"HTTP {status}", status=status))
+                llm = FakeLLMClient(action_name="test_action", params={"value": 5})
+                b = brain.Brain(jev=jev, llm=llm, clock=lambda: now[0])
+
+                self.assertTrue(self._think(b).ok)
+                self.assertEqual(len(jev.calls), 1)
+
+                now[0] += cooldown - 1  # still cooling down: Jev is not called
+                self.assertTrue(self._think(b).ok)
+                self.assertEqual(len(jev.calls), 1)
+                rec = self.audit.records[-1]
+                self.assertIn("cooling down", rec["fallback"])
+                self.assertIn(f"HTTP {status}", rec["fallback"])
+                self.assertEqual(rec["brain"], "llm")
+
+                now[0] += 2  # cooldown over: Jev gets its turn back
+                jev.error = None
+                self._think(b)
+                self.assertEqual(len(jev.calls), 2)
+                self.assertEqual(self.audit.records[-1]["brain"], "jev")
+
+    def test_jev_error_without_llm_skips_the_cycle(self):
+        jev = FakeJevClient(error=JevError("HTTP 402", status=402))
+        b = brain.Brain(jev=jev)
+        result = self._think(b)
+        self.assertFalse(result.ok)
+        self.assertIn("jev call failed", result.error)
+        self.assertIsNone(self.action.executed_with)
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["brain"], "jev")
+        self.assertIn("jev call failed", rec["fallback"])
+        self.assertFalse(rec["result"]["ok"])
+        # And while it cools down, cycles are skipped without calling Jev.
+        result = self._think(b)
+        self.assertFalse(result.ok)
+        self.assertIn("cooling down", result.error)
+        self.assertEqual(len(jev.calls), 1)
+        self.assertIsNone(self.action.executed_with)
+
+    def test_jev_and_llm_both_failing_reports_both(self):
+        jev = FakeJevClient(error=JevError("timeout"))
+        llm = FakeLLMClient(error=LLMError("no tool call"))
+        result = self._think(brain.Brain(jev=jev, llm=llm))
+        self.assertFalse(result.ok)
+        self.assertIn("jev call failed: timeout", result.error)
+        self.assertIn("llm call failed: no tool call", result.error)
+
+    def test_jev_choice_still_goes_through_registry_validation(self):
+        # A stale candidate (check() rejects it) fails safely, like an LLM pick.
+        self.action.check_error = "target gone"
+        result = self._think(brain.Brain(jev=FakeJevClient(pick=0)))
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "target gone")
+        self.assertEqual(self.audit.records[-1]["brain"], "jev")
+
+    def test_loop_guard_blocked_candidates_are_not_offered(self):
+        state = think.ThinkState()
+        for _ in range(think.LOOP_GUARD_REPEATS):
+            state.record("test_action", {"value": 1}, False, "same", error="nope")
+        jev = FakeJevClient(pick=0)
+        self._think(brain.Brain(jev=jev), state=state)
+        offered = [c["id"] for c in jev.calls[0]["candidates"]]
+        self.assertEqual(offered, ["test_action:value=2", "idle"])
+        self.assertEqual(self.action.executed_with, {"value": 2})
+        self.assertEqual(len(jev.calls[0]["history"]), think.LOOP_GUARD_REPEATS)
+
+
+class BrainFromConfigTest(unittest.TestCase):
+    def _cfg(self, env):
+        with mock.patch.dict(os.environ, env, clear=True):
+            return config.Config()
+
+    def test_neither_configured_means_no_brain(self):
+        # __main__ then skips think_and_act entirely and the agent idles (UM-44 behaviour).
+        cfg = self._cfg({})
+        self.assertFalse(cfg.jev_enabled)
+        self.assertIsNone(brain.Brain.from_config(cfg))
+        # docker compose passes unset vars through as "": still off, defaults intact.
+        cfg = self._cfg({"JEV_BASE_URL": "", "JEV_API_KEY": "", "JEV_MODEL": "",
+                         "LLM_BASE_URL": "", "LLM_MODEL": ""})
+        self.assertIsNone(brain.Brain.from_config(cfg))
+        self.assertEqual(cfg.jev_base_url, "https://openrouter.ai/api/alpha")
+        self.assertEqual(cfg.jev_model, "typesafe/jev-1.13")
+
+    def test_llm_only(self):
+        b = brain.Brain.from_config(self._cfg({"LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}))
+        self.assertIsNone(b.jev)
+        self.assertEqual(b.llm.model, "m")
+        self.assertEqual(b.model, "m")
+
+    def test_jev_by_key_or_by_explicit_base_url(self):
+        for env in ({"JEV_API_KEY": "sekrit"}, {"OPENROUTER_API_KEY": "sekrit"},
+                    {"JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha"}):
+            with self.subTest(env=list(env)):
+                b = brain.Brain.from_config(self._cfg(env))
+                self.assertIsNotNone(b.jev)
+                self.assertIsNone(b.llm)
+                self.assertNotIn("sekrit", b.describe())
+
+    def test_jev_with_llm_fallback(self):
+        b = brain.Brain.from_config(self._cfg({"JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha",
+                                               "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}))
+        self.assertEqual(b.jev.base_url, "http://127.0.0.1:8090/api/alpha")
+        self.assertEqual(b.model, "typesafe/jev-1.13")
+        self.assertIn("(fallback)", b.describe())
 
 
 if __name__ == "__main__":

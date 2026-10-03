@@ -299,5 +299,65 @@ class PageTests(unittest.TestCase):
             self.assertIn(label, app.PAGE)
 
 
+class ItemTooltipWiringTests(unittest.TestCase):
+    """app.inventory_item / item_set_context pass the instance columns, the equipped
+    entries and the set piece names on to item_tooltip."""
+
+    def names(self):
+        n = fake_names()
+        n.random_suffixes = {7: ("of the Bear", ((2803, 10000),))}
+        n.enchants = {2803: ("+$i Stamina", ((5, 0, 7),)), 2564: ("+15 Agility", ((5, 15, 3),))}
+        n.rand_prop_points = {60: ((40, 30, 20, 15, 10), (30, 22, 15, 11, 8), (26, 20, 13, 10, 7))}
+        n.item_sets = {1: ("The Gladiator", (500, 501), ((2, 41863),))}
+        return n
+
+    def row(self, entry=500, bag=0, slot=0, extras=(), **template):
+        base = (bag, slot, 900 + entry, entry, "Gladiator Helm", 1, None, 2, 0, 0)
+        cols = tuple(template.get(c, 0) for c in item_tooltip.COLUMNS)
+        return base + cols + extras
+
+    def test_random_property_and_enchantments_columns_reach_the_tooltip(self):
+        row = self.row(extras=(-7, "2564 0 0 " + "0 0 0 " * 11),
+                       **{"class": 4, "InventoryType": 1, "ItemLevel": 60, "Quality": 2})
+        item = app.inventory_item(row, self.names())
+        left = [l["left"] for l in item["tooltip"]]
+        self.assertEqual(left[0], "Gladiator Helm of the Bear")
+        self.assertIn("+26 Stamina", left)
+        self.assertIn("+15 Agility", left)
+        self.assertEqual(item["item_name"], "Gladiator Helm")  # the grid keeps the plain name
+
+    def test_rows_without_the_instance_columns_still_work(self):
+        item = app.inventory_item(self.row(**{"class": 4, "InventoryType": 1}), self.names())
+        self.assertEqual(item["tooltip"][0]["left"], "Gladiator Helm")
+
+    def test_item_set_context_collects_equipped_entries_and_piece_names(self):
+        rows = [self.row(500, 0, 0, itemset=1, **{"class": 4}),      # equipped
+                self.row(501, 0, 24, itemset=1, **{"class": 4}),     # in the backpack
+                self.row(502, 0, 19, **{"class": 1})]                # an equipped bag slot is not gear
+        cur = mock.Mock()
+        cur.fetchall.return_value = [(500, "Gladiator Helm"), (501, "Gladiator Chain")]
+        with mock.patch.object(app, "names", return_value=self.names()):
+            equipped, piece_names = app.item_set_context(cur, rows)
+        self.assertEqual(equipped, {500})
+        self.assertEqual(piece_names, {500: "Gladiator Helm", 501: "Gladiator Chain"})
+        sql, args = cur.execute.call_args[0]
+        self.assertIn("world.item_template", sql)
+        self.assertEqual(args, [500, 501])
+
+    def test_item_set_context_runs_no_query_without_sets(self):
+        cur = mock.Mock()
+        with mock.patch.object(app, "names", return_value=self.names()):
+            equipped, piece_names = app.item_set_context(cur, [self.row(**{"class": 15})])
+        self.assertEqual((equipped, piece_names), ({500}, {}))
+        cur.execute.assert_not_called()
+
+    def test_set_block_uses_the_context(self):
+        row = self.row(itemset=1, **{"class": 4, "InventoryType": 1})
+        item = app.inventory_item(row, self.names(), {500}, {500: "Gladiator Helm", 501: "Gladiator Chain"})
+        left = [l["left"] for l in item["tooltip"]]
+        self.assertIn("The Gladiator (1/2)", left)
+        self.assertIn("Gladiator Chain", left)
+
+
 if __name__ == "__main__":
     unittest.main()

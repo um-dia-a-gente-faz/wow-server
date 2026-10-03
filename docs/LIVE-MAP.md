@@ -216,7 +216,8 @@ The rect from `WorldMapArea.dbc` covers the game's **1002×668** map frame
 (FrameXML `WorldMapDetailFrame`), not the full 1024×768 tile sheet: the 4×3 tiles
 overflow the frame at the right and bottom, and that strip is blank. So a normalised
 position is multiplied by 1002×668 to get a pixel on the extracted PNG
-(`transform.MAP_FRAME_W/H`, and `px()` in the page). Scaling by 1024×768 put markers up
+(`transform.MAP_FRAME_W/H`, and `px()` in the page; these pixels are also the units of
+the page's Leaflet map, see `tools/wowmap/README.md`). Scaling by 1024×768 put markers up
 to 100 px too low near the bottom of a zone (fixed with #109).
 
 With the axes and the frame right, markers sit where the game shows them, and
@@ -239,6 +240,7 @@ Three earlier calibration attempts, from before the axis fix, are in `tools/wowm
 | `GET /maps/<area_id>.png` | the zone map image, fully explored (static, cached 24 h); `<area_id>_base.png` is the unexplored art |
 | `GET /maps/<area_id>.png?explored=<overlay ids>` | the base art with only those overlays revealed (fog of war) |
 | `GET /api/character/<name>/explored` | JSON: the overlays a character has revealed, per zone |
+| `GET /static/leaflet.js`, `/static/leaflet.css` | the vendored Leaflet 1.9.4 the page loads (cached 24 h) |
 | `GET /healthz` | `{"ok": true}` |
 
 ### Grafana

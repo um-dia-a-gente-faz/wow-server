@@ -65,6 +65,12 @@ x-agent: &agent-defaults
     LLM_BASE_URL: ${LLM_BASE_URL:-}
     LLM_API_KEY: ${LLM_API_KEY:-}
     LLM_MODEL: ${LLM_MODEL:-}  # one id, or a comma-separated fallback list (UM-94, see .env.example)
+    # UM-101: Jev, the primary brain when set (agent/brain.py); empty = off.
+    # Same trap as above: unless passed through here, a key in .env never
+    # reaches the containers.
+    JEV_BASE_URL: ${JEV_BASE_URL:-}
+    JEV_API_KEY: ${JEV_API_KEY:-}
+    JEV_MODEL: ${JEV_MODEL:-}
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
