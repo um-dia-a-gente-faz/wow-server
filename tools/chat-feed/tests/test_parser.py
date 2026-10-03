@@ -50,7 +50,7 @@ class ParserTests(unittest.TestCase):
 
         feed.publish_line("Loading Player Totem models...\n", "inode:43")
 
-        self.assertEqual(feed.health(), {"ok": True, "events": 0,
+        self.assertEqual(feed.health(), {"ok": True, "events": 0, "clients": 0,
                                          "chat_candidates": 1, "parse_errors": 1,
                                          "ingested": 0, "ingest_duplicates": 0,
                                          "ingest_rejected": 0})
