@@ -13,7 +13,8 @@ whose field count differs is from another build and is skipped, not misread.
     TalentTab.dbc     24 fields   0 ID, 1-16 Name[16], 20 ClassMask, 22 OrderIndex
     Faction.dbc       57 fields   0 ID, 1 ReputationIndex, 2-5 ReputationRaceMask[4],
                                   6-9 ReputationClassMask[4], 10-13 ReputationBase[4],
-                                  18 ParentFactionID, 23-38 Name[16]
+                                  18 ParentFactionID (the reputation window's
+                                  headers: Classic > Horde > Orgrimmar), 23-38 Name[16]
     Achievement.dbc   62 fields   0 ID, 1 Faction, 4-19 Title[16], 38 Category,
                                   39 Points
 
@@ -53,6 +54,29 @@ def reputation_tier(value):
         if value >= floor:
             return name
     return "Hated"  # TrinityCore clamps at Reputation_Bottom (-42000)
+
+
+# ReputationMgr.h `enum class ReputationFlags` (TrinityCore 3.3.5), stored as-is in
+# characters.character_reputation.flags.
+REP_VISIBLE, REP_AT_WAR, REP_HIDDEN, REP_HEADER = 0x01, 0x02, 0x04, 0x08
+REP_PEACEFUL, REP_INACTIVE, REP_HEADER_SHOWS_BAR = 0x10, 0x20, 0x80
+# Rank bounds from ReputationMgr::ReputationRankThresholds; Exalted ends at
+# Reputation_Cap + 1 (43000). `rank_id` is the client's standingID, 1 Hated .. 8
+# Exalted, the key of FACTION_BAR_COLORS in FrameXML ReputationFrame.lua.
+RANK_BOUNDS = (-42000, -6000, -3000, 0, 3000, 9000, 21000, 42000, 43000)
+RANK_NAMES = ("Hated", "Hostile", "Unfriendly", "Neutral", "Friendly", "Honored",
+              "Revered", "Exalted")
+
+
+def reputation_bar(value):
+    """{"rank", "rank_id", "bar_value", "bar_max"} as the in-game bar shows it:
+    Orgrimmar at 562 is Neutral 562/3000, Silvermoon at 4250 Friendly 1250/6000."""
+    value = max(RANK_BOUNDS[0], min(value, RANK_BOUNDS[-1] - 1))
+    i = 0
+    while value >= RANK_BOUNDS[i + 1]:
+        i += 1
+    return {"rank": RANK_NAMES[i], "rank_id": i + 1,
+            "bar_value": value - RANK_BOUNDS[i], "bar_max": RANK_BOUNDS[i + 1] - RANK_BOUNDS[i]}
 
 
 def _open(dbc_dir, filename, fields):
@@ -178,6 +202,68 @@ class GameNames:
                 break
         value = base + standing
         return {"faction_name": name, "value": value, "tier": reputation_tier(value)}
+
+    def reputation_panel(self, rows, race, cls):
+        """The character's reputation window as a tree, from `character_reputation`
+        rows of (faction, standing, flags).
+
+        Like the client: a faction is listed when its row has the Visible flag and
+        not Hidden. Headers come from Faction.dbc ParentFactionID ("Classic" >
+        "Horde" > "Orgrimmar") and are listed when something under them is, or when
+        they carry their own bar (HeaderShowsBar, e.g. Horde Expedition) and are
+        visible themselves. Visible factions flagged Inactive move to a trailing
+        "Inactive" group, as in game. Siblings are sorted by name.
+
+        Node: {"faction", "name", "header", "children" (headers only), "rep"}; `rep`
+        is None for a header without a bar, otherwise {"value", "rank", "rank_id",
+        "bar_value", "bar_max", "at_war"}."""
+        state = {faction: (standing, flags) for faction, standing, flags in rows}
+
+        def rep(faction):
+            standing, flags = state[faction]
+            value = self.reputation(faction, standing, race, cls)["value"]
+            return {"value": value, **reputation_bar(value), "at_war": bool(flags & REP_AT_WAR)}
+
+        def shown(faction):
+            flags = state.get(faction, (0, 0))[1]
+            return bool(flags & REP_VISIBLE) and not flags & REP_HIDDEN
+
+        children = {}
+        for faction, f in self.factions.items():
+            parent = f[5] if f[5] in self.factions else 0  # orphan -> top level
+            children.setdefault(parent, []).append(faction)
+
+        def by_name(nodes):
+            return sorted(nodes, key=lambda n: (n["name"].casefold(), n["faction"] or 0))
+
+        inactive = []
+
+        def build(faction):
+            name = self.factions[faction][0]
+            kids = [n for n in map(build, children.get(faction, ())) if n]
+            if faction in children:
+                has_bar = shown(faction) and bool(state[faction][1] & REP_HEADER_SHOWS_BAR)
+                if not kids and not has_bar:
+                    return None
+                return {"faction": faction, "name": name, "header": True,
+                        "children": by_name(kids), "rep": rep(faction) if has_bar else None}
+            if not shown(faction):
+                return None
+            node = {"faction": faction, "name": name, "header": False, "rep": rep(faction)}
+            if state[faction][1] & REP_INACTIVE:
+                inactive.append(node)
+                return None
+            return node
+
+        panel = [n for n in map(build, children.get(0, ())) if n]
+        # Rows the DBC doesn't know (wrong build, missing file) still show, unnamed.
+        panel += [{"faction": f, "name": "Unknown faction", "header": False, "rep": rep(f)}
+                  for f in state if f not in self.factions and shown(f)]
+        panel = by_name(panel)
+        if inactive:
+            panel.append({"faction": None, "name": "Inactive", "header": True,
+                          "children": by_name(inactive), "rep": None})
+        return panel
 
     def achievement(self, achievement_id):
         """{"name", "points"} for an achievement id."""

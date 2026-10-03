@@ -25,6 +25,8 @@
 #   - job_name: "node_wow"      targets: ["192.168.1.64:9100"]  labels: {host: "wow-server"}
 #   - job_name: "cadvisor_wow"  targets: ["192.168.1.64:8080"]  labels: {host: "wow-server"}
 #   - job_name: "wow_game"      targets: ["192.168.1.64:9300"]  labels: {host: "wow-server"}
+#   - job_name: "wow_chat_feed" targets: ["192.168.1.64:9500"]  labels: {host: "wow-server"}
+#     (tools/chat-feed, which runs from the root docker-compose.yml)
 #
 # Grafana dashboards are file-provisioned, see grafana/provisioning/dashboards.yaml.
 # Drop raw dashboard JSONs into /opt/pandora/grafana/dashboards-wow/.

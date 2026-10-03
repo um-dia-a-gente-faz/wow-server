@@ -219,7 +219,7 @@ to run without the file, and `git reset --hard` leaves it alone (it's ignored).
 |---|---|---|
 | `MYSQL_ROOT_PASSWORD` | `database` (+ healthcheck), `wow-exporter`, `wowmap` | Only applied when `db_data` is first initialised. On the existing VM, set it to the password the DB **already** uses — changing it here does not change MySQL. |
 | `ACCESS_PASSWORD` | `trinitycore-wowserver` web UI (:3000) | Username stays `admin`. |
-| `AGENT_PASSWORD` | `docker-compose.agents.yml` | Shared password of AGENT01..AGENT05. |
+| `AGENT_PASSWORD` | `docker-compose.agents.yml` | Shared password of AGENT01..AGENT25 (also read by `scripts/create_agent_roster.py`). |
 | `LLM_API_KEY` | agents (future LLM layer) | FreeLLMAPI key; never paste it into docs. |
 
 One-time setup on the VM:
@@ -244,6 +244,62 @@ Apart from `.env`, everything running is tracked in the compose files. If you
 add a one-off env var or port directly on the VM, fold it back into the repo
 (secrets via `.env` + `.env.example`, the rest with a comment explaining why)
 instead of leaving it untracked, or the next `deploy.sh` will silently drop it.
+
+## Agent roster (25 agents, profiles `party` and `raid`)
+
+`agents/roster.json` lists every agent: account `AGENT01..AGENT25`, character,
+race, class, gender (no secrets). AGENT01..05 are Luaprata, Farstrider,
+Shadowblade, Sunspeaker and Spellweaver (their race/class are `null` until a real
+run reads them back from the realm); AGENT06..25 are random Horde characters
+(orc, undead, tauren, troll, blood elf; never Death Knights, which need an
+existing level 55 character on the account). `docker-compose.agents.yml` is
+**generated** from the roster, so never edit its services by hand.
+
+**Where they run.** Not on the 6 GB `wow-server` VM, which has no room (see
+*Resource limits*). Run the agents on a separate small VM on the Proxmox host
+(`pv1`) with Docker and a checkout of this repo plus its own `.env`
+(`AGENT_PASSWORD`, `LLM_*`). The compose file points `WOW_HOST` at
+`192.168.1.64`, so the agents only need LAN access to it. Each container has
+`mem_limit: 128m` and `cpus: 0.25`, so 25 of them need about 3.2 GB of RAM
+(limit, not measured use) and 6 CPUs at the cap; size the VM from `docker stats`
+once they run.
+
+**Create the accounts and characters** (needs `AGENT_PASSWORD` in the
+environment and the realm and console reachable; the script uses the same
+shared password as the compose file, it does not generate new ones):
+
+```bash
+python3 scripts/create_agent_roster.py --dry-run    # print the plan; no network, writes nothing
+python3 scripts/create_agent_roster.py              # create what is missing; safe to re-run
+```
+
+A real run logs in as each account; if that fails it creates the account on the
+worldserver console (output not echoed, it carries the password) and logs in
+again; if the account has no character it creates the planned one, drawing a new
+name if the server says it is taken. Accounts that already have a character are
+left alone and their real race/class are written back to `agents/roster.json`.
+A second run changes nothing.
+
+**Change the roster, regenerate the compose file:**
+
+```bash
+python3 scripts/create_agent_roster.py --write-plan   # (re)plan missing entries into agents/roster.json, no network
+python3 scripts/gen_agents_compose.py                 # rewrite docker-compose.agents.yml
+python3 scripts/gen_agents_compose.py --check         # CI-style check that it is up to date
+```
+
+**Start agents** (from the agents VM, in the checkout):
+
+```bash
+docker compose -f docker-compose.agents.yml --profile party up -d   # AGENT01..05
+docker compose -f docker-compose.agents.yml --profile raid  up -d   # all 25
+docker compose -f docker-compose.agents.yml up -d agent-luaprata    # one agent, any profile
+docker compose -f docker-compose.agents.yml --profile raid down     # stop them
+```
+
+Plain `up -d` with no profile and no service name starts nothing. The first 5
+agents are in both profiles, so `--profile raid` includes the party. Agent N
+publishes its read-only API on port `9600+N` (9601..9625).
 
 ## Management
 
