@@ -330,6 +330,37 @@ Plain `up -d` with no profile and no service name starts nothing. The first 5
 agents are in both profiles, so `--profile raid` includes the party. Agent N
 publishes its read-only API on port `9600+N` (9601..9625).
 
+### wowmap's `AGENT_API_URLS`
+
+The console's *Agent mind* tab needs `AGENT_API_URLS` in the wow-server VM's
+`/opt/wow-server/.env` (`monitoring/docker-compose.yml` forwards it to wowmap).
+Unset, `GET /api/agents` returns `{"agents": []}` and every agent view is a 404.
+The value is derived, not hand-typed: names come from `agents/roster.json` in
+roster order, ports are `9600+N` as in `docker-compose.agents.yml` (the script
+imports them from `gen_agents_compose.py`, and a test compares the result with
+the committed compose file). Only the **host** is yours to give, and it has no
+default, because the agents no longer run on `192.168.1.64` (ADR 0002 / issue
+#134 puts them on the `wow-agents` VM):
+
+```bash
+python3 scripts/gen_agent_api_urls.py --host <agent-host>    # or AGENT_HOST=<agent-host>
+# AGENT_API_URLS=Luaprata=http://<agent-host>:9601,Farstrider=http://<agent-host>:9602,...
+```
+
+The script only prints. By hand, on the wow-server VM: put that line in `.env`
+(replace an existing `AGENT_API_URLS=` line), then recreate wowmap only, which is
+not a worldserver restart:
+
+```bash
+docker compose --env-file .env -f monitoring/docker-compose.yml up -d wowmap
+```
+
+Re-run it when the roster or the agent host changes. The output lists all 25
+agents; trim it by hand if only some run (a listed agent that is down gives a
+clean 502 for its views, not a broken page).
+The agent ports must be reachable from the wow-server VM (they are published on
+all interfaces unless `AGENT_HTTP_PUBLISH_IP` is set).
+
 ## Management
 
 ```bash
