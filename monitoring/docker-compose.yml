@@ -110,6 +110,10 @@ services:
       - AUDIT_DIR=/audit
       # UM-50: agents' read-only APIs, "Name=http://host:9601,..." (empty = no agent mind tab)
       - AGENT_API_URLS=${AGENT_API_URLS:-}
+      # #137: the agent runner behind the Fleet panel (tools/agent-runner). Empty URL = the
+      # panel is read-only. The token stays inside wowmap; the browser never sees it.
+      - AGENT_RUNNER_URL=${AGENT_RUNNER_URL:-}
+      - AGENT_RUNNER_TOKEN=${AGENT_RUNNER_TOKEN:-}
     ports:
       - "9400:9400"
     volumes:

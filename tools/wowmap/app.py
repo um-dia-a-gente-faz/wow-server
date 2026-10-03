@@ -9,6 +9,8 @@ Serves:
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available, subzones
                               and `continents`: the continent maps and their zones' boxes
     POST /api/calibrate       save a per-zone pixel offset
+    GET /api/fleet            the agent fleet panel's data, from the agent runner (#137, fleet.py)
+    POST /api/fleet/agents/<name>/start|stop   forwarded to the runner (token stays server-side)
     GET /api/agents           names of agents with an observability API (UM-50)
     GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
                               (healthz, state, perception, brain)
@@ -36,6 +38,9 @@ Env:
     AUDIT_DIR     default /audit    agents' UM-51 decision logs ("" = no agent events)
     AGENT_API_URLS default ""       "Name=http://host:9601,Name2=http://host:9602" — agent
                                     observability APIs (agent/http_api.py) to proxy
+    AGENT_RUNNER_URL default ""     the agent runner's base URL (tools/agent-runner); empty = the
+                                    fleet panel is read-only
+    AGENT_RUNNER_TOKEN default ""   its bearer token. Server-side only: never sent to the browser
 """
 import json
 import logging
@@ -45,6 +50,7 @@ import re
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import urllib.error
 import urllib.request
@@ -54,6 +60,7 @@ import pymysql
 
 import activity as activity_feed
 import item_icons
+import fleet
 import fog
 import item_tooltip
 from overlays import load_overlays, subzones
@@ -117,6 +124,36 @@ AGENT_APIS = parse_agent_urls(os.environ.get("AGENT_API_URLS", ""))
 AGENT_VIEWS = ("healthz", "state", "perception", "brain")
 AGENT_PROXY_TIMEOUT_S = 3
 MAX_AGENT_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+# #137: the agent runner behind the fleet panel. URL and token are read here once and
+# only ever used by fleet.Runner; no handler echoes either.
+RUNNER = fleet.Runner(os.environ.get("AGENT_RUNNER_URL", ""), os.environ.get("AGENT_RUNNER_TOKEN", ""))
+
+
+def fleet_status():
+    """GET /api/fleet. Without a runner the panel is read-only: the rows are the
+    agents in AGENT_API_URLS with only their own /healthz probed, everything else
+    stays out of the row so the page shows it as unknown."""
+    out = RUNNER.status()
+    if RUNNER.configured:
+        return out
+
+    def probe(entry):
+        name, _ = entry
+        status, body = fetch_agent_view(name, "healthz")
+        try:
+            h = json.loads(body) if status == 200 else {}
+        except ValueError:
+            h = {}
+        ok = isinstance(h, dict) and h.get("ok") is True
+        return {"name": name, "agent_api": {"state": "ok" if ok else "unreachable",
+                                            "connected": h.get("connected") if ok else None}}
+    entries = sorted(AGENT_APIS.values())
+    if entries:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            out["agents"] = list(pool.map(probe, entries))
+    return out
 
 
 def fetch_agent_view(name, view, n=None):
@@ -650,6 +687,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _fleet_action(self, path):
+        name, _, action = unquote(path[len("/api/fleet/agents/"):]).partition("/")
+        # A cross-site form can POST here, but it cannot set a custom header without a
+        # CORS preflight, which wowmap never answers: so the header proves it is our page.
+        if self.headers.get("X-Fleet-Action") != "1":
+            return self._send(403, {"error": "missing X-Fleet-Action header"})
+        status, body = RUNNER.act(name, action)
+        return self._send(status, body, cache="no-store")
+
     def do_GET(self):  # noqa: N802
         u = urlparse(self.path)
         path, qs = u.path, parse_qs(u.query)
@@ -689,6 +735,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/agents":
                 return self._send(200, {"agents": sorted(n for n, _ in AGENT_APIS.values())})
+
+            if path == "/api/fleet":
+                return self._send(200, fleet_status(), cache="no-store")
 
             if path.startswith("/api/agent/"):
                 name, _, view = unquote(path[len("/api/agent/"):]).partition("/")
@@ -755,7 +804,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": str(e)})
 
     def do_POST(self):  # noqa: N802
-        if urlparse(self.path).path != "/api/calibrate":
+        path = urlparse(self.path).path
+        if path.startswith("/api/fleet/agents/"):
+            return self._fleet_action(path)
+        if path != "/api/calibrate":
             return self._send(404, {"error": "not found"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1888,6 +1940,7 @@ PAGE = r"""<!doctype html>
 /* @chat-css */
 /* @activity-css */
 /* @agent-css */
+/* @fleet-css */
 </style></head>
 <body>
 <aside id="aside">
@@ -1921,12 +1974,14 @@ PAGE = r"""<!doctype html>
     <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
     <button id="saveCalibration" hidden>Save calibration</button>
     <div class="tabs">
+      <button id="tglFleet" title="Agent fleet: what every agent container is doing, start/stop (#137)">Fleet</button>
       <button id="follow" title="Center on the selected character">Follow: off</button>
     </div>
   </div>
   <div class="stage" id="stage">
     <div id="map"></div>
     <div id="subzone-hover" hidden></div>
+    <!-- @fleet-html -->
   </div>
   <footer>
     <span class="pill" id="f-refresh">–</span>
@@ -1940,6 +1995,7 @@ PAGE = r"""<!doctype html>
 <script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
 <!-- @chat-js -->
 <!-- @agent-js -->
+<!-- @fleet-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -2601,6 +2657,9 @@ PAGE = (PAGE
         .replace("<!-- @chat-js -->", CHAT_JS)
         .replace("/* @agent-css */", AGENT_CSS)
         .replace("<!-- @agent-js -->", AGENT_JS)
+        .replace("/* @fleet-css */", fleet.FLEET_CSS)
+        .replace("<!-- @fleet-html -->", fleet.FLEET_HTML)
+        .replace("<!-- @fleet-js -->", fleet.FLEET_JS)
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 
