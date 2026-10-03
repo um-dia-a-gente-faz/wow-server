@@ -43,13 +43,44 @@ the coordinates the game shows for them.
 | position | `characters.characters.position_x/y/z`, `orientation` | `PlayerSaveInterval`, configured to **5000 ms (5 s)** |
 | current map / zone | same row — `map`, `zone` | as above |
 | instance | `instance_id` (non-zero = in a dungeon/raid) | as above |
-| online flag | `characters.characters.online`, `auth.account.online` | on login/logout |
+| online flag | `characters.characters.online`, `auth.account.online` | set within ms of the world session starting, rewritten every save (5 s), cleared on logout, on a worldserver stop/start; see [Online flags](#online-flags) |
 | zone names | `AreaTable.dbc` — **not in the DB**, the TDB has no `areatable` table | static |
 | zone rects | `WorldMapArea.dbc` | static |
 
 **Sampling resolution is the main knob.** With the configured 5 s interval, movement
 samples are fresh enough for usable traces. Trade-off: one DB write per online player per
 interval; 5 s is fine for a small realm, while 1 s would be wasteful.
+
+### Online flags
+
+Both flags are written by the **worldserver** and behave the same for an agent's scripted
+`CMSG_PLAYER_LOGIN` as for a real client (#130). The authserver never writes `online`: it
+only sets `last_login`, `last_ip` and the session key. Source: TrinityCore 3.3.5 branch at
+`2ac2d9055061`, the revision the deployed worldserver reports.
+
+| Flag | Set to 1 | Set to 0 |
+|---|---|---|
+| `auth.account.online` | `WorldSession` constructor, when the world socket authenticates, before any character is chosen (`WorldSession.cpp:156`); again at character login (`CharacterHandler.cpp:833`) | `WorldSession` destructor (`WorldSession.cpp:184`); worldserver start (`worldserver/Main.cpp:701`) |
+| `characters.characters.online` | end of `HandlePlayerLogin`, after the player is on the map (`CharacterHandler.cpp:829`); every `SaveToDB` rewrites it as `IsInWorld() && !PlayerLogout()` (`Player.cpp:19248`, every 5 s here) | `LogoutPlayer` (`WorldSession.cpp:618`, a save with `PlayerLogout()` set); worldserver start (`worldserver/Main.cpp:704`) |
+
+What that means for readers:
+
+- An agent character is `online = 1` for as long as its world session is live, exactly like
+  the owner's. `GET /api/players`, `/api/summary` and the Grafana online panels therefore do
+  list agents while they play.
+- `auth.account.online = 1` only means *a world session exists*. A session that
+  authenticates and lists characters without logging one in (what `--list-chars` does) flips
+  it to 1 and back to 0 within the same second (seen in the binlog for AGENT05 at 19:01:50 on 2026-10-03). Use `characters.characters.online` for presence.
+- Both flags describe the **server's** view. An agent process that lost its connection
+  (for instance when a deploy restarts the worldserver) is `online = 0` even though the
+  process is up and, on an agent image without the reconnect supervisor, still logs
+  stale `perception: N objects tracked` lines from its last world state. For client-side
+  liveness read the agent's own `GET /healthz` / `/state` `connected` field
+  (`agent/http_api.py`), not a log line.
+- A DB sample taken *after* the agent logged out reads `0` and the post-logout
+  `totaltime`. To check presence, sample while it is in world, e.g. start
+  `python3 -m agent --duration 60` and run, 20 s in:
+  `SELECT name, online, totaltime FROM characters.characters WHERE account = <id>`.
 
 ## Rendering options
 
