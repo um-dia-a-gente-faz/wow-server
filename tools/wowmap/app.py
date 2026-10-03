@@ -396,7 +396,7 @@ def fetch_character(name):
             ORDER BY talentGroup, spell
         """, (guid,), "talents")
         reputation = best_effort(cur, """
-            SELECT faction, standing
+            SELECT faction, standing, flags
             FROM characters.character_reputation
             WHERE guid = %s
             ORDER BY faction
@@ -462,10 +462,13 @@ def fetch_character(name):
             for spell, spec in talents
         ],
         "reputation": [
-            {"faction": faction, "standing": standing,
+            {"faction": faction, "standing": standing, "flags": flags,
              **n.reputation(faction, standing, race, cls)}
-            for faction, standing in reputation
+            for faction, standing, flags in reputation
         ],
+        # The in-game reputation window: visible factions only, grouped and ordered
+        # by the Faction.dbc parent tree (GameNames.reputation_panel).
+        "reputation_panel": n.reputation_panel(reputation, race, cls),
         "achievements": [
             {"achievement": achievement, "date": date,
              **(n.achievement(achievement) or {"name": None, "points": None})}
@@ -761,6 +764,27 @@ INSPECT_CSS = r"""
   .drawer details[open] { padding-bottom:8px; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
                     text-transform:uppercase; letter-spacing:.6px; }
+  /* Reputation window: nested headers, one bar per faction (name | rank bar | numbers). */
+  .drawer details.rep-group { margin:0; border:0; border-radius:0; padding:0 0 0 12px; }
+  .drawer details.rep-group[open] { padding-bottom:0; }
+  .drawer details.rep-group > summary { display:flex; align-items:center; gap:4px; margin-left:-12px;
+                                        padding:3px 0; list-style:none; text-transform:none;
+                                        letter-spacing:0; font-size:13px; color:var(--fg); }
+  .drawer details.rep-group > summary::-webkit-details-marker { display:none; }
+  .drawer details.rep-group > summary::before { content:'\25B8'; flex:0 0 8px; color:var(--dim); }
+  .drawer details.rep-group[open] > summary::before { content:'\25BE'; }
+  .drawer .rep-head { font-weight:600; }
+  .drawer .rep { display:flex; gap:6px; align-items:center; padding:2px 0; font-size:13px; }
+  .drawer summary > .rep { flex:1; min-width:0; padding:0; }
+  .drawer .rep-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drawer .rep-bar { position:relative; flex:0 0 72px; height:14px; background:#20263a;
+                     border-radius:3px; overflow:hidden; }
+  .drawer .rep-bar.war { outline:1px solid #e0402f; }
+  .drawer .rep-bar .fill { position:absolute; inset:0 auto 0 0; }
+  .drawer .rep-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
+                          line-height:14px; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
+  .drawer .rep-num { flex:0 0 72px; text-align:right; color:var(--dim); font-size:12px;
+                     font-variant-numeric:tabular-nums; }
 """
 
 INSPECT_HTML = r"""
@@ -961,12 +985,45 @@ const Inspect = (() => {
     }
     return d;
   }
-  function reputationSection(list) {
-    const d = collapsible('reputation', `Reputation (${list.length})`);
-    const value = (r) => r.value ?? r.standing;
-    for (const r of [...list].sort((a, b) => value(b) - value(a))) {
-      d.append(kv(r.faction_name || `faction ${r.faction}`, `${r.tier || ''} · ${nf.format(value(r))}`));
+  // The in-game reputation window (GameNames.reputation_panel): headers from the
+  // Faction.dbc tree, only factions the character has discovered. Bar colours are
+  // FACTION_BAR_COLORS from the 3.3.5 FrameXML ReputationFrame.lua, keyed by rank_id.
+  const REP_COLORS = {1: '#cc4d38', 2: '#cc4d38', 3: '#bf4500', 4: '#e6b300',
+    5: '#00991a', 6: '#00991a', 7: '#00991a', 8: '#00991a'};
+  const closedReps = new Set();
+  function repRow(name, r) {
+    const row = el('div', 'rep');
+    row.append(el('span', 'rep-name', name));
+    const b = el('span', 'rep-bar' + (r.at_war ? ' war' : ''));
+    const fill = el('span', 'fill');
+    fill.style.width = `${Math.max(0, Math.min(100, r.bar_value / r.bar_max * 100))}%`;
+    fill.style.background = REP_COLORS[r.rank_id] || '#888';
+    b.append(fill, el('span', 'txt', r.rank));
+    if (r.at_war) b.title = 'At war';
+    row.append(b, el('span', 'rep-num', `${r.bar_value}/${r.bar_max}`));  // as in game: 562/3000
+    return row;
+  }
+  function repNodes(parent, nodes) {
+    for (const n of nodes) {
+      if (!n.header) { parent.append(repRow(n.name, n.rep)); continue; }
+      const key = String(n.faction ?? n.name);
+      const d = el('details', 'rep-group');
+      d.open = !closedReps.has(key);
+      const s = el('summary');
+      s.append(n.rep ? repRow(n.name, n.rep) : el('span', 'rep-head', n.name));
+      d.append(s);
+      d.addEventListener('toggle', () => { d.open ? closedReps.delete(key) : closedReps.add(key); });
+      repNodes(d, n.children || []);
+      parent.append(d);
     }
+  }
+  function countReps(nodes) {
+    return nodes.reduce((k, n) => k + (n.rep ? 1 : 0) + countReps(n.children || []), 0);
+  }
+  function reputationSection(panel) {
+    const d = collapsible('reputation', `Reputation (${countReps(panel)})`);
+    if (!panel.length) d.append(el('div', 'none', 'No factions discovered'));
+    repNodes(d, panel);
     return d;
   }
   function achievementSection(list) {
@@ -1025,7 +1082,7 @@ const Inspect = (() => {
       f.append(d);
     }
 
-    f.append(talentSection(c.talents || []), reputationSection(c.reputation || []),
+    f.append(talentSection(c.talents || []), reputationSection(c.reputation_panel || []),
              achievementSection(c.achievements || []));
 
     const top = body.scrollTop;
