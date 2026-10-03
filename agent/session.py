@@ -42,6 +42,7 @@ SMSG_AUTH_RESPONSE      = 0x1EE
 CMSG_CHAR_CREATE        = 0x036
 SMSG_CHAR_CREATE        = 0x03A
 CHAR_CREATE_SUCCESS     = 47  # SharedDefines.h ResponseCodes (0x2F)
+CHAR_CREATE_MAX_SKIPPED_PACKETS = 32
 CHAR_CREATE_NAME_IN_USE = 50  # 0x32
 CMSG_CHAR_ENUM          = 0x037
 SMSG_CHAR_ENUM          = 0x03B
@@ -601,9 +602,16 @@ class WoWSession:
             + b'\x00'  # OutfitId, deprecated
         )
         self._send_packet(CMSG_CHAR_CREATE, payload)
-        opcode, resp = self._recv_packet()
-        if opcode != SMSG_CHAR_CREATE:
-            raise RuntimeError(f"char create failed for {name!r}: unexpected opcode {opcode:#x}")
+        # Found live 2026-10-03: the server builds the new Player on this session
+        # before it answers, and that sends SMSG_POWER_UPDATE (0x480) first. Skip
+        # whatever comes before the answer instead of failing on it.
+        for _ in range(CHAR_CREATE_MAX_SKIPPED_PACKETS + 1):
+            opcode, resp = self._recv_packet()
+            if opcode == SMSG_CHAR_CREATE:
+                break
+        else:
+            raise RuntimeError(f"char create failed for {name!r}: no SMSG_CHAR_CREATE "
+                               f"in {CHAR_CREATE_MAX_SKIPPED_PACKETS + 1} packets")
         code = resp[0]
         if code != CHAR_CREATE_SUCCESS:
             raise RuntimeError(f"char create failed for {name!r}: response code {code}")

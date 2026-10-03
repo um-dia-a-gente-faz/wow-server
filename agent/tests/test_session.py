@@ -733,6 +733,20 @@ class CreateCharacterTest(unittest.TestCase):
         self.assertEqual(sess.sock.sent, expected)
         self.assertEqual(code, se.CHAR_CREATE_SUCCESS)
 
+    def test_skips_packets_sent_before_the_answer(self):
+        # Live 2026-10-03: SMSG_POWER_UPDATE (0x480) arrives before SMSG_CHAR_CREATE.
+        power_update = server_packet(0x480, b'\x01\x07\x00' + struct.pack('<I', 100))
+        sess = make_session(power_update * 3
+                            + server_packet(se.SMSG_CHAR_CREATE, bytes([se.CHAR_CREATE_SUCCESS])))
+        self.assertEqual(sess.create_character('Testelf', race=10, class_=2),
+                         se.CHAR_CREATE_SUCCESS)
+
+    def test_raises_when_the_answer_never_comes(self):
+        junk = server_packet(0x480, b'\x00') * (se.CHAR_CREATE_MAX_SKIPPED_PACKETS + 1)
+        sess = make_session(junk + server_packet(se.SMSG_CHAR_CREATE, bytes([se.CHAR_CREATE_SUCCESS])))
+        with self.assertRaises(RuntimeError):
+            sess.create_character('Testelf', race=10, class_=2)
+
     def test_raises_on_non_success_code(self):
         sess = make_session(server_packet(se.SMSG_CHAR_CREATE, bytes([se.CHAR_CREATE_NAME_IN_USE])))
         with self.assertRaises(RuntimeError):
