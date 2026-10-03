@@ -994,6 +994,7 @@ const AgentMind = (() => {
     f.append(el('h3', null, 'Brain'));
     f.append(kv('Status', brain.connected ? 'in game' : 'not connected'));
     f.append(kv('Goal', brain.goal || '(none)'));
+    if (brain.brain) f.append(kv('Brain', brain.brain));
     f.append(kv('Model', brain.model || '(none)'));
     f.append(kv('Cycle', brain.cycle ?? '-'));
     const t = brain.tokens || {};
@@ -1007,7 +1008,9 @@ const AgentMind = (() => {
       const ok = d.result && d.result.ok;
       const r = el('div', 'dec' + (ok ? '' : ' fail'));
       const tc = d.tool_call || {};
-      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}`),
+      // UM-101: which brain picked it, Jev's confidence, and a fallback marker.
+      const who = d.brain ? ` · ${d.brain}${d.confidence != null ? ' ' + Math.round(d.confidence * 100) + '%' : ''}${d.fallback && d.brain === 'llm' ? ' (jev fallback)' : ''}` : '';
+      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}${who}`),
                el('div', 'act', `${tc.name || '(no action)'} ${args(tc.args)}`));
       if (!ok && d.result && d.result.error) r.append(el('div', 'err', d.result.error));
       f.append(r);
