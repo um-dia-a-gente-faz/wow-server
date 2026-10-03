@@ -1,12 +1,17 @@
 ---
-title: "UM-<number>: <brief summary>"
+title: "<ref>: <brief summary>"
 labels: []
 assignees: []
 ---
 
-<!-- PR title must follow: UM-<number>: <brief summary>  (e.g. "UM-123: Add auto-deploy poller") -->
+<!-- PR title must follow: <ref>: <brief summary>
+     <ref> = gh-<n> / #<n> for a GitHub-native issue, UM-<n> for one mirrored from Linear.
+     Examples: "#136: Add the agent runner", "UM-123: Add auto-deploy poller" -->
 
-Issue: UM-<number>
+Issue: <ref>
+
+Closes <ref>
+<!-- or: Refs <ref>  — then say below what is left undone. -->
 
 ## What
 
@@ -31,8 +36,9 @@ Issue: UM-<number>
 
 ## Checklist
 
-- [ ] PR title follows `UM-<number>: <brief summary>`
-- [ ] Linear issue linked above (`Issue: UM-<number>`)
+- [ ] PR title follows `<ref>: <brief summary>`
+- [ ] Issue linked above (`Issue: <ref>`) and the body says `Closes <ref>` (or `Refs <ref>` with what remains) — the board's *Linked pull requests* field reads this
+- [ ] Issue is on the board: *In progress* while it was being written, *Review* now that the PR is open
 - [ ] Tested on the live VM (192.168.1.64)
 - [ ] All Prometheus targets still healthy (`/api/v1/targets`)
 - [ ] Grafana dashboards load without errors

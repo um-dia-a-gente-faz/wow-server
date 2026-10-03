@@ -61,9 +61,17 @@ refactor(wowmap): extract DbcTables into its own module
 
 Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 
-- Has a title of the form `UM-<number>: <brief summary>` (e.g.
+- Has a title of the form `<ref>: <brief summary>`, where `<ref>` identifies the issue
+  it serves: `UM-<number>` for an issue mirrored from Linear, `gh-<number>` or
+  `#<number>` for a GitHub-native one (e.g. `#136: Add the agent runner`,
   `UM-123: Add auto-deploy poller`).
-- Links its Linear issue in the body as `Issue: UM-<number>`.
+- Links its issue in the body: the first line is `Issue: <ref>` and the body contains
+  `Closes <ref>`, which is what makes GitHub link the PR to the issue and fill the
+  project board's *Linked pull requests* field. Use `Refs <ref>` instead when the PR
+  does not finish the issue, and say what remains.
+- Moves the issue on the board (org project *wow-server*, 7): *In progress* when the
+  branch starts, *Review* once the PR is open with CI green. *Done* is the reviewer's,
+  on merge.
 - Is a single logical change.
 - Has CI green (`.github/workflows/ci.yml`: py_compile, unit tests, compose
   and dashboard validation, gitleaks, agent image build) before merging.
@@ -74,11 +82,12 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 ## Branches
 
 - `main` — the single source of truth. Always deployable.
-- Every branch MUST follow `<type>/UM-<number>-<slug>`, where `<type>` is
-  `feature` or `bugfix` and `<number>` is the branch's Linear issue:
-  - `feature/UM-<number>-<slug>` — new functionality (Linear `feat`-type work).
-  - `bugfix/UM-<number>-<slug>` — bug fixes.
-  - Examples: `feature/UM-58-follow-leader-reflex`, `bugfix/UM-48-chat-log-level`.
+- Every branch MUST follow `<type>/<ref>-<slug>`, where `<type>` is `feature` or
+  `bugfix` and `<ref>` is the issue the branch serves — `gh-<number>` for a
+  GitHub-native issue, `UM-<number>` for one mirrored from Linear:
+  - `feature/gh-<number>-<slug>` / `feature/UM-<number>-<slug>` — new functionality.
+  - `bugfix/gh-<number>-<slug>` / `bugfix/UM-<number>-<slug>` — bug fixes.
+  - Examples: `feature/gh-136-agent-runner`, `bugfix/UM-48-chat-log-level`.
 - **Every PR's base is `main`. Never stack a PR on another branch, even a
   genuinely dependent one.** Branch from `main` (or from the tip of your own
   in-progress work if you're queuing several tickets before any of them
