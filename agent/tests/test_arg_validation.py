@@ -44,32 +44,37 @@ class PlayerNameTest(unittest.TestCase):
 
 
 class ActionChecksTest(unittest.TestCase):
+    """The chat actions are no longer registered on main (chat generation was
+    deferred — docs/adr/0001, UM-98), so those tests drive the classes
+    directly. Their validators matter again the moment chat is re-registered.
+    """
+
     def setUp(self):
         self.session = _Sent()
         self.world = per.WorldState()
 
     def test_say_junk_never_sends(self):
-        result = ac.REGISTRY["say"].run(self.session, self.world, message="}")
+        result = ac.SayAction().run(self.session, self.world, message="}")
         self.assertFalse(result.ok)
         self.assertEqual(self.session.packets, [])
 
     def test_say_normal_sends(self):
-        result = ac.REGISTRY["say"].run(self.session, self.world, message="Hello there")
+        result = ac.SayAction().run(self.session, self.world, message="Hello there")
         self.assertTrue(result.ok)
         self.assertEqual(len(self.session.packets), 1)
 
     def test_yell_and_emote_junk_rejected(self):
-        self.assertFalse(ac.REGISTRY["yell"].run(self.session, self.world, message="{}").ok)
-        self.assertFalse(ac.REGISTRY["emote"].run(self.session, self.world, text=": ").ok)
+        self.assertFalse(ac.YellAction().run(self.session, self.world, message="{}").ok)
+        self.assertFalse(ac.EmoteAction().run(self.session, self.world, text=": ").ok)
         self.assertEqual(self.session.packets, [])
 
     def test_whisper_bad_name_or_text_rejected(self):
         self.session.chat_inbox = [{"sender_name": "Rubens"}]
-        err = ac.REGISTRY["whisper"].check(self.session, self.world, target_name="}}dotspans", message="hi")
+        err = ac.WhisperAction().check(self.session, self.world, target_name="}}dotspans", message="hi")
         self.assertIn("not a valid character name", err)
-        err = ac.REGISTRY["whisper"].check(self.session, self.world, target_name="Rubens", message="}")
+        err = ac.WhisperAction().check(self.session, self.world, target_name="Rubens", message="}")
         self.assertIn("not a chat message", err)
-        self.assertIsNone(ac.REGISTRY["whisper"].check(self.session, self.world, target_name="Rubens", message="hi"))
+        self.assertIsNone(ac.WhisperAction().check(self.session, self.world, target_name="Rubens", message="hi"))
 
     def test_invite_bad_name_rejected(self):
         result = ac.REGISTRY["invite_to_group"].run(self.session, self.world, name=": ")
