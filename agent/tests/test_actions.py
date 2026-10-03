@@ -17,6 +17,7 @@ from agent import perception as per
 from agent import trade as tr
 from agent import update_fields as uf
 from agent import update_object as uo
+from agent.reflexes import follow as _follow_reflex  # noqa: F401 -- registers follow/assist
 
 
 def fake_session(race=10, player_guid=0xF130000000000099, player_position=None, class_=0):
@@ -891,9 +892,23 @@ class CloseWindowActionTest(unittest.TestCase):
 
 
 class SocialActionsRegistrationTest(unittest.TestCase):
-    def test_registry_has_all_social_actions(self):
-        for name in ("say", "yell", "whisper", "emote", "invite_to_group", "accept_group"):
+    # UM-98: chat is deferred (docs/adr/0001-jev-in-the-think-loop.md), so
+    # the brain is offered no text-generating chat action; party mechanics
+    # need no free text and stay.
+    CHAT_ACTIONS = ("say", "yell", "whisper", "emote", "channel_say")
+
+    def test_registry_keeps_party_actions(self):
+        for name in ("invite_to_group", "accept_group", "follow", "assist", "stop_following"):
             self.assertIn(name, ac.REGISTRY)
+
+    def test_chat_actions_not_registered(self):
+        for name in self.CHAT_ACTIONS:
+            self.assertNotIn(name, ac.REGISTRY)
+
+    def test_catalog_offers_no_chat_action(self):
+        names = {tool["name"] for tool in ac.catalog()}
+        self.assertFalse(names & set(self.CHAT_ACTIONS))
+        self.assertTrue({"invite_to_group", "accept_group", "follow", "assist"} <= names)
 
 
 class SayActionTest(unittest.TestCase):

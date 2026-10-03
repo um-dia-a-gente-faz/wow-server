@@ -7,6 +7,9 @@ Serves:
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
     POST /api/calibrate       save a per-zone pixel offset
+    GET /api/agents           names of agents with an observability API (UM-50)
+    GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
+                              (healthz, state, perception, brain)
     GET /maps/<file>          extracted zone map images (static)
     GET /healthz              liveness
 
@@ -21,6 +24,8 @@ Env:
     GRID_MAPS_DIR default /server-maps (the worldserver's maps/*.map, for subzones)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
+    AGENT_API_URLS default ""       "Name=http://host:9601,Name2=http://host:9602" — agent
+                                    observability APIs (agent/http_api.py) to proxy
 """
 import json
 import logging
@@ -29,6 +34,8 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
@@ -57,6 +64,47 @@ MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
 CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
+
+
+def parse_agent_urls(spec):
+    """AGENT_API_URLS -> {lowercased name: (name, base url)}. Malformed
+    entries are skipped; only http(s) URLs are accepted."""
+    out = {}
+    for part in (spec or "").split(","):
+        name, sep, url = part.strip().partition("=")
+        name, url = name.strip(), url.strip().rstrip("/")
+        if sep and name and url.startswith(("http://", "https://")):
+            out[name.lower()] = (name, url)
+    return out
+
+
+# UM-50: agents' read-only observability APIs. wowmap proxies them so the page
+# needs no extra ports or CORS; only these GET views are ever forwarded.
+AGENT_APIS = parse_agent_urls(os.environ.get("AGENT_API_URLS", ""))
+AGENT_VIEWS = ("healthz", "state", "perception", "brain")
+AGENT_PROXY_TIMEOUT_S = 3
+MAX_AGENT_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+def fetch_agent_view(name, view, n=None):
+    """GET <agent base>/<view> and return (status, body bytes). Unknown agent
+    or view -> 404; an unreachable agent -> 502. The agent's URL is never
+    echoed back to the browser."""
+    entry = AGENT_APIS.get((name or "").lower())
+    if entry is None or view not in AGENT_VIEWS:
+        return 404, json.dumps({"error": "unknown agent or view"}).encode()
+    url = f"{entry[1]}/{view}"
+    if view == "brain" and n is not None:
+        url += f"?n={int(n)}"
+    try:
+        with urllib.request.urlopen(url, timeout=AGENT_PROXY_TIMEOUT_S) as r:
+            return r.status, r.read(MAX_AGENT_RESPONSE_BYTES)
+    except urllib.error.HTTPError as e:
+        e.close()
+        return 502, json.dumps({"error": f"agent API returned {e.code}"}).encode()
+    except (OSError, ValueError) as e:
+        log.info("agent API %s unreachable: %s", entry[0], e)
+        return 502, json.dumps({"error": "agent API unreachable"}).encode()
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -367,6 +415,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "character not found"})
                 return self._send(200, character)
 
+            if path == "/api/agents":
+                return self._send(200, {"agents": sorted(n for n, _ in AGENT_APIS.values())})
+
+            if path.startswith("/api/agent/"):
+                name, _, view = unquote(path[len("/api/agent/"):]).partition("/")
+                n = qs.get("n", [None])[0]
+                status, body = fetch_agent_view(name, view, int(n) if n and n.isdigit() else None)
+                return self._send(status, body, cache="no-store")
+
             if path == "/api/areas":
                 mid = qs.get("map", [None])[0]
                 return self._send(200, {
@@ -460,9 +517,9 @@ CHAT_HTML = r"""
 CHAT_JS = r"""
 <script>
 const Chat = (() => {
-  const KIND_LABEL = {say: 'diz', yell: 'grita', channel: 'canal', guild: 'guilda',
-    party: 'grupo', raid: 'raide', officer: 'oficial', battleground: 'campo de batalha',
-    whisper: 'sussurro', unknown: '?'};
+  const KIND_LABEL = {say: 'says', yell: 'yells', channel: 'channel', guild: 'guild',
+    party: 'party', raid: 'raid', officer: 'officer', battleground: 'battleground',
+    whisper: 'whisper', unknown: '?'};
   const list = document.getElementById('chat');
   const status = document.getElementById('chat-status');
   let source = null, autoscroll = true, backoffMs = 2000;
@@ -497,11 +554,11 @@ const Chat = (() => {
   function connect() {
     if (source) return;
     status.hidden = false;
-    status.textContent = 'conectando ao chat…';
+    status.textContent = 'connecting to chat…';
     try {
       source = new EventSource(feedUrl());
     } catch (e) {
-      status.textContent = 'chat indisponível: ' + e;
+      status.textContent = 'chat unavailable: ' + e;
       return;
     }
     source.addEventListener('chat', (e) => {
@@ -510,7 +567,7 @@ const Chat = (() => {
     source.onopen = () => { status.hidden = true; backoffMs = 2000; };
     source.onerror = () => {
       status.hidden = false;
-      status.textContent = 'chat desconectado, tentando reconectar…';
+      status.textContent = 'chat disconnected, reconnecting…';
     };
   }
 
@@ -569,10 +626,10 @@ INSPECT_CSS = r"""
 """
 
 INSPECT_HTML = r"""
-<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspecionar personagem">
+<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspect character">
   <div class="drawer-head">
     <div class="dh-main" id="inspect-head"></div>
-    <button id="inspect-close" title="Fechar (Esc)" aria-label="Fechar">✕</button>
+    <button id="inspect-close" title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <div class="drawer-body" id="inspect-body"></div>
   <div class="drawer-foot" id="inspect-status"></div>
@@ -595,16 +652,16 @@ function worldText(x, y, z) {
 }
 
 const Inspect = (() => {
-  const EQUIP_SLOTS = ['Cabeça', 'Pescoço', 'Ombros', 'Camisa', 'Peito', 'Cintura', 'Pernas',
-    'Pés', 'Pulsos', 'Mãos', 'Dedo 1', 'Dedo 2', 'Berloque 1', 'Berloque 2', 'Costas',
-    'Mão principal', 'Mão secundária', 'À distância', 'Tabardo'];
-  const POWER_LABELS = {mana: 'Mana', rage: 'Raiva', focus: 'Foco', energy: 'Energia',
-    happiness: 'Felicidade', rune: 'Runas', runic_power: 'Poder rúnico'};
+  const EQUIP_SLOTS = ['Head', 'Neck', 'Shoulder', 'Shirt', 'Chest', 'Waist', 'Legs',
+    'Feet', 'Wrist', 'Hands', 'Finger 1', 'Finger 2', 'Trinket 1', 'Trinket 2', 'Back',
+    'Main Hand', 'Off Hand', 'Ranged', 'Tabard'];
+  const POWER_LABELS = {mana: 'Mana', rage: 'Rage', focus: 'Focus', energy: 'Energy',
+    happiness: 'Happiness', rune: 'Runes', runic_power: 'Runic Power'};
   // The server keeps rage and runic power in tenths (1000 is shown as 100 in game).
   const POWER_SCALE = {rage: 10, runic_power: 10};
   const CLASS_POWERS = {1: ['rage'], 2: ['mana'], 3: ['mana'], 4: ['energy'], 5: ['mana'],
     6: ['runic_power'], 7: ['mana'], 8: ['mana'], 9: ['mana'], 11: ['mana', 'rage', 'energy']};
-  const nf = new Intl.NumberFormat('pt-BR');
+  const nf = new Intl.NumberFormat('en-US');
   const drawer = document.getElementById('inspect');
   const head = document.getElementById('inspect-head');
   const body = document.getElementById('inspect-body');
@@ -632,7 +689,7 @@ const Inspect = (() => {
     const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
   }
-  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('pt-BR') : 'nunca'; }
+  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('en-US') : 'never'; }
 
   // bag 0 = the character's own slots (TrinityCore Player.h EquipmentSlots, InventorySlots, …);
   // any other bag value is the item_instance guid of the container holding the item.
@@ -646,7 +703,7 @@ const Inspect = (() => {
       if (s < 19) g.equipped.push(it);
       else if (s < 23 || (s >= 67 && s < 74)) {
         const bank = s >= 67;
-        const c = {label: bank ? `Bolsa do banco ${s - 66}` : `Bolsa ${s - 18}`, bag: it, items: []};
+        const c = {label: bank ? `Bank bag ${s - 66}` : `Bag ${s - 18}`, bag: it, items: []};
         (bank ? g.bankBags : g.bags).push(c);
         containers.set(it.item_guid, c);
       }
@@ -665,7 +722,7 @@ const Inspect = (() => {
   }
 
   function itemRows(parent, items, label) {
-    if (!items.length) { parent.append(el('div', 'none', 'vazio')); return; }
+    if (!items.length) { parent.append(el('div', 'none', 'empty')); return; }
     for (const it of items) {
       const r = el('div', 'item');
       r.append(el('span', 'k', label(it)));
@@ -703,7 +760,7 @@ const Inspect = (() => {
     h.append(dot, el('span', 'nm', c.name),
              el('span', 'badge' + (c.online ? ' on' : ''), c.online ? 'online' : 'offline'));
     head.replaceChildren(h,
-      el('div', 'line', `Nível ${c.level} · ${c.race_name} · ${c.class_name}`),
+      el('div', 'line', `Level ${c.level} · ${c.race_name} · ${c.class_name}`),
       el('div', 'line', placeText(c)));
   }
 
@@ -711,15 +768,15 @@ const Inspect = (() => {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(kv('Vida', nf.format(c.health)));
+    f.append(kv('Health', nf.format(c.health)));
     const power = c.power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
       f.append(kv(POWER_LABELS[key], nf.format(Math.floor(power[key] / (POWER_SCALE[key] || 1)))));
     }
-    f.append(kv('Ouro', money(c.money)));
-    f.append(kv('Tempo de jogo', duration(c.totaltime)));
-    f.append(kv('Último logout', when(c.logout_time)));
+    f.append(kv('Gold', money(c.money)));
+    f.append(kv('Played time', duration(c.totaltime)));
+    f.append(kv('Last logout', when(c.logout_time)));
 
     f.append(el('h3', null, 'Position'));
     f.append(kv('Location', placeText(c)));
@@ -728,22 +785,22 @@ const Inspect = (() => {
     f.append(kv('Facing', `${c.orientation.toFixed(2)} rad`));
 
     const inv = groupInventory(c.inventory || []);
-    f.append(el('h3', null, 'Equipado'));
+    f.append(el('h3', null, 'Equipped'));
     itemRows(f, inv.equipped, slotLabel);
-    f.append(el('h3', null, 'Bolsas'));
-    f.append(el('h4', null, 'Mochila'));
+    f.append(el('h3', null, 'Bags'));
+    f.append(el('h4', null, 'Backpack'));
     itemRows(f, inv.backpack, packSlotLabel(23));
     containerList(f, inv.bags);
 
     if (inv.bank.length || inv.bankBags.length) {
-      const d = collapsible('bank', `Banco (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
+      const d = collapsible('bank', `Bank (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
       itemRows(d, inv.bank, packSlotLabel(39));
       containerList(d, inv.bankBags);
       f.append(d);
     }
-    for (const [key, title, items] of [['keyring', 'Chaveiro', inv.keyring],
-                                       ['currency', 'Moedas', inv.currency],
-                                       ['other', 'Outros itens', inv.other]]) {
+    for (const [key, title, items] of [['keyring', 'Keyring', inv.keyring],
+                                       ['currency', 'Currency', inv.currency],
+                                       ['other', 'Other items', inv.other]]) {
       if (!items.length) continue;
       const d = collapsible(key, `${title} (${items.length})`);
       itemRows(d, items, (it) => `bag ${it.bag} / ${it.slot}`);
@@ -751,11 +808,11 @@ const Inspect = (() => {
     }
 
     // Raw ids for now; names need the DBC loader (ROADMAP Phase C).
-    const talents = collapsible('talents', `Talentos (${(c.talents || []).length})`);
+    const talents = collapsible('talents', `Talents (${(c.talents || []).length})`);
     for (const t of c.talents || []) talents.append(kv(`spec ${t.spec + 1}`, `spell ${t.spell}`));
-    const reps = collapsible('reputation', `Reputação (${(c.reputation || []).length})`);
-    for (const r of c.reputation || []) reps.append(kv(`facção ${r.faction}`, nf.format(r.standing)));
-    const achs = collapsible('achievements', `Conquistas (${(c.achievements || []).length})`);
+    const reps = collapsible('reputation', `Reputation (${(c.reputation || []).length})`);
+    for (const r of c.reputation || []) reps.append(kv(`faction ${r.faction}`, nf.format(r.standing)));
+    const achs = collapsible('achievements', `Achievements (${(c.achievements || []).length})`);
     for (const a of c.achievements || []) achs.append(kv(`#${a.achievement}`, when(a.date)));
     f.append(talents, reps, achs);
 
@@ -764,7 +821,7 @@ const Inspect = (() => {
     body.scrollTop = top;
   }
 
-  function stamp() { status.textContent = 'atualizado ' + new Date().toLocaleTimeString(); }
+  function stamp() { status.textContent = 'updated ' + new Date().toLocaleTimeString(); }
 
   function markSelected() {
     for (const e of document.querySelectorAll('.pl')) e.classList.toggle('sel', e.dataset.name === name);
@@ -780,7 +837,7 @@ const Inspect = (() => {
       if (!r.ok) {
         lastJson = null;
         head.replaceChildren(el('h2', null, who));
-        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Personagem não encontrado' : 'erro ' + r.status));
+        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Character not found' : 'error ' + r.status));
         stamp();
         return;
       }
@@ -792,7 +849,7 @@ const Inspect = (() => {
       }
       stamp();
     } catch (e) {
-      if (mine === seq) status.textContent = 'erro: ' + e;
+      if (mine === seq) status.textContent = 'error: ' + e;
     }
   }
 
@@ -801,7 +858,7 @@ const Inspect = (() => {
       name = who;
       lastJson = null;
       head.replaceChildren(el('h2', null, who));
-      body.replaceChildren(el('div', 'empty', 'carregando…'));
+      body.replaceChildren(el('div', 'empty', 'loading…'));
       body.scrollTop = 0;
       status.textContent = '';
     }
@@ -839,7 +896,7 @@ const Inspect = (() => {
     const m = location.hash.match(/^#inspect=(.+)$/);
     if (m) open(decodeURIComponent(m[1]));
   } catch (e) {
-    console.warn('hash de inspeção inválido:', e);
+    console.warn('invalid inspect hash:', e);
   }
 
   return {open, close, refresh, current: () => name};
@@ -847,9 +904,187 @@ const Inspect = (() => {
 </script>
 """
 
+# ---------------------------------------------------------------- page: agent mind
+# UM-50: agents that run an observability API (AGENT_API_URLS) get a distinct
+# ring on the map and an "Agent mind" tab in the inspect drawer, polled through
+# /api/agent/<name>/{brain,perception}. Self-contained: it only reads
+# Inspect.current() and adds its own elements, so the inspect panel is untouched.
+# Everything from the agent is rendered with textContent (chat and names are untrusted).
+AGENT_CSS = r"""
+  .marker.agent .ring { outline:2px dashed #5fd0d8; outline-offset:2px; }
+  .pl.agent .nm::after { content:" · agent"; color:#5fd0d8; font-size:11px; }
+  .mind-tabs { display:flex; gap:6px; padding:8px 16px 0; }
+  .mind-tabs button { flex:1; background:#141824; color:var(--dim); border:1px solid var(--line);
+                      border-radius:7px; padding:5px 4px; font:inherit; cursor:pointer; }
+  .mind-tabs button.on { background:#2b3550; border-color:#46557a; color:var(--fg); }
+  .mind .dec { padding:4px 0; border-bottom:1px solid #20263a; font-size:12.5px; overflow-wrap:anywhere; }
+  .mind .dec .when { color:var(--dim); font-size:11px; }
+  .mind .dec.fail .act { color:#ff8b8b; }
+  .mind .dec .err { color:var(--dim); }
+"""
+
+AGENT_JS = r"""
+<script>
+const AgentMind = (() => {
+  const drawer = document.getElementById('inspect');
+  const charBody = document.getElementById('inspect-body');
+  const status = document.getElementById('inspect-status');
+  const agents = new Map();  // lowercased name -> name
+  let tab = 'character', shownFor = null, seq = 0;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function kv(label, value) {
+    const r = el('div', 'kv');
+    r.append(el('span', 'k', label), el('span', 'v', value));
+    return r;
+  }
+  const isAgent = (n) => !!n && agents.has(n.toLowerCase());
+
+  const tabs = el('div', 'mind-tabs');
+  const bChar = el('button', 'on', 'Character'), bMind = el('button', null, 'Agent mind');
+  tabs.append(bChar, bMind);
+  tabs.hidden = true;
+  const pane = el('div', 'drawer-body mind');
+  pane.hidden = true;
+  drawer.insertBefore(tabs, charBody);
+  drawer.insertBefore(pane, status);
+
+  function setTab(t) {
+    tab = t;
+    bChar.classList.toggle('on', t === 'character');
+    bMind.classList.toggle('on', t === 'mind');
+    charBody.hidden = t === 'mind';
+    pane.hidden = t !== 'mind';
+    if (t === 'mind') refresh();
+  }
+  bChar.onclick = () => setTab('character');
+  bMind.onclick = () => setTab('mind');
+
+  function sync() {
+    const n = Inspect.current();
+    tabs.hidden = !isAgent(n);
+    if (!isAgent(n) && tab === 'mind') setTab('character');
+    if (n !== shownFor) {
+      shownFor = n;
+      seq++;
+      pane.replaceChildren(el('div', 'none', 'loading…'));
+      if (tab === 'mind' && isAgent(n)) refresh();
+    }
+  }
+
+  function args(a) {
+    const s = JSON.stringify(a || {});
+    return s === '{}' ? '' : s.length > 120 ? s.slice(0, 117) + '...' : s;
+  }
+  function unitLine(u) {
+    const bits = [u.name || `${u.type || 'object'} ${u.entry ?? ''}`];
+    if (u.level != null) bits.push(`L${u.level}`);
+    if (u.health_pct != null) bits.push(`${Math.round(u.health_pct * 100)}% hp`);
+    if (u.in_combat) bits.push('in combat');
+    return bits.join(' · ');
+  }
+
+  function render(brain, perc) {
+    const f = document.createDocumentFragment();
+    f.append(el('h3', null, 'Brain'));
+    f.append(kv('Status', brain.connected ? 'in game' : 'not connected'));
+    f.append(kv('Goal', brain.goal || '(none)'));
+    f.append(kv('Model', brain.model || '(none)'));
+    f.append(kv('Cycle', brain.cycle ?? '-'));
+    const t = brain.tokens || {};
+    f.append(kv('Tokens', `${t.prompt_total || 0} in · ${t.completion_total || 0} out · ${t.cycles || 0} cycles`));
+    for (const [k, v] of Object.entries(brain.reflexes || {})) f.append(kv(`Reflex: ${k}`, JSON.stringify(v)));
+
+    f.append(el('h3', null, 'Last decisions'));
+    const decs = (brain.decisions || []).slice().reverse();
+    if (!decs.length) f.append(el('div', 'none', 'no decisions yet'));
+    for (const d of decs) {
+      const ok = d.result && d.result.ok;
+      const r = el('div', 'dec' + (ok ? '' : ' fail'));
+      const tc = d.tool_call || {};
+      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}`),
+               el('div', 'act', `${tc.name || '(no action)'} ${args(tc.args)}`));
+      if (!ok && d.result && d.result.error) r.append(el('div', 'err', d.result.error));
+      f.append(r);
+    }
+
+    f.append(el('h3', null, 'Nearby'));
+    if (perc && perc.connected !== false) {
+      const p = perc.position;
+      if (p) f.append(kv('Position', `map ${p.map} · ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`));
+      for (const [label, key] of [['Units', 'nearby_units'], ['Players', 'nearby_players'], ['Objects', 'nearby_objects']]) {
+        const list = (perc[key] || []).slice(0, 8);
+        f.append(el('h4', null, `${label} (${(perc[key] || []).length})`));
+        if (!list.length) f.append(el('div', 'none', 'none'));
+        for (const u of list) f.append(kv(`${u.distance} yd`, unitLine(u)));
+      }
+      for (const key of ['window', 'trade', 'pending_invite']) {
+        if (perc[key]) f.append(kv(key.replace('_', ' '), JSON.stringify(perc[key]).slice(0, 200)));
+      }
+    } else {
+      f.append(el('div', 'none', 'no perception'));
+    }
+    const top = pane.scrollTop;
+    pane.replaceChildren(f);
+    pane.scrollTop = top;
+  }
+
+  async function getJson(who, view) {
+    const r = await fetch(`/api/agent/${encodeURIComponent(who)}/${view}` + (view === 'brain' ? '?n=5' : ''));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'error ' + r.status);
+    return j;
+  }
+
+  async function refresh() {
+    const who = Inspect.current();
+    if (!isAgent(who) || tab !== 'mind') return;
+    const mine = ++seq;
+    try {
+      const [brain, perc] = await Promise.all([getJson(who, 'brain'), getJson(who, 'perception')]);
+      if (mine !== seq) return;
+      render(brain, perc);
+      status.textContent = 'agent updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      if (mine === seq) pane.replaceChildren(el('div', 'none', 'agent API: ' + e.message));
+    }
+  }
+
+  function tag(root) {
+    for (const e of root.querySelectorAll('.marker, .pl')) e.classList.toggle('agent', isAgent(e.dataset.name));
+  }
+  async function loadAgents() {
+    try {
+      const j = await (await fetch('/api/agents')).json();
+      agents.clear();
+      for (const n of j.agents || []) agents.set(n.toLowerCase(), n);
+      tag(document);
+      sync();
+    } catch (e) { /* no agents configured or wowmap restarting */ }
+  }
+  // Markers and the player list are rebuilt on every tick; tag the new nodes.
+  for (const id of ['markers', 'list']) {
+    const root = document.getElementById(id);
+    if (root) new MutationObserver(() => tag(root)).observe(root, {childList: true});
+  }
+
+  loadAgents();
+  setInterval(loadAgents, 60000);
+  setInterval(sync, 500);
+  setInterval(refresh, 3000);
+  return {refresh, agents: () => [...agents.values()]};
+})();
+</script>
+"""
+
 PAGE = r"""<!doctype html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"><title>WoW — Mapa ao vivo</title>
+<html lang="en"><head>
+<meta charset="utf-8"><title>WoW — Live map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { --bg:#10131a; --panel:#1a1f2b; --line:#2a3244; --fg:#e6e9f0; --dim:#8b93a7; }
@@ -922,37 +1157,38 @@ PAGE = r"""<!doctype html>
   }
 /* @inspect-css */
 /* @chat-css */
+/* @agent-css */
 </style></head>
 <body>
 <aside id="aside">
-  <h1>Mapa ao vivo <button id="collapse" title="Recolher barra lateral" aria-label="Recolher barra lateral">«</button></h1>
-  <div class="sub" id="sub">carregando…</div>
+  <h1>Live map <button id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">«</button></h1>
+  <div class="sub" id="sub">loading…</div>
   <div class="stats">
     <div class="stat"><b id="s-online">–</b><span>online</span></div>
-    <div class="stat"><b id="s-world">–</b><span>no mundo</span></div>
-    <div class="stat"><b id="s-inst">–</b><span>em instância</span></div>
+    <div class="stat"><b id="s-world">–</b><span>in world</span></div>
+    <div class="stat"><b id="s-inst">–</b><span>in instance</span></div>
   </div>
   <div class="side-tabs">
-    <button id="tab-players" class="on">Jogadores</button>
+    <button id="tab-players" class="on">Players</button>
     <button id="tab-chat">Chat</button>
   </div>
   <div class="search-wrap" id="search-wrap">
-    <input id="search" type="text" placeholder="Buscar personagem (/)" autocomplete="off">
+    <input id="search" type="text" placeholder="Search characters (/)" autocomplete="off">
   </div>
   <div class="list" id="list"></div>
   <!-- @chat-html -->
-  <div id="resize-handle" title="Arraste para redimensionar"></div>
+  <div id="resize-handle" title="Drag to resize"></div>
 </aside>
-<button id="expand" hidden title="Mostrar barra lateral" aria-label="Mostrar barra lateral">»</button>
+<button id="expand" hidden title="Show sidebar" aria-label="Show sidebar">»</button>
 <main>
   <div class="bar">
-    <label>Zona <select id="zone"></select></label>
-    <button id="fit">Ajustar</button>
-    <button id="tglTrail" title="Mostra o rastro recente (requer histórico ligado)">Rastro: off</button>
-    <button id="calibrate" title="Clique num ponto de referência e arraste para ajustar os marcadores">Calibrar: off</button>
-    <button id="saveCalibration" hidden>Salvar calibração</button>
+    <label>Zone <select id="zone"></select></label>
+    <button id="fit">Fit</button>
+    <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
+    <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
+    <button id="saveCalibration" hidden>Save calibration</button>
     <div class="tabs">
-      <button id="follow" title="Centraliza no personagem selecionado">Seguir: off</button>
+      <button id="follow" title="Center on the selected character">Follow: off</button>
     </div>
   </div>
   <div class="stage" id="stage">
@@ -965,7 +1201,7 @@ PAGE = r"""<!doctype html>
   </div>
   <footer>
     <span class="pill" id="f-refresh">–</span>
-    <span class="pill" id="f-src">fonte: characters.position_*</span>
+    <span class="pill" id="f-src">source: characters.position_*</span>
     <span class="pill" id="f-note"></span>
   </footer>
 </main>
@@ -973,6 +1209,7 @@ PAGE = r"""<!doctype html>
 <!-- @inspect-js -->
 <script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
 <!-- @chat-js -->
+<!-- @agent-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -995,7 +1232,7 @@ async function loadAreas() {
   for (const a of list) {
     const o = document.createElement('option');
     o.value = a.area_id;
-    o.textContent = a.name + (a.has_image ? '' : ' (sem imagem)');
+    o.textContent = a.name + (a.has_image ? '' : ' (no image)');
     sel.appendChild(o);
   }
   // default to the last-viewed zone, else a zone with players, else first
@@ -1126,19 +1363,19 @@ function place() {
     ref.className = 'calibration-marker';
     ref.style.left = (calibrationReference.x + c.dx) + 'px';
     ref.style.top = (calibrationReference.y + c.dy) + 'px';
-    ref.title = 'Ponto de referência — arraste para ajustar';
+    ref.title = 'Landmark — drag to adjust';
     m.appendChild(ref);
   }
   wrap.classList.toggle('calibrating', calibrating);
-  $('f-note').textContent = `${here.length} nesta zona`;
+  $('f-note').textContent = `${here.length} in this zone`;
 }
 
 function renderList() {
   const l = $('list');
   const query = ($('search').value || '').trim().toLowerCase();
   const filtered = query ? players.filter(p => p.name.toLowerCase().includes(query)) : players;
-  if (!players.length) { l.innerHTML = '<div class="empty">Ninguém online</div>'; return; }
-  if (!filtered.length) { l.innerHTML = '<div class="empty">Nenhum personagem corresponde à busca</div>'; return; }
+  if (!players.length) { l.innerHTML = '<div class="empty">Nobody online</div>'; return; }
+  if (!filtered.length) { l.innerHTML = '<div class="empty">No character matches the search</div>'; return; }
   l.innerHTML = '';
   for (const p of filtered) {
     const e = document.createElement('div');
@@ -1168,29 +1405,29 @@ async function tick() {
     $('s-online').textContent = s.online;
     $('s-world').textContent = s.in_world;
     $('s-inst').textContent = s.in_instance;
-    $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'sem ninguém no mundo';
-    $('f-refresh').textContent = 'atualizado ' + new Date().toLocaleTimeString();
+    $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'nobody in the world';
+    $('f-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
     renderList(); place();
-  } catch (e) { $('sub').textContent = 'erro: ' + e; }
+  } catch (e) { $('sub').textContent = 'error: ' + e; }
   Inspect.refresh();
 }
 
 $('fit').onclick = () => place();
 $('tglTrail').onclick = (e) => {
   showTrail = !showTrail;
-  e.target.textContent = 'Rastro: ' + (showTrail ? 'on' : 'off');
+  e.target.textContent = 'Trail: ' + (showTrail ? 'on' : 'off');
   draw();
 };
 $('follow').onclick = (e) => {
   follow = !follow;
-  e.target.textContent = 'Seguir: ' + (follow ? 'on' : 'off');
+  e.target.textContent = 'Follow: ' + (follow ? 'on' : 'off');
   e.target.classList.toggle('on', follow);
   place();
 };
 $('calibrate').onclick = (e) => {
   calibrating = !calibrating;
   if (calibrating) resetCalibration();
-  e.target.textContent = 'Calibrar: ' + (calibrating ? 'on' : 'off');
+  e.target.textContent = 'Calibrate: ' + (calibrating ? 'on' : 'off');
   e.target.classList.toggle('on', calibrating);
   $('saveCalibration').hidden = !calibrating;
   place();
@@ -1223,10 +1460,10 @@ $('saveCalibration').onclick = async () => {
   const r = await fetch('/api/calibrate', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({area_id: currentArea.area_id, ...draftCalibration})});
   const saved = await r.json();
-  if (!r.ok) { $('f-note').textContent = 'erro ao salvar: ' + saved.error; return; }
+  if (!r.ok) { $('f-note').textContent = 'save failed: ' + saved.error; return; }
   currentArea.calibration = {dx: saved.dx, dy: saved.dy};
   draftCalibration = {...currentArea.calibration};
-  $('f-note').textContent = `calibração salva: ${saved.dx}px, ${saved.dy}px`;
+  $('f-note').textContent = `calibration saved: ${saved.dx}px, ${saved.dy}px`;
   place();
 };
 addEventListener('resize', () => place());
@@ -1335,6 +1572,8 @@ PAGE = (PAGE
         .replace("/* @chat-css */", CHAT_CSS)
         .replace("<!-- @chat-html -->", CHAT_HTML)
         .replace("<!-- @chat-js -->", CHAT_JS)
+        .replace("/* @agent-css */", AGENT_CSS)
+        .replace("<!-- @agent-js -->", AGENT_JS)
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 

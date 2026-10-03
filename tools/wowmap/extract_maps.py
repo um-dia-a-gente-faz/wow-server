@@ -140,7 +140,7 @@ def main():
         print(f"  {name:24s} area {area_id:5d} -> {os.path.basename(out)} ({have}/12 tiles)")
         done += 1
 
-    print(f"\n{done} mapas extraidos, {skipped} sem arte, em {args.out}")
+    print(f"\n{done} maps extracted, {skipped} without art, in {args.out}")
 
 
 if __name__ == "__main__":

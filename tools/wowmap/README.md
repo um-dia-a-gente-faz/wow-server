@@ -39,11 +39,11 @@ WorldMapArea rects do not always line up exactly with the visible map art. The
 map page therefore supports a small, per-zone translation after the normalised
 world-coordinate transform has been converted to image pixels.
 
-1. Select the affected zone and click **Calibrar: off** to enter calibration mode.
+1. Select the affected zone and click **Calibrate: off** to enter calibration mode.
 2. Click a known point on the map (for example, one identified with `.gps` or a
    creature spawn) and drag the reference crosshair until the player markers line up.
    The preview moves the markers immediately.
-3. Click **Salvar calibração**. This writes that zone's `{dx, dy}` pixel delta to
+3. Click **Save calibration**. This writes that zone's `{dx, dy}` pixel delta to
    `calibration.json`; future page loads use it automatically.
 
 The file is intentionally a tiny operator-maintained JSON dictionary keyed by
@@ -60,10 +60,10 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipado**: equipment slots 0-18 by slot name.
-- **Bolsas**: backpack slots 23-38, then each equipped bag's contents.
-- Collapsible **Banco**, **Chaveiro**, **Moedas** (only when non-empty), and
-  **Talentos**, **Reputação**, and **Conquistas** as raw IDs (names come later
+- **Equipped**: equipment slots 0-18 by slot name.
+- **Bags**: backpack slots 23-38, then each equipped bag's contents.
+- Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
+  **Talents**, **Reputation**, and **Achievements** as raw IDs (names come later
   with the shared DBC loader).
 
 The drawer re-fetches the character on the page's 5 s tick. It only re-renders
@@ -110,6 +110,21 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
 - **Shared polling**: one 5 s tick fetches `/api/players` and `/api/summary`
   and also drives the open drawer's refresh — the chat tab doesn't add polling
   since it's push-based (SSE).
+
+## Agent mind (UM-50)
+
+Agents started with `AGENT_HTTP_PORT` serve a read-only API (`agent/http_api.py`).
+Point wowmap at them with `AGENT_API_URLS`, e.g.
+`AGENT_API_URLS=Luaprata=http://192.168.1.80:9601,Farstrider=http://192.168.1.80:9602`.
+
+- `GET /api/agents` lists the configured agent names (never their URLs).
+- `GET /api/agent/<name>/<view>` proxies the agent's `GET /<view>` for
+  `healthz`, `state`, `perception` and `brain` (`?n=` is forwarded for brain).
+  Unknown agent or view: 404; agent down: 502. Nothing else is forwarded.
+- Agent markers get a dashed cyan ring and an "agent" tag in the player list.
+  Inspecting one shows a **Character / Agent mind** tab strip; the Agent mind
+  tab polls brain + perception every 3 s while it is visible (goal, model,
+  tokens, reflexes, last 5 decisions, nearby units/players/objects).
 
 ## Character inspect endpoint
 

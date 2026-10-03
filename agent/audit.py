@@ -156,6 +156,9 @@ class AuditLogger:
         self.max_bytes = max_bytes
         self.agent_dir = os.path.join(self.base_dir, agent_name)
         self._last_cleaned_date = None
+        # UM-50: optional callback(record_dict) run for every record, before
+        # the file write — agent.http_api.AgentObserver.record_decision.
+        self.on_record = None
 
     # ── paths ────────────────────────────────────────────────────────
     def _date_str(self, ts: float) -> str:
@@ -186,6 +189,12 @@ class AuditLogger:
             reflex=reflex or {}, goal=goal,
             snapshot=snapshot if include_full else None,
         )
+
+        if self.on_record is not None:
+            try:
+                self.on_record(rec.to_dict())
+            except Exception:  # an observer must never break auditing
+                log.exception("audit on_record hook failed")
 
         self._maybe_clean_retention(ts)
         os.makedirs(self.agent_dir, exist_ok=True)
