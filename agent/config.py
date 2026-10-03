@@ -64,6 +64,14 @@ class Config:
     llm_api_key: str = field(default_factory=lambda: _env_str("LLM_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", ""))
 
+    # ── Jev decision model (UM-99, ADR 0001) ──────────────────
+    # OpenRouter Decisions API. The key is JEV_API_KEY, else OPENROUTER_API_KEY.
+    jev_base_url: str = field(default_factory=lambda: _env_str(
+        "JEV_BASE_URL", "https://openrouter.ai/api/alpha"))
+    jev_api_key: str = field(default_factory=lambda: _env_str(
+        "JEV_API_KEY") or _env_str("OPENROUTER_API_KEY"))
+    jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL", "typesafe/jev-1.13"))
+
     # ── Logging ───────────────────────────────────────────────
     log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
     verbose_packets: bool = field(default_factory=lambda: _env_bool("VERBOSE_PACKETS", False))
@@ -99,6 +107,9 @@ class Config:
             "think_interval": self.think_interval,
             "run_duration": self.run_duration or "forever",
             "llm_model": self.llm_model or "(unset)",
+            "jev_base_url": self.jev_base_url,
+            "jev_model": self.jev_model,
+            "jev_api_key": "***" if self.jev_api_key else "(unset)",
             "log_level": self.log_level,
             "dump_packets": self.dump_packets_dir or "(off)",
             "audit_dir": self.audit_dir,
