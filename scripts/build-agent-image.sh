@@ -21,13 +21,20 @@ IMAGE=wow-agent:latest
 
 image_created() { docker image inspect -f '{{.Created}}' "$IMAGE" 2>/dev/null; }
 
-# Epoch of the last commit that changes what goes into the image.
-src_epoch() { git log -1 --format=%ct -- agent Dockerfile 2>/dev/null || echo 0; }
+# Epoch of the last commit that changes what goes into the image. Empty when the
+# checkout has no history for those paths (e.g. a shallow clone) — callers must
+# treat that as "cannot determine", not as "fresh".
+src_epoch() { git log -1 --format=%ct -- agent Dockerfile 2>/dev/null || true; }
 
 if [ "${1:-}" = "--check" ]; then
   created=$(image_created) || { echo "STALE: $IMAGE does not exist; run scripts/build-agent-image.sh"; exit 1; }
-  built=$(date -d "$created" +%s)
+  built=$(date -d "$created" +%s 2>/dev/null) || { echo "UNKNOWN: cannot parse docker Created '$created' for $IMAGE."; exit 1; }
   src=$(src_epoch)
+  if [ -z "$src" ]; then
+    echo "UNKNOWN: no git history for agent/ or Dockerfile (shallow clone?); cannot verify $IMAGE freshness."
+    echo "         Run scripts/build-agent-image.sh to be sure."
+    exit 1
+  fi
   if [ "$built" -lt "$src" ]; then
     echo "STALE: $IMAGE built $created, but agent/ or Dockerfile changed $(date -d "@$src" -Iseconds)."
     echo "       Run scripts/build-agent-image.sh, then recreate the agent containers."
