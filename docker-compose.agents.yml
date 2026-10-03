@@ -1,12 +1,23 @@
-# Five independent agent containers — one per character.
-# Each has its own account, password, and character.
+# Agent containers, one per character: 5 for a party, 25 for a raid (UM-63).
+# GENERATED from agents/roster.json by scripts/gen_agents_compose.py. Do not
+# edit the services by hand; edit the roster or the generator and regenerate.
+# Each has its own account and character, all sharing ${AGENT_PASSWORD}.
 # Communication is in-game only (chat, party).
-# Uncomment agents as you need them.
+#
+# Compose profiles:
+#   party  the first 5 agents      docker compose -f docker-compose.agents.yml --profile party up -d
+#   raid   all 25 agents           docker compose -f docker-compose.agents.yml --profile raid up -d
+# Naming a service starts it whatever the profile:
+#   docker compose -f docker-compose.agents.yml up -d agent-luaprata
 
 x-agent: &agent-defaults
   build: .
   image: wow-agent:latest
   restart: unless-stopped
+  # Per-container limits so 25 agents fit on a small VM. An agent is a stdlib
+  # Python process that mostly waits on the network and the LLM.
+  mem_limit: 128m
+  cpus: 0.25
   environment: &env-defaults
     WOW_HOST: 192.168.1.64
     WOW_AUTH_PORT: 3724
@@ -25,7 +36,7 @@ x-agent: &agent-defaults
     LLM_MODEL: ${LLM_MODEL:-}  # one id, or a comma-separated fallback list (UM-94, see .env.example)
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
     # UM-50 read-only observability API (agent/http_api.py). Each service
-    # sets its own AGENT_HTTP_PORT and publishes it (9601-9605). Bound to
+    # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
     # all interfaces inside the container so the published port works; the
     # data (position, perception, chat heard, decisions) is visible to the
     # whole LAN, but no secrets and no write endpoints. Set
@@ -42,6 +53,7 @@ services:
   agent-luaprata:
     <<: *agent-defaults
     container_name: wow-agent-luaprata
+    profiles: [party, raid]
     environment:
       <<: *env-defaults
       WOW_ACCOUNT: AGENT01
@@ -57,6 +69,7 @@ services:
   agent-farstrider:
     <<: *agent-defaults
     container_name: wow-agent-farstrider
+    profiles: [party, raid]
     environment:
       <<: *env-defaults
       WOW_ACCOUNT: AGENT02
@@ -72,6 +85,7 @@ services:
   agent-shadowblade:
     <<: *agent-defaults
     container_name: wow-agent-shadowblade
+    profiles: [party, raid]
     environment:
       <<: *env-defaults
       WOW_ACCOUNT: AGENT03
@@ -87,6 +101,7 @@ services:
   agent-sunspeaker:
     <<: *agent-defaults
     container_name: wow-agent-sunspeaker
+    profiles: [party, raid]
     environment:
       <<: *env-defaults
       WOW_ACCOUNT: AGENT04
@@ -102,6 +117,7 @@ services:
   agent-spellweaver:
     <<: *agent-defaults
     container_name: wow-agent-spellweaver
+    profiles: [party, raid]
     environment:
       <<: *env-defaults
       WOW_ACCOUNT: AGENT05
@@ -113,3 +129,323 @@ services:
     labels:
       wow.agent.name: Spellweaver
       wow.agent.http-port: "9605"
+
+  agent-zanja:
+    <<: *agent-defaults
+    container_name: wow-agent-zanja
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT06
+      WOW_CHARACTER: Zanja
+      AGENT_NAME: Zanja
+      AGENT_HTTP_PORT: 9606
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9606:9606"
+    labels:
+      wow.agent.name: Zanja
+      wow.agent.http-port: "9606"
+
+  agent-jinjin:
+    <<: *agent-defaults
+    container_name: wow-agent-jinjin
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT07
+      WOW_CHARACTER: Jinjin
+      AGENT_NAME: Jinjin
+      AGENT_HTTP_PORT: 9607
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9607:9607"
+    labels:
+      wow.agent.name: Jinjin
+      wow.agent.http-port: "9607"
+
+  agent-gargash:
+    <<: *agent-defaults
+    container_name: wow-agent-gargash
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT08
+      WOW_CHARACTER: Gargash
+      AGENT_NAME: Gargash
+      AGENT_HTTP_PORT: 9608
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9608:9608"
+    labels:
+      wow.agent.name: Gargash
+      wow.agent.http-port: "9608"
+
+  agent-tatoka:
+    <<: *agent-defaults
+    container_name: wow-agent-tatoka
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT09
+      WOW_CHARACTER: Tatoka
+      AGENT_NAME: Tatoka
+      AGENT_HTTP_PORT: 9609
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9609:9609"
+    labels:
+      wow.agent.name: Tatoka
+      wow.agent.http-port: "9609"
+
+  agent-aerdorei:
+    <<: *agent-defaults
+    container_name: wow-agent-aerdorei
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT10
+      WOW_CHARACTER: Aerdorei
+      AGENT_NAME: Aerdorei
+      AGENT_HTTP_PORT: 9610
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9610:9610"
+    labels:
+      wow.agent.name: Aerdorei
+      wow.agent.http-port: "9610"
+
+  agent-senkazi:
+    <<: *agent-defaults
+    container_name: wow-agent-senkazi
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT11
+      WOW_CHARACTER: Senkazi
+      AGENT_NAME: Senkazi
+      AGENT_HTTP_PORT: 9611
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9611:9611"
+    labels:
+      wow.agent.name: Senkazi
+      wow.agent.http-port: "9611"
+
+  agent-mogthar:
+    <<: *agent-defaults
+    container_name: wow-agent-mogthar
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT12
+      WOW_CHARACTER: Mogthar
+      AGENT_NAME: Mogthar
+      AGENT_HTTP_PORT: 9612
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9612:9612"
+    labels:
+      wow.agent.name: Mogthar
+      wow.agent.http-port: "9612"
+
+  agent-urzughak:
+    <<: *agent-defaults
+    container_name: wow-agent-urzughak
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT13
+      WOW_CHARACTER: Urzughak
+      AGENT_NAME: Urzughak
+      AGENT_HTTP_PORT: 9613
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9613:9613"
+    labels:
+      wow.agent.name: Urzughak
+      wow.agent.http-port: "9613"
+
+  agent-garmar:
+    <<: *agent-defaults
+    container_name: wow-agent-garmar
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT14
+      WOW_CHARACTER: Garmar
+      AGENT_NAME: Garmar
+      AGENT_HTTP_PORT: 9614
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9614:9614"
+    labels:
+      wow.agent.name: Garmar
+      wow.agent.http-port: "9614"
+
+  agent-queldorei:
+    <<: *agent-defaults
+    container_name: wow-agent-queldorei
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT15
+      WOW_CHARACTER: Queldorei
+      AGENT_NAME: Queldorei
+      AGENT_HTTP_PORT: 9615
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9615:9615"
+    labels:
+      wow.agent.name: Queldorei
+      wow.agent.http-port: "9615"
+
+  agent-zulrik:
+    <<: *agent-defaults
+    container_name: wow-agent-zulrik
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT16
+      WOW_CHARACTER: Zulrik
+      AGENT_NAME: Zulrik
+      AGENT_HTTP_PORT: 9616
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9616:9616"
+    labels:
+      wow.agent.name: Zulrik
+      wow.agent.http-port: "9616"
+
+  agent-pamarana:
+    <<: *agent-defaults
+    container_name: wow-agent-pamarana
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT17
+      WOW_CHARACTER: Pamarana
+      AGENT_NAME: Pamarana
+      AGENT_HTTP_PORT: 9617
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9617:9617"
+    labels:
+      wow.agent.name: Pamarana
+      wow.agent.http-port: "9617"
+
+  agent-thalwyn:
+    <<: *agent-defaults
+    container_name: wow-agent-thalwyn
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT18
+      WOW_CHARACTER: Thalwyn
+      AGENT_NAME: Thalwyn
+      AGENT_HTTP_PORT: 9618
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9618:9618"
+    labels:
+      wow.agent.name: Thalwyn
+      wow.agent.http-port: "9618"
+
+  agent-thokgor:
+    <<: *agent-defaults
+    container_name: wow-agent-thokgor
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT19
+      WOW_CHARACTER: Thokgor
+      AGENT_NAME: Thokgor
+      AGENT_HTTP_PORT: 9619
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9619:9619"
+    labels:
+      wow.agent.name: Thokgor
+      wow.agent.http-port: "9619"
+
+  agent-lorvaris:
+    <<: *agent-defaults
+    container_name: wow-agent-lorvaris
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT20
+      WOW_CHARACTER: Lorvaris
+      AGENT_NAME: Lorvaris
+      AGENT_HTTP_PORT: 9620
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9620:9620"
+    labels:
+      wow.agent.name: Lorvaris
+      wow.agent.http-port: "9620"
+
+  agent-moggor:
+    <<: *agent-defaults
+    container_name: wow-agent-moggor
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT21
+      WOW_CHARACTER: Moggor
+      AGENT_NAME: Moggor
+      AGENT_HTTP_PORT: 9621
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9621:9621"
+    labels:
+      wow.agent.name: Moggor
+      wow.agent.http-port: "9621"
+
+  agent-velkaelanar:
+    <<: *agent-defaults
+    container_name: wow-agent-velkaelanar
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT22
+      WOW_CHARACTER: Velkaelanar
+      AGENT_NAME: Velkaelanar
+      AGENT_HTTP_PORT: 9622
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9622:9622"
+    labels:
+      wow.agent.name: Velkaelanar
+      wow.agent.http-port: "9622"
+
+  agent-thalvis:
+    <<: *agent-defaults
+    container_name: wow-agent-thalvis
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT23
+      WOW_CHARACTER: Thalvis
+      AGENT_NAME: Thalvis
+      AGENT_HTTP_PORT: 9623
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9623:9623"
+    labels:
+      wow.agent.name: Thalvis
+      wow.agent.http-port: "9623"
+
+  agent-quelthas:
+    <<: *agent-defaults
+    container_name: wow-agent-quelthas
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT24
+      WOW_CHARACTER: Quelthas
+      AGENT_NAME: Quelthas
+      AGENT_HTTP_PORT: 9624
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9624:9624"
+    labels:
+      wow.agent.name: Quelthas
+      wow.agent.http-port: "9624"
+
+  agent-zulari:
+    <<: *agent-defaults
+    container_name: wow-agent-zulari
+    profiles: [raid]
+    environment:
+      <<: *env-defaults
+      WOW_ACCOUNT: AGENT25
+      WOW_CHARACTER: Zulari
+      AGENT_NAME: Zulari
+      AGENT_HTTP_PORT: 9625
+    ports:
+      - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9625:9625"
+    labels:
+      wow.agent.name: Zulari
+      wow.agent.http-port: "9625"
