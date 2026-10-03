@@ -74,6 +74,22 @@ class DbcTables:
         self.display_map = {r[2]: struct.unpack("<i", struct.pack("<I", r[8]))[0]
                             for r in self._wm if r[2] and len(r) > 8}
 
+        # The four continent maps are the WorldMapArea rows with AreaID 0 (Kalimdor,
+        # Azeroth, Expansion01, Northrend), same field layout as a zone; keyed by MapID.
+        # WorldMapContinent.dbc is not needed (docs/MAP_ENGINE_SPIKE.md, section 1).
+        self.continent_rects = {}
+        self.continent_dirs = {}
+        for r in self._wm:
+            if r[2] == 0 and r[3] and r[1] not in self.continent_rects:
+                self.continent_rects[r[1]] = (self._f(r[6]), self._f(r[7]),
+                                              self._f(r[4]), self._f(r[5]))
+                self.continent_dirs[r[1]] = self._s(self._wm_str, r[3])
+        # area_id -> MapID of the zone's first WorldMapArea row (the one the page shows).
+        self.zone_map = {}
+        for r in self._wm:
+            if r[2] and r[3]:
+                self.zone_map.setdefault(r[2], r[1])
+
         self.area_names = {r[0]: self._s(self._area_str, r[11]) for r in self._area
                            if len(r) > 11}
         self.map_names = {r[0]: self._s(self._map_str, r[1]) for r in self._map
@@ -155,11 +171,47 @@ class DbcTables:
         rect = self.rects.get(area_id)
         if not rect:
             return None
+        return self._normalise(rect, world_x, world_y)
+
+    @staticmethod
+    def _normalise(rect, world_x, world_y):
         left, right, top, bottom = rect
         if right == left or top == bottom:
             return None
-        return ((top - world_y) / (top - bottom),
-                (left - world_x) / (left - right))
+        return ((top - world_y) / (top - bottom), (left - world_x) / (left - right))
+
+    def continent_normalised(self, map_id, world_x, world_y):
+        """World coords -> (0..1, 0..1) on that continent's map image, or None when the
+        map is not a continent. The same transform as a zone, with the continent's rect."""
+        rect = self.continent_rects.get(map_id)
+        return self._normalise(rect, world_x, world_y) if rect else None
+
+    def zone_continent(self, area_id):
+        """MapID of the continent the game shows a zone on, or None. Eversong Woods
+        (map 530) is shown on Eastern Kingdoms (0) through its DisplayMapID."""
+        display = self.display_map.get(area_id, -1)
+        map_id = display if display >= 0 else self.zone_map.get(area_id)
+        return map_id if map_id in self.continent_rects else None
+
+    def zone_box(self, area_id):
+        """(x0, y0, x1, y1), a zone's rect as fractions of its continent's map frame, or
+        None. None too for the zones with a DisplayMapID: their rect is in map 530
+        coordinates and does not land on the continent that draws them, and for a rect
+        that falls outside the frame (Hrothgar's Landing)."""
+        rect = self.rects.get(area_id)
+        map_id = self.zone_map.get(area_id)
+        if not rect or self.display_map.get(area_id, -1) >= 0 or map_id not in self.continent_rects:
+            return None
+        left, right, top, bottom = rect
+        a = self.continent_normalised(map_id, left, top)
+        b = self.continent_normalised(map_id, right, bottom)
+        if a is None or b is None:
+            return None
+        box = (min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+        if box[0] < -0.01 or box[1] < -0.01 or box[2] > 1.01 or box[3] > 1.01 \
+                or box[0] == box[2] or box[1] == box[3]:
+            return None
+        return box
 
     def to_pixel(self, area_id, world_x, world_y, width=MAP_FRAME_W, height=MAP_FRAME_H):
         """Pixel on the extracted zone art (top-left origin), or None."""

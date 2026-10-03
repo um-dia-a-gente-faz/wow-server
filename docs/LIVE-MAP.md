@@ -235,7 +235,7 @@ Three earlier calibration attempts, from before the axis fix, are in `tools/wowm
 |---|---|
 | `GET /` | the map HTML page |
 | `GET /api/players` | JSON: online players with name, level, class, race, zone, map, x/y/z, normalized coords |
-| `GET /api/areas?map=<id>` | JSON: zone tiles with rect, name, whether an image exists, subzones (overlay rects + names) |
+| `GET /api/areas?map=<id>` | JSON: zone tiles with rect, name, whether an image exists, subzones (overlay rects + names); plus `continents`, the four continent maps with their zones' boxes (UM-78) |
 | `GET /api/summary` | `{online, in_world, in_instance, zones}` |
 | `GET /maps/<area_id>.png` | the zone map image, fully explored (static, cached 24 h); `<area_id>_base.png` is the unexplored art |
 | `GET /maps/<area_id>.png?explored=<overlay ids>` | the base art with only those overlays revealed (fog of war) |

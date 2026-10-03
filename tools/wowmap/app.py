@@ -7,6 +7,7 @@ Serves:
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available, subzones
+                              and `continents`: the continent maps and their zones' boxes
     POST /api/calibrate       save a per-zone pixel offset
     GET /api/agents           names of agents with an observability API (UM-50)
     GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
@@ -56,7 +57,7 @@ import item_icons
 import fog
 import item_tooltip
 from overlays import load_overlays, subzones
-from transform import DbcTables, GridAreas
+from transform import MAP_FRAME_H, MAP_FRAME_W, DbcTables, GridAreas
 
 # The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -265,6 +266,20 @@ def grid_areas():
     return _grid_areas
 
 
+def continent_position(t, cmap, zone, x, y):
+    """(map id, x, y) of a saved position on its continent's map frame, or None.
+
+    None in an instance, off the frame, and in the zones the game draws on another
+    map's continent (Eversong, Azuremyst, ...): their coordinates are in map 530's
+    space, which that continent's rect does not cover (docs/MAP_ENGINE_SPIKE.md)."""
+    if zone and t.display_map.get(zone, -1) >= 0:
+        return None
+    n = t.continent_normalised(cmap, x, y)
+    if n is None or not (0 <= n[0] <= 1 and 0 <= n[1] <= 1):
+        return None
+    return cmap, n[0], n[1]
+
+
 def position_fields(t, cmap, zone, x, y):
     """Continent, subzone and in-game map coordinates for one saved position."""
     area = grid_areas().area_id(cmap, x, y)
@@ -296,6 +311,7 @@ def fetch_players():
              inst, totaltime, online) in cur.fetchall():
             t = tables()
             n = t.to_normalised(zone, float(x), float(y)) if zone else None
+            c = None if inst else continent_position(t, cmap, zone, float(x), float(y))
             out.append({
                 "name": name, "level": level, "class": cls,
                 "class_name": CLASSES.get(cls, str(cls)),
@@ -308,6 +324,10 @@ def fetch_players():
                 "in_world": not inst,
                 "norm_x": round(n[0], 4) if n else None,
                 "norm_y": round(n[1], 4) if n else None,
+                # The same position on the continent map (UM-78), as /api/areas names it.
+                "continent": f"c{c[0]}" if c else None,
+                "cont_x": round(c[1], 4) if c else None,
+                "cont_y": round(c[2], 4) if c else None,
                 "playtime_seconds": totaltime,
                 **position_fields(t, cmap, zone, float(x), float(y)),
             })
@@ -370,7 +390,7 @@ def fetch_areas(map_id=None):
         if map_id is not None and r[1] != map_id:
             continue
         area_id = r[2]
-        if area_id in seen:
+        if not area_id or area_id in seen:      # area 0 rows are the continents
             continue
         seen.add(area_id)
         rect = t.rects.get(area_id)
@@ -394,6 +414,41 @@ def fetch_areas(map_id=None):
         })
     rows.sort(key=lambda a: a["name"])
     return rows
+
+
+def fetch_continents():
+    """The four continent maps as areas the page can show like a zone (UM-78).
+
+    `zones` are the zones drawn on the continent, each with `box`: its WorldMapArea rect
+    in the continent's map-frame pixels [x, y, w, h], or None when the rect does not
+    fit the continent (see transform.zone_box). Clicking a box opens the zone.
+    """
+    t = tables()
+    out = []
+    for map_id in t.continent_rects:
+        zones = []
+        for area_id in t.rects:
+            if not area_id or t.zone_continent(area_id) != map_id:
+                continue
+            box = t.zone_box(area_id)
+            zones.append({
+                "area_id": area_id, "name": t.zone_name(area_id),
+                "box": box and [round(box[0] * MAP_FRAME_W, 1), round(box[1] * MAP_FRAME_H, 1),
+                                round((box[2] - box[0]) * MAP_FRAME_W, 1),
+                                round((box[3] - box[1]) * MAP_FRAME_H, 1)],
+            })
+        zones.sort(key=lambda z: z["name"])
+        img = f"continent_{map_id}.png"
+        out.append({
+            "area_id": f"c{map_id}", "continent_view": True, "map": map_id,
+            "name": t.map_display_names.get(map_id) or t.map_name(map_id),
+            "map_name": t.map_name(map_id),
+            "image": img, "has_image": os.path.exists(os.path.join(MAPS_DIR, img)),
+            "fog": False, "calibration": {"dx": 0, "dy": 0}, "subzones": [],
+            "zones": zones,
+        })
+    out.sort(key=lambda c: c["name"])
+    return out
 
 
 def zones_in_use():
@@ -645,6 +700,7 @@ class Handler(BaseHTTPRequestHandler):
                 mid = qs.get("map", [None])[0]
                 return self._send(200, {
                     "areas": fetch_areas(int(mid) if mid else None),
+                    "continents": fetch_continents(),
                     "in_use": zones_in_use(),
                 })
 
@@ -1808,6 +1864,8 @@ PAGE = r"""<!doctype html>
   .subzone-label span, #subzone-hover { position:absolute; white-space:nowrap; font-size:12px;
       color:#ffd25e; text-shadow:0 0 3px #000,0 0 3px #000,0 0 2px #000; pointer-events:none; }
   .subzone-label span { transform:translate(-50%,-50%); }
+  .zone-glow { stroke:#ffd166; stroke-width:1.5; stroke-opacity:.9; fill:#ffd166; fill-opacity:.12; }
+  #map.continent { cursor:pointer; }
   #subzone-hover { z-index:1000; transform:translate(12px,-130%); background:rgba(10,13,20,.82);
       color:var(--fg); text-shadow:none; padding:1px 7px; border-radius:5px; border:1px solid var(--line); }
   footer { padding:8px 14px; border-top:1px solid var(--line); color:var(--dim);
@@ -1855,6 +1913,7 @@ PAGE = r"""<!doctype html>
 <main>
   <div class="bar">
     <label>Zone <select id="zone"></select></label>
+    <button id="toContinent" title="Zoom out to the continent map (or right-click the map)">Continent</button>
     <button id="fit" title="Fit the whole zone in view">Fit zone</button>
     <button id="tglLabels" title="Show every subzone name (from WorldMapOverlay.dbc)">Labels: off</button>
     <button id="tglFog" class="on" title="With a character open, colour only the areas that character has explored, as its in-game map does">Fog of war: on</button>
@@ -1914,6 +1973,7 @@ const labelLayer = L.layerGroup().addTo(map);
 const playerLayer = L.layerGroup().addTo(map);
 const markers = new Map();                       // character name -> L.marker
 let art = null, artKey = '', shownZone = null, lastFit = null, calibrationPin = null;
+let continents = [], zoneGlow = null;
 
 // The zoom at which the zone's map frame fills the stage. getBoundsZoom clamps to the
 // current zoom range, which belongs to the previous stage size, so lift it first.
@@ -1956,16 +2016,32 @@ function eventPoint(e) {
 async function loadAreas() {
   const r = await fetch('/api/areas');
   const d = await r.json();
-  areas = d.areas;
+  // Continents are areas too (area_id "c<map>", continent_view): the same stage shows
+  // their art, with their zones' boxes as the hover/label/click targets.
+  continents = (d.continents || []).filter(c => c.has_image);
+  for (const c of continents) {
+    c.subzones = c.zones.filter(z => z.box).map(z => ({
+      name: z.name, area_id: z.area_id, hit: z.box,
+      label: [z.box[0] + z.box[2] / 2, z.box[1] + z.box[3] / 2]}));
+  }
+  areas = continents.concat(d.areas);
   const sel = $('zone');
   const usable = areas.filter(a => a.has_image);
   const list = usable.length ? usable : areas;
   sel.innerHTML = '';
-  for (const a of list) {
-    const o = document.createElement('option');
-    o.value = a.area_id;
-    o.textContent = a.name + (a.has_image ? '' : ' (no image)');
-    sel.appendChild(o);
+  const groups = [['Continents', list.filter(a => a.continent_view)],
+                  ['Zones', list.filter(a => !a.continent_view)]];
+  for (const [label, members] of groups) {
+    if (!members.length) continue;
+    const g = document.createElement('optgroup');
+    g.label = label;
+    for (const a of members) {
+      const o = document.createElement('option');
+      o.value = a.area_id;
+      o.textContent = a.name + (a.has_image ? '' : ' (no image)');
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
   }
   // default to the last-viewed zone, else a zone with players, else first
   const inuse = new Set((d.in_use || []).map(z => z.zone));
@@ -1973,14 +2049,40 @@ async function loadAreas() {
   const pick = list.find(a => String(a.area_id) === String(lastZone))
     || list.find(a => inuse.has(a.area_id)) || list[0];
   if (pick) { sel.value = pick.area_id; currentArea = pick; }
-  sel.onchange = () => {
-    currentArea = list.find(a => String(a.area_id) === sel.value);
-    resetCalibration(); draw();
-    if (currentArea) saveState('lastZone', currentArea.area_id);
-  };
+  sel.onchange = () => showArea(list.find(a => String(a.area_id) === sel.value));
 }
 
 function areaFor(zone) { return areas.find(a => a.area_id === zone); }
+// The continent map a zone is drawn on, if its art is there.
+function continentOf(a) {
+  if (!a || a.continent_view) return null;
+  return continents.find(c => c.zones.some(z => z.area_id === a.area_id)) || null;
+}
+// Switch the stage to a zone or a continent: like the game's world map, left-click a
+// zone on the continent to open it and right-click (or "Continent") to go back out.
+function showArea(a) {
+  if (!a) return;
+  currentArea = a;
+  $('zone').value = a.area_id;
+  saveState('lastZone', a.area_id);
+  $('subzone-hover').hidden = true;
+  resetCalibration();
+  draw();
+}
+// With Follow on, the stage goes where the selected character goes: stay on a
+// continent that still holds it, else open its zone.
+function followAcrossZones() {
+  if (!follow || !selected || calibrating || !currentArea) return;
+  const p = players.find(pl => pl.name === selected);
+  if (!p || !p.in_world) return;
+  if (currentArea.continent_view && p.continent === currentArea.area_id) return;
+  const a = areaFor(p.zone);
+  if (a && a !== currentArea) showArea(a);
+}
+function zoomOut() {
+  const c = continentOf(currentArea);
+  if (c && !calibrating) showArea(c);
+}
 
 // Toggle-only highlighting, safe to call from inside a click handler: rebuilding
 // #list or #markers here (as renderList()/place() do) would detach the very
@@ -1997,14 +2099,11 @@ function selectCharacter(name) {
   selected = name;
   if (!calibrating) Inspect.open(name);
   const p = players.find(pl => pl.name === name);
-  if (p && p.in_world) {
+  const onContinent = currentArea && currentArea.continent_view && p
+    && p.continent === currentArea.area_id;
+  if (p && p.in_world && !onContinent) {
     const a = areaFor(p.zone);
-    if (a && (!currentArea || currentArea.area_id !== a.area_id)) {
-      currentArea = a;
-      $('zone').value = a.area_id;
-      saveState('lastZone', a.area_id);
-      draw();
-    }
+    if (a && (!currentArea || currentArea.area_id !== a.area_id)) showArea(a);
   }
   markListAndMarkersSelected();
 }
@@ -2061,6 +2160,10 @@ function draw() {
     }
   }
   $('map').classList.toggle('grid-fallback', !key);
+  $('map').classList.toggle('continent', !!(a && a.continent_view));
+  $('toContinent').disabled = !continentOf(a);
+  $('calibrate').disabled = !!(a && a.continent_view);   // offsets are per zone
+  if (zoneGlow) { zoneGlow.remove(); zoneGlow = null; }
   const zone = a ? a.area_id : null;
   if (zone !== shownZone) { shownZone = zone; fitZone(); }
   place();
@@ -2110,10 +2213,14 @@ function fillMarker(e, p) {
 
 function place() {
   const a = currentArea;
-  const here = a ? players.filter(p => p.in_world && p.zone === a.area_id && p.norm_x !== null) : [];
+  const onContinent = !!(a && a.continent_view);
+  const here = !a ? [] : onContinent
+    ? players.filter(p => p.in_world && p.continent === a.area_id)
+    : players.filter(p => p.in_world && p.zone === a.area_id && p.norm_x !== null);
   const seen = new Set();
   for (const p of here) {
-    const [x, y] = px(p);
+    // A continent has no calibration: it is one transform for the whole map.
+    const [x, y] = onContinent ? [p.cont_x * MAP_FRAME_W, p.cont_y * MAP_FRAME_H] : px(p);
     seen.add(p.name);
     let m = markers.get(p.name);
     if (!m) {
@@ -2142,7 +2249,7 @@ function place() {
   AgentMind.tag($('map'));
   drawLabels();
   drawTrails();
-  $('f-note').textContent = `${here.length} in this zone`;
+  $('f-note').textContent = `${here.length} ${onContinent ? 'on this continent' : 'in this zone'}`;
 }
 
 // ---- trails: where each character has been since this page was opened. The server
@@ -2192,11 +2299,42 @@ function drawLabels() {
 
 // The smallest rect under the point wins: Ruins of Silvermoon sits inside Silvermoon City.
 function subzoneAt(x, y) {
+  if (currentArea && currentArea.continent_view) return zoneAt(x, y);
   let best = null, bestArea = Infinity;
   for (const sz of (currentArea && currentArea.subzones) || []) {
     const r = sz.hit || sz.art;
     if (!r || x < r[0] || y < r[1] || x > r[0] + r[2] || y > r[1] + r[3]) continue;
     if (r[2] * r[3] < bestArea) { best = sz; bestArea = r[2] * r[3]; }
+  }
+  return best;
+}
+
+// On a continent the zone rects are bounding boxes that overlap a lot (half of
+// Kalimdor is under two or more), so "the box under the pointer" is often the wrong
+// zone. A zone's explored-area rects (its subzones) cover its land much more tightly:
+// prefer the zones whose land is under the pointer, then the nearest box centre.
+// Cities have no subzones and count as land all over their small box.
+function onZoneLand(z, x, y) {
+  const a = areaFor(z.area_id);
+  if (!a || !a.subzones || !a.subzones.length) return true;
+  const [bx, by, bw, bh] = z.hit;
+  const zx = (x - bx) / bw * MAP_FRAME_W, zy = (y - by) / bh * MAP_FRAME_H;
+  return a.subzones.some(sz => {
+    const r = sz.hit || sz.art;
+    return r && zx >= r[0] && zy >= r[1] && zx <= r[0] + r[2] && zy <= r[1] + r[3];
+  });
+}
+function zoneAt(x, y) {
+  const under = currentArea.subzones.filter(z => {
+    const [bx, by, bw, bh] = z.hit;
+    return x >= bx && y >= by && x <= bx + bw && y <= by + bh;
+  });
+  const land = under.filter(z => onZoneLand(z, x, y));
+  let best = null, bestD = Infinity;
+  for (const z of (land.length ? land : under)) {
+    const [bx, by, bw, bh] = z.hit;
+    const d = Math.hypot(x - bx - bw / 2, y - by - bh / 2);
+    if (d < bestD) { best = z; bestD = d; }
   }
   return best;
 }
@@ -2239,6 +2377,7 @@ async function tick() {
     $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'nobody in the world';
     $('f-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
     recordTrails();
+    followAcrossZones();
     renderList(); place();
   } catch (e) { $('sub').textContent = 'error: ' + e; }
   Inspect.refresh();
@@ -2291,6 +2430,14 @@ $('map').addEventListener('pointermove', (e) => {
   const {x, y} = eventPoint(e);
   const sz = subzoneAt(x, y);
   hover.hidden = !sz;
+  if (currentArea.continent_view) {
+    if (zoneGlow) { zoneGlow.remove(); zoneGlow = null; }
+    if (sz) {
+      const [bx, by, bw, bh] = sz.hit;
+      zoneGlow = L.rectangle([ll(bx, by + bh), ll(bx + bw, by)],
+                             {className: 'zone-glow', interactive: false}).addTo(map);
+    }
+  }
   if (!sz) return;
   hover.textContent = sz.name;
   const at = map.mouseEventToContainerPoint(e);
@@ -2326,7 +2473,18 @@ $('saveCalibration').onclick = async () => {
 };
 addEventListener('resize', onResize);
 // A plain click on the map closes the inspect drawer; Leaflet fires no click after a drag.
-map.on('click', () => { if (!calibrating) Inspect.close(); });
+// On a continent it opens the zone under the pointer instead.
+map.on('click', (e) => {
+  if (calibrating) return;
+  if (currentArea && currentArea.continent_view) {
+    const z = zoneAt(e.latlng.lng, -e.latlng.lat);
+    const a = z && areaFor(z.area_id);
+    if (a) return showArea(a);
+  }
+  Inspect.close();
+});
+map.on('contextmenu', zoomOut);                  // also keeps the browser menu away
+$('toContinent').onclick = zoomOut;
 
 // ---- UI state persisted in localStorage: sidebar width/collapse, active tab,
 // last zone (used above in loadAreas) and pinned character. Every access is

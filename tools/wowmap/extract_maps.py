@@ -10,6 +10,9 @@ Writes, per zone (`<area_id>` = WorldMapArea field 2, an AreaTable ID):
 and, per overlay with a texture, `overlays/<overlay_id>.png`: that texture alone,
 which the site stacks on the base art for a character's fog of war (fog.py).
 
+and, per continent (the four WorldMapArea rows with AreaID 0), `continent_<map_id>.png`:
+its art alone, in the same 4x3 tile format. Continents have no overlays.
+
 Non-obvious things this handles:
 
 1. The world map art lives in the **locale** MPQs (`<locale>/locale-XXxx.MPQ`, with
@@ -124,6 +127,16 @@ def zones(dbc_dir, area_dbc="WorldMapArea.dbc"):
     """[(worldmaparea_id, area_id, dir_name), ...] for every named WorldMapArea row."""
     recs, strings = ovl.read_dbc(os.path.join(dbc_dir, area_dbc))
     return [(r[0], r[2], ovl.dbc_string(strings, r[3])) for r in recs if r[3]]
+
+
+def continents(dbc_dir, area_dbc="WorldMapArea.dbc"):
+    """[(map_id, dir_name), ...]: the WorldMapArea rows with AreaID 0, one per map."""
+    recs, strings = ovl.read_dbc(os.path.join(dbc_dir, area_dbc))
+    out = {}
+    for r in recs:
+        if r[2] == 0 and r[3]:
+            out.setdefault(r[1], ovl.dbc_string(strings, r[3]))
+    return sorted(out.items())
 
 
 class ArchiveChain:
@@ -249,8 +262,17 @@ def main():
     overlay_dir = os.path.join(args.out, "overlays")    # fog.OVERLAY_DIR
     os.makedirs(overlay_dir, exist_ok=True)
 
-    # Continents share area 0; as before, the last WorldMapArea row for an area wins.
-    by_area = {area_id: (wma_id, name) for wma_id, area_id, name in rows}
+    # Continents share area 0, so they are written by map id instead (UM-78).
+    for map_id, name in continents(args.dbc, args.area_dbc):
+        if args.only and name.lower() not in want:
+            continue
+        sheet = base_sheet(archive, name)
+        if sheet is not None:
+            sheet.save(os.path.join(args.out, f"continent_{map_id}.png"), "PNG", optimize=True)
+            print(f"  {name:24s} map  {map_id:5d} -> continent_{map_id}.png")
+
+    # The last WorldMapArea row for an area wins, as before.
+    by_area = {area_id: (wma_id, name) for wma_id, area_id, name in rows if area_id}
     print(f"{len(by_area)} areas; MPQs (first wins): {', '.join(os.path.basename(p) for p in paths)}")
     done = skipped = 0
     for area_id, (wma_id, name) in sorted(by_area.items()):
