@@ -5,6 +5,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import item_tooltip  # noqa: E402
 from dbc.names import GameNames  # noqa: E402
 
 CHARACTER_ROW = (
@@ -13,15 +14,27 @@ CHARACTER_ROW = (
     19281, 1789510926, 1,
     4231, 1020, 0, 0, 100, 0, 8, 0,
 )
-# bag, slot, item_guid, itemEntry, name, count, item_template.displayid, Quality
+
+
+def inv_row(*base, flags=0, durability=0, **template):
+    """bag, slot, item_guid, itemEntry, name, count, item_template.displayid, Quality,
+    then item_instance.flags/durability and item_tooltip.COLUMNS (None = no template)."""
+    known = base[7] is not None
+    cols = tuple(template.get(c, 0 if known else None) for c in item_tooltip.COLUMNS)
+    return base + (flags, durability) + cols
+
+
 INVENTORY_ROWS = [
-    (0, 3, 101, 45, "Initiate's Shirt", 1, 36789, 0),
-    (0, 19, 200, 4496, "Small Brown Pouch", 1, 1168, 1),
-    (0, 24, 102, 20482, "Torn Wyrm Scale", 6, 26375, 0),
-    (200, 0, 103, 159, "Refreshing Spring Water", 5, None, None),
+    inv_row(0, 3, 101, 45, "Initiate's Shirt", 1, 36789, 0, **{"class": 4, "InventoryType": 4}),
+    inv_row(0, 19, 200, 4496, "Small Brown Pouch", 1, 1168, 1,
+            **{"class": 1, "InventoryType": 18, "ContainerSlots": 6}),
+    inv_row(0, 24, 102, 20482, "Torn Wyrm Scale", 6, 26375, 0,
+            **{"class": 15, "SellPrice": 4}),
+    inv_row(200, 0, 103, 159, "Refreshing Spring Water", 5, None, None),
 ]
 TALENT_ROWS = [(12663, 0), (20262, 1), (99999, 0)]
-REPUTATION_ROWS = [(911, 500), (72, 0), (4242, -100)]
+# faction, standing, flags (ReputationFlags: 0x01 Visible, 0x10 Peaceful, 0x06 AtWar|Hidden)
+REPUTATION_ROWS = [(911, 500, 17), (72, 0, 6), (4242, -100, 0)]
 ACHIEVEMENT_ROWS = [(6, 1789000000), (7777, 1788000000)]
 
 
@@ -153,9 +166,22 @@ class FetchCharacterTests(unittest.TestCase):
         pouch = next(i for i in inventory if i["slot"] == 19)
         water = next(i for i in inventory if i["bag"] != 0)
         self.assertEqual(water["bag"], pouch["item_guid"])
-        self.assertEqual(inventory[2], {"bag": 0, "slot": 24, "item_guid": 102, "item_entry": 20482,
-                                        "item_name": "Torn Wyrm Scale", "count": 6,
-                                        "quality": 0, "icon": "/icons/26375.png"})
+        self.assertEqual(inventory[2], {
+            "bag": 0, "slot": 24, "item_guid": 102, "item_entry": 20482,
+            "item_name": "Torn Wyrm Scale", "count": 6,
+            "quality": 0, "icon": "/icons/26375.png", "container_slots": 0,
+            "tooltip": [{"left": "Torn Wyrm Scale", "color": "quality"},
+                        {"left": "Sell Price:", "money": 24, "color": "white"}]})
+
+    def test_bag_rows_carry_their_slot_count(self):
+        pouch = next(i for i in self.character["inventory"] if i["slot"] == 19)
+        self.assertEqual(pouch["container_slots"], 6)
+        self.assertIn({"left": "6 Slot Bag", "color": "white"}, pouch["tooltip"])
+
+    def test_item_missing_from_item_template_gets_a_name_only_tooltip(self):
+        water = self.character["inventory"][3]
+        self.assertEqual(water["tooltip"], [{"left": "Refreshing Spring Water", "color": "quality"}])
+        self.assertEqual(water["container_slots"], 0)
 
     def test_inventory_icon_and_quality(self):
         inventory = self.character["inventory"]
@@ -175,12 +201,20 @@ class FetchCharacterTests(unittest.TestCase):
 
     def test_reputation_adds_race_base_and_tier(self):
         reps = {r["faction"]: r for r in self.character["reputation"]}
-        self.assertEqual(reps[911], {"faction": 911, "standing": 500,
+        self.assertEqual(reps[911], {"faction": 911, "standing": 500, "flags": 17,
                                      "faction_name": "Silvermoon City",
                                      "value": 4500, "tier": "Friendly"})
         self.assertEqual((reps[72]["value"], reps[72]["tier"]), (-42000, "Hated"))
-        self.assertEqual(reps[4242], {"faction": 4242, "standing": -100, "faction_name": None,
+        self.assertEqual(reps[4242], {"faction": 4242, "standing": -100, "flags": 0,
+                                      "faction_name": None,
                                       "value": -100, "tier": "Unfriendly"})
+
+    def test_reputation_panel_lists_only_visible_factions(self):
+        # 911 is visible; Stormwind (hidden) and the unflagged unknown id are not.
+        self.assertEqual(self.character["reputation_panel"], [
+            {"faction": 911, "name": "Silvermoon City", "header": False,
+             "rep": {"value": 4500, "rank": "Friendly", "rank_id": 5, "bar_value": 1500,
+                     "bar_max": 6000, "at_war": False}}])
 
     def test_achievements_carry_name_and_points(self):
         achs = self.character["achievements"]
@@ -242,6 +276,14 @@ class PageTests(unittest.TestCase):
         self.assertIn("function meter(", app.PAGE)
         self.assertIn("c.max_health", app.PAGE)
         self.assertIn("c.max_power", app.PAGE)
+
+    def test_reputation_section_draws_the_panel_with_game_colours(self):
+        self.assertIn("reputationSection(c.reputation_panel", app.PAGE)
+        # FACTION_BAR_COLORS (FrameXML ReputationFrame.lua): Neutral 0.9/0.7/0,
+        # Friendly..Exalted 0/0.6/0.1, Hated/Hostile 0.8/0.3/0.22, Unfriendly 0.75/0.27/0.
+        for colour in ("4: '#e6b300'", "5: '#00991a'", "1: '#cc4d38'", "3: '#bf4500'"):
+            self.assertIn(colour, app.PAGE)
+        self.assertNotIn("`faction ${", app.PAGE)  # no raw faction ids in the UI
 
     def test_position_text_helpers_are_shared_with_the_page(self):
         for name in ("function placeText", "function mapCoordsText", "function worldText"):

@@ -54,6 +54,7 @@ import pymysql
 import activity as activity_feed
 import item_icons
 import fog
+import item_tooltip
 from overlays import load_overlays, subzones
 from transform import DbcTables, GridAreas
 
@@ -433,7 +434,8 @@ def fetch_character(name):
         inventory = best_effort(cur, """
             SELECT ci.bag, ci.slot, ci.item, ii.itemEntry,
                    COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count,
-                   it.displayid, it.Quality
+                   it.displayid, it.Quality, ii.flags, ii.durability, """
+            + ", ".join(f"it.`{c}`" for c in item_tooltip.COLUMNS) + """
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
@@ -447,7 +449,7 @@ def fetch_character(name):
             ORDER BY talentGroup, spell
         """, (guid,), "talents")
         reputation = best_effort(cur, """
-            SELECT faction, standing
+            SELECT faction, standing, flags
             FROM characters.character_reputation
             WHERE guid = %s
             ORDER BY faction
@@ -499,29 +501,42 @@ def fetch_character(name):
         # hasn't been saved since it was turned on).
         "max_health": stats[0][0] if stats else None,
         "max_power": dict(zip(POWER_NAMES, stats[0][1:])) if stats else None,
-        "inventory": [
-            {"bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
-             "item_name": item_name, "count": count,
-             # Quality is item_template.Quality (0 poor .. 7 heirloom), None if unknown.
-             "quality": quality, "icon": icon_url(display_id)}
-            for bag, slot, item_guid, item_entry, item_name, count, display_id, quality
-            in inventory
-        ],
+        "inventory": [inventory_item(row) for row in inventory],
         # Names from the client DBCs (tools/dbc/names.py); null when an id is unknown.
         "talents": [
             {"spell": spell, "spec": spec, **_talent_names(n, spell)}
             for spell, spec in talents
         ],
         "reputation": [
-            {"faction": faction, "standing": standing,
+            {"faction": faction, "standing": standing, "flags": flags,
              **n.reputation(faction, standing, race, cls)}
-            for faction, standing in reputation
+            for faction, standing, flags in reputation
         ],
+        # The in-game reputation window: visible factions only, grouped and ordered
+        # by the Faction.dbc parent tree (GameNames.reputation_panel).
+        "reputation_panel": n.reputation_panel(reputation, race, cls),
         "achievements": [
             {"achievement": achievement, "date": date,
              **(n.achievement(achievement) or {"name": None, "points": None})}
             for achievement, date in achievements
         ],
+    }
+
+
+def inventory_item(row):
+    """One inventory row: (bag, slot, item guid, entry, name, count, displayid, Quality,
+    item_instance.flags, item_instance.durability, *item_tooltip.COLUMNS)."""
+    (bag, slot, item_guid, item_entry, item_name, count, display_id, quality,
+     inst_flags, durability) = row[:10]
+    template = dict(zip(item_tooltip.COLUMNS, row[10:]))
+    return {
+        "bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
+        "item_name": item_name, "count": count,
+        # Quality is item_template.Quality (0 poor .. 7 heirloom), None if unknown.
+        "quality": quality, "icon": icon_url(display_id),
+        # A bag's size (item_template.ContainerSlots), for drawing its grid; 0 otherwise.
+        "container_slots": template.get("ContainerSlots") or 0,
+        "tooltip": item_tooltip.tooltip(item_name, template, count, inst_flags, durability),
     }
 
 
@@ -823,8 +838,63 @@ INSPECT_CSS = r"""
                       line-height:16px; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
+  /* UM-80: paper doll, bag bar and bag grids (38 px squares, game layout). */
+  .drawer .ico.empty { display:flex; align-items:center; justify-content:center;
+                       border-color:#2a3047; background:#0d111b; }
+  .drawer .ico .lbl { font-size:7.5px; line-height:1.1; text-align:center; color:#5b647e; }
+  .drawer .ico[tabindex] { cursor:default; }
+  .drawer .ico[tabindex]:focus-visible { outline:2px solid #ffd100; outline-offset:1px; }
+  .drawer .doll { display:grid; grid-template-columns:36px 1fr 36px; gap:4px 8px; }
+  .drawer .doll .col { display:flex; flex-direction:column; gap:4px; }
+  .drawer .doll .mid { display:flex; flex-direction:column; justify-content:center; align-items:center;
+                       gap:2px; border:1px solid #20263a; border-radius:6px; font-size:12px;
+                       color:var(--dim); text-align:center; min-width:0;
+                       background:radial-gradient(ellipse at center, #1a2033 0%, #0d111b 75%); }
+  .drawer .doll .mid .nm { font-size:14px; font-weight:600; overflow-wrap:anywhere; }
+  .drawer .doll .bottom { grid-column:1 / -1; display:flex; justify-content:center; gap:4px; }
+  .drawer .bag-bar { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
+  .drawer .bags { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }
+  .drawer .bag { border:1px solid #2a3047; border-radius:6px; padding:5px 6px 6px; background:#10141f;
+                 max-width:100%; }
+  .drawer .bag-title { font-size:11px; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis;
+                       white-space:nowrap; max-width:166px; }
+  .drawer .bag-grid { display:grid; gap:2px; max-width:100%; }
+  .drawer .bag-grid .ico { width:36px; height:36px; }
+  .item-tip { position:fixed; z-index:50; max-width:min(320px, calc(100vw - 12px)); pointer-events:none;
+              background:rgba(9,12,30,.95); border:1px solid #8a8fa8; border-radius:5px;
+              padding:6px 9px; font-size:12.5px; line-height:1.35;
+              box-shadow:0 4px 14px rgba(0,0,0,.6); }
+  .item-tip .tl { display:flex; gap:18px; justify-content:space-between; }
+  .item-tip .tl:first-child { font-size:14px; }
+  .item-tip .r { white-space:nowrap; }
+  .item-tip .coin { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:2px;
+                    vertical-align:-1px; }
+  .item-tip .coin.g { background:#e8c447; }
+  .item-tip .coin.s { background:#c7c7cf; }
+  .item-tip .coin.c { background:#c06a35; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
                     text-transform:uppercase; letter-spacing:.6px; }
+  /* Reputation window: nested headers, one bar per faction (name | rank bar | numbers). */
+  .drawer details.rep-group { margin:0; border:0; border-radius:0; padding:0 0 0 12px; }
+  .drawer details.rep-group[open] { padding-bottom:0; }
+  .drawer details.rep-group > summary { display:flex; align-items:center; gap:4px; margin-left:-12px;
+                                        padding:3px 0; list-style:none; text-transform:none;
+                                        letter-spacing:0; font-size:13px; color:var(--fg); }
+  .drawer details.rep-group > summary::-webkit-details-marker { display:none; }
+  .drawer details.rep-group > summary::before { content:'\25B8'; flex:0 0 8px; color:var(--dim); }
+  .drawer details.rep-group[open] > summary::before { content:'\25BE'; }
+  .drawer .rep-head { font-weight:600; }
+  .drawer .rep { display:flex; gap:6px; align-items:center; padding:2px 0; font-size:13px; }
+  .drawer summary > .rep { flex:1; min-width:0; padding:0; }
+  .drawer .rep-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drawer .rep-bar { position:relative; flex:0 0 72px; height:14px; background:#20263a;
+                     border-radius:3px; overflow:hidden; }
+  .drawer .rep-bar.war { outline:1px solid #e0402f; }
+  .drawer .rep-bar .fill { position:absolute; inset:0 auto 0 0; }
+  .drawer .rep-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
+                          line-height:14px; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
+  .drawer .rep-num { flex:0 0 72px; text-align:right; color:var(--dim); font-size:12px;
+                     font-variant-numeric:tabular-nums; }
 """
 
 INSPECT_HTML = r"""
@@ -852,6 +922,85 @@ function mapCoordsText(p) {
 function worldText(x, y, z) {
   return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
 }
+
+// In-game style item tooltip (UM-80). The API sends ready-made lines
+// (item_tooltip.py); this only draws them, with textContent, and keeps the box on screen.
+const ItemTip = (() => {
+  const TIP_COLORS = {white: '#ffffff', green: '#1eff00', yellow: '#ffd100', gray: '#9d9d9d',
+    red: '#ff2020'};
+  const QUALITY = ['#9d9d9d', '#ffffff', '#1eff00', '#0070dd', '#a335ee', '#ff8000', '#e6cc80', '#e6cc80'];
+  const tip = document.createElement('div');
+  tip.className = 'item-tip';
+  tip.hidden = true;
+  tip.setAttribute('role', 'tooltip');
+  document.body.append(tip);
+  let anchor = null;
+
+  function span(cls, text) {
+    const e = document.createElement('span');
+    if (cls) e.className = cls;
+    e.textContent = String(text);
+    return e;
+  }
+  // Copper as the game's coins: only the non-zero denominations.
+  function coins(copper) {
+    const out = document.createElement('span');
+    const parts = [[Math.floor(copper / 10000), 'g'], [Math.floor(copper / 100) % 100, 's'], [copper % 100, 'c']];
+    for (const [n, c] of parts) if (n) out.append(span(null, n), span('coin ' + c, ''), ' ');
+    return out;
+  }
+  function render(it) {
+    const lines = it.tooltip && it.tooltip.length ? it.tooltip : [{left: it.item_name, color: 'quality'}];
+    tip.replaceChildren();
+    for (const l of lines) {
+      const row = document.createElement('div');
+      row.className = 'tl';
+      row.style.color = l.color === 'quality' ? (QUALITY[it.quality] || '#fff') : (TIP_COLORS[l.color] || '#fff');
+      const left = span('l', l.left);
+      if (l.money !== undefined) left.append(' ', coins(Number(l.money) || 0));
+      row.append(left);
+      if (l.right) row.append(span('r', l.right));
+      tip.append(row);
+    }
+  }
+  // Beside the square (left first: the drawer sits on the right), else below or
+  // above it; always clamped to the viewport so narrow screens keep it visible.
+  function place() {
+    const r = anchor.getBoundingClientRect();
+    const w = tip.offsetWidth, h = tip.offsetHeight, vw = innerWidth, vh = innerHeight, m = 6;
+    let x = r.left - w - m, y = r.top;
+    if (x < m) x = r.right + m;
+    if (x + w > vw - m) {
+      x = Math.max(m, Math.min(r.left, vw - w - m));
+      y = r.bottom + m;
+      if (y + h > vh - m) y = r.top - h - m;
+    }
+    y = Math.max(m, Math.min(y, vh - h - m));
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }
+  function show(box, it) {
+    anchor = box;
+    render(it);
+    tip.hidden = false;
+    place();
+  }
+  function hide() { tip.hidden = true; anchor = null; }
+  function attach(box, it) {
+    box.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') show(box, it); });
+    box.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse' && anchor === box) hide(); });
+    box.addEventListener('focus', () => show(box, it));
+    box.addEventListener('blur', () => { if (anchor === box) hide(); });
+    // Touch: a tap shows it; tapping anywhere else (or scrolling) hides it.
+    box.addEventListener('click', () => show(box, it));
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (anchor && !anchor.contains(e.target)) hide();
+  });
+  addEventListener('scroll', () => { if (anchor) hide(); }, true);
+  addEventListener('resize', () => { if (anchor) hide(); });
+  return {attach, hide};
+})();
 
 const Inspect = (() => {
   const EQUIP_SLOTS = ['Head', 'Neck', 'Shoulder', 'Shirt', 'Chest', 'Waist', 'Legs',
@@ -924,7 +1073,7 @@ const Inspect = (() => {
       if (s < 19) g.equipped.push(it);
       else if (s < 23 || (s >= 67 && s < 74)) {
         const bank = s >= 67;
-        const c = {label: bank ? `Bank bag ${s - 66}` : `Bag ${s - 18}`, bag: it, items: []};
+        const c = {slot: s, bag: it, items: []};
         (bank ? g.bankBags : g.bags).push(c);
         containers.set(it.item_guid, c);
       }
@@ -949,7 +1098,9 @@ const Inspect = (() => {
   function itemIcon(it) {
     const q = Q_COLORS[it.quality];
     const box = el('span', 'ico');
-    box.title = it.count > 1 ? `${it.item_name} ×${it.count}` : it.item_name;
+    box.setAttribute('aria-label', it.count > 1 ? `${it.item_name} ×${it.count}` : it.item_name);
+    box.tabIndex = 0;
+    ItemTip.attach(box, it);
     if (q) box.style.borderColor = q;
     if (it.icon) {
       const img = el('img');
@@ -975,9 +1126,6 @@ const Inspect = (() => {
       parent.append(r);
     }
   }
-  const slotLabel = (it) => EQUIP_SLOTS[it.slot] || `slot ${it.slot}`;
-  const bagSlotLabel = (it) => `slot ${it.slot + 1}`;
-  const packSlotLabel = (first) => (it) => `slot ${it.slot - first + 1}`;
 
   function collapsible(key, title) {
     const d = el('details');
@@ -989,11 +1137,62 @@ const Inspect = (() => {
     });
     return d;
   }
-  function containerList(parent, containers) {
-    for (const c of containers) {
-      parent.append(el('h4', null, `${c.label}: ${c.bag.item_name}`));
-      itemRows(parent, c.items, bagSlotLabel);
+
+  // ---- In-game style equipment and bags (UM-80) ----------------------------------
+  // Paper doll: the character window's slot columns (EquipmentSlots ids, Player.h).
+  const DOLL_LEFT = [0, 1, 2, 14, 4, 3, 18, 8];      // head neck shoulder back chest shirt tabard wrist
+  const DOLL_RIGHT = [9, 5, 6, 7, 10, 11, 12, 13];   // hands waist legs feet finger×2 trinket×2
+  const DOLL_BOTTOM = [15, 16, 17];                  // main hand, off hand, ranged
+  // An empty slot: a dimmed square named after the slot, like the game's slot art.
+  function emptySlot(label) {
+    const e = el('span', 'ico empty');
+    if (label) { e.title = label; e.append(el('span', 'lbl', label)); }
+    return e;
+  }
+  function paperDoll(equipped, c) {
+    const by = new Map(equipped.map((it) => [it.slot, it]));
+    const sq = (s) => by.has(s) ? itemIcon(by.get(s)) : emptySlot(EQUIP_SLOTS[s]);
+    const doll = el('div', 'doll');
+    const left = el('div', 'col'), right = el('div', 'col'), bottom = el('div', 'bottom');
+    left.append(...DOLL_LEFT.map(sq));
+    right.append(...DOLL_RIGHT.map(sq));
+    bottom.append(...DOLL_BOTTOM.map(sq));
+    const mid = el('div', 'mid');
+    mid.append(el('div', 'nm', c.name), el('div', null, `Level ${c.level} ${c.race_name}`),
+               el('div', null, c.class_name));
+    mid.firstChild.style.color = c.class_color;
+    doll.append(left, mid, right, bottom);
+    return doll;
+  }
+  // One bag window: `size` squares, `cols` wide. Like the game's container frames
+  // the slots fill from the bottom right, so a partial row sits top right.
+  function bagGrid(title, quality, size, items, first, cols) {
+    const box = el('div', 'bag');
+    const h = el('div', 'bag-title', title);
+    if (Q_COLORS[quality]) h.style.color = Q_COLORS[quality];
+    const grid = el('div', 'bag-grid');
+    grid.style.gridTemplateColumns = `repeat(${cols}, 36px)`;
+    const by = new Map(items.map((it) => [it.slot - first, it]));
+    const n = Math.max(size, ...[...by.keys()].map((k) => k + 1), 0);
+    for (let i = 0; i < (cols - n % cols) % cols; i++) grid.append(el('span', 'gap'));
+    for (let i = 0; i < n; i++) grid.append(by.has(i) ? itemIcon(by.get(i)) : emptySlot());
+    box.append(h, grid);
+    return box;
+  }
+  // The bag bar (the four bag slots, InventorySlots 19-22, or bank bags 67-73)
+  // followed by a grid per equipped bag.
+  function bagWindows(parent, packTitle, pack, packSize, packFirst, packCols, bags, firstBagSlot, nBags) {
+    const bySlot = new Map(bags.map((b) => [b.slot, b]));
+    const bar = el('div', 'bag-bar');
+    for (let s = firstBagSlot; s < firstBagSlot + nBags; s++) {
+      bar.append(bySlot.has(s) ? itemIcon(bySlot.get(s).bag) : emptySlot('Bag'));
     }
+    const wrap = el('div', 'bags');
+    wrap.append(bagGrid(packTitle, 1, packSize, pack, packFirst, packCols));
+    for (const b of [...bags].sort((x, y) => x.slot - y.slot)) {
+      wrap.append(bagGrid(b.bag.item_name, b.bag.quality, b.bag.container_slots, b.items, 0, 4));
+    }
+    parent.append(bar, wrap);
   }
 
   function renderHead(c) {
@@ -1025,12 +1224,45 @@ const Inspect = (() => {
     }
     return d;
   }
-  function reputationSection(list) {
-    const d = collapsible('reputation', `Reputation (${list.length})`);
-    const value = (r) => r.value ?? r.standing;
-    for (const r of [...list].sort((a, b) => value(b) - value(a))) {
-      d.append(kv(r.faction_name || `faction ${r.faction}`, `${r.tier || ''} · ${nf.format(value(r))}`));
+  // The in-game reputation window (GameNames.reputation_panel): headers from the
+  // Faction.dbc tree, only factions the character has discovered. Bar colours are
+  // FACTION_BAR_COLORS from the 3.3.5 FrameXML ReputationFrame.lua, keyed by rank_id.
+  const REP_COLORS = {1: '#cc4d38', 2: '#cc4d38', 3: '#bf4500', 4: '#e6b300',
+    5: '#00991a', 6: '#00991a', 7: '#00991a', 8: '#00991a'};
+  const closedReps = new Set();
+  function repRow(name, r) {
+    const row = el('div', 'rep');
+    row.append(el('span', 'rep-name', name));
+    const b = el('span', 'rep-bar' + (r.at_war ? ' war' : ''));
+    const fill = el('span', 'fill');
+    fill.style.width = `${Math.max(0, Math.min(100, r.bar_value / r.bar_max * 100))}%`;
+    fill.style.background = REP_COLORS[r.rank_id] || '#888';
+    b.append(fill, el('span', 'txt', r.rank));
+    if (r.at_war) b.title = 'At war';
+    row.append(b, el('span', 'rep-num', `${r.bar_value}/${r.bar_max}`));  // as in game: 562/3000
+    return row;
+  }
+  function repNodes(parent, nodes) {
+    for (const n of nodes) {
+      if (!n.header) { parent.append(repRow(n.name, n.rep)); continue; }
+      const key = String(n.faction ?? n.name);
+      const d = el('details', 'rep-group');
+      d.open = !closedReps.has(key);
+      const s = el('summary');
+      s.append(n.rep ? repRow(n.name, n.rep) : el('span', 'rep-head', n.name));
+      d.append(s);
+      d.addEventListener('toggle', () => { d.open ? closedReps.delete(key) : closedReps.add(key); });
+      repNodes(d, n.children || []);
+      parent.append(d);
     }
+  }
+  function countReps(nodes) {
+    return nodes.reduce((k, n) => k + (n.rep ? 1 : 0) + countReps(n.children || []), 0);
+  }
+  function reputationSection(panel) {
+    const d = collapsible('reputation', `Reputation (${countReps(panel)})`);
+    if (!panel.length) d.append(el('div', 'none', 'No factions discovered'));
+    repNodes(d, panel);
     return d;
   }
   function achievementSection(list) {
@@ -1068,16 +1300,15 @@ const Inspect = (() => {
 
     const inv = groupInventory(c.inventory || []);
     f.append(el('h3', null, 'Equipped'));
-    itemRows(f, inv.equipped, slotLabel);
+    f.append(paperDoll(inv.equipped, c));
     f.append(el('h3', null, 'Bags'));
-    f.append(el('h4', null, 'Backpack'));
-    itemRows(f, inv.backpack, packSlotLabel(23));
-    containerList(f, inv.bags);
+    // Backpack: InventoryPackSlots 23-38; bags in InventorySlots 19-22 (Player.h).
+    bagWindows(f, 'Backpack', inv.backpack, 16, 23, 4, inv.bags, 19, 4);
 
     if (inv.bank.length || inv.bankBags.length) {
       const d = collapsible('bank', `Bank (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
-      itemRows(d, inv.bank, packSlotLabel(39));
-      containerList(d, inv.bankBags);
+      // Bank: BankItemSlots 39-66 (28 squares, 7 wide in game); bank bags in 67-73.
+      bagWindows(d, 'Bank', inv.bank, 28, 39, 7, inv.bankBags, 67, 7);
       f.append(d);
     }
     for (const [key, title, items] of [['keyring', 'Keyring', inv.keyring],
@@ -1089,10 +1320,11 @@ const Inspect = (() => {
       f.append(d);
     }
 
-    f.append(talentSection(c.talents || []), reputationSection(c.reputation || []),
+    f.append(talentSection(c.talents || []), reputationSection(c.reputation_panel || []),
              achievementSection(c.achievements || []));
 
     const top = body.scrollTop;
+    ItemTip.hide();
     body.replaceChildren(f);
     body.scrollTop = top;
   }

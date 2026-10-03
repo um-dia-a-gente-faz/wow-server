@@ -1,0 +1,179 @@
+{
+  "agents": [
+    {
+      "account": "AGENT01",
+      "character": "Luaprata",
+      "race": null,
+      "class": null,
+      "gender": null
+    },
+    {
+      "account": "AGENT02",
+      "character": "Farstrider",
+      "race": null,
+      "class": null,
+      "gender": null
+    },
+    {
+      "account": "AGENT03",
+      "character": "Shadowblade",
+      "race": null,
+      "class": null,
+      "gender": null
+    },
+    {
+      "account": "AGENT04",
+      "character": "Sunspeaker",
+      "race": null,
+      "class": null,
+      "gender": null
+    },
+    {
+      "account": "AGENT05",
+      "character": "Spellweaver",
+      "race": null,
+      "class": null,
+      "gender": null
+    },
+    {
+      "account": "AGENT06",
+      "character": "Zanja",
+      "race": 8,
+      "class": 5,
+      "gender": 0
+    },
+    {
+      "account": "AGENT07",
+      "character": "Jinjin",
+      "race": 8,
+      "class": 8,
+      "gender": 1
+    },
+    {
+      "account": "AGENT08",
+      "character": "Gargash",
+      "race": 2,
+      "class": 4,
+      "gender": 0
+    },
+    {
+      "account": "AGENT09",
+      "character": "Tatoka",
+      "race": 6,
+      "class": 3,
+      "gender": 0
+    },
+    {
+      "account": "AGENT10",
+      "character": "Aerdorei",
+      "race": 10,
+      "class": 8,
+      "gender": 1
+    },
+    {
+      "account": "AGENT11",
+      "character": "Senkazi",
+      "race": 8,
+      "class": 8,
+      "gender": 0
+    },
+    {
+      "account": "AGENT12",
+      "character": "Mogthar",
+      "race": 2,
+      "class": 1,
+      "gender": 0
+    },
+    {
+      "account": "AGENT13",
+      "character": "Urzughak",
+      "race": 2,
+      "class": 9,
+      "gender": 1
+    },
+    {
+      "account": "AGENT14",
+      "character": "Garmar",
+      "race": 2,
+      "class": 4,
+      "gender": 1
+    },
+    {
+      "account": "AGENT15",
+      "character": "Queldorei",
+      "race": 10,
+      "class": 8,
+      "gender": 1
+    },
+    {
+      "account": "AGENT16",
+      "character": "Zulrik",
+      "race": 8,
+      "class": 3,
+      "gender": 1
+    },
+    {
+      "account": "AGENT17",
+      "character": "Pamarana",
+      "race": 6,
+      "class": 3,
+      "gender": 1
+    },
+    {
+      "account": "AGENT18",
+      "character": "Thalwyn",
+      "race": 5,
+      "class": 4,
+      "gender": 0
+    },
+    {
+      "account": "AGENT19",
+      "character": "Thokgor",
+      "race": 2,
+      "class": 7,
+      "gender": 1
+    },
+    {
+      "account": "AGENT20",
+      "character": "Lorvaris",
+      "race": 10,
+      "class": 5,
+      "gender": 1
+    },
+    {
+      "account": "AGENT21",
+      "character": "Moggor",
+      "race": 2,
+      "class": 3,
+      "gender": 0
+    },
+    {
+      "account": "AGENT22",
+      "character": "Velkaelanar",
+      "race": 10,
+      "class": 8,
+      "gender": 0
+    },
+    {
+      "account": "AGENT23",
+      "character": "Thalvis",
+      "race": 5,
+      "class": 8,
+      "gender": 1
+    },
+    {
+      "account": "AGENT24",
+      "character": "Quelthas",
+      "race": 10,
+      "class": 5,
+      "gender": 0
+    },
+    {
+      "account": "AGENT25",
+      "character": "Zulari",
+      "race": 8,
+      "class": 5,
+      "gender": 1
+    }
+  ]
+}

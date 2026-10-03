@@ -157,11 +157,20 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipped**: equipment slots 0-18 by slot name. Every item row has a 36 px
-  icon with a border in the item's quality colour, a count badge for stacks, and
-  the name (and count) as a tooltip; the item name is quality coloured too.
-- **Bags**: backpack slots 23-38, then each equipped bag's contents.
-- Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
+- **Equipped**: a paper doll laid out like the game's character window (head,
+  neck, shoulder, back, chest, shirt, tabard, wrist on the left; hands, waist,
+  legs, feet, rings, trinkets on the right; main hand, off hand, ranged below).
+- **Bags**: the bag bar (bag slots 19-22), then the backpack (slots 23-38) and
+  each equipped bag as a grid of squares, four wide and sized to the bag's
+  `container_slots`. Like the game's bag windows the slots fill from the bottom
+  right, so a bag whose size isn't a multiple of four has its gap top left.
+  Bag windows wrap onto a new row when the drawer is narrow.
+- Every item is a 36 px square with its icon (a `?` placeholder until
+  `extract_icons.py` has been run), a border in the item's quality colour and a
+  stack count badge. Empty slots are dimmed squares named after the slot.
+  Hovering (or focusing, or tapping) an item shows an in-game style tooltip built
+  by `item_tooltip.py`; it is kept inside the viewport.
+- Collapsible **Bank** (28 squares, seven wide, plus bank bags), **Keyring**, **Currency** (only when non-empty), and
   **Talents** (grouped by spec and tree, with rank), **Reputation** (sorted by
   value, with tier), and **Achievements** (title, points, date). Names come from
   the client DBCs; an unknown id falls back to the raw id.
@@ -286,18 +295,39 @@ the character's base state.
   "health": 4231,
   "power": {"mana": 1020, "rage": 0, "focus": 0, "energy": 100,
             "happiness": 0, "rune": 0, "runic_power": 0},
-  "inventory": [{"bag": 0, "slot": 0, "item_guid": 42, "item_entry": 12345,
-                 "item_name": "Example Item", "count": 1, "quality": 2,
-                 "icon": "/icons/inv_sword_04.png"}],
+  "inventory": [{"bag": 0, "slot": 15, "item_guid": 42, "item_entry": 23346,
+                 "item_name": "Battleworn Claymore", "count": 1, "quality": 1,
+                 "icon": "/icons/inv_sword_04.png", "container_slots": 0,
+                 "tooltip": [{"left": "Battleworn Claymore", "color": "quality"},
+                             {"left": "Two-Hand", "right": "Sword", "color": "white"},
+                             {"left": "3 - 5 Damage", "right": "Speed 2.90", "color": "white"},
+                             {"left": "(1.4 damage per second)", "color": "white"},
+                             {"left": "Durability 25 / 25", "color": "white"},
+                             {"left": "Requires Level 1", "color": "white"},
+                             {"left": "Item Level 2", "color": "yellow"},
+                             {"left": "Sell Price:", "money": 9, "color": "white"}]}],
   "talents": [{"spell": 12282, "spec": 0, "name": "Improved Heroic Strike",
                "tree": "Arms", "tree_order": 0, "rank": 1}],
-  "reputation": [{"faction": 76, "standing": 2000, "faction_name": "Orgrimmar",
-                  "value": 6000, "tier": "Friendly"}],
+  "reputation": [{"faction": 76, "standing": 2000, "flags": 17,
+                  "faction_name": "Orgrimmar", "value": 6000, "tier": "Friendly"}],
+  "reputation_panel": [{"faction": 1118, "name": "Classic", "header": true, "rep": null,
+    "children": [{"faction": 67, "name": "Horde", "header": true, "rep": null,
+      "children": [{"faction": 76, "name": "Orgrimmar", "header": false,
+        "rep": {"value": 6000, "rank": "Friendly", "rank_id": 5, "bar_value": 3000,
+                "bar_max": 6000, "at_war": false}}]}]}],
   "achievements": [{"achievement": 6, "date": 1710000000, "name": "Level 10",
                     "points": 10}]
 }
 ```
 
+- `container_slots` is the bag's `item_template.ContainerSlots` (0 for non-bags).
+  `tooltip` is the item's tooltip as lines (`left`, optional `right`, `color` one
+  of `quality`/`white`/`green`/`yellow`/`gray`/`red`, and `money` in copper for the
+  sell price line, which is for the whole stack). `item_tooltip.py` builds it from
+  `world.item_template` (column names as in TrinityCore's
+  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound) and
+  `.durability`. Not shown yet: spell lines (`Use:`/`Equip:` effects with a
+  spell), item set names, random suffixes, enchants and gems.
 - `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
   same-origin URL for the item's icon, or `null` when the display id has no
   icon or the PNG hasn't been extracted; clients draw a placeholder then.
@@ -309,8 +339,19 @@ the character's base state.
 - `reputation[].standing` is the raw `character_reputation.standing`, which
   TrinityCore stores without the faction's starting value. `value` adds the
   race/class starting value from `Faction.dbc` the way `ReputationMgr` does, and
-  `tier` is its rank (Hated … Exalted). Hidden and header factions are still
-  listed; grouping and hiding them is left to the reputation panel (#92).
+  `tier` is its rank (Hated … Exalted). `flags` is `character_reputation.flags`
+  (ReputationMgr's `ReputationFlags`: 0x01 visible, 0x02 at war, 0x04 hidden,
+  0x08 header, 0x20 inactive, 0x80 header with its own bar). This list has every
+  row, hidden and header factions included.
+- `reputation_panel` is the in-game reputation window (#92), built by
+  `GameNames.reputation_panel`: only factions flagged visible and not hidden,
+  nested under the `Faction.dbc` ParentFactionID headers ("Classic" › "Horde" ›
+  "Orgrimmar"), siblings sorted by name. A header is listed when something under
+  it is, or when it has its own bar (0x80, e.g. Horde Expedition) and is visible.
+  Visible factions flagged inactive move to a trailing "Inactive" group. `rep` is
+  null for a header without a bar; `rank_id` is the client's standingID (1 Hated …
+  8 Exalted) and `bar_value`/`bar_max` the progress inside that rank (Exalted is
+  out of 1000). The drawer colours bars with the game's `FACTION_BAR_COLORS`.
 - `money` is in copper; `money_gold` is the same value divided by 10000.
 - Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
   name ("Expansion01"). `continent_name` is the continent the game shows the zone

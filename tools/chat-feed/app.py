@@ -19,7 +19,7 @@ import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("chat-feed")
@@ -36,6 +36,15 @@ PUBLIC_KINDS = frozenset(
 # LAN client, matching the rest of this LAN-only stack; set it to require
 # `Authorization: Bearer <token>` from the agents. Never logged.
 INGEST_TOKEN = os.environ.get("CHAT_FEED_INGEST_TOKEN", "").strip()
+# Shared secret for GET /api/chat/stream (UM-48). Empty (the default) leaves
+# the stream open to the LAN. Sent as `Authorization: Bearer <token>`, or as
+# `?token=<token>` because a browser's EventSource cannot set headers. Never
+# logged. /healthz and /metrics carry no chat text and stay open.
+STREAM_TOKEN = os.environ.get("CHAT_FEED_TOKEN", "").strip()
+# Each stream client holds a thread and a socket for as long as it stays
+# connected, so both are capped. 0 disables a cap.
+MAX_CLIENTS = int(os.environ.get("CHAT_FEED_MAX_CLIENTS", "100"))
+MAX_CLIENTS_PER_IP = int(os.environ.get("CHAT_FEED_MAX_CLIENTS_PER_IP", "20"))
 # Several agents hear the same /say, so each relayed event carries a
 # dedupe_key computed from the message alone; the first copy inside this
 # window wins. Identical text from the same speaker inside the window is
@@ -136,9 +145,17 @@ def normalize_relay_event(raw, at=None):
 
 class ChatFeed:
     def __init__(self, capacity, public_kinds, dedupe_window_s=DEDUPE_WINDOW_S,
-                 clock=time.monotonic):
+                 clock=time.monotonic, max_clients=MAX_CLIENTS,
+                 max_clients_per_ip=MAX_CLIENTS_PER_IP):
         self.events = collections.deque(maxlen=capacity)
         self.public_kinds = public_kinds
+        self.max_clients = max_clients
+        self.max_clients_per_ip = max_clients_per_ip
+        self.clients = collections.Counter()   # ip -> open streams
+        self.clients_rejected = 0
+        self.events_by_kind = collections.Counter()
+        self.last_event_at = 0.0               # unix seconds; 0 = none yet
+        self.log_rotations = 0
         self.parse_errors = 0
         self.chat_candidates = 0
         self.ingested = 0
@@ -204,7 +221,30 @@ class ChatFeed:
     def _append(self, event):
         """Called with self.condition held."""
         self.events.append(event)
+        self.events_by_kind[event["kind"]] += 1
+        self.last_event_at = time.time()
         self.condition.notify_all()
+
+    def note_rotation(self):
+        with self.condition:
+            self.log_rotations += 1
+
+    def add_client(self, ip):
+        """Count one stream client in, or return False when a cap is hit."""
+        with self.condition:
+            total = sum(self.clients.values())
+            if ((self.max_clients and total >= self.max_clients)
+                    or (self.max_clients_per_ip and self.clients[ip] >= self.max_clients_per_ip)):
+                self.clients_rejected += 1
+                return False
+            self.clients[ip] += 1
+            return True
+
+    def remove_client(self, ip):
+        with self.condition:
+            self.clients[ip] -= 1
+            if self.clients[ip] <= 0:
+                del self.clients[ip]
 
     def snapshot_after(self, last_id):
         with self.condition:
@@ -226,50 +266,112 @@ class ChatFeed:
     def health(self):
         with self.condition:
             return {"ok": True, "events": len(self.events),
+                    "clients": sum(self.clients.values()),
                     "chat_candidates": self.chat_candidates,
                     "parse_errors": self.parse_errors,
                     "ingested": self.ingested,
                     "ingest_duplicates": self.ingest_duplicates,
                     "ingest_rejected": self.ingest_rejected}
 
+    def metrics(self):
+        """Prometheus text exposition (version 0.0.4), stdlib only."""
+        with self.condition:
+            kinds = sorted(set(self.public_kinds) | set(self.events_by_kind))
+            lines = ["# HELP chat_feed_events_total Chat events published to the stream, by kind.",
+                     "# TYPE chat_feed_events_total counter"]
+            lines += [f'chat_feed_events_total{{kind="{_label(kind)}"}} {self.events_by_kind[kind]}'
+                      for kind in kinds]
+            for name, kind, help_text, value in (
+                ("chat_feed_parse_errors_total", "counter",
+                 "Log lines that looked like chat but matched no known shape.", self.parse_errors),
+                ("chat_feed_ingest_duplicates_total", "counter",
+                 "Relayed events dropped because another agent already reported them.",
+                 self.ingest_duplicates),
+                ("chat_feed_ingest_rejected_total", "counter",
+                 "Relayed events dropped as unusable.", self.ingest_rejected),
+                ("chat_feed_clients", "gauge",
+                 "Stream clients connected right now.", sum(self.clients.values())),
+                ("chat_feed_clients_rejected_total", "counter",
+                 "Stream connections refused by a client cap.", self.clients_rejected),
+                ("chat_feed_log_rotations_total", "counter",
+                 "Times the tailed log was truncated or replaced.", self.log_rotations),
+                ("chat_feed_last_event_timestamp_seconds", "gauge",
+                 "Unix time of the last published event (0 = none since start).",
+                 self.last_event_at),
+            ):
+                lines += [f"# HELP {name} {help_text}", f"# TYPE {name} {kind}", f"{name} {value}"]
+        return "\n".join(lines) + "\n"
+
+
+def _label(value):
+    """Escape a Prometheus label value."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+class LogTailer:
+    """Follow a path like tail -F, handling replacement and truncation.
+
+    `poll()` does one step and never blocks, so tests can drive it; `run()` is
+    the service loop.
+    """
+
+    def __init__(self, feed, path):
+        self.feed = feed
+        self.path = path
+        self.handle = None
+        self.inode = None
+        self.position = 0
+        self.first_open = True
+
+    def close(self):
+        if self.handle:
+            self.handle.close()
+            self.handle = None
+
+    def poll(self):
+        """Read at most one line. Returns True when one was published, False
+        when there is nothing complete to read yet. Raises FileNotFoundError
+        while the path is missing."""
+        path_stat = os.stat(self.path)
+        inode = (path_stat.st_dev, path_stat.st_ino)
+        if self.handle is None or self.inode != inode or path_stat.st_size < self.position:
+            self.close()
+            self.handle = open(self.path, "r", encoding="utf-8", errors="replace")
+            self.inode = inode
+            # Only the very first open skips what is already there; a rotated
+            # or truncated file is new content and is read from its start.
+            self.handle.seek(0, os.SEEK_END if self.first_open else os.SEEK_SET)
+            self.position = self.handle.tell()
+            if not self.first_open:
+                self.feed.note_rotation()
+            self.first_open = False
+            LOG.info("following %s (inode=%s)", self.path, inode)
+        line_start = self.position
+        line = self.handle.readline()
+        if not line:
+            return False
+        if not line.endswith("\n"):
+            self.handle.seek(line_start)     # partial write: retry when it is whole
+            return False
+        self.position = self.handle.tell()
+        self.feed.publish_line(line, f"{inode[1]}:{line_start}")
+        return True
+
+    def run(self):
+        while True:
+            try:
+                if not self.poll():
+                    time.sleep(0.25)
+            except FileNotFoundError:
+                self.close()
+                time.sleep(1)
+            except Exception:  # noqa: BLE001 - keep the sidecar alive on transient I/O
+                LOG.exception("log tail failure")
+                time.sleep(1)
+
 
 def tail_log(feed, path):
-    """Follow a path like tail -F, handling replacement and truncation."""
-    handle = None
-    inode = None
-    position = 0
-    first_open = True
-    while True:
-        try:
-            path_stat = os.stat(path)
-            if handle is None or inode != (path_stat.st_dev, path_stat.st_ino) or path_stat.st_size < position:
-                if handle:
-                    handle.close()
-                handle = open(path, "r", encoding="utf-8", errors="replace")
-                inode = (path_stat.st_dev, path_stat.st_ino)
-                handle.seek(0, os.SEEK_END if first_open else os.SEEK_SET)
-                position = handle.tell()
-                first_open = False
-                LOG.info("following %s (inode=%s)", path, inode)
-            line_start = position
-            line = handle.readline()
-            if line:
-                if not line.endswith("\n"):
-                    handle.seek(line_start)
-                    time.sleep(0.25)
-                    continue
-                position = handle.tell()
-                feed.publish_line(line, f"{inode[1]}:{line_start}")
-            else:
-                time.sleep(0.25)
-        except FileNotFoundError:
-            if handle:
-                handle.close()
-                handle = None
-            time.sleep(1)
-        except Exception:  # noqa: BLE001 - keep the sidecar alive on transient I/O
-            LOG.exception("log tail failure")
-            time.sleep(1)
+    LogTailer(feed, path).run()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -299,15 +401,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def authorized(self):
-        token = getattr(self.server, "ingest_token", "")
+    def authorized(self, token=None, allow_query=False):
+        """Bearer check against `token` (default: the ingest token). With
+        `allow_query`, `?token=` is accepted too, for EventSource."""
+        if token is None:
+            token = getattr(self.server, "ingest_token", "")
         if not token:
             return True
         header = self.headers.get("Authorization", "")
         prefix = "Bearer "
-        if not header.startswith(prefix):
+        if header.startswith(prefix):
+            given = header[len(prefix):]
+        elif allow_query:
+            given = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        else:
             return False
-        return hmac.compare_digest(header[len(prefix):], token)
+        return hmac.compare_digest(given.encode("utf-8"), token.encode("utf-8"))
 
     def do_OPTIONS(self):  # noqa: N802
         self.send_response(204)
@@ -354,9 +463,27 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/healthz":
             return self.send_json(200, self.feed.health())
+        if path == "/metrics":
+            data = self.feed.metrics().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return None
         if path != "/api/chat/stream":
             return self.send_json(404, {"error": "not found"})
+        if not self.authorized(getattr(self.server, "stream_token", ""), allow_query=True):
+            return self.send_json(401, {"error": "unauthorized"})
+        ip = self.client_address[0]
+        if not self.feed.add_client(ip):
+            return self.send_json(429, {"error": "too many stream clients"})
+        try:
+            return self.stream()
+        finally:
+            self.feed.remove_client(ip)
 
+    def stream(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -376,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
                 self.feed.wait_after(last_id)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
 
 
@@ -385,8 +512,10 @@ def main():
     threading.Thread(target=tail_log, args=(feed, LOG_PATH), daemon=True).start()
     httpd = ThreadingHTTPServer(("", LISTEN_PORT), Handler)
     httpd.feed = feed
-    httpd.ingest_token = INGEST_TOKEN  # value never logged
-    LOG.info("serving SSE on :%s; ingest auth: %s; public kinds: %s", LISTEN_PORT,
+    httpd.ingest_token = INGEST_TOKEN  # values never logged
+    httpd.stream_token = STREAM_TOKEN
+    LOG.info("serving SSE on :%s; stream auth: %s; ingest auth: %s; public kinds: %s", LISTEN_PORT,
+             "token" if STREAM_TOKEN else "open (LAN)",
              "token" if INGEST_TOKEN else "open (LAN)", ",".join(sorted(PUBLIC_KINDS)))
     httpd.serve_forever()
 

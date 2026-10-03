@@ -70,6 +70,9 @@ services:
       - REPLAY_BUFFER_SIZE=200
       - LISTEN_PORT=9500
       - CHAT_FEED_CHANNELS=say,yell,channel
+      # Optional stream guard (UM-48), off when unset. See tools/chat-feed/README.md
+      # before enabling: wowmap's chat tab and activity feed don't send it yet.
+      # - CHAT_FEED_TOKEN=${CHAT_FEED_TOKEN}
     volumes:
       - server_logs:/logs:ro
     depends_on:
