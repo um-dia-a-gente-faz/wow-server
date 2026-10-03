@@ -42,9 +42,10 @@ python3 -m unittest discover -s tools/wowmap/tests
 `extract_maps.py` writes two images per zone: `<area_id>_base.png`, the game's
 unexplored parchment, and `<area_id>.png`, the same art with every
 `WorldMapOverlay` explored-area texture composited on top (the zone fully
-explored, as the in-game map shows it). The page shows `<area_id>.png`; the base
-art is kept for per-character fog of war later. See `overlays.py` for the DBC
-layout and `docs/LIVE-MAP.md` for the pipeline and how to re-run it.
+explored, as the in-game map shows it). It also writes each overlay's own
+texture to `overlays/<overlay_id>.png`. The page shows `<area_id>.png` unless a
+character is open (see fog of war below). See `overlays.py` for the DBC layout
+and `docs/LIVE-MAP.md` for the pipeline and how to re-run it.
 
 `GET /api/areas` gives each zone a `subzones` list read from
 `WorldMapOverlay.dbc` at startup:
@@ -60,6 +61,40 @@ world-coordinate transform, so calibration offsets don't apply). `hit` is the
 DBC's hit rect, `null` for 21 overlays, which then use `art`; `label` is the
 centre of `hit`, else of `art`. Hovering the map shows the name of the smallest
 rect under the cursor; **Labels** toggles every subzone name.
+
+## Fog of war
+
+With a character open in the inspect drawer, the zone art shows only what that
+character has explored, the way its in-game map does: unexplored areas stay
+parchment. Closing the drawer returns to the fully explored art. **Fog of war:
+on/off** in the toolbar turns it off without closing the drawer.
+
+- `GET /api/character/<name>/explored` returns
+  `{"name", "explored_bits", "zones": {"<area_id>": [overlay ids]}}`: per zone,
+  the `WorldMapOverlay` rows the character has revealed. `404` for an unknown
+  character. Zones with nothing revealed are left out.
+- `GET /maps/<area_id>.png?explored=<overlay ids, comma-separated>` returns the
+  zone's base art with those overlays stacked on it. IDs that are not overlays of
+  that zone are ignored; a malformed list is a `404`.
+- `/api/areas` gives each zone a `fog` flag: true when its base art and every
+  overlay texture are in `MAPS_DIR`. The page only fogs zones where it is true,
+  so cities (no overlays) and maps extracted before this feature keep the fully
+  explored art.
+
+How it is decoded (`fog.py`): `characters.exploredZones` is 128 space-separated
+uint32 values; an area's bit is `AreaTable.dbc` field 3; an overlay is revealed
+when any of its areas' bits is set. The first two come from TrinityCore
+(`Player::SaveToDB`, `Player::CheckAreaExploreAndOutdoor`); the last is the
+client's rule and is the part to check against the in-game map.
+
+The art is composed with Pillow on request and cached (24 composites in memory;
+the browser caches each URL for a day). An online character's explored areas
+reach the database on its next save, so the map follows within a save interval
+plus the 5 s refresh.
+
+**After deploying this, re-run `extract_maps.py`** (see `docs/LIVE-MAP.md`): the
+`overlays/` directory and, on older extractions, `<area_id>_base.png` do not
+exist until then, and fog of war stays off for every zone.
 
 ## Calibrating map art
 

@@ -53,6 +53,7 @@ import pymysql
 
 import activity as activity_feed
 import item_icons
+import fog
 from overlays import load_overlays, subzones
 from transform import DbcTables, GridAreas
 
@@ -80,6 +81,7 @@ CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
 )
 MAX_CALIBRATION_PAYLOAD_BYTES = 65536
+MAX_FOG_OVERLAYS = 128   # ids accepted in /maps/<area>.png?explored=; no zone has that many
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
 CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
@@ -306,6 +308,52 @@ def fetch_players():
     return out
 
 
+def zone_overlays(area_id):
+    """A zone's WorldMapOverlay rows by its AreaTable ID. As in fetch_areas(), the
+    first WorldMapArea row of an area is the one the page shows."""
+    for r in tables()._wm:  # noqa: SLF001 - internal read, kept local to this module
+        if r[3] and r[2] == area_id:
+            return overlays().get(r[0], [])
+    return []
+
+
+def fetch_explored(name):
+    """Which overlays a character has revealed, per zone (see fog.py), or None for
+    an unknown character. Zones are keyed by area ID, as in /api/areas."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT name, exploredZones FROM characters.characters WHERE name = %s LIMIT 1",
+                    (name,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    t = tables()
+    bits = fog.explored_bits(row[1])
+    by_wma = overlays()
+    zones, seen = {}, set()
+    for r in t._wm:  # noqa: SLF001
+        if not r[3] or r[2] in seen:
+            continue
+        seen.add(r[2])
+        ids = fog.revealed(by_wma.get(r[0], []), t.area_bits, bits)
+        if ids:
+            zones[str(r[2])] = ids
+    return {"name": row[0], "explored_bits": len(bits), "zones": zones}
+
+
+def fog_image(area_id, explored):
+    """PNG bytes for /maps/<area_id>.png?explored=<overlay ids>, or None.
+
+    Only this zone's own overlays count, so the query can't name arbitrary files.
+    """
+    try:
+        ids = {int(v) for v in explored.split(",") if v}
+    except ValueError:
+        return None
+    if len(ids) > MAX_FOG_OVERLAYS:
+        return None
+    return fog.compose(MAPS_DIR, area_id, zone_overlays(area_id), ids)
+
+
 def fetch_areas(map_id=None):
     t = tables()
     rows = []
@@ -330,6 +378,9 @@ def fetch_areas(map_id=None):
             "xmin": round(xmin, 1), "xmax": round(xmax, 1),
             "ymin": round(ymin, 1), "ymax": round(ymax, 1),
             "image": img, "has_image": os.path.exists(os.path.join(MAPS_DIR, img)),
+            # Per-overlay art is extracted, so the page can draw this zone with a
+            # character's fog of war (/maps/<area_id>.png?explored=...).
+            "fog": fog.has_art(MAPS_DIR, area_id, overlays().get(r[0], [])),
             "calibration": calibrations.get(str(area_id), {"dx": 0, "dy": 0}),
             # Explored-area rects in image pixels (the 1024x768 canvas), not world
             # coordinates, so they don't go through the marker transform.
@@ -521,6 +572,13 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int(limit) if limit.isdigit() else 50
                 return self._send(200, activity.feed(name, limit), cache="no-store")
 
+            if path.startswith("/api/character/") and path.endswith("/explored"):
+                name = unquote(path[len("/api/character/"):-len("/explored")])
+                explored = fetch_explored(name) if name else None
+                if explored is None:
+                    return self._send(404, {"error": "character not found"})
+                return self._send(200, explored, cache="no-store")
+
             if path.startswith("/api/character/"):
                 name = unquote(path[len("/api/character/"):])
                 if not name:
@@ -558,6 +616,12 @@ class Handler(BaseHTTPRequestHandler):
 
             if path.startswith("/maps/"):
                 fn = os.path.basename(path[len("/maps/"):])
+                if "explored" in qs and fn.endswith(".png") and fn[:-4].isdigit():
+                    # The same zone art, with only the listed overlays revealed.
+                    body = fog_image(int(fn[:-4]), qs["explored"][0])
+                    if body is None:
+                        return self._send(404, {"error": "not found"})
+                    return self._send(200, body, "image/png", cache="max-age=86400")
                 fp = os.path.join(MAPS_DIR, fn)
                 if os.path.isfile(fp) and fn.endswith(".png"):
                     with open(fp, "rb") as f:
@@ -1514,6 +1578,7 @@ PAGE = r"""<!doctype html>
     <label>Zone <select id="zone"></select></label>
     <button id="fit">Fit</button>
     <button id="tglLabels" title="Show every subzone name (from WorldMapOverlay.dbc)">Labels: off</button>
+    <button id="tglFog" class="on" title="With a character open, colour only the areas that character has explored, as its in-game map does">Fog of war: on</button>
     <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
     <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
     <button id="saveCalibration" hidden>Save calibration</button>
@@ -1549,6 +1614,10 @@ let areas = [], players = [], selected = null, follow = false, showTrail = false
 let showLabels = false, stageScale = 1;
 let currentArea = null, imgW = 1002, imgH = 668;
 let calibrating = false, draftCalibration = null, calibrationReference = null, calibrationDrag = null;
+// Fog of war: with a character open in the inspect drawer the zone art shows only
+// what that character has explored. `fog` is its /api/character/<name>/explored
+// answer, null with nobody open (then the art is the fully explored zone).
+let fogOn = true, fogFor = null, fog = null;
 
 function setImgSize(a) {
   if (!a || !a.has_image) { imgW = 1002; imgH = 668; }
@@ -1611,15 +1680,47 @@ function selectCharacter(name) {
 }
 window.selectCharacter = selectCharacter;
 
+// The zone art to show: fully explored, or as the open character has explored it
+// (the base parchment plus that character's revealed overlays, composed by the server).
+function artUrl(a) {
+  if (!fog || !a.fog) return '/maps/' + a.image;
+  const ids = fog.zones[a.area_id] || [];
+  return ids.length ? `/maps/${a.area_id}.png?explored=${ids.join(',')}` : `/maps/${a.area_id}_base.png`;
+}
+
+async function loadFog() {
+  const name = fogFor;
+  let next = null;
+  if (name) {
+    try {
+      const r = await fetch(`/api/character/${encodeURIComponent(name)}/explored`);
+      if (r.ok) next = await r.json();
+    } catch (e) { /* keep the fully explored art */ }
+    if (name !== fogFor) return;               // the selection changed while loading
+  }
+  const changed = JSON.stringify(next && next.zones) !== JSON.stringify(fog && fog.zones);
+  fog = next;
+  if (changed) draw();
+}
+// The drawer opens and closes from several places (list, marker, chat, Esc, click
+// away), so follow Inspect.current() instead of hooking each of them.
+function syncFog() {
+  const name = fogOn ? Inspect.current() : null;
+  if (name === fogFor) return;
+  fogFor = name;
+  loadFog();
+}
+
 function draw() {
   const a = currentArea;
   const img = $('mapimg');
   if (!a) { $('fallback').style.display = 'block'; img.style.display = 'none'; return; }
   if (a.has_image) {
-    if (img.dataset.area !== String(a.area_id)) {
-      img.dataset.area = a.area_id;
+    const src = artUrl(a);
+    if (img.dataset.src !== src) {
+      img.dataset.src = src;
       img.onload = () => { imgW = img.naturalWidth; imgH = img.naturalHeight; place(); };
-      img.src = '/maps/' + a.image;
+      img.src = src;
     }
     img.style.display = 'block';
     $('fallback').style.display = 'none';
@@ -1775,6 +1876,7 @@ async function tick() {
     renderList(); place();
   } catch (e) { $('sub').textContent = 'error: ' + e; }
   Inspect.refresh();
+  if (fogFor) loadFog();                       // the character may have explored more
 }
 
 $('fit').onclick = () => place();
@@ -1837,6 +1939,13 @@ $('tglLabels').onclick = (e) => {
   e.target.classList.toggle('on', showLabels);
   drawLabels();
 };
+$('tglFog').onclick = (e) => {
+  fogOn = !fogOn;
+  e.target.textContent = 'Fog of war: ' + (fogOn ? 'on' : 'off');
+  e.target.classList.toggle('on', fogOn);
+  syncFog();
+};
+setInterval(syncFog, 300);
 for (const event of ['pointerup', 'pointercancel']) {
   $('wrap').addEventListener(event, () => { calibrationDrag = null; });
 }
