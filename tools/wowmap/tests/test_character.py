@@ -5,6 +5,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import item_tooltip  # noqa: E402
 from dbc.names import GameNames  # noqa: E402
 
 CHARACTER_ROW = (
@@ -13,12 +14,23 @@ CHARACTER_ROW = (
     19281, 1789510926, 1,
     4231, 1020, 0, 0, 100, 0, 8, 0,
 )
-# bag, slot, item_guid, itemEntry, name, count, item_template.displayid, Quality
+
+
+def inv_row(*base, flags=0, durability=0, **template):
+    """bag, slot, item_guid, itemEntry, name, count, item_template.displayid, Quality,
+    then item_instance.flags/durability and item_tooltip.COLUMNS (None = no template)."""
+    known = base[7] is not None
+    cols = tuple(template.get(c, 0 if known else None) for c in item_tooltip.COLUMNS)
+    return base + (flags, durability) + cols
+
+
 INVENTORY_ROWS = [
-    (0, 3, 101, 45, "Initiate's Shirt", 1, 36789, 0),
-    (0, 19, 200, 4496, "Small Brown Pouch", 1, 1168, 1),
-    (0, 24, 102, 20482, "Torn Wyrm Scale", 6, 26375, 0),
-    (200, 0, 103, 159, "Refreshing Spring Water", 5, None, None),
+    inv_row(0, 3, 101, 45, "Initiate's Shirt", 1, 36789, 0, **{"class": 4, "InventoryType": 4}),
+    inv_row(0, 19, 200, 4496, "Small Brown Pouch", 1, 1168, 1,
+            **{"class": 1, "InventoryType": 18, "ContainerSlots": 6}),
+    inv_row(0, 24, 102, 20482, "Torn Wyrm Scale", 6, 26375, 0,
+            **{"class": 15, "SellPrice": 4}),
+    inv_row(200, 0, 103, 159, "Refreshing Spring Water", 5, None, None),
 ]
 TALENT_ROWS = [(12663, 0), (20262, 1), (99999, 0)]
 REPUTATION_ROWS = [(911, 500), (72, 0), (4242, -100)]
@@ -153,9 +165,22 @@ class FetchCharacterTests(unittest.TestCase):
         pouch = next(i for i in inventory if i["slot"] == 19)
         water = next(i for i in inventory if i["bag"] != 0)
         self.assertEqual(water["bag"], pouch["item_guid"])
-        self.assertEqual(inventory[2], {"bag": 0, "slot": 24, "item_guid": 102, "item_entry": 20482,
-                                        "item_name": "Torn Wyrm Scale", "count": 6,
-                                        "quality": 0, "icon": "/icons/26375.png"})
+        self.assertEqual(inventory[2], {
+            "bag": 0, "slot": 24, "item_guid": 102, "item_entry": 20482,
+            "item_name": "Torn Wyrm Scale", "count": 6,
+            "quality": 0, "icon": "/icons/26375.png", "container_slots": 0,
+            "tooltip": [{"left": "Torn Wyrm Scale", "color": "quality"},
+                        {"left": "Sell Price:", "money": 24, "color": "white"}]})
+
+    def test_bag_rows_carry_their_slot_count(self):
+        pouch = next(i for i in self.character["inventory"] if i["slot"] == 19)
+        self.assertEqual(pouch["container_slots"], 6)
+        self.assertIn({"left": "6 Slot Bag", "color": "white"}, pouch["tooltip"])
+
+    def test_item_missing_from_item_template_gets_a_name_only_tooltip(self):
+        water = self.character["inventory"][3]
+        self.assertEqual(water["tooltip"], [{"left": "Refreshing Spring Water", "color": "quality"}])
+        self.assertEqual(water["container_slots"], 0)
 
     def test_inventory_icon_and_quality(self):
         inventory = self.character["inventory"]
