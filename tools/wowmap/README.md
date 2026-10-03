@@ -207,8 +207,13 @@ the character's base state.
                  "icon": "/icons/inv_sword_04.png"}],
   "talents": [{"spell": 12282, "spec": 0, "name": "Improved Heroic Strike",
                "tree": "Arms", "tree_order": 0, "rank": 1}],
-  "reputation": [{"faction": 76, "standing": 2000, "faction_name": "Orgrimmar",
-                  "value": 6000, "tier": "Friendly"}],
+  "reputation": [{"faction": 76, "standing": 2000, "flags": 17,
+                  "faction_name": "Orgrimmar", "value": 6000, "tier": "Friendly"}],
+  "reputation_panel": [{"faction": 1118, "name": "Classic", "header": true, "rep": null,
+    "children": [{"faction": 67, "name": "Horde", "header": true, "rep": null,
+      "children": [{"faction": 76, "name": "Orgrimmar", "header": false,
+        "rep": {"value": 6000, "rank": "Friendly", "rank_id": 5, "bar_value": 3000,
+                "bar_max": 6000, "at_war": false}}]}]}],
   "achievements": [{"achievement": 6, "date": 1710000000, "name": "Level 10",
                     "points": 10}]
 }
@@ -225,8 +230,19 @@ the character's base state.
 - `reputation[].standing` is the raw `character_reputation.standing`, which
   TrinityCore stores without the faction's starting value. `value` adds the
   race/class starting value from `Faction.dbc` the way `ReputationMgr` does, and
-  `tier` is its rank (Hated … Exalted). Hidden and header factions are still
-  listed; grouping and hiding them is left to the reputation panel (#92).
+  `tier` is its rank (Hated … Exalted). `flags` is `character_reputation.flags`
+  (ReputationMgr's `ReputationFlags`: 0x01 visible, 0x02 at war, 0x04 hidden,
+  0x08 header, 0x20 inactive, 0x80 header with its own bar). This list has every
+  row, hidden and header factions included.
+- `reputation_panel` is the in-game reputation window (#92), built by
+  `GameNames.reputation_panel`: only factions flagged visible and not hidden,
+  nested under the `Faction.dbc` ParentFactionID headers ("Classic" › "Horde" ›
+  "Orgrimmar"), siblings sorted by name. A header is listed when something under
+  it is, or when it has its own bar (0x80, e.g. Horde Expedition) and is visible.
+  Visible factions flagged inactive move to a trailing "Inactive" group. `rep` is
+  null for a header without a bar; `rank_id` is the client's standingID (1 Hated …
+  8 Exalted) and `bar_value`/`bar_max` the progress inside that rank (Exalted is
+  out of 1000). The drawer colours bars with the game's `FACTION_BAR_COLORS`.
 - `money` is in copper; `money_gold` is the same value divided by 10000.
 - Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
   name ("Expansion01"). `continent_name` is the continent the game shows the zone
