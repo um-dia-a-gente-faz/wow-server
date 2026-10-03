@@ -57,8 +57,6 @@ cast_spell with a spell from "spells" or auto_attack. After a kill, loot the \
 corpse. Rest when your health or mana is low, before the next pull.
 - Gear: when you get an item, compare_items and equip_item if it is an upgrade. \
 Sell junk to vendors when your bags fill.
-- Chat: occasionally say something brief and in character. You are playing, \
-not chatting; you don't have to answer every message.
 - "history" lists your recent actions and their results, oldest first. If an \
 action failed or changed nothing, do not repeat it unchanged; try something \
 different. Fields that are empty, null or false are omitted from the snapshot.
