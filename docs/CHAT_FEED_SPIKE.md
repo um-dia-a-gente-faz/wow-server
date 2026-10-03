@@ -1,5 +1,23 @@
 # Global chat feed spike
 
+> **Superseded in part by UM-47 (2026-09-25).** The conclusion below — tail
+> `Server.log` — does not work on the build this project runs. The deployed
+> worldserver (3.3.5a, build 12340) writes **no player chat to any log**, so
+> the tailer follows a file that never gets a chat line. `Logger.chat.log`
+> did not produce output here, and enabling it would need a worldserver
+> restart, which this project forbids.
+>
+> Chat is now taken **off the wire instead of out of the log**: an agent is
+> already a protocol client receiving `SMSG_MESSAGECHAT`, and
+> `agent/chat_relay.py` POSTs what it hears to `tools/chat-feed`'s
+> `POST /api/chat/ingest`. `tools/chat-feed/app.py` still tails the log —
+> it costs nothing and would work on a build that does log chat — but the
+> relay is the real source.
+>
+> Still accurate below: the SSE transport choice, the event schema, and the
+> privacy/escaping guidance (which the ingest path implements). The
+> "Recommended implementation" step 1 and the effort estimate are not.
+
 This note investigates roadmap item 4, **Global chat feed**, on TrinityCore
 3.3.5a. It recommends a log-tail sidecar rather than adding a chat database table
 or polling the character database.
@@ -71,8 +89,11 @@ party, raid, officer, and whispers should be a deliberate privacy decision.
 
 ## Recommended implementation
 
-1. Enable `Logger.chat.log=2,Console Server` and test `/say`, `/yell`, guild,
-   and the custom `/world` channel against the exact deployed `Server.log`.
+1. ~~Enable `Logger.chat.log=2,Console Server` and test `/say`, `/yell`, guild,
+   and the custom `/world` channel against the exact deployed `Server.log`.~~
+   **Does not work on this build** — no chat reaches any log, and changing
+   logging configuration needs a worldserver restart. Superseded by the
+   agent relay (UM-47); see the note at the top of this file.
 2. Add a small `chat-feed` sidecar that reads the mounted `server_logs` volume,
    tails `Server.log`, parses the known payloads, and keeps the last 100--500
    normalized public events in memory. Persisting chat is out of scope for the
@@ -90,6 +111,21 @@ Suggested event schema:
 ```json
 {"id":"log-inode:offset","at":"2026-09-14T12:34:56Z","kind":"say","sender":"Alice","channel":null,"text":"Hello"}
 ```
+
+As shipped in UM-47, both sources emit the same shape, with `target` (a
+whisper addressee) and `source` (which agent relayed it) added, and `id`
+assigned by the feed (`relay:<n>` for ingested events):
+
+```json
+{"id":"relay:3","at":"2026-09-26T01:19:22.378Z","kind":"channel","sender":"Shadowblade",
+ "channel":"General - Eversong Woods","target":null,"text":"hello","source":"Shadowblade"}
+```
+
+Because several agents hear the same message, each relayed event carries a
+`dedupe_key` derived from the message alone (kind, speaker GUID, channel,
+target, text) — never from the listener — and the feed keeps the first copy
+within `CHAT_FEED_DEDUPE_WINDOW_S`. The key is consumed by the feed and is
+not part of the published event.
 
 ## Rough effort
 

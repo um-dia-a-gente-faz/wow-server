@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
-"""Small, dependency-free TrinityCore chat log tailer and SSE endpoint."""
+"""Small, dependency-free chat feed: an SSE endpoint fed by agents relaying
+`SMSG_MESSAGECHAT` (UM-47, `POST /api/chat/ingest`), plus the original
+TrinityCore log tailer.
+
+The tailer is kept because it costs nothing, but it finds no chat on this
+server build: TrinityCore here never writes player chat to any log (see
+docs/AGENT-DIRECTION.md → known findings). The agent relay is the real
+source — `agent/chat_relay.py`.
+"""
 import collections
 import datetime as dt
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -19,9 +29,22 @@ REPLAY_BUFFER_SIZE = int(os.environ.get("REPLAY_BUFFER_SIZE", "200"))
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9500"))
 PUBLIC_KINDS = frozenset(
     kind.strip().lower()
-    for kind in os.environ.get("CHAT_FEED_CHANNELS", "say,yell,channel").split(",")
+    for kind in os.environ.get("CHAT_FEED_CHANNELS", "say,yell,channel,emote,text_emote,system").split(",")
     if kind.strip()
 )
+# Shared secret for POST /api/chat/ingest. Empty (the default) accepts any
+# LAN client, matching the rest of this LAN-only stack; set it to require
+# `Authorization: Bearer <token>` from the agents. Never logged.
+INGEST_TOKEN = os.environ.get("CHAT_FEED_INGEST_TOKEN", "").strip()
+# Several agents hear the same /say, so each relayed event carries a
+# dedupe_key computed from the message alone; the first copy inside this
+# window wins. Identical text from the same speaker inside the window is
+# therefore also collapsed — that is the accepted trade-off.
+DEDUPE_WINDOW_S = float(os.environ.get("CHAT_FEED_DEDUPE_WINDOW_S", "5"))
+MAX_INGEST_BYTES = int(os.environ.get("CHAT_FEED_MAX_INGEST_BYTES", "65536"))
+MAX_INGEST_EVENTS = 50
+MAX_TEXT_LEN = 512      # 3.3.5a's own chat limit is 255 bytes
+MAX_FIELD_LEN = 64      # speaker/channel/target/source names
 
 # Match the payload, not the appender-owned timestamp/logger prefix.  The caller
 # first isolates the "Player ..." portion and these expressions must consume it.
@@ -53,7 +76,8 @@ def parse_chat_line(line, event_id="", at=None):
     if marker < 0:
         return None
     payload = line[marker:].rstrip("\r\n")
-    event = {"id": event_id, "at": at or now_iso8601(), "channel": None}
+    event = {"id": event_id, "at": at or now_iso8601(), "channel": None,
+             "target": None, "source": None}
     for kind, pattern in (("say", SAY_RE), ("yell", YELL_RE), ("channel", CHANNEL_RE),
                           (None, GROUP_RE), ("whisper", WHISPER_RE)):
         match = pattern.fullmatch(payload)
@@ -69,12 +93,61 @@ def parse_chat_line(line, event_id="", at=None):
     return event
 
 
+def _clean(value, limit=MAX_FIELD_LEN):
+    """Trim one relayed string field, or None. Control characters go: the
+    text is untrusted player input and ends up in an SSE frame, where a
+    stray newline would forge an event boundary."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    value = "".join(ch for ch in value if ch == "\t" or ch >= " ")[:limit].strip()
+    return value or None
+
+
+def normalize_relay_event(raw, at=None):
+    """Validate/normalize one event POSTed by an agent (agent/chat_relay.py's
+    build_event output) into the same shape the tailer produces, or None if
+    it is unusable.
+
+    `id` is assigned by the feed, never by the sender, so one relay cannot
+    overwrite another's entry in a consumer's Last-Event-ID bookkeeping.
+    """
+    if not isinstance(raw, dict):
+        return None
+    kind = _clean(raw.get("kind"), 32)
+    text = _clean(raw.get("text"), MAX_TEXT_LEN)
+    if not kind or text is None:
+        return None
+    sender = _clean(raw.get("sender"))
+    channel = _clean(raw.get("channel"))
+    target = _clean(raw.get("target"))
+    key = _clean(raw.get("dedupe_key"), 64)
+    if not key:
+        guid = raw.get("sender_guid")
+        who = str(guid) if guid else (sender or "")
+        key = hashlib.sha1("\x1f".join(
+            (kind, who, channel or "", target or "", text)).encode("utf-8")).hexdigest()[:16]
+    return {"id": "", "at": _clean(raw.get("at"), 40) or (at or now_iso8601()),
+            "kind": kind.lower(), "sender": sender, "channel": channel,
+            "target": target, "text": text, "source": _clean(raw.get("source")),
+            "dedupe_key": key}
+
+
 class ChatFeed:
-    def __init__(self, capacity, public_kinds):
+    def __init__(self, capacity, public_kinds, dedupe_window_s=DEDUPE_WINDOW_S,
+                 clock=time.monotonic):
         self.events = collections.deque(maxlen=capacity)
         self.public_kinds = public_kinds
         self.parse_errors = 0
         self.chat_candidates = 0
+        self.ingested = 0
+        self.ingest_duplicates = 0
+        self.ingest_rejected = 0
+        self.dedupe_window_s = dedupe_window_s
+        self._clock = clock
+        self._recent = collections.OrderedDict()  # dedupe_key -> clock()
+        self._sequence = 0
         self.condition = threading.Condition()
 
     def publish_line(self, line, event_id):
@@ -88,8 +161,50 @@ class ChatFeed:
                 return
             elif event["kind"] not in self.public_kinds:
                 return
-            self.events.append(event)
-            self.condition.notify_all()
+            self._append(event)
+
+    def publish_relay_event(self, raw):
+        """UM-47: accept one event relayed by an agent. Returns "published",
+        "duplicate" (another agent already reported this message),
+        "filtered" (a kind this feed doesn't publish, e.g. whispers) or
+        "rejected" (unusable payload)."""
+        event = normalize_relay_event(raw)
+        if event is None:
+            with self.condition:
+                self.ingest_rejected += 1
+            return "rejected"
+        key = event.pop("dedupe_key")
+        with self.condition:
+            if self._seen_recently(key):
+                self.ingest_duplicates += 1
+                return "duplicate"
+            if event["kind"] not in self.public_kinds:
+                return "filtered"
+            self._sequence += 1
+            event["id"] = f"relay:{self._sequence}"
+            self.ingested += 1
+            self._append(event)
+            return "published"
+
+    def _seen_recently(self, key):
+        """Called with self.condition held. Dedupe across agents: the first
+        copy of a message wins for DEDUPE_WINDOW_S. Filtered kinds are
+        recorded too, so a whisper isn't re-evaluated per listener."""
+        now = self._clock()
+        while self._recent:
+            oldest_key, seen_at = next(iter(self._recent.items()))
+            if now - seen_at < self.dedupe_window_s:
+                break
+            self._recent.popitem(last=False)
+        if key in self._recent:
+            return True
+        self._recent[key] = now
+        return False
+
+    def _append(self, event):
+        """Called with self.condition held."""
+        self.events.append(event)
+        self.condition.notify_all()
 
     def snapshot_after(self, last_id):
         with self.condition:
@@ -112,7 +227,10 @@ class ChatFeed:
         with self.condition:
             return {"ok": True, "events": len(self.events),
                     "chat_candidates": self.chat_candidates,
-                    "parse_errors": self.parse_errors}
+                    "parse_errors": self.parse_errors,
+                    "ingested": self.ingested,
+                    "ingest_duplicates": self.ingest_duplicates,
+                    "ingest_rejected": self.ingest_rejected}
 
 
 def tail_log(feed, path):
@@ -164,14 +282,68 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         LOG.debug("%s - %s", self.address_string(), fmt % args)
 
+    def send_cors_headers(self):
+        # The viewer (tools/wowmap) is served from :9400 and this feed from
+        # :9500, so a browser needs CORS to open the stream at all. Read-only
+        # public chat on a LAN-only realm: any origin may read it.
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
     def send_json(self, status, body):
         data = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_cors_headers()
         self.end_headers()
         self.wfile.write(data)
+
+    def authorized(self):
+        token = getattr(self.server, "ingest_token", "")
+        if not token:
+            return True
+        header = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not header.startswith(prefix):
+            return False
+        return hmac.compare_digest(header[len(prefix):], token)
+
+    def do_OPTIONS(self):  # noqa: N802
+        self.send_response(204)
+        self.send_cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self):  # noqa: N802
+        if urlparse(self.path).path != "/api/chat/ingest":
+            return self.send_json(404, {"error": "not found"})
+        if not self.authorized():
+            return self.send_json(401, {"error": "unauthorized"})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self.send_json(400, {"error": "bad content-length"})
+        if length <= 0 or length > MAX_INGEST_BYTES:
+            return self.send_json(413, {"error": "body too large or empty"})
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return self.send_json(400, {"error": "invalid json"})
+
+        events = body.get("events") if isinstance(body, dict) else body
+        if isinstance(events, dict):
+            events = [events]
+        if not isinstance(events, list):
+            return self.send_json(400, {"error": "expected an events list"})
+
+        counts = collections.Counter(
+            self.feed.publish_relay_event(event) for event in events[:MAX_INGEST_EVENTS]
+        )
+        return self.send_json(202, {"published": counts["published"],
+                                    "duplicates": counts["duplicate"],
+                                    "filtered": counts["filtered"],
+                                    "rejected": counts["rejected"]})
 
     def send_event(self, event):
         data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
@@ -190,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_cors_headers()
         self.end_headers()
         last_id = self.headers.get("Last-Event-ID", "")
         try:
@@ -213,7 +385,9 @@ def main():
     threading.Thread(target=tail_log, args=(feed, LOG_PATH), daemon=True).start()
     httpd = ThreadingHTTPServer(("", LISTEN_PORT), Handler)
     httpd.feed = feed
-    LOG.info("serving SSE on :%s; public kinds: %s", LISTEN_PORT, ",".join(sorted(PUBLIC_KINDS)))
+    httpd.ingest_token = INGEST_TOKEN  # value never logged
+    LOG.info("serving SSE on :%s; ingest auth: %s; public kinds: %s", LISTEN_PORT,
+             "token" if INGEST_TOKEN else "open (LAN)", ",".join(sorted(PUBLIC_KINDS)))
     httpd.serve_forever()
 
 

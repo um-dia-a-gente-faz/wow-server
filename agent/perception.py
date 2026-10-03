@@ -426,6 +426,22 @@ class WorldState:
             self._quest_status_pending = self._quest_status_pending[max_items:]
             return out
 
+    def resolve_player_name(self, guid: int) -> str | None:
+        """UM-47: cached name for a player GUID, queuing a CMSG_NAME_QUERY
+        the first time it's asked for.
+
+        Returns None while the name is unknown — either because the query
+        hasn't been answered yet, or because the server said "no such
+        player" (NameCache stores that as None). Used by the chat relay,
+        whose senders are GUIDs the agent may never have had in range:
+        `SMSG_MESSAGECHAT` carries no sender name outside the GM opcode.
+        """
+        with self._lock:
+            if guid in self.names.players:
+                return self.names.players[guid]
+            self.names.want_player(guid)
+            return None
+
     @staticmethod
     def _apply_creature_name(obj: ObjectInfo, data: dict):
         obj.name = data["name"]

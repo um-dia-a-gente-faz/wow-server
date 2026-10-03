@@ -17,6 +17,7 @@ import threading
 import time
 
 from .channels import parse_channel_spec
+from .chat_relay import ChatRelay
 from .config import load_config
 from .auth import auth_logon
 from .session import WoWSession
@@ -71,9 +72,11 @@ def main():
     if duration <= 0:
         duration = 30.0 if args.dry_run else None  # None = forever
 
+    chat_relay = _build_chat_relay(cfg, log)
+
     if args.dry_run:
         try:
-            sess = _connect_and_login(cfg, log)
+            sess = _connect_and_login(cfg, log, chat_relay)
         except RuntimeError as e:
             log.critical("%s", e)
             sys.exit(1)
@@ -84,6 +87,7 @@ def main():
                  "alive" if sess.recv_thread_alive() else "DEAD",
                  sess.dropped_packets)
         sess.logout()
+        chat_relay.stop()
         log.info("dry-run complete.")
         return
 
@@ -103,7 +107,7 @@ def main():
     log.info("entering agent loop (ctrl+c to stop) ...")
     try:
         _supervise_connection(
-            build_session=lambda: _connect_and_login(cfg, log),
+            build_session=lambda: _connect_and_login(cfg, log, chat_relay),
             run_session=lambda sess: _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
                                                 llm_client=llm_client, audit_logger=audit_logger,
                                                 observer=observer),
@@ -112,6 +116,7 @@ def main():
     except KeyboardInterrupt:
         log.info("interrupted")
     finally:
+        chat_relay.stop()
         if http_server is not None:
             http_server.shutdown()
     log.info("done.")
@@ -176,7 +181,18 @@ def _resolve_character(cfg, chars: list) -> dict:
     return choice
 
 
-def _connect_and_login(cfg, log) -> WoWSession:
+def _build_chat_relay(cfg, log) -> ChatRelay:
+    """UM-47: one relay per agent process, shared by every (re)connected
+    session. Inert unless AGENT_CHAT_RELAY_URL is set."""
+    relay = ChatRelay(cfg.chat_relay_url, agent_name=cfg.agent_name,
+                      token=cfg.chat_relay_token, timeout=cfg.chat_relay_timeout)
+    if relay.enabled:
+        relay.start()
+        log.info("chat relay: %s", relay.url)
+    return relay
+
+
+def _connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
     """Full auth -> connect -> character login sequence, returning a
     WoWSession already logged in as the configured (or first available)
     character. Raises on failure. Used directly by main() for --dry-run,
@@ -184,6 +200,7 @@ def _connect_and_login(cfg, log) -> WoWSession:
     run-forever mode (UM-43) — each call builds a brand-new WoWSession, and
     therefore a brand-new WorldState (agent.perception), from scratch."""
     sess, chars = _authenticate_and_login(cfg, log)
+    sess.chat_relay = chat_relay  # UM-47 — attached before login so nothing is missed
     choice = _resolve_character(cfg, chars)
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
     sess.race = choice['race']
