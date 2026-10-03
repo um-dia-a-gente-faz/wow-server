@@ -20,6 +20,15 @@ Note that `JEV_BASE_URL` includes `/api/alpha`: `JevClient` posts to
 `{JEV_BASE_URL}/decisions`. Any API key, or none, is accepted unless
 `JEV_MOCK_REQUIRE_AUTH=1`.
 
+With the agents, in Docker (dev only: the answers are random, so never point
+live agents at it). The service is in `docker-compose.agents.yml` under its own
+`jev-mock` profile, and `JEV_BASE_URL` stays empty unless you set it:
+
+```bash
+JEV_BASE_URL=http://jev-mock:8090/api/alpha \
+  docker compose -f docker-compose.agents.yml --profile jev-mock up -d jev-mock agent-luaprata
+```
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | Bind address. Use `0.0.0.0` inside a container. |
@@ -57,5 +66,11 @@ mock does not implement), 404 for other paths, 413 over 1 MiB.
 python3 -m unittest discover -s tools/jev-mock/tests -v
 ```
 
-The `JevClient*` tests drive the real `agent.jev.JevClient` against the
-mock and are skipped until `agent/jev.py` exists on the branch.
+The `JevClient*` tests drive the real `agent.jev.JevClient` against the mock
+in-process. `tests/test_external.py` does the same against a mock running as
+its own process, and is skipped unless `JEV_MOCK_URL` is set (CI sets it):
+
+```bash
+python3 tools/jev-mock/server.py &
+JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha python3 -m unittest -v tools/jev-mock/tests/test_external.py
+```

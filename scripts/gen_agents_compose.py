@@ -40,6 +40,7 @@ HEADER = """\
 #   raid   all 25 agents           docker compose -f docker-compose.agents.yml --profile raid up -d
 # Naming a service starts it whatever the profile:
 #   docker compose -f docker-compose.agents.yml up -d agent-luaprata
+# Profile jev-mock adds a local stand-in for Jev (see the jev-mock service).
 
 x-agent: &agent-defaults
   build: .
@@ -108,6 +109,37 @@ SERVICE = """\
 """
 
 
+# UM-100: tools/jev-mock next to the agents, for dev runs without an OpenRouter
+# key. Opt-in on both sides (its own profile, and JEV_BASE_URL stays empty by
+# default): the mock answers at random, so it must never become a brain by
+# accident on the live realm.
+JEV_MOCK = """\
+  # Random-answer stand-in for Jev's Decisions API (tools/jev-mock). Dev only:
+  #   JEV_BASE_URL=http://jev-mock:8090/api/alpha \\
+  #     docker compose -f docker-compose.agents.yml --profile jev-mock up -d jev-mock agent-luaprata
+  jev-mock:
+    image: python:3.12-slim
+    container_name: wow-jev-mock
+    profiles: [jev-mock]
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.25
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8090
+      PYTHONUNBUFFERED: "1"
+      JEV_MOCK_SEED: ${JEV_MOCK_SEED:-}
+    volumes:
+      - ./tools/jev-mock/server.py:/app/server.py:ro
+    command: ["python3", "/app/server.py"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+"""
+
+
 def load_roster(path: Path = ROSTER_PATH) -> list[dict]:
     return json.loads(path.read_text())["agents"]
 
@@ -123,7 +155,7 @@ def render(agents: list[dict]) -> str:
         blocks.append(SERVICE.format(
             slug=slug, account=a["account"], character=a["character"], port=FIRST_PORT + i,
             profiles="party, raid" if i < PARTY_SIZE else "raid"))
-    return HEADER + "\n".join(blocks)
+    return HEADER + "\n".join(blocks + [JEV_MOCK])
 
 
 def main(argv=None) -> int:
