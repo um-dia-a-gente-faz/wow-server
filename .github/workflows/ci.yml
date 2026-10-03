@@ -44,6 +44,10 @@ jobs:
       - name: jev-mock unit tests
         run: python -m unittest discover -s tools/jev-mock/tests -v
 
+      # tools/agent-runner is stdlib-only; its tests use a fake `docker` on PATH.
+      - name: agent-runner unit tests
+        run: python -m unittest discover -s tools/agent-runner/tests -v
+
       # UM-100: the real JevClient against jev-mock as a separate process, over
       # real HTTP. Real Jev (paid, needs a key) never runs in CI.
       - name: JevClient against a running jev-mock

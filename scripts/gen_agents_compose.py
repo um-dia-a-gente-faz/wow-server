@@ -27,6 +27,7 @@ ROSTER_PATH = REPO / "agents" / "roster.json"
 COMPOSE_PATH = REPO / "docker-compose.agents.yml"
 FIRST_PORT = 9601
 PARTY_SIZE = 5
+DEFAULT_AUDIT_DIR = "/opt/wow-server-metrics/audit"
 
 HEADER = """\
 # Agent containers, one per character: 5 for a party, 25 for a raid (UM-63).
@@ -144,7 +145,10 @@ def load_roster(path: Path = ROSTER_PATH) -> list[dict]:
     return json.loads(path.read_text())["agents"]
 
 
-def render(agents: list[dict]) -> str:
+def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
+    """The compose file text. `audit_dir` is the host path mounted at /data/audit;
+    tools/agent-runner passes its own so the checkout's committed file stays the
+    default (#136, ADR 0002 D5)."""
     seen = set()
     blocks = []
     for i, a in enumerate(agents):
@@ -155,7 +159,8 @@ def render(agents: list[dict]) -> str:
         blocks.append(SERVICE.format(
             slug=slug, account=a["account"], character=a["character"], port=FIRST_PORT + i,
             profiles="party, raid" if i < PARTY_SIZE else "raid"))
-    return HEADER + "\n".join(blocks + [JEV_MOCK])
+    text = HEADER + "\n".join(blocks + [JEV_MOCK])
+    return text.replace(f"- {DEFAULT_AUDIT_DIR}:/data/audit", f"- {audit_dir}:/data/audit")
 
 
 def main(argv=None) -> int:
