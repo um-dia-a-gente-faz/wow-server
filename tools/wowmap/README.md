@@ -30,6 +30,9 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 | `ACTIVITY_DB` | `/data/activity.sqlite3` | activity feed store; empty disables the feed |
 | `ACTIVITY_CHAT_FEED_URL` | `http://chat-feed:9500` | chat-feed as seen from the wowmap process; empty = no chat events |
 | `AUDIT_DIR` | `/audit` | agents' UM-51 decision logs (`<agent>/<day>.jsonl`); empty = no agent events |
+| `AGENT_API_URLS` | empty | `Name=http://host:9601,...`: agents' observability APIs for the Agent mind tab (see below); also the rows of the Fleet panel when no runner is set |
+| `AGENT_RUNNER_URL` | empty | the agent runner's base URL (`tools/agent-runner`, #136), e.g. `http://<wow-agents>:9700`; empty = the Fleet panel is read-only |
+| `AGENT_RUNNER_TOKEN` | empty | the runner's bearer token. Server-side only: wowmap adds it to its own requests and scrubs it from everything it returns; the browser never sees it |
 
 Tests (need the `requirements.txt` packages):
 
@@ -313,6 +316,45 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
 - **Shared polling**: one 5 s tick fetches `/api/players` and `/api/summary`
   and also drives the open drawer's refresh — the chat tab doesn't add polling
   since it's push-based (SSE).
+
+## Fleet panel (#137)
+
+The **Fleet** button in the map toolbar (or `/#fleet`) opens one table with a row per
+agent and every signal in its own column, so a running-but-useless agent cannot hide
+behind a green dot: **Container** (`running` / `exited <code>` + age / `absent`),
+**Login / in world** (the agent's own API; the DB `online` flag is not used, see #130),
+**Agent API** (`ok` / `unreachable`), **Last cycle** (audit age, cycle, and
+`no action taken: <error>`), **Brain** (valid / invalid, brain, model, error) and
+**Character** (level, zone, playtime). A header shows fleet totals (agents, running,
+logged in, progressing, need attention, unknown) and a filter (All / Needs attention /
+Running / Not running); broken agents sort first and stopped ones last. The panel polls
+every 5 s, only while it is open and the tab is visible.
+
+*Progressing* = container running, agent API ok and logged in, newest audit record at most
+120 s old, and the brain not invalid. *Needs attention* = unknown, exited with a non-zero
+code, or running but not progressing. A cleanly stopped or absent agent is dimmed, not red.
+
+The data comes from the agent runner (`tools/agent-runner`, contract in #136); wowmap
+holds no Docker socket:
+
+- `GET /api/fleet` returns `{"configured", "controls", "runner", "error", "agents", "image",
+  "generated_at"}`. `runner` is `ok`, `unreachable`, `unauthorized`, `error` or `disabled`
+  (no `AGENT_RUNNER_URL`). `agents` is the runner's `GET /agents` entries unchanged. Always
+  `200`: a runner that cannot be asked is a state. Then `agents` only names the agents the
+  runner last listed (no signals) and the page renders every cell as `UNKNOWN`, with totals
+  as `?`, never as healthy.
+- `POST /api/fleet/agents/<name>/start|stop` forwards to the runner and returns its answer
+  verbatim (`error` and `detail` included, `502` for a failed docker call), after scrubbing
+  the token. It needs an `X-Fleet-Action: 1` header, which a cross-site form cannot set
+  without a CORS preflight (wowmap answers none). The page asks for a confirm first, then
+  lists the result under **Actions**.
+- With `AGENT_RUNNER_URL` empty the panel is read-only and says so: the rows are the
+  agents in `AGENT_API_URLS` with only their own `/healthz` probed, everything else reads
+  `UNKNOWN`, and there are no buttons. The create-agent form is #138 (needs the runner's
+  character-creation endpoint); the panel only has a marked placeholder for it.
+
+`fleet.py` holds the proxy and the panel's CSS/HTML/JS; `tests/test_fleet.py` runs it
+against a fake runner. Every string from the runner is rendered with `textContent`.
 
 ## Agent mind (UM-50)
 
