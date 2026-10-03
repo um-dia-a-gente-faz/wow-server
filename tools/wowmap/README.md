@@ -20,8 +20,8 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 
 | Env | Default | Meaning |
 |---|---|---|
-| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` |
-| `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
+| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names; without it `subzones` is empty) |
+| `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art (and `<area_id>_base.png`) |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
@@ -31,6 +31,30 @@ Tests (need the `requirements.txt` packages):
 ```bash
 python3 -m unittest discover -s tools/wowmap/tests
 ```
+
+## Map art and subzones
+
+`extract_maps.py` writes two images per zone: `<area_id>_base.png`, the game's
+unexplored parchment, and `<area_id>.png`, the same art with every
+`WorldMapOverlay` explored-area texture composited on top (the zone fully
+explored, as the in-game map shows it). The page shows `<area_id>.png`; the base
+art is kept for per-character fog of war later. See `overlays.py` for the DBC
+layout and `docs/LIVE-MAP.md` for the pipeline and how to re-run it.
+
+`GET /api/areas` gives each zone a `subzones` list read from
+`WorldMapOverlay.dbc` at startup:
+
+```json
+{"id": 1127, "area_ids": [3431, 3432], "name": "Sunstrider Isle",
+ "names": ["Sunstrider Isle", "Shrine of Dath'Remar"],
+ "art": [195, 5, 512, 512], "hit": [226, 27, 176, 161], "label": [314, 108]}
+```
+
+`art` and `hit` are `[x, y, w, h]` in image pixels on the 1024x768 canvas (no
+world-coordinate transform, so calibration offsets don't apply). `hit` is the
+DBC's hit rect, `null` for 21 overlays, which then use `art`; `label` is the
+centre of `hit`, else of `art`. Hovering the map shows the name of the smallest
+rect under the cursor; **Labels** toggles every subzone name.
 
 ## Calibrating map art
 
