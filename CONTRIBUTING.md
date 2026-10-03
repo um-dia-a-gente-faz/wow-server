@@ -67,10 +67,18 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
   `UM-123: Add auto-deploy poller`).
 - Links its issue in the body: the first line is `Issue: <ref>` and the body contains
   `Closes <ref>`, which is what makes GitHub link the PR to the issue and fill the
-  project board's *Linked pull requests* field. Use `Refs <ref>` instead when the PR
-  does not finish the issue, and say what remains.
+  project board's *Linked pull requests* field. Every issue is linked to a PR, so use
+  `Closes`, never `Refs` (a `Refs` mention does not link anything). When live or
+  human steps remain, keep `Closes`, leave them unticked under "How to test" and add
+  `> Closes is here so GitHub and the board link this PR to the issue. The live steps
+  under *How to test* are not done: reopen the issue if they fail.`
+  Check the link with
+  `gh api graphql -f query='query{repository(owner:"um-dia-a-gente-faz",name:"wow-server"){pullRequest(number:N){closingIssuesReferences(first:5){nodes{number}}}}}'`.
+  If `gh pr edit` fails (classic-projects deprecation error), edit the body with
+  `gh api -X PATCH repos/um-dia-a-gente-faz/wow-server/pulls/N -F body=@file`, then
+  re-check the issue's board status: adding a closing keyword can reset it.
 - Moves the issue on the board (org project *wow-server*, 7): *In progress* when the
-  branch starts, *Review* once the PR is open with CI green. *Done* is the reviewer's,
+  branch starts, *In Review* once the PR is open with CI green. *Done* is the reviewer's,
   on merge.
 - Is a single logical change.
 - Has CI green (`.github/workflows/ci.yml`: py_compile, unit tests, compose

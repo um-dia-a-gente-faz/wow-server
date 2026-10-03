@@ -29,8 +29,12 @@ Linear (`UM-*`, team *Um Dia a Gente Faz*) is the tracker of record.
 - PR title `<ref>: <summary>`; body starts with `Issue: <ref>`, includes `Closes <ref>`
   so GitHub links the PR to its issue, and follows `.github/PULL_REQUEST_TEMPLATE.md`.
   Commits are Conventional Commits.
-- **Every PR links its issue** — `Closes <ref>` when it finishes the work, `Refs <ref>`
-  plus what remains otherwise. The board's *Linked pull requests* field depends on it.
+- **Every issue is linked to a PR, so every PR says `Closes <ref>`** — never `Refs`.
+  GitHub only links on a closing keyword, and the board's *Linked pull requests* field
+  reads that link. If live or human steps remain, keep `Closes`, leave them unticked
+  under "How to test" and note that the issue is to be reopened if they fail (see
+  CONTRIBUTING.md). An issue that cannot have a PR yet (blocked on an unmerged PR,
+  needs a live run, deferred) gets it once unblocked; never stack to get the link.
 - Anything you could not verify goes under "How to test" as a human step. Don't tick it.
 
 ## Working model
@@ -53,7 +57,7 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
 - **Shelved PRs stay open** until the owner decides. A coordinator comment saying
   "shelving" means don't extend or merge it.
 - **The board is the operating picture** (org project *wow-server*, project 7): the
-  author moves the issue to *In progress* when the branch starts and to *Review* when
+  author moves the issue to *In progress* when the branch starts and to *In Review* when
   the PR is open with CI green; *Done* belongs to the reviewer on merge. Author
   sessions never merge, so they never move an issue to *Done*.
 

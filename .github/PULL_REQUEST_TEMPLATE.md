@@ -11,7 +11,10 @@ assignees: []
 Issue: <ref>
 
 Closes <ref>
-<!-- or: Refs <ref>  — then say below what is left undone. -->
+<!-- Always Closes: only a closing keyword links the PR to the issue (Refs does not).
+     If live/human steps remain, keep Closes, leave them unticked under "How to test",
+     and add: "> `Closes` is here so GitHub and the board link this PR to the issue.
+     The live steps under *How to test* are **not done**: reopen the issue if they fail." -->
 
 ## What
 
@@ -37,8 +40,8 @@ Closes <ref>
 ## Checklist
 
 - [ ] PR title follows `<ref>: <brief summary>`
-- [ ] Issue linked above (`Issue: <ref>`) and the body says `Closes <ref>` (or `Refs <ref>` with what remains) — the board's *Linked pull requests* field reads this
-- [ ] Issue is on the board: *In progress* while it was being written, *Review* now that the PR is open
+- [ ] Issue linked above (`Issue: <ref>`) and the body says `Closes <ref>` (never `Refs`; unticked live steps go under "How to test") — the board's *Linked pull requests* field reads this
+- [ ] Issue is on the board: *In progress* while it was being written, *In Review* now that the PR is open
 - [ ] Tested on the live VM (192.168.1.64)
 - [ ] All Prometheus targets still healthy (`/api/v1/targets`)
 - [ ] Grafana dashboards load without errors
