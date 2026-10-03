@@ -5,6 +5,7 @@ Serves:
     GET /                     the map page (single file, no build step)
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
+    GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
     POST /api/calibrate       save a per-zone pixel offset
     GET /maps/<file>          extracted zone map images (static)
@@ -20,6 +21,10 @@ Env:
     MAPS_DIR    default /maps       (extracted PNGs)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
+    ACTIVITY_DB   default /data/activity.sqlite3   activity feed store ("" disables the feed)
+    ACTIVITY_CHAT_FEED_URL default http://chat-feed:9500  chat-feed as seen from this
+                                    process ("" = no chat in the activity feed)
+    AUDIT_DIR     default /audit    agents' UM-51 decision logs ("" = no agent events)
 """
 import json
 import logging
@@ -32,6 +37,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
+import activity as activity_feed
 from transform import DbcTables
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -55,6 +61,11 @@ MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
 CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
+ACTIVITY_DB = os.environ.get("ACTIVITY_DB", "/data/activity.sqlite3")
+ACTIVITY_CHAT_FEED_URL = os.environ.get("ACTIVITY_CHAT_FEED_URL", "http://chat-feed:9500")
+AUDIT_DIR = os.environ.get("AUDIT_DIR", "/audit")
+# Set in __main__ (see start_activity) so importing this module starts no threads.
+activity = None
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -329,6 +340,14 @@ class Handler(BaseHTTPRequestHandler):
                     "server_time": int(time.time()),
                     "players": fetch_players(),
                 })
+
+            if path.startswith("/api/character/") and path.endswith("/activity"):
+                name = unquote(path[len("/api/character/"):-len("/activity")])
+                if activity is None:
+                    return self._send(503, {"error": "activity feed disabled"})
+                limit = qs.get("limit", ["50"])[0]
+                limit = int(limit) if limit.isdigit() else 50
+                return self._send(200, activity.feed(name, limit), cache="no-store")
 
             if path.startswith("/api/character/"):
                 name = unquote(path[len("/api/character/"):])
@@ -682,6 +701,7 @@ const Inspect = (() => {
     f.append(kv('Tempo de jogo', duration(c.totaltime)));
     f.append(kv('Último logout', when(c.logout_time)));
     f.append(kv('Posição', `${c.map_name} (${c.map}) · ${c.position_x}, ${c.position_y}, ${c.position_z}`));
+    if (window.ActivityFeed) f.append(window.ActivityFeed.section(c.name));
 
     const inv = groupInventory(c.inventory || []);
     f.append(el('h3', null, 'Equipado'));
@@ -803,6 +823,117 @@ const Inspect = (() => {
 </script>
 """
 
+# ---------------------------------------------------------------- page: activity feed
+# UM-76: "Recent activity" section of the inspect drawer, fed by
+# GET /api/character/<name>/activity (see activity.py). Inspect.renderBody appends
+# this module's persistent node; the module polls on its own every 5 s. Event text
+# comes from chat and the database, so it is rendered with textContent only.
+ACTIVITY_CSS = r"""
+  .activity .act { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #20263a;
+                   font-size:12.5px; line-height:1.35; }
+  .activity .act .ic { flex:0 0 18px; text-align:center; color:var(--dim); }
+  .activity .act .tx { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .activity .act .meta { color:var(--dim); font-size:11px; }
+  .activity .act.failed .tx { color:#ff8b8b; }
+  .activity .inferred { font-size:10px; border:1px solid #6b5a2f; color:#f3b84b; border-radius:999px;
+                        padding:0 6px; margin-left:6px; white-space:nowrap; }
+  .activity .note { color:var(--dim); font-size:11px; padding:3px 0; }
+  .activity .ic.k-combat { color:#ff6b6b; } .activity .ic.k-loot, .activity .ic.k-item { color:#7ddf8a; }
+  .activity .ic.k-sell, .activity .ic.k-buy, .activity .ic.k-money { color:#f3b84b; }
+  .activity .ic.k-chat, .activity .ic.k-whisper { color:#5fd0d8; }
+  .activity .ic.k-level, .activity .ic.k-quest { color:#d68cf5; }
+"""
+
+ACTIVITY_JS = r"""
+<script>
+window.ActivityFeed = (() => {
+  const ICONS = {combat: '⚔', loot: '✚', item: '✚', item_lost: '✖', sell: '$', buy: '$',
+    money: '¤', trade: '⇄', chat: '“', whisper: '“', level: '▲', zone: '➜', quest: '!',
+    mail: '✉', move: '→', group: '◆', session: '●', action: '•'};
+  const SOURCES = {db: 'database', chat: 'public chat', audit: 'agent log'};
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  const box = el('div', 'activity');
+  const list = el('div');
+  box.append(el('h3', null, 'Recent activity'), list);
+  let shownFor = null, seq = 0, data = null;
+
+  function ago(t) {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - t));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+  }
+
+  function render() {
+    const f = document.createDocumentFragment();
+    const src = (data && data.sources) || {};
+    if (!data) f.append(el('div', 'none', 'loading…'));
+    else if (data.error) f.append(el('div', 'none', data.error));
+    else {
+      for (const [key, label] of [['db', 'database'], ['chat', 'chat feed']]) {
+        if (src[key] && !src[key].ok) f.append(el('div', 'note', `${label} unreachable, events may be missing`));
+      }
+      if (!data.events.length) f.append(el('div', 'none', 'no activity recorded yet'));
+      for (const e of data.events) {
+        const failed = e.detail && e.detail.ok === false;
+        const r = el('div', 'act' + (failed ? ' failed' : ''));
+        r.append(el('span', 'ic k-' + e.kind, ICONS[e.kind] || '•'));
+        const tx = el('div', 'tx', e.text);
+        if (e.inferred) {
+          const b = el('span', 'inferred', 'inferred');
+          b.title = 'Not recorded by the server: deduced from database changes';
+          tx.append(b);
+        }
+        const meta = el('div', 'meta', `${ago(e.t)} · ${SOURCES[e.source] || e.source}`);
+        meta.title = new Date(e.t * 1000).toLocaleString();
+        tx.append(meta);
+        r.append(tx);
+        f.append(r);
+      }
+    }
+    list.replaceChildren(f);
+  }
+
+  async function refresh() {
+    const who = Inspect.current();
+    if (!who || who !== shownFor) return;
+    const mine = ++seq;
+    try {
+      const r = await fetch(`/api/character/${encodeURIComponent(who)}/activity?limit=50`);
+      const j = await r.json().catch(() => ({}));
+      if (mine !== seq || who !== shownFor) return;
+      data = r.ok ? j : {error: j.error || 'error ' + r.status};
+    } catch (e) {
+      if (mine !== seq) return;
+      data = {error: 'activity unavailable: ' + e};
+    }
+    render();
+  }
+
+  // Called by Inspect.renderBody on every re-render; the node is reused.
+  function section(name) {
+    if (name !== shownFor) {
+      shownFor = name;
+      data = null;
+      seq++;
+      render();
+      refresh();
+    }
+    return box;
+  }
+
+  setInterval(refresh, 5000);
+  return {section, refresh};
+})();
+</script>
+"""
+
 PAGE = r"""<!doctype html>
 <html lang="pt-BR"><head>
 <meta charset="utf-8"><title>WoW — Mapa ao vivo</title>
@@ -878,6 +1009,7 @@ PAGE = r"""<!doctype html>
   }
 /* @inspect-css */
 /* @chat-css */
+/* @activity-css */
 </style></head>
 <body>
 <aside id="aside">
@@ -927,6 +1059,7 @@ PAGE = r"""<!doctype html>
 </main>
 <!-- @inspect-html -->
 <!-- @inspect-js -->
+<!-- @activity-js -->
 <script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
 <!-- @chat-js -->
 <script>
@@ -1286,12 +1419,35 @@ PAGE = (PAGE
         .replace("/* @inspect-css */", INSPECT_CSS)
         .replace("<!-- @inspect-html -->", INSPECT_HTML)
         .replace("<!-- @inspect-js -->", INSPECT_JS)
+        .replace("/* @activity-css */", ACTIVITY_CSS)
+        .replace("<!-- @activity-js -->", ACTIVITY_JS)
         .replace("/* @chat-css */", CHAT_CSS)
         .replace("<!-- @chat-html -->", CHAT_HTML)
         .replace("<!-- @chat-js -->", CHAT_JS)
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 
+def start_activity():
+    """Open the activity store and start its pollers; the feed is optional, so a
+    store that can't be opened only disables it."""
+    global activity
+    if not ACTIVITY_DB:
+        return None
+    try:
+        store = activity_feed.ActivityStore(ACTIVITY_DB)
+    except Exception as e:  # noqa: BLE001 - OSError, sqlite3.Error, ...
+        log.error("activity feed disabled, cannot open %s: %s", ACTIVITY_DB, e)
+        return None
+    activity = activity_feed.Activity(
+        store, connect=db, zone_name=lambda z: tables().zone_name(z),
+        chat_url=ACTIVITY_CHAT_FEED_URL, audit_dir=AUDIT_DIR)
+    activity.start()
+    log.info("activity feed: store=%s chat=%s audit=%s", ACTIVITY_DB,
+             ACTIVITY_CHAT_FEED_URL or "off", AUDIT_DIR or "off")
+    return activity
+
+
 if __name__ == "__main__":
+    start_activity()
     log.info("wowmap on :%d (db=%s dbc=%s maps=%s)", LISTEN_PORT, MYSQL["host"], DBC_DIR, MAPS_DIR)
     ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
