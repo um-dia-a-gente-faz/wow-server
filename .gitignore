@@ -25,6 +25,9 @@ Thumbs.db
 
 # Extracted client DBCs (game data — regenerate with TrinityCore's mapextractor)
 tools/wowmap/*.dbc
+# Extracted client art (map tiles, item icons) lives in /opt/wowmap-data, never here
+tools/wowmap/maps/
+tools/wowmap/icons/
 *.dbc
 __pycache__/
 artifs/

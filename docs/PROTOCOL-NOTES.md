@@ -463,119 +463,118 @@ UM-34) misclassifies as attackable. Confirming a real kill + XP gain needs
 either a longer supervised walk into an actual leveling zone or the owner
 placing/pointing at a safe low-level hostile near spawn.
 
-## UM-41: quest wire formats
+## UM-41 / UM-91: quest wire formats
 
-**Caveat that applies to this entire section, unlike every other one in this
-file:** none of it was diffed against a live TrinityCore checkout or a
-packet capture — this repo had no network access while UM-41 was
-implemented. Every opcode/layout below is this module's best-effort
-reconstruction from the well-documented 3.3.5a (build 12340) quest system,
-cross-checked only against this codebase's own already-verified numbering
-(the `OBJECT_END`/`UNIT_END`-relative field arithmetic in
-`agent/update_fields.py`, and the `Opcodes.h` gap between
-`CMSG_GAMEOBJECT_QUERY`/`CMSG_CREATURE_QUERY`). Treat every parser in
-`agent/quests.py` as unverified until it's checked against real traffic or
-source — same spirit as the "Not live-verified" note above, just for an
-entire feature instead of one scenario. Every quest opcode is still routed
-through `session.py`'s usual per-packet `try`/`except`-and-drop
-(`_dispatch_guarded`), so a wrong guess here degrades to "this update is
-silently missed" rather than crashing the session.
+UM-41 reconstructed these layouts from memory. UM-91 found that most of them were
+wrong: live, the quest log showed the title `"g\r"` (the zone id 3431 read as a string)
+and the objective `393216: 0/1966080`. Everything below is now checked against
+TrinityCore branch `3.3.5` (commit `48128f325ac5f1b597ab86b6b410d9eed1024bb1`):
+`Server/Packets/QuestPackets.cpp`, `Entities/Creature/GossipDef.cpp`,
+`Entities/Player/Player.cpp`, `Handlers/QuestHandler.cpp`, `Quests/QuestDef.{h,cpp}`,
+`Entities/Object/Updates/UpdateFields.h`. Rows marked **live** also have a capture in
+`agent/tests/fixtures/quests/` (Sunspeaker, 2026-09-24). Every parser in
+`agent/quests.py` checks that it consumed exactly `len(payload)` bytes.
 
-### Quest log fields (`Entities/Object/Updates/UpdateFields.h`)
+Constants (`QuestDef.h`): `QUEST_OBJECTIVES_COUNT 4`, `QUEST_ITEM_OBJECTIVES_COUNT 6`,
+`QUEST_REWARD_CHOICES_COUNT 6`, `QUEST_REWARD_ITEM_COUNT 4`,
+`QUEST_REWARD_REPUTATIONS_COUNT 5`.
 
-`PLAYER_QUEST_LOG_1_1 = UNIT_END + 0x0A`, 5 `uint32` fields per slot, 25
-slots (`MAX_QUEST_LOG_SIZE`) — the array runs `UNIT_END+0x0A` ..
-`UNIT_END+0x86`, immediately followed by `PLAYER_VISIBLE_ITEM_1_ENTRYID` at
-`UNIT_END+0x87` (25 × 5 = 125 = `0x87 - 0x0A`, checked against this
-project's own `UNIT_END`/`PLAYER_FLAGS` arithmetic in
-`agent/update_fields.py`). Per slot:
+### Quest log fields (`UpdateFields.h`, `Player.h`/`Player.cpp`), live
+
+`PLAYER_QUEST_LOG_1_1 = UNIT_END + 0x0A`, 5 fields per slot (`MAX_QUEST_OFFSET`), 25 slots:
 
 ```
-PLAYER_QUEST_LOG_x_1   quest id (0 = empty slot)
-PLAYER_QUEST_LOG_x_2   state (QuestSlotStateMask-ish objective/complete flags)
-PLAYER_QUEST_LOG_x_3   counters 1&2, packed: low uint16 = counter 1, high uint16 = counter 2
-PLAYER_QUEST_LOG_x_4   counters 3&4, packed the same way
-PLAYER_QUEST_LOG_x_5   quest accept/expiry time
+x_1  quest id (0 = empty slot)
+x_2  state: QuestSlotStateMask bitmask. 0 = in progress, 0x1 = COMPLETE, 0x2 = FAIL.
+     This is not the DB's QuestStatus: an accepted, unfinished quest is 0 on the wire
+     while character_queststatus.status is 3 (QUEST_STATUS_INCOMPLETE).
+x_3  counters, a uint64 over x_3/x_4: 4 x uint16, counter i = kill-credit objective i
+x_5  timer
 ```
 
-`agent/update_fields.py::decode_quest_log` unpacks this into a list of
-`{slot, quest_id, state, counters: [4 ints], time}`, skipping empty slots.
-`agent/perception.py::WorldState.build_quest_log` enriches each entry with
-cached quest text (title/objectives, from `SMSG_QUEST_QUERY_RESPONSE`) and
-a best-effort per-objective progress string (pairing the 4 raw counters
-against the cached quest's required-credit/required-item counts, in that
-order).
+Only creature/GO objectives have counters (`SetQuestSlotCounter` is called from
+`SendQuestUpdateAddCreatureOrGo`). Item progress is not in the update fields, so
+`build_quest_log` reports item objectives with `count: None`. The perception snapshot
+adds `state_name` and objective names from the creature/gameobject name cache, e.g.
+`Mana Wyrm slain: 1/8`. It queues a `CMSG_CREATURE_QUERY` with guid 0 for an unknown
+entry, because `HandleCreatureQueryOpcode` only uses the entry.
 
-### `CMSG_QUEST_QUERY` (`0x05C`) → `SMSG_QUEST_QUERY_RESPONSE` (`0x05D`)
-
-Slotted into the same numbering gap as the other `*_QUERY` opcodes already
-verified in this file (`CMSG_GAMEOBJECT_QUERY 0x05E`, `CMSG_CREATURE_QUERY
-0x060`).
+### `CMSG_QUEST_QUERY` (`0x05C`) → `SMSG_QUEST_QUERY_RESPONSE` (`0x05D`), live
 
 ```
-CMSG_QUEST_QUERY:  uint32 questId, uint64 guid   // guid: the questgiver queried through, or 0
-SMSG_QUEST_QUERY_RESPONSE:
-  uint32 questId, int32 method, uint32 level, uint32 flags
-  cstring title, cstring details, cstring objectives, cstring endText (offer-reward text)
-  uint32 rewardMoney, uint32 rewardXp
-  (int32 entry, uint32 count) x4   // required creature/GO kill credit (GO entries negative)
-  (int32 entry, uint32 count) x4   // required items
-  (int32 entry, uint32 count) x4   // reward items
-  uint32 nextQuestInChain
+CMSG_QUEST_QUERY: uint32 questId            // QueryQuestInfo::Read, nothing else
+SMSG_QUEST_QUERY_RESPONSE (QueryQuestInfoResponse::Write):
+  uint32 id, type, int32 level, uint32 minLevel, int32 sortId (zone), uint32 infoId, suggestedPlayers
+  2 x (uint32 factionId, int32 factionValue)
+  uint32 nextQuest, xpDifficulty, int32 rewardMoney, uint32 bonusMoney, displaySpell, int32 spell
+  uint32 honor, float killHonor, uint32 startItem, flags, title, playerKills, talents, int32 arena, uint32 factionFlags
+  4 x (uint32 item, uint32 count)          // reward items
+  6 x (uint32 item, uint32 count)          // reward choice items
+  5 x uint32 factionId, 5 x int32 value, 5 x int32 override
+  uint32 poiMap, float poiX, float poiY, uint32 poiPriority
+  cstring logTitle, logDescription (objective summary), questDescription (story), areaDescription, completionLog
+  4 x (uint32 npcOrGo, uint32 count, uint32 itemDrop, uint32 itemDropCount)   // GO = entry | 0x80000000
+  6 x (uint32 item, uint32 count)          // required items
+  4 x cstring objectiveText                // custom label per kill objective, often ""
 ```
 
-### Questgiver flow (`0x182`-`0x19A`, well-documented 3.3.5a `Opcodes.h` block)
+### Questgiver windows and events
 
 ```
-CMSG_QUESTGIVER_STATUS_QUERY 0x182  → SMSG_QUESTGIVER_STATUS 0x183
-CMSG_QUESTGIVER_HELLO        0x184  → SMSG_QUESTGIVER_QUEST_LIST 0x185 (and/or SMSG_QUESTGIVER_QUEST_DETAILS 0x187, for a single-quest NPC)
-CMSG_QUESTGIVER_ACCEPT_QUEST 0x189
-CMSG_QUESTGIVER_COMPLETE_QUEST 0x18A → SMSG_QUESTGIVER_REQUEST_ITEMS 0x18B or SMSG_QUESTGIVER_OFFER_REWARD 0x18D
-CMSG_QUESTGIVER_CHOOSE_REWARD 0x18E → SMSG_QUESTGIVER_QUEST_COMPLETE 0x191 (xp/money reward, turn-in success signal)
-CMSG_QUESTLOG_REMOVE_QUEST   0x194  // by quest-log slot, not quest id
-SMSG_QUESTUPDATE_ADD_KILL    0x199
-SMSG_QUESTUPDATE_ADD_ITEM    0x19A
-SMSG_QUESTUPDATE_COMPLETE    0x198  // all objectives satisfied, ready to turn in
+SMSG_QUESTGIVER_STATUS        0x183: uint64 guid, uint8 status
+SMSG_QUESTGIVER_QUEST_LIST    0x185: uint64 npc, cstring greeting, uint32 emoteDelay, uint32 emote, uint8 n,
+                                     n x (uint32 quest, uint32 icon, int32 level, uint32 flags, uint8 repeatable, cstring title)
+SMSG_QUESTGIVER_QUEST_DETAILS 0x188: uint64 npc, uint64 informUnit, uint32 quest, cstring title, details, objectives,
+                                     uint8 autoLaunched, uint32 flags, suggested, uint8 startCheat,
+                                     uint32 n + n x (item, count, displayId)  // choice items
+                                     uint32 n + n x (item, count, displayId)  // reward items
+                                     uint32 money, xp, honor, float killHonor, uint32 displaySpell, int32 spell,
+                                     uint32 title, talents, arena, factionFlags, 5x3 reputation ints,
+                                     int32 n + n x (uint32 type, uint32 delay)
+SMSG_QUESTGIVER_REQUEST_ITEMS 0x18B: uint64 npc, int32 quest, cstring title, completionText, int32 emoteDelay, emote,
+                                     autoLaunched, uint32 flags, int32 suggested, moneyToGet,
+                                     uint32 n + n x (int32 item, int32 count, uint32 displayId),
+                                     uint32 explored (3 = can complete), 0x04, 0x08, 0x10
+SMSG_QUESTGIVER_OFFER_REWARD  0x18D: uint64 npc, uint32 quest, cstring title, rewardText, uint8 autoLaunched,
+                                     uint32 flags, suggested, uint32 n + n x (delay, type),
+                                     choice-item list, reward-item list (as in DETAILS), uint32 money, xp, honor,
+                                     float killHonor, uint32 unused, displaySpell, int32 spell, uint32 title,
+                                     talents, arena, factionFlags, 5x3 reputation ints
+SMSG_QUESTGIVER_QUEST_COMPLETE 0x191: uint32 quest, xp, money, honor, talents, arena
+SMSG_QUESTGIVER_QUEST_FAILED  0x192: uint32 quest, uint32 reason
+SMSG_QUESTUPDATE_ADD_KILL     0x199: uint32 quest, uint32 npcOrGo, uint32 count, uint32 required, uint64 guid   (live)
+SMSG_QUESTUPDATE_ADD_ITEM     0x19A: empty on 3.3.5 (the writes are commented out in Player.cpp)
+SMSG_QUESTUPDATE_COMPLETE     0x198: uint32 quest
 ```
 
+The window item lists only contain non-empty slots (`Quest::BuildQuestRewards`). A kill
+quest with no required items skips REQUEST_ITEMS and goes straight to OFFER_REWARD
+(`PlayerMenu::SendQuestGiverRequestItems`).
+
+Client requests (`QuestHandler.cpp` read order):
+
 ```
-CMSG_QUESTGIVER_STATUS_QUERY:   uint64 guid
-SMSG_QUESTGIVER_STATUS:         uint64 guid, uint32 status        // QuestGiverStatus
-CMSG_QUESTGIVER_HELLO:          uint64 guid                        // same "Hello" shape as agent/npc.py's gossip/vendor/trainer hellos
-SMSG_QUESTGIVER_QUEST_LIST:     uint64 npcGuid, cstring title, uint32 emoteDelay, uint32 emoteId,
-                                 uint8 count, count x (int32 questId, uint32 icon, int32 level, cstring title)
-CMSG_QUESTGIVER_ACCEPT_QUEST:   uint64 guid, uint32 questId, uint32 unk (always 0)
-CMSG_QUESTGIVER_COMPLETE_QUEST: uint64 guid, uint32 questId
-SMSG_QUESTGIVER_REQUEST_ITEMS:  uint64 npcGuid, uint32 questId, cstring title, cstring requestItemsText,
-                                 uint32 requiredMoney, uint8 autoFinish, (int32 entry, uint32 count) x4
-SMSG_QUESTGIVER_OFFER_REWARD:   uint64 npcGuid, uint32 questId, cstring title, cstring offerRewardText,
-                                 uint32 rewardMoney, uint32 rewardXp,
-                                 (int32 entry, uint32 count) x4   // reward items
-                                 (int32 entry, uint32 count) x4   // reward *choice* items — CHOOSE_REWARD's slot index picks one of these
-CMSG_QUESTGIVER_CHOOSE_REWARD:  uint64 guid, uint32 questId, uint32 rewardChoiceSlot
-SMSG_QUESTGIVER_QUEST_COMPLETE: uint32 questId, uint32 xpReward, uint32 moneyReward
-CMSG_QUESTLOG_REMOVE_QUEST:     uint8 slot
-SMSG_QUESTUPDATE_ADD_KILL:      uint32 questId, int32 creatureEntry, uint32 count, uint32 required, uint64 victimGuid
-SMSG_QUESTUPDATE_ADD_ITEM:      uint32 itemEntry, uint32 count
-SMSG_QUESTUPDATE_COMPLETE:      uint32 questId
+CMSG_QUESTGIVER_STATUS_QUERY   0x182: uint64 guid
+CMSG_QUESTGIVER_HELLO          0x184: uint64 guid
+CMSG_QUESTGIVER_QUERY_QUEST    0x186: uint64 guid, uint32 quest, uint8 respondToGiver
+CMSG_QUESTGIVER_ACCEPT_QUEST   0x189: uint64 guid, uint32 quest, uint32 startCheat
+CMSG_QUESTGIVER_COMPLETE_QUEST 0x18A: uint64 guid, uint32 quest
+CMSG_QUESTGIVER_REQUEST_REWARD 0x18C: uint64 guid, uint32 quest
+CMSG_QUESTGIVER_CHOOSE_REWARD  0x18E: uint64 guid, uint32 quest, uint32 rewardIndex
+CMSG_QUESTLOG_REMOVE_QUEST     0x194: uint8 slot
 ```
 
-`agent/quests.py` holds every pure parser/builder plus `QuestCache` (mirrors
-`agent/names.py::NameCache`'s dedupe/budget shape, no on-disk persistence).
-Opcodes/dispatch live in `agent/session.py`'s `_QUEST_DISPATCH` table;
-`agent/actions.py` adds `accept_quest`/`complete_quest`/`turn_in_quest`/
-`abandon_quest` to the Action registry, each checking the relevant open
-`world.ui_state` window (`quest_list`/`quest_details`/`quest_offer_reward`)
-or `world.build_quest_log()` before sending anything, the same
-check-before-send shape `interact`/`gossip_select` established in UM-40.
-`quest_progress`/`quest_complete`/`quest_turned_in`/`quest_failed` events
-land in `session.events` via `_record_event`, the same bounded-deque shape
-combat events (UM-39) use.
+**Known gap:** `build_questgiver_query_quest` omits the trailing `uint8 respondToGiver`,
+so the server drops the packet as too short. `accept_quest` still works because
+ACCEPT_QUEST doesn't depend on it; this was verified live when 8325 was accepted from a
+gossip window. The builder is left unchanged here because fixing it would make the
+server open a quest-details window in the middle of `accept_quest`. That change belongs
+in `agent/actions.py`.
 
-**Not live-verified (see the section-wide caveat above):** every layout in
-this section, `characters.character_queststatus` cross-checking, and the
-`wow_character_quests_completed_total` metric — all deferred to whenever
-this agent can run against a real TrinityCore 3.3.5a server again.
+Quest events land in `session.events`: `quest_progress` (`objective: "kill"|"item"`),
+`quest_complete`, `quest_turned_in`, `quest_failed`. Before UM-91, `quest_progress`
+passed `kind="kill"` next to `_record_event`'s own `kind` argument, which raised
+`TypeError`, so every ADD_KILL was dropped.
 
 ## UM-59: player trade wire formats
 

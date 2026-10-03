@@ -37,10 +37,18 @@ jobs:
       - name: chat-feed unit tests
         run: python -m unittest discover -s tools/chat-feed/tests -v
 
-      # wowmap needs PyMySQL + cryptography (see its requirements.txt).
+      # tools/dbc (the shared WDBC reader) is stdlib-only.
+      - name: dbc unit tests
+        run: python -m unittest discover -s tools/dbc/tests -v
+
+      - name: jev-mock unit tests
+        run: python -m unittest discover -s tools/jev-mock/tests -v
+
+      # wowmap needs PyMySQL + cryptography (see its requirements.txt), and Pillow
+      # for the extract_maps.py / extract_icons.py tests (offline tools, not in the image).
       - name: wowmap unit tests
         run: |
-          pip install -r tools/wowmap/requirements.txt
+          pip install -r tools/wowmap/requirements.txt Pillow
           python -m unittest discover -s tools/wowmap/tests -v
 
       - name: agent unit tests
@@ -92,17 +100,37 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read  # the action lists the PR's commits via the API
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      # On pull_request / push the action scans only the new commits, so the
-      # known historical leak tracked in UM-26 does not fail every run.
-      - uses: gitleaks/gitleaks-action@v3
+      # Scans only the new commits (PR base..head, or the pushed range on
+      # main) so the known historical leak tracked in UM-26 does not fail
+      # every run. Runs the gitleaks binary directly instead of
+      # gitleaks-action, which now requires a paid GITLEAKS_LICENSE
+      # (https://github.com/gitleaks/gitleaks-action#-announcement).
+      - name: Install gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          set -euo pipefail
+          curl -sSL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+      - name: Run gitleaks
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            LOG_OPTS="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              LOG_OPTS="-1"
+            else
+              LOG_OPTS="${BEFORE}..${{ github.sha }}"
+            fi
+          fi
+          ./gitleaks git --log-opts="$LOG_OPTS" -v --redact
 
   docker-build:
     name: docker build (agent image)

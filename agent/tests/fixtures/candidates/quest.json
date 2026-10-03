@@ -1,0 +1,24 @@
+{
+  "_comment": "Agent at Magistrix Erona with her gossip window open (one new quest, one already in the log, one plain option, one coded option), a second questgiver 20 yd away with a reward ready, a third with nothing to offer, and a failed quest in the log.",
+  "position": {"map": 530, "x": 10354.0, "y": -6365.0, "z": 36.0},
+  "is_dead": false, "is_ghost": false, "corpse_position": null,
+  "nearby_units": [
+    {"guid": 5001, "entry": 15278, "name": "Magistrix Erona", "type": "unit", "distance": 2.5, "level": 7, "health_pct": 1.0, "in_combat": false, "npc_flags": 3, "quest_giver_status": "incomplete"},
+    {"guid": 5002, "entry": 15279, "name": "Julia Sunstriker", "type": "unit", "distance": 20.0, "level": 6, "health_pct": 1.0, "in_combat": false, "npc_flags": 2, "quest_giver_status": "reward"},
+    {"guid": 5003, "entry": 15280, "name": "Jesthenis Sunstriker", "type": "unit", "distance": 25.0, "level": 7, "health_pct": 1.0, "in_combat": false, "npc_flags": 2, "quest_giver_status": "none"}
+  ],
+  "nearby_players": [],
+  "nearby_objects": [],
+  "window": {"kind": "gossip", "npc_guid": 5001, "menu_id": 1, "text_id": 2,
+             "options": [{"index": 0, "icon": 0, "coded": false, "box_money": 0, "text": "Tell me about this place.", "box_text": ""},
+                         {"index": 1, "icon": 0, "coded": true, "box_money": 0, "text": "Enter the password.", "box_text": "Password"}],
+             "quests": [{"quest_id": 8325, "quest_type": 4, "level": 1, "flags": 0, "repeatable": false, "title": "Reclaiming Sunstrider Isle"},
+                        {"quest_id": 8326, "quest_type": 2, "level": 2, "flags": 0, "repeatable": false, "title": "Unfortunate Measures"}]},
+  "trade": null, "mailbox": null, "has_new_mail": false,
+  "equipment": [], "inventory": [], "pending_invite": null, "chat_inbox": [], "channels": [],
+  "quest_log": [
+    {"slot": 0, "quest_id": 8325, "state": 1, "state_name": "complete", "counters": [8, 0, 0, 0], "time": 0, "title": "Reclaiming Sunstrider Isle"},
+    {"slot": 1, "quest_id": 9999, "state": 2, "state_name": "failed", "counters": [0, 0, 0, 0], "time": 0, "title": "A Timed Errand"}
+  ],
+  "me": {"level": 3}
+}

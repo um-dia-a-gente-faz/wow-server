@@ -136,7 +136,14 @@ attached.
 
 | Symptom | Cycle range | Root cause | Fix card |
 |---|---|---|---|
-| _(none logged yet)_ | | | |
+| Model returns a wrong GUID, so every GUID-taking action fails the same way (`interact`, `accept_quest`): `guid 0xf130003bae001ed0 is not currently perceived` | A2 cycles 2-19 (18 in a row); A3 cycles with `interact`/`accept_quest` fails (10 of 50) | The snapshot shows GUIDs as 20-digit integers (Erona = `17379391218345059262`); the model returned `17379391218345058000`, which is that number after a 64-bit float round-trip. Above 2^53 a JSON number can't survive tool-call arguments through the gateway (Gemini routes). Some `auto` cycles passed the exact value, probably when routed to a provider that keeps integers as text (the audit log records only `auto`, not the routed model, so this is unconfirmed). Blocking: it breaks every action that takes a GUID. | _(to file)_ |
+| Agent re-does the same step forever: `accept_quest` 8 times and gossip `interact` 15 times for one quest | A3 cycles 4-41 | The prompt is stateless (`agent/llm.py` `build_messages`): no goal, no history, no result of the last action. The model can't know it already accepted the quest. The server ignored the repeats (one `character_queststatus` row, status 3). | _(to file)_ |
+| Quest log in the snapshot is garbage: `title: "g\r"`, objective `entry: 393216, needed: 1966080`, `state: 0`, while the DB says the quest is status 3 (incomplete) | A3 (every snapshot after accepting quest 8325, first seen around cycle 10) | Live `SMSG_QUEST_QUERY_RESPONSE` / quest-log field parsing is misaligned (`393216 = 0x60000`, `1966080 = 0x1E0000` look like values shifted by two bytes). Unit tests pass, so either the fixtures don't match the live layout or the live parse takes a different path. Not yet root-caused. | _(to file)_ |
+| Garbage tool arguments reach the game: `say` with message `}`, `follow` with names `}}dotspans` and `: ` | A3 cycles 42, 48 (`follow`), 49 (`say`) | No validation of free-text/name args before acting. A bare `}` was sent to public chat. | _(to file)_ |
+| Free LLM tier can't sustain one agent: pinned `gemini-3.6-flash` got 502/429 within 10 s; pinned `gemini-3.1-flash-lite` got 429 after 19 calls (~4 min); `auto` ran the full 17.7 min | A1 cycles 2-7, A2 cycles 20-25 | Each cycle sends a 4-8k-token prompt (avg 6.5k) every 12-15 s (~340k prompt tokens in 17.7 min). One free route per pinned model has a low per-minute budget. `auto` spreads over routes, which is why it survives but also why GUID handling flips between providers. | _(to file)_ |
+| "Chat in global" not possible | n/a | The agent has `say`/`yell`/`whisper`/`emote` only. There is no join-channel action, no channel send, and no channel handling in `send_chat_message`. | _(to file)_ |
+| Follow reflex points the agent at the owner instead of the quest | A3 cycles 43-47 | The LLM chose `follow` Rubens (the only other player nearby) after its quest steps stalled. Not a bug in the reflex, but it shows the model has no objective to fall back on. | (same as goal/history row) |
+| Audit log rows for failed LLM calls repeat the previous cycle's `model`, `latency_ms` and token counts | A1 cycles 2-7, A2 cycles 20-25 | Likely the client's `last_usage`/`last_latency_ms` are left over from the previous call when no call completed (not confirmed in code). Misleads cost analysis. | _(to file)_ |
 
 Expected categories (fill in as they occur, don't force a fit):
 
@@ -166,12 +173,54 @@ just the latest:
 
 One entry per attempt, successful or not.
 
-### Attempt 1 — _(date)_
+### Attempt 1 (exploratory, not a counted run) — 2026-09-19
 
-- Character: _(name, race/class)_
-- Target level: _(e.g. 5)_
-- Model: _(provider/model, settings)_
-- Start: _(timestamp)_ · Stop: _(timestamp)_ · Outcome: _(success/failure)_
-- Token usage / cost: _(from provider dashboard)_
-- Deaths: _ · Stuck events: _ · Invalid-call rate: _
-- Failure catalog rows added: _(links)_
+Three short starts, all on the same character, so the model and think interval could be changed after each failure. Restarting to change model counts as an intervention by the rules above, so this is **not** a counted run. It's a first live look at Milestone 2 with a target of level 5.
+
+- Character: Spellweaver, Blood Elf Mage (AGENT05), Sunstrider Isle. Level 1, 0 XP, 0 copper, empty equipment and bags (agents own no starting gear).
+- Target level: 5. **Reached: no. Final: level 1, 0 XP.**
+- Other players online: Rubens (owner), within 5 yd of the agent in perception during the run.
+- Interventions: no GM commands, no DB edits, no worldserver restart. The agent process was stopped and restarted three times to change model and interval.
+- Run code: `main` at `df41e45` (includes UM-59, UM-60, UM-88 and #55).
+
+| Attempt | Model / think interval | Length | Outcome |
+|---|---|---|---|
+| A1 | pinned `gemini-3.6-flash`, 8 s | ~1 min | 502, then 429 on every cycle after the first call. Stopped. |
+| A2 | pinned `gemini-3.1-flash-lite`, 12 s | ~7 min | 18 identical failed `interact` calls (wrong GUID), then 429. Stopped. |
+| A3 | `auto`, 15 s | 17.7 min, 50 cycles | Quest 8325 accepted for real, then repeated; no kill, no XP. Stopped. |
+
+A3 numbers (from the audit log): 47 of 50 cycles produced a valid tool call (94%, above UM-44's 90% bar); 33 actions succeeded, 14 failed validation or execution, 3 LLM calls timed out. Successful actions: `interact` 15, `accept_quest` 8, `set_target` 2, `move_towards` 2, `follow` 2, `rest` 1, `move_to` 1, `say` 1, `face` 1. Failed: `interact` 6, `accept_quest` 4, `follow` 2, `auto_attack` 1 (target already dead), `loot` 1 (not lootable). No `cast_spell`, no `equip_item`, no `complete_quest`, no `turn_in_quest`. LLM latency median 3.5 s, max 19.3 s. Prompt tokens 337k, completion tokens 22.5k.
+
+**What went well**
+
+- Login, perception and packet handling on the live server were clean: 43-54 objects tracked, 0 dropped packets, and the agent logged out cleanly on interrupt every time.
+- Quest acceptance works end to end. Erona's gossip opened, `accept_quest` for 8325 succeeded, and the DB has `character_queststatus` (quest 8325, status 3). The server ignored the repeated accepts.
+- The UM-81 fix held: three LLM timeouts and many 429/502 responses were logged as skipped cycles, and the agent never crashed.
+- Valid tool-call rate on `auto` was 94%. Actions that got a correct GUID mostly worked: `interact`, `set_target`, `move_towards`, `move_to`, `rest`, `follow`, `say`.
+- The follow reflex works: the agent followed Rubens at 3 yd.
+- The audit log recorded every cycle with prompt, tool call, result and snapshot, which is how the GUID and quest-log problems were diagnosed in minutes.
+
+**What went badly** (details in the failure catalog above)
+
+1. The GUID float-precision bug blocks every GUID action on Gemini routes.
+2. The prompt has no goal, no history and no last-result feedback, so the agent loops.
+3. The live quest log and quest text are garbage.
+4. Garbage arguments (`say "}"`, nonsense player names) go straight to the game.
+5. The free LLM tier runs out fast; pinning a model is worse than `auto` right now.
+6. No path to global/channel chat.
+7. Not exercised at all, so still unproven live: combat by the agent itself (`cast_spell`, `auto_attack` on a live mob), looting, equipping items, selling, turning in a quest, dying and recovering, and reaching level 2+. The agent never killed a mob: its one `auto_attack` (cycle 45) and `loot` (cycle 46) targeted a Mana Wyrm that was already dead.
+
+**Suggested next steps, in order**
+
+1. Stop showing 64-bit GUIDs to the model. Give each perceived object a short handle (`u1`, `p2`, ...) or pass GUIDs as strings, and map back in code.
+2. Put a goal ("level up by doing quests and killing mobs near you"), the last N actions with their results, and the quest log with real titles into the prompt.
+3. Add a code-level loop guard: after 2-3 identical failed or no-op calls, tell the model or apply a cooldown.
+4. Fix the live quest-query parse using a captured `SMSG_QUEST_QUERY_RESPONSE` for quest 8325 as a fixture.
+5. Validate tool-call arguments before acting (player names must match a nearby player; chat text must be sane).
+6. Add a join-channel action and channel chat so "global" chat is possible.
+7. Size the prompt down and pick a model list with enough rate limit for a 15 s think interval; add retry-after handling for 429.
+8. Re-run this target-5 test after items 1-4. Start from a character that has never accepted the quest, and note that equipping can only be tested once the agent gets an item (quest reward or loot).
+
+- Token usage / cost: free tier, no cost. See the token counts above.
+- Deaths: 0 · Stuck events: 2 (A2 loop, A3 quest loop) · Invalid-call rate: 6% on `auto` (3 of 50)
+- Failure catalog rows added: 8 (see the table above)

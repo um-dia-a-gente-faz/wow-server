@@ -143,7 +143,38 @@ Run it on the VM:
   --out /opt/wowmap-data/maps
 ```
 
-Extracted 78 zone maps; 27 zones had no art in the locale MPQ.
+The script reads `patch-<locale>-3`, `patch-<locale>-2`, `patch-<locale>` and then
+`locale-<locale>.MPQ`, first match wins, like the client. 89 zone maps; the 16
+WorldMapArea rows without art are Wrath dungeons/raids and Dalaran,
+whose art uses per-floor names (`<Name>1_<N>.blp`) that the script does
+not try.
+
+### Explored-area overlays (coloured art)
+
+The base tiles are the *unexplored* parchment. The colour comes from
+`WorldMapOverlay.dbc`: one row per explored area, with the texture name, its size
+and its `(OffsetX, OffsetY)` on the zone's 1024x768 canvas (field layout in
+`tools/wowmap/overlays.py`, checked against TrinityCore's `WorldMapOverlayEntry` and
+the real DBC). Each overlay is split into 256 px tiles,
+`Interface\WorldMap\<Zone>\<TextureName><N>.blp`, numbered row-major; the last
+row/column is drawn `size % 256` pixels from a file padded to a power of two
+(FrameXML `WorldMapFrame_Update`). `extract_maps.py` pastes every overlay at its
+offset, so `<area_id>.png` is the zone fully explored and `<area_id>_base.png` the
+parchment alone. Overlays are placed by pixel offset, not through `transform.py`.
+
+Overlay tiles are DXT3/DXT5 (alpha encoding 1/7), base tiles DXT1; the BLP decoder
+picks the DDS FourCC from the BLP's alpha-encoding byte.
+
+Re-running it (read-only on the client; the output dir is what the container
+mounts, so write to a scratch dir first and swap it in on purpose):
+
+```
+/opt/wowmap-venv/bin/python tools/wowmap/extract_maps.py \
+  --client /opt/wow-server/client --dbc /opt/wowmap-data/dbc --out /tmp/maps-new
+```
+
+All zones take about 100 s. `wowmap` reads `WorldMapOverlay.dbc` from `DBC_DIR`
+for the subzone names and rects in `/api/areas`.
 
 ### The DBC field order (bug that cost hours)
 
@@ -185,9 +216,9 @@ Three calibration attempts documented in `tools/wowmap/`:
 |---|---|
 | `GET /` | the map HTML page |
 | `GET /api/players` | JSON: online players with name, level, class, race, zone, map, x/y/z, normalized coords |
-| `GET /api/areas?map=<id>` | JSON: zone tiles with rect, name, whether an image exists |
+| `GET /api/areas?map=<id>` | JSON: zone tiles with rect, name, whether an image exists, subzones (overlay rects + names) |
 | `GET /api/summary` | `{online, in_world, in_instance, zones}` |
-| `GET /maps/<area_id>.png` | the zone map image (static, cached 24 h) |
+| `GET /maps/<area_id>.png` | the zone map image, fully explored (static, cached 24 h); `<area_id>_base.png` is the unexplored art |
 | `GET /healthz` | `{"ok": true}` |
 
 ### Grafana

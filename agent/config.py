@@ -64,6 +64,14 @@ class Config:
     llm_api_key: str = field(default_factory=lambda: _env_str("LLM_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", ""))
 
+    # ── Jev decision model (UM-99, ADR 0001) ──────────────────
+    # OpenRouter Decisions API. The key is JEV_API_KEY, else OPENROUTER_API_KEY.
+    jev_base_url: str = field(default_factory=lambda: _env_str(
+        "JEV_BASE_URL", "https://openrouter.ai/api/alpha"))
+    jev_api_key: str = field(default_factory=lambda: _env_str(
+        "JEV_API_KEY") or _env_str("OPENROUTER_API_KEY"))
+    jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL", "typesafe/jev-1.13"))
+
     # ── Logging ───────────────────────────────────────────────
     log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
     verbose_packets: bool = field(default_factory=lambda: _env_bool("VERBOSE_PACKETS", False))
@@ -81,6 +89,13 @@ class Config:
     audit_dir: str = field(default_factory=lambda: _env_str("AGENT_AUDIT_DIR", "/data/audit"))
     audit_retention_days: int = field(default_factory=lambda: _env_int("AGENT_AUDIT_RETENTION_DAYS", 14))
 
+    # ── Observability API (UM-50) ─────────────────────────────
+    # Read-only HTTP view of this agent (agent/http_api.py). 0 = off (default).
+    # Bind defaults to loopback; containers set 0.0.0.0 so the port can be
+    # published (see docker-compose.agents.yml).
+    http_port: int = field(default_factory=lambda: _env_int("AGENT_HTTP_PORT", 0))
+    http_bind: str = field(default_factory=lambda: _env_str("AGENT_HTTP_BIND", "127.0.0.1"))
+
     def validate(self, require_character: bool = True) -> list[str]:
         """Return a list of configuration problems (empty = OK)."""
         problems = []
@@ -92,6 +107,8 @@ class Config:
             problems.append("either WOW_CHARACTER (name) or WOW_CHAR_GUID is required")
         if self.wow_auth_port <= 0 or self.wow_auth_port > 65535:
             problems.append(f"WOW_AUTH_PORT out of range: {self.wow_auth_port}")
+        if self.http_port < 0 or self.http_port > 65535:
+            problems.append(f"AGENT_HTTP_PORT out of range: {self.http_port}")
         return problems
 
     def redacted(self) -> dict:
@@ -106,6 +123,9 @@ class Config:
             "think_interval": self.think_interval,
             "run_duration": self.run_duration or "forever",
             "llm_model": self.llm_model or "(unset)",
+            "jev_base_url": self.jev_base_url,
+            "jev_model": self.jev_model,
+            "jev_api_key": "***" if self.jev_api_key else "(unset)",
             "log_level": self.log_level,
             "dump_packets": self.dump_packets_dir or "(off)",
             "audit_dir": self.audit_dir,
@@ -113,6 +133,7 @@ class Config:
             "chat_relay_url": self.chat_relay_url or "(off)",
             # The token itself is never logged (CLAUDE.md: no credentials in logs).
             "chat_relay_token": "***" if self.chat_relay_token else "(unset)",
+            "http": f"{self.http_bind}:{self.http_port}" if self.http_port else "(off)",
         }
 
 

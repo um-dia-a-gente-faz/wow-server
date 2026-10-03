@@ -1,0 +1,17 @@
+{
+  "_comment": "After a fight: one lootable corpse in reach, one 12 yd away, one 60 yd away (beyond a straight-line hop), and a dead corpse that is not lootable.",
+  "position": {"map": 530, "x": 10340.0, "y": -6370.0, "z": 26.0},
+  "is_dead": false, "is_ghost": false, "corpse_position": null,
+  "nearby_units": [
+    {"guid": 4661, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 2.0, "level": 2, "health_pct": 0.0, "in_combat": false, "lootable": true},
+    {"guid": 4665, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 6.0, "level": 2, "health_pct": 0.0, "in_combat": false},
+    {"guid": 4664, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 12.0, "level": 2, "health_pct": 0.0, "in_combat": false, "lootable": true},
+    {"guid": 4666, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 60.0, "level": 2, "health_pct": 0.0, "in_combat": false, "lootable": true}
+  ],
+  "nearby_players": [],
+  "nearby_objects": [],
+  "window": null, "trade": null, "mailbox": null, "has_new_mail": false,
+  "equipment": [], "inventory": [], "pending_invite": null, "chat_inbox": [], "channels": [],
+  "quest_log": [],
+  "me": {"level": 3}
+}

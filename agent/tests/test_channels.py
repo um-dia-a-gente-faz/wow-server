@@ -213,9 +213,10 @@ class ChannelSayTest(unittest.TestCase):
         a.confirm_interval = 0.01
         return a
 
-    def test_registered(self):
-        self.assertIn("channel_say", ac.REGISTRY)
-        self.assertEqual(ac.REGISTRY["channel_say"].schema()["parameters"]["required"], ["channel", "message"])
+    def test_not_registered(self):
+        # UM-98: chat deferred; the class stays for the future roleplay layer.
+        self.assertNotIn("channel_say", ac.REGISTRY)
+        self.assertEqual(ac.ChannelSayAction().schema()["parameters"]["required"], ["channel", "message"])
 
     def test_packet_layout(self):
         self.assertEqual(ac.build_channel_message(ac.LANG_ORCISH, GENERAL, "Hello"),

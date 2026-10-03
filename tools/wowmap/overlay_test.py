@@ -59,7 +59,7 @@ def main():
         print(f"  {label:28s} world({wx:.0f},{wy:.0f}) -> px({x:.0f},{y:.0f}) {land}")
 
     im.save(args.out, "PNG")
-    print("salvo:", args.out)
+    print("saved:", args.out)
 
 
 if __name__ == "__main__":

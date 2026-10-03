@@ -927,14 +927,14 @@ class WoWSession:
             data = qu.parse_questupdate_add_kill(payload)
         except (IndexError, struct.error) as e:
             raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_KILL ({len(payload)} B): {e}") from e
-        self._record_event("quest_progress", kind="kill", **data)
+        self._record_event("quest_progress", objective="kill", **data)
 
     def _handle_questupdate_add_item(self, payload: bytes):
         try:
             data = qu.parse_questupdate_add_item(payload)
         except (IndexError, struct.error) as e:
             raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_ITEM ({len(payload)} B): {e}") from e
-        self._record_event("quest_progress", kind="item", **data)
+        self._record_event("quest_progress", objective="item", **data)
 
     def _handle_questupdate_complete(self, payload: bytes):
         try:
