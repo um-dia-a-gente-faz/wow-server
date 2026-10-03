@@ -250,7 +250,10 @@ def think_and_act(session, world, llm_client, persona: str = "",
                 goal=persona or None,
                 prompt_tokens=usage.get("prompt_tokens"),
                 completion_tokens=usage.get("completion_tokens"),
-                model=getattr(llm_client, "model", None),
+                # UM-94: the model that actually answered (None on a failed
+                # call); clients without `last_model` fall back to `model`.
+                model=(llm_client.last_model if hasattr(llm_client, "last_model")
+                       else getattr(llm_client, "model", None)),
                 latency_ms=getattr(llm_client, "last_latency_ms", None),
             )
         except OSError as e:  # never let audit I/O crash a think cycle
