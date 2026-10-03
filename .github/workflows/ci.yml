@@ -37,6 +37,13 @@ jobs:
       - name: chat-feed unit tests
         run: python -m unittest discover -s tools/chat-feed/tests -v
 
+      # tools/dbc (the shared WDBC reader) is stdlib-only.
+      - name: dbc unit tests
+        run: python -m unittest discover -s tools/dbc/tests -v
+
+      - name: jev-mock unit tests
+        run: python -m unittest discover -s tools/jev-mock/tests -v
+
       # wowmap needs PyMySQL + cryptography (see its requirements.txt). Pillow is
       # only an extraction-time dep (extract_maps.py / extract_icons.py), installed
       # here so the BLP decode tests run instead of being skipped.

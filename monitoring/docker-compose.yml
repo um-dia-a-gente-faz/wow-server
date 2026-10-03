@@ -6,7 +6,7 @@
 # repo root even though both live in the same git checkout.
 #
 # Build contexts are relative to this file (../exporters/wow-exporter,
-# ../tools/wowmap), so this runs straight from the repo checkout — no more
+# ../tools for wowmap), so this runs straight from the repo checkout — no more
 # copying source into /opt/monitoring or /opt/wowmap. See scripts/deploy.sh.
 #
 # MYSQL_PASSWORD is interpolated from the repo-root .env. Compose only auto-loads
@@ -86,7 +86,9 @@ services:
 
   wowmap:
     container_name: wowmap
-    build: ../tools/wowmap
+    build:
+      context: ../tools          # tools/ so the image also gets the shared tools/dbc reader
+      dockerfile: wowmap/Dockerfile
     restart: unless-stopped
     environment:
       - MYSQL_HOST=trinitycore-db
@@ -96,8 +98,11 @@ services:
       - DBC_DIR=/dbc
       - MAPS_DIR=/maps
       - ICONS_DIR=/icons
+      - GRID_MAPS_DIR=/server-data/maps
       - LISTEN_PORT=9400
       - CALIBRATION_FILE=/app/calibration.json
+      # UM-50: agents' read-only APIs, "Name=http://host:9601,..." (empty = no agent mind tab)
+      - AGENT_API_URLS=${AGENT_API_URLS:-}
     ports:
       - "9400:9400"
     volumes:
@@ -107,6 +112,8 @@ services:
       # creates this directory empty and the inspect drawer shows placeholders.
       - /opt/wowmap-data/icons:/icons:ro
       - /opt/wowmap-data/calibration.json:/app/calibration.json
+      # The worldserver's extracted maps/*.map, read-only: subzone at a position (UM-75).
+      - server_data:/server-data:ro
     networks:
       - wow-game
 
@@ -114,3 +121,8 @@ networks:
   wow-game:
     external: true
     name: wow-server_default
+
+volumes:
+  server_data:
+    external: true
+    name: wow-server_server_data

@@ -54,7 +54,7 @@ def main():
         d.ellipse([x - 3, y - 3, x + 3, y + 3], fill=(255, 30, 30, 230))
 
     im.save(args.out, "PNG")
-    print(f"area {args.area} ({t.zone_name(args.area)}): {n_ok} dentro, {n_out} fora -> {args.out}")
+    print(f"area {args.area} ({t.zone_name(args.area)}): {n_ok} inside, {n_out} outside -> {args.out}")
 
 
 if __name__ == "__main__":

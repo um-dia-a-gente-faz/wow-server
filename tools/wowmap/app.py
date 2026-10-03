@@ -7,6 +7,9 @@ Serves:
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
     POST /api/calibrate       save a per-zone pixel offset
+    GET /api/agents           names of agents with an observability API (UM-50)
+    GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
+                              (healthz, state, perception, brain)
     GET /maps/<file>          extracted zone map images (static)
     GET /icons/<file>         extracted item icons (static, see item_icons.py)
     GET /healthz              liveness
@@ -17,26 +20,37 @@ extract_maps.py and served from MAPS_DIR.
 
 Env:
     MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD   as elsewhere in this repo
-    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc)
+    DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc; names come
+                                     from Spell, Talent, TalentTab, Faction, Achievement)
     MAPS_DIR    default /maps       (extracted PNGs)
     ICONS_DIR   default /icons      (item icon PNGs from extract_icons.py)
+    GRID_MAPS_DIR default /server-maps (the worldserver's maps/*.map, for subzones)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
+    AGENT_API_URLS default ""       "Name=http://host:9601,Name2=http://host:9602" — agent
+                                    observability APIs (agent/http_api.py) to proxy
 """
 import json
 import logging
 import math
 import os
 import re
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
 import item_icons
-from transform import DbcTables
+from transform import DbcTables, GridAreas
+
+# The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from dbc.names import GameNames  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wowmap")
@@ -52,6 +66,7 @@ MYSQL: dict = dict(
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
 ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
+GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
@@ -60,6 +75,47 @@ MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
 CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
+
+
+def parse_agent_urls(spec):
+    """AGENT_API_URLS -> {lowercased name: (name, base url)}. Malformed
+    entries are skipped; only http(s) URLs are accepted."""
+    out = {}
+    for part in (spec or "").split(","):
+        name, sep, url = part.strip().partition("=")
+        name, url = name.strip(), url.strip().rstrip("/")
+        if sep and name and url.startswith(("http://", "https://")):
+            out[name.lower()] = (name, url)
+    return out
+
+
+# UM-50: agents' read-only observability APIs. wowmap proxies them so the page
+# needs no extra ports or CORS; only these GET views are ever forwarded.
+AGENT_APIS = parse_agent_urls(os.environ.get("AGENT_API_URLS", ""))
+AGENT_VIEWS = ("healthz", "state", "perception", "brain")
+AGENT_PROXY_TIMEOUT_S = 3
+MAX_AGENT_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+def fetch_agent_view(name, view, n=None):
+    """GET <agent base>/<view> and return (status, body bytes). Unknown agent
+    or view -> 404; an unreachable agent -> 502. The agent's URL is never
+    echoed back to the browser."""
+    entry = AGENT_APIS.get((name or "").lower())
+    if entry is None or view not in AGENT_VIEWS:
+        return 404, json.dumps({"error": "unknown agent or view"}).encode()
+    url = f"{entry[1]}/{view}"
+    if view == "brain" and n is not None:
+        url += f"?n={int(n)}"
+    try:
+        with urllib.request.urlopen(url, timeout=AGENT_PROXY_TIMEOUT_S) as r:
+            return r.status, r.read(MAX_AGENT_RESPONSE_BYTES)
+    except urllib.error.HTTPError as e:
+        e.close()
+        return 502, json.dumps({"error": f"agent API returned {e.code}"}).encode()
+    except (OSError, ValueError) as e:
+        log.info("agent API %s unreachable: %s", entry[0], e)
+        return 502, json.dumps({"error": "agent API unreachable"}).encode()
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -78,6 +134,8 @@ ICON_FILE_RE = re.compile(r"[a-z0-9_\-]+\.png")
 _tables = None
 _display_icons = None
 _icons_lock = threading.Lock()
+_names = None
+_names_lock = threading.Lock()
 _calibration_lock = threading.Lock()
 
 
@@ -150,8 +208,45 @@ def icon_url(display_id):
     return None
 
 
+def names():
+    """Spell/talent/faction/achievement names, built once (~1 s, ~15 MB)."""
+    global _names
+    with _names_lock:
+        if _names is None:
+            t0 = time.monotonic()
+            _names = GameNames(DBC_DIR)
+            log.info("names: %d spells, %d talents, %d factions, %d achievements in %.1fs",
+                     len(_names.spells), len(_names.talent_spells), len(_names.factions),
+                     len(_names.achievements), time.monotonic() - t0)
+    return _names
+
+
 def db():
     return pymysql.connect(**MYSQL)
+
+
+_grid_areas = None
+
+
+def grid_areas():
+    global _grid_areas
+    if _grid_areas is None:
+        _grid_areas = GridAreas(GRID_MAPS_DIR)
+    return _grid_areas
+
+
+def position_fields(t, cmap, zone, x, y):
+    """Continent, subzone and in-game map coordinates for one saved position."""
+    area = grid_areas().area_id(cmap, x, y)
+    # Only a subzone of the saved zone; at zone borders the grid can disagree.
+    sub = area if area and area != zone and t.area_parent.get(area) == zone else None
+    coords = t.game_coords(zone, x, y) if zone else None
+    return {
+        "continent_name": t.continent_name(cmap, zone),
+        "subzone": sub,
+        "subzone_name": t.zone_name(sub) if sub else None,
+        "map_coords": {"x": round(coords[0], 1), "y": round(coords[1], 1)} if coords else None,
+    }
 
 
 # ---------------------------------------------------------------- queries
@@ -184,6 +279,7 @@ def fetch_players():
                 "norm_x": round(n[0], 4) if n else None,
                 "norm_y": round(n[1], 4) if n else None,
                 "playtime_seconds": totaltime,
+                **position_fields(t, cmap, zone, float(x), float(y)),
             })
     return out
 
@@ -280,6 +376,14 @@ def fetch_character(name):
             WHERE guid = %s
             ORDER BY faction
         """, (guid,), "reputation")
+        # Max health/power only exist when the worldserver persists them
+        # (PlayerSave.Stats.MinLevel > 0; Player::_SaveStats). No row -> None.
+        stats = best_effort(cur, """
+            SELECT maxhealth, maxpower1, maxpower2, maxpower3, maxpower4,
+                   maxpower5, maxpower6, maxpower7
+            FROM characters.character_stats
+            WHERE guid = %s
+        """, (guid,), "stats")
         achievements = best_effort(cur, """
             SELECT achievement, date
             FROM characters.character_achievement
@@ -288,6 +392,7 @@ def fetch_character(name):
         """, (guid,), "achievements")
 
     t = tables()
+    n = names()
     return {
         "name": char_name,
         "level": level,
@@ -305,15 +410,19 @@ def fetch_character(name):
         "position_y": round(float(y), 2),
         "position_z": round(float(z), 2),
         "orientation": round(float(orient), 3),
+        **position_fields(t, cmap, zone, float(x), float(y)),
         "money": money,
         "money_gold": float(money) / 10000.0,
         "totaltime": totaltime,
         "logout_time": logout_time,
         "online": bool(online),
-        # Current values only: max health/power are computed by the worldserver
-        # at runtime and never persisted (docs/ROADMAP.md, Phase B option 1).
         "health": health,
         "power": dict(zip(POWER_NAMES, powers)),
+        # From characters.character_stats, written in the same save as health/power
+        # above; None when the row doesn't exist (stat saving off, or the character
+        # hasn't been saved since it was turned on).
+        "max_health": stats[0][0] if stats else None,
+        "max_power": dict(zip(POWER_NAMES, stats[0][1:])) if stats else None,
         "inventory": [
             {"bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
              "item_name": item_name, "count": count,
@@ -322,16 +431,28 @@ def fetch_character(name):
             for bag, slot, item_guid, item_entry, item_name, count, display_id, quality
             in inventory
         ],
-        "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
+        # Names from the client DBCs (tools/dbc/names.py); null when an id is unknown.
+        "talents": [
+            {"spell": spell, "spec": spec, **_talent_names(n, spell)}
+            for spell, spec in talents
+        ],
         "reputation": [
-            {"faction": faction, "standing": standing}
+            {"faction": faction, "standing": standing,
+             **n.reputation(faction, standing, race, cls)}
             for faction, standing in reputation
         ],
         "achievements": [
-            {"achievement": achievement, "date": date}
+            {"achievement": achievement, "date": date,
+             **(n.achievement(achievement) or {"name": None, "points": None})}
             for achievement, date in achievements
         ],
     }
+
+
+def _talent_names(n, spell):
+    t = n.talent(spell) or {}
+    return {"name": t.get("name"), "tree": t.get("tree"), "tree_order": t.get("tree_order"),
+            "rank": t.get("rank")}
 
 
 # ---------------------------------------------------------------- HTTP
@@ -375,6 +496,15 @@ class Handler(BaseHTTPRequestHandler):
                 if character is None:
                     return self._send(404, {"error": "character not found"})
                 return self._send(200, character)
+
+            if path == "/api/agents":
+                return self._send(200, {"agents": sorted(n for n, _ in AGENT_APIS.values())})
+
+            if path.startswith("/api/agent/"):
+                name, _, view = unquote(path[len("/api/agent/"):]).partition("/")
+                n = qs.get("n", [None])[0]
+                status, body = fetch_agent_view(name, view, int(n) if n and n.isdigit() else None)
+                return self._send(status, body, cache="no-store")
 
             if path == "/api/areas":
                 mid = qs.get("map", [None])[0]
@@ -479,9 +609,9 @@ CHAT_HTML = r"""
 CHAT_JS = r"""
 <script>
 const Chat = (() => {
-  const KIND_LABEL = {say: 'diz', yell: 'grita', channel: 'canal', guild: 'guilda',
-    party: 'grupo', raid: 'raide', officer: 'oficial', battleground: 'campo de batalha',
-    whisper: 'sussurro', unknown: '?'};
+  const KIND_LABEL = {say: 'says', yell: 'yells', channel: 'channel', guild: 'guild',
+    party: 'party', raid: 'raid', officer: 'officer', battleground: 'battleground',
+    whisper: 'whisper', unknown: '?'};
   const list = document.getElementById('chat');
   const status = document.getElementById('chat-status');
   let source = null, autoscroll = true, backoffMs = 2000;
@@ -516,11 +646,11 @@ const Chat = (() => {
   function connect() {
     if (source) return;
     status.hidden = false;
-    status.textContent = 'conectando ao chat…';
+    status.textContent = 'connecting to chat…';
     try {
       source = new EventSource(feedUrl());
     } catch (e) {
-      status.textContent = 'chat indisponível: ' + e;
+      status.textContent = 'chat unavailable: ' + e;
       return;
     }
     source.addEventListener('chat', (e) => {
@@ -529,7 +659,7 @@ const Chat = (() => {
     source.onopen = () => { status.hidden = true; backoffMs = 2000; };
     source.onerror = () => {
       status.hidden = false;
-      status.textContent = 'chat desconectado, tentando reconectar…';
+      status.textContent = 'chat disconnected, reconnecting…';
     };
   }
 
@@ -590,6 +720,10 @@ INSPECT_CSS = r"""
   .drawer .ico .cnt { position:absolute; right:2px; bottom:0; font-size:11px; font-weight:600;
                       color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer .none { color:var(--dim); font-size:12px; padding:3px 0; }
+  .drawer .meter-bar { position:relative; height:16px; background:#20263a; border-radius:3px; overflow:hidden; }
+  .drawer .meter-bar .fill { position:absolute; inset:0 auto 0 0; }
+  .drawer .meter-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
+                      line-height:16px; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
@@ -597,10 +731,10 @@ INSPECT_CSS = r"""
 """
 
 INSPECT_HTML = r"""
-<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspecionar personagem">
+<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspect character">
   <div class="drawer-head">
     <div class="dh-main" id="inspect-head"></div>
-    <button id="inspect-close" title="Fechar (Esc)" aria-label="Fechar">✕</button>
+    <button id="inspect-close" title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <div class="drawer-body" id="inspect-body"></div>
   <div class="drawer-foot" id="inspect-status"></div>
@@ -611,17 +745,31 @@ INSPECT_HTML = r"""
 # and item names come straight from the database.
 INSPECT_JS = r"""
 <script>
+// Position text shared by the inspect drawer, the player list and marker tooltips.
+function placeText(p) {
+  return [p.continent_name, p.zone_name, p.subzone_name].filter(Boolean).join(' › ');
+}
+function mapCoordsText(p) {
+  return p.map_coords ? `${p.map_coords.x.toFixed(1)}, ${p.map_coords.y.toFixed(1)}` : '';
+}
+function worldText(x, y, z) {
+  return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
+}
+
 const Inspect = (() => {
-  const EQUIP_SLOTS = ['Cabeça', 'Pescoço', 'Ombros', 'Camisa', 'Peito', 'Cintura', 'Pernas',
-    'Pés', 'Pulsos', 'Mãos', 'Dedo 1', 'Dedo 2', 'Berloque 1', 'Berloque 2', 'Costas',
-    'Mão principal', 'Mão secundária', 'À distância', 'Tabardo'];
-  const POWER_LABELS = {mana: 'Mana', rage: 'Raiva', focus: 'Foco', energy: 'Energia',
-    happiness: 'Felicidade', rune: 'Runas', runic_power: 'Poder rúnico'};
+  const EQUIP_SLOTS = ['Head', 'Neck', 'Shoulder', 'Shirt', 'Chest', 'Waist', 'Legs',
+    'Feet', 'Wrist', 'Hands', 'Finger 1', 'Finger 2', 'Trinket 1', 'Trinket 2', 'Back',
+    'Main Hand', 'Off Hand', 'Ranged', 'Tabard'];
+  const POWER_LABELS = {mana: 'Mana', rage: 'Rage', focus: 'Focus', energy: 'Energy',
+    happiness: 'Happiness', rune: 'Runes', runic_power: 'Runic Power'};
   // The server keeps rage and runic power in tenths (1000 is shown as 100 in game).
   const POWER_SCALE = {rage: 10, runic_power: 10};
+  // Bar colours roughly follow the default unit frames.
+  const BAR_COLORS = {health: '#1f9e3a', mana: '#2f5fd8', rage: '#c42f2f', focus: '#d98a3a',
+    energy: '#d6c22e', happiness: '#2fa88a', rune: '#7f7f7f', runic_power: '#1fa6c4'};
   const CLASS_POWERS = {1: ['rage'], 2: ['mana'], 3: ['mana'], 4: ['energy'], 5: ['mana'],
     6: ['runic_power'], 7: ['mana'], 8: ['mana'], 9: ['mana'], 11: ['mana', 'rage', 'energy']};
-  const nf = new Intl.NumberFormat('pt-BR');
+  const nf = new Intl.NumberFormat('en-US');
   const drawer = document.getElementById('inspect');
   const head = document.getElementById('inspect-head');
   const body = document.getElementById('inspect-body');
@@ -640,6 +788,22 @@ const Inspect = (() => {
     r.append(el('span', 'k', label), el('span', 'v', value));
     return r;
   }
+  // A bar when the max is known (character_stats row), otherwise the plain number.
+  function meter(label, cur, max, color) {
+    const value = nf.format(cur);
+    if (!(max > 0)) return kv(label, value);
+    const b = el('div', 'meter-bar');
+    const fill = el('span', 'fill');
+    fill.style.width = `${Math.max(0, Math.min(100, cur / max * 100))}%`;
+    fill.style.background = color;
+    b.append(fill, el('span', 'txt', `${value} / ${nf.format(max)}`));
+    const r = el('div', 'kv');
+    r.append(el('span', 'k', label));
+    const v = el('span', 'v');
+    v.append(b);
+    r.append(v);
+    return r;
+  }
   function money(copper) {
     const c = Number(copper) || 0;
     return `${nf.format(Math.floor(c / 10000))}g ${Math.floor(c / 100) % 100}s ${c % 100}c`;
@@ -649,7 +813,7 @@ const Inspect = (() => {
     const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
   }
-  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('pt-BR') : 'nunca'; }
+  function when(ts) { return ts ? new Date(ts * 1000).toLocaleString('en-US') : 'never'; }
 
   // bag 0 = the character's own slots (TrinityCore Player.h EquipmentSlots, InventorySlots, …);
   // any other bag value is the item_instance guid of the container holding the item.
@@ -663,7 +827,7 @@ const Inspect = (() => {
       if (s < 19) g.equipped.push(it);
       else if (s < 23 || (s >= 67 && s < 74)) {
         const bank = s >= 67;
-        const c = {label: bank ? `Bolsa do banco ${s - 66}` : `Bolsa ${s - 18}`, bag: it, items: []};
+        const c = {label: bank ? `Bank bag ${s - 66}` : `Bag ${s - 18}`, bag: it, items: []};
         (bank ? g.bankBags : g.bags).push(c);
         containers.set(it.item_guid, c);
       }
@@ -703,7 +867,7 @@ const Inspect = (() => {
   }
 
   function itemRows(parent, items, label) {
-    if (!items.length) { parent.append(el('div', 'none', 'vazio')); return; }
+    if (!items.length) { parent.append(el('div', 'none', 'empty')); return; }
     for (const it of items) {
       const r = el('div', 'item');
       r.append(el('span', 'k', label(it)), itemIcon(it));
@@ -742,63 +906,100 @@ const Inspect = (() => {
     h.append(dot, el('span', 'nm', c.name),
              el('span', 'badge' + (c.online ? ' on' : ''), c.online ? 'online' : 'offline'));
     head.replaceChildren(h,
-      el('div', 'line', `Nível ${c.level} · ${c.race_name} · ${c.class_name}`),
-      el('div', 'line', c.zone_name));
+      el('div', 'line', `Level ${c.level} · ${c.race_name} · ${c.class_name}`),
+      el('div', 'line', placeText(c)));
+  }
+
+  // Names come from the client DBCs (tools/dbc/names.py); unknown ids fall back to the raw id.
+  function talentSection(list) {
+    const d = collapsible('talents', `Talents (${list.length})`);
+    const groups = new Map();
+    for (const t of list) {
+      const key = `${t.spec}|${t.tree_order ?? 99}|${t.tree ?? ''}`;
+      if (!groups.has(key)) groups.set(key, {spec: t.spec, order: t.tree_order ?? 99, tree: t.tree, items: []});
+      groups.get(key).items.push(t);
+    }
+    const specs = new Set(list.map((t) => t.spec));
+    const sorted = [...groups.values()].sort((a, b) => a.spec - b.spec || a.order - b.order);
+    for (const g of sorted) {
+      const tree = g.tree || 'Unknown tree';
+      d.append(el('h4', null, specs.size > 1 ? `Spec ${g.spec + 1} · ${tree} (${g.items.length})` : `${tree} (${g.items.length})`));
+      for (const t of g.items) d.append(kv(t.name || `spell ${t.spell}`, t.rank ? `rank ${t.rank}` : ''));
+    }
+    return d;
+  }
+  function reputationSection(list) {
+    const d = collapsible('reputation', `Reputation (${list.length})`);
+    const value = (r) => r.value ?? r.standing;
+    for (const r of [...list].sort((a, b) => value(b) - value(a))) {
+      d.append(kv(r.faction_name || `faction ${r.faction}`, `${r.tier || ''} · ${nf.format(value(r))}`));
+    }
+    return d;
+  }
+  function achievementSection(list) {
+    const points = list.reduce((n, a) => n + (a.points || 0), 0);
+    const d = collapsible('achievements', `Achievements (${list.length} · ${nf.format(points)} pts)`);
+    for (const a of list) {
+      const pts = a.points != null ? `${a.points} pts · ` : '';
+      d.append(kv(a.name || `#${a.achievement}`, pts + when(a.date)));
+    }
+    return d;
   }
 
   function renderBody(c) {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(kv('Vida', nf.format(c.health)));
-    const power = c.power || {};
+    f.append(meter('Health', c.health, c.max_health, BAR_COLORS.health));
+    const power = c.power || {}, maxPower = c.max_power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
-      f.append(kv(POWER_LABELS[key], nf.format(Math.floor(power[key] / (POWER_SCALE[key] || 1)))));
+      const scale = POWER_SCALE[key] || 1;
+      f.append(meter(POWER_LABELS[key], Math.floor(power[key] / scale),
+                     Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]));
     }
-    f.append(kv('Ouro', money(c.money)));
-    f.append(kv('Tempo de jogo', duration(c.totaltime)));
-    f.append(kv('Último logout', when(c.logout_time)));
-    f.append(kv('Posição', `${c.map_name} (${c.map}) · ${c.position_x}, ${c.position_y}, ${c.position_z}`));
+    f.append(kv('Gold', money(c.money)));
+    f.append(kv('Played time', duration(c.totaltime)));
+    f.append(kv('Last logout', when(c.logout_time)));
+
+    f.append(el('h3', null, 'Position'));
+    f.append(kv('Location', placeText(c)));
+    f.append(kv('Map coords', mapCoordsText(c) || '—'));
+    f.append(kv('World X, Y, Z', worldText(c.position_x, c.position_y, c.position_z)));
+    f.append(kv('Facing', `${c.orientation.toFixed(2)} rad`));
 
     const inv = groupInventory(c.inventory || []);
-    f.append(el('h3', null, 'Equipado'));
+    f.append(el('h3', null, 'Equipped'));
     itemRows(f, inv.equipped, slotLabel);
-    f.append(el('h3', null, 'Bolsas'));
-    f.append(el('h4', null, 'Mochila'));
+    f.append(el('h3', null, 'Bags'));
+    f.append(el('h4', null, 'Backpack'));
     itemRows(f, inv.backpack, packSlotLabel(23));
     containerList(f, inv.bags);
 
     if (inv.bank.length || inv.bankBags.length) {
-      const d = collapsible('bank', `Banco (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
+      const d = collapsible('bank', `Bank (${inv.bank.length + inv.bankBags.reduce((n, b) => n + b.items.length, 0)})`);
       itemRows(d, inv.bank, packSlotLabel(39));
       containerList(d, inv.bankBags);
       f.append(d);
     }
-    for (const [key, title, items] of [['keyring', 'Chaveiro', inv.keyring],
-                                       ['currency', 'Moedas', inv.currency],
-                                       ['other', 'Outros itens', inv.other]]) {
+    for (const [key, title, items] of [['keyring', 'Keyring', inv.keyring],
+                                       ['currency', 'Currency', inv.currency],
+                                       ['other', 'Other items', inv.other]]) {
       if (!items.length) continue;
       const d = collapsible(key, `${title} (${items.length})`);
       itemRows(d, items, (it) => `bag ${it.bag} / ${it.slot}`);
       f.append(d);
     }
 
-    // Raw ids for now; names need the DBC loader (ROADMAP Phase C).
-    const talents = collapsible('talents', `Talentos (${(c.talents || []).length})`);
-    for (const t of c.talents || []) talents.append(kv(`spec ${t.spec + 1}`, `spell ${t.spell}`));
-    const reps = collapsible('reputation', `Reputação (${(c.reputation || []).length})`);
-    for (const r of c.reputation || []) reps.append(kv(`facção ${r.faction}`, nf.format(r.standing)));
-    const achs = collapsible('achievements', `Conquistas (${(c.achievements || []).length})`);
-    for (const a of c.achievements || []) achs.append(kv(`#${a.achievement}`, when(a.date)));
-    f.append(talents, reps, achs);
+    f.append(talentSection(c.talents || []), reputationSection(c.reputation || []),
+             achievementSection(c.achievements || []));
 
     const top = body.scrollTop;
     body.replaceChildren(f);
     body.scrollTop = top;
   }
 
-  function stamp() { status.textContent = 'atualizado ' + new Date().toLocaleTimeString(); }
+  function stamp() { status.textContent = 'updated ' + new Date().toLocaleTimeString(); }
 
   function markSelected() {
     for (const e of document.querySelectorAll('.pl')) e.classList.toggle('sel', e.dataset.name === name);
@@ -814,7 +1015,7 @@ const Inspect = (() => {
       if (!r.ok) {
         lastJson = null;
         head.replaceChildren(el('h2', null, who));
-        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Personagem não encontrado' : 'erro ' + r.status));
+        body.replaceChildren(el('div', 'empty', r.status === 404 ? 'Character not found' : 'error ' + r.status));
         stamp();
         return;
       }
@@ -826,7 +1027,7 @@ const Inspect = (() => {
       }
       stamp();
     } catch (e) {
-      if (mine === seq) status.textContent = 'erro: ' + e;
+      if (mine === seq) status.textContent = 'error: ' + e;
     }
   }
 
@@ -835,7 +1036,7 @@ const Inspect = (() => {
       name = who;
       lastJson = null;
       head.replaceChildren(el('h2', null, who));
-      body.replaceChildren(el('div', 'empty', 'carregando…'));
+      body.replaceChildren(el('div', 'empty', 'loading…'));
       body.scrollTop = 0;
       status.textContent = '';
     }
@@ -873,7 +1074,7 @@ const Inspect = (() => {
     const m = location.hash.match(/^#inspect=(.+)$/);
     if (m) open(decodeURIComponent(m[1]));
   } catch (e) {
-    console.warn('hash de inspeção inválido:', e);
+    console.warn('invalid inspect hash:', e);
   }
 
   return {open, close, refresh, current: () => name};
@@ -881,9 +1082,187 @@ const Inspect = (() => {
 </script>
 """
 
+# ---------------------------------------------------------------- page: agent mind
+# UM-50: agents that run an observability API (AGENT_API_URLS) get a distinct
+# ring on the map and an "Agent mind" tab in the inspect drawer, polled through
+# /api/agent/<name>/{brain,perception}. Self-contained: it only reads
+# Inspect.current() and adds its own elements, so the inspect panel is untouched.
+# Everything from the agent is rendered with textContent (chat and names are untrusted).
+AGENT_CSS = r"""
+  .marker.agent .ring { outline:2px dashed #5fd0d8; outline-offset:2px; }
+  .pl.agent .nm::after { content:" · agent"; color:#5fd0d8; font-size:11px; }
+  .mind-tabs { display:flex; gap:6px; padding:8px 16px 0; }
+  .mind-tabs button { flex:1; background:#141824; color:var(--dim); border:1px solid var(--line);
+                      border-radius:7px; padding:5px 4px; font:inherit; cursor:pointer; }
+  .mind-tabs button.on { background:#2b3550; border-color:#46557a; color:var(--fg); }
+  .mind .dec { padding:4px 0; border-bottom:1px solid #20263a; font-size:12.5px; overflow-wrap:anywhere; }
+  .mind .dec .when { color:var(--dim); font-size:11px; }
+  .mind .dec.fail .act { color:#ff8b8b; }
+  .mind .dec .err { color:var(--dim); }
+"""
+
+AGENT_JS = r"""
+<script>
+const AgentMind = (() => {
+  const drawer = document.getElementById('inspect');
+  const charBody = document.getElementById('inspect-body');
+  const status = document.getElementById('inspect-status');
+  const agents = new Map();  // lowercased name -> name
+  let tab = 'character', shownFor = null, seq = 0;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function kv(label, value) {
+    const r = el('div', 'kv');
+    r.append(el('span', 'k', label), el('span', 'v', value));
+    return r;
+  }
+  const isAgent = (n) => !!n && agents.has(n.toLowerCase());
+
+  const tabs = el('div', 'mind-tabs');
+  const bChar = el('button', 'on', 'Character'), bMind = el('button', null, 'Agent mind');
+  tabs.append(bChar, bMind);
+  tabs.hidden = true;
+  const pane = el('div', 'drawer-body mind');
+  pane.hidden = true;
+  drawer.insertBefore(tabs, charBody);
+  drawer.insertBefore(pane, status);
+
+  function setTab(t) {
+    tab = t;
+    bChar.classList.toggle('on', t === 'character');
+    bMind.classList.toggle('on', t === 'mind');
+    charBody.hidden = t === 'mind';
+    pane.hidden = t !== 'mind';
+    if (t === 'mind') refresh();
+  }
+  bChar.onclick = () => setTab('character');
+  bMind.onclick = () => setTab('mind');
+
+  function sync() {
+    const n = Inspect.current();
+    tabs.hidden = !isAgent(n);
+    if (!isAgent(n) && tab === 'mind') setTab('character');
+    if (n !== shownFor) {
+      shownFor = n;
+      seq++;
+      pane.replaceChildren(el('div', 'none', 'loading…'));
+      if (tab === 'mind' && isAgent(n)) refresh();
+    }
+  }
+
+  function args(a) {
+    const s = JSON.stringify(a || {});
+    return s === '{}' ? '' : s.length > 120 ? s.slice(0, 117) + '...' : s;
+  }
+  function unitLine(u) {
+    const bits = [u.name || `${u.type || 'object'} ${u.entry ?? ''}`];
+    if (u.level != null) bits.push(`L${u.level}`);
+    if (u.health_pct != null) bits.push(`${Math.round(u.health_pct * 100)}% hp`);
+    if (u.in_combat) bits.push('in combat');
+    return bits.join(' · ');
+  }
+
+  function render(brain, perc) {
+    const f = document.createDocumentFragment();
+    f.append(el('h3', null, 'Brain'));
+    f.append(kv('Status', brain.connected ? 'in game' : 'not connected'));
+    f.append(kv('Goal', brain.goal || '(none)'));
+    f.append(kv('Model', brain.model || '(none)'));
+    f.append(kv('Cycle', brain.cycle ?? '-'));
+    const t = brain.tokens || {};
+    f.append(kv('Tokens', `${t.prompt_total || 0} in · ${t.completion_total || 0} out · ${t.cycles || 0} cycles`));
+    for (const [k, v] of Object.entries(brain.reflexes || {})) f.append(kv(`Reflex: ${k}`, JSON.stringify(v)));
+
+    f.append(el('h3', null, 'Last decisions'));
+    const decs = (brain.decisions || []).slice().reverse();
+    if (!decs.length) f.append(el('div', 'none', 'no decisions yet'));
+    for (const d of decs) {
+      const ok = d.result && d.result.ok;
+      const r = el('div', 'dec' + (ok ? '' : ' fail'));
+      const tc = d.tool_call || {};
+      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}`),
+               el('div', 'act', `${tc.name || '(no action)'} ${args(tc.args)}`));
+      if (!ok && d.result && d.result.error) r.append(el('div', 'err', d.result.error));
+      f.append(r);
+    }
+
+    f.append(el('h3', null, 'Nearby'));
+    if (perc && perc.connected !== false) {
+      const p = perc.position;
+      if (p) f.append(kv('Position', `map ${p.map} · ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`));
+      for (const [label, key] of [['Units', 'nearby_units'], ['Players', 'nearby_players'], ['Objects', 'nearby_objects']]) {
+        const list = (perc[key] || []).slice(0, 8);
+        f.append(el('h4', null, `${label} (${(perc[key] || []).length})`));
+        if (!list.length) f.append(el('div', 'none', 'none'));
+        for (const u of list) f.append(kv(`${u.distance} yd`, unitLine(u)));
+      }
+      for (const key of ['window', 'trade', 'pending_invite']) {
+        if (perc[key]) f.append(kv(key.replace('_', ' '), JSON.stringify(perc[key]).slice(0, 200)));
+      }
+    } else {
+      f.append(el('div', 'none', 'no perception'));
+    }
+    const top = pane.scrollTop;
+    pane.replaceChildren(f);
+    pane.scrollTop = top;
+  }
+
+  async function getJson(who, view) {
+    const r = await fetch(`/api/agent/${encodeURIComponent(who)}/${view}` + (view === 'brain' ? '?n=5' : ''));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'error ' + r.status);
+    return j;
+  }
+
+  async function refresh() {
+    const who = Inspect.current();
+    if (!isAgent(who) || tab !== 'mind') return;
+    const mine = ++seq;
+    try {
+      const [brain, perc] = await Promise.all([getJson(who, 'brain'), getJson(who, 'perception')]);
+      if (mine !== seq) return;
+      render(brain, perc);
+      status.textContent = 'agent updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      if (mine === seq) pane.replaceChildren(el('div', 'none', 'agent API: ' + e.message));
+    }
+  }
+
+  function tag(root) {
+    for (const e of root.querySelectorAll('.marker, .pl')) e.classList.toggle('agent', isAgent(e.dataset.name));
+  }
+  async function loadAgents() {
+    try {
+      const j = await (await fetch('/api/agents')).json();
+      agents.clear();
+      for (const n of j.agents || []) agents.set(n.toLowerCase(), n);
+      tag(document);
+      sync();
+    } catch (e) { /* no agents configured or wowmap restarting */ }
+  }
+  // Markers and the player list are rebuilt on every tick; tag the new nodes.
+  for (const id of ['markers', 'list']) {
+    const root = document.getElementById(id);
+    if (root) new MutationObserver(() => tag(root)).observe(root, {childList: true});
+  }
+
+  loadAgents();
+  setInterval(loadAgents, 60000);
+  setInterval(sync, 500);
+  setInterval(refresh, 3000);
+  return {refresh, agents: () => [...agents.values()]};
+})();
+</script>
+"""
+
 PAGE = r"""<!doctype html>
-<html lang="pt-BR"><head>
-<meta charset="utf-8"><title>WoW — Mapa ao vivo</title>
+<html lang="en"><head>
+<meta charset="utf-8"><title>WoW — Live map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { --bg:#10131a; --panel:#1a1f2b; --line:#2a3244; --fg:#e6e9f0; --dim:#8b93a7; }
@@ -956,37 +1335,38 @@ PAGE = r"""<!doctype html>
   }
 /* @inspect-css */
 /* @chat-css */
+/* @agent-css */
 </style></head>
 <body>
 <aside id="aside">
-  <h1>Mapa ao vivo <button id="collapse" title="Recolher barra lateral" aria-label="Recolher barra lateral">«</button></h1>
-  <div class="sub" id="sub">carregando…</div>
+  <h1>Live map <button id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">«</button></h1>
+  <div class="sub" id="sub">loading…</div>
   <div class="stats">
     <div class="stat"><b id="s-online">–</b><span>online</span></div>
-    <div class="stat"><b id="s-world">–</b><span>no mundo</span></div>
-    <div class="stat"><b id="s-inst">–</b><span>em instância</span></div>
+    <div class="stat"><b id="s-world">–</b><span>in world</span></div>
+    <div class="stat"><b id="s-inst">–</b><span>in instance</span></div>
   </div>
   <div class="side-tabs">
-    <button id="tab-players" class="on">Jogadores</button>
+    <button id="tab-players" class="on">Players</button>
     <button id="tab-chat">Chat</button>
   </div>
   <div class="search-wrap" id="search-wrap">
-    <input id="search" type="text" placeholder="Buscar personagem (/)" autocomplete="off">
+    <input id="search" type="text" placeholder="Search characters (/)" autocomplete="off">
   </div>
   <div class="list" id="list"></div>
   <!-- @chat-html -->
-  <div id="resize-handle" title="Arraste para redimensionar"></div>
+  <div id="resize-handle" title="Drag to resize"></div>
 </aside>
-<button id="expand" hidden title="Mostrar barra lateral" aria-label="Mostrar barra lateral">»</button>
+<button id="expand" hidden title="Show sidebar" aria-label="Show sidebar">»</button>
 <main>
   <div class="bar">
-    <label>Zona <select id="zone"></select></label>
-    <button id="fit">Ajustar</button>
-    <button id="tglTrail" title="Mostra o rastro recente (requer histórico ligado)">Rastro: off</button>
-    <button id="calibrate" title="Clique num ponto de referência e arraste para ajustar os marcadores">Calibrar: off</button>
-    <button id="saveCalibration" hidden>Salvar calibração</button>
+    <label>Zone <select id="zone"></select></label>
+    <button id="fit">Fit</button>
+    <button id="tglTrail" title="Show the recent trail (requires history to be enabled)">Trail: off</button>
+    <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
+    <button id="saveCalibration" hidden>Save calibration</button>
     <div class="tabs">
-      <button id="follow" title="Centraliza no personagem selecionado">Seguir: off</button>
+      <button id="follow" title="Center on the selected character">Follow: off</button>
     </div>
   </div>
   <div class="stage" id="stage">
@@ -999,7 +1379,7 @@ PAGE = r"""<!doctype html>
   </div>
   <footer>
     <span class="pill" id="f-refresh">–</span>
-    <span class="pill" id="f-src">fonte: characters.position_*</span>
+    <span class="pill" id="f-src">source: characters.position_*</span>
     <span class="pill" id="f-note"></span>
   </footer>
 </main>
@@ -1007,6 +1387,7 @@ PAGE = r"""<!doctype html>
 <!-- @inspect-js -->
 <script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
 <!-- @chat-js -->
+<!-- @agent-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -1029,7 +1410,7 @@ async function loadAreas() {
   for (const a of list) {
     const o = document.createElement('option');
     o.value = a.area_id;
-    o.textContent = a.name + (a.has_image ? '' : ' (sem imagem)');
+    o.textContent = a.name + (a.has_image ? '' : ' (no image)');
     sel.appendChild(o);
   }
   // default to the last-viewed zone, else a zone with players, else first
@@ -1145,7 +1526,8 @@ function place() {
     lvl.textContent = p.level;
     lbl.append(p.name + ' ', lvl);
     d.append(ring, lbl);
-    d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${p.zone_name}`;
+    d.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
+      + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
     d.onclick = () => {
       if (calibrating) return;
       selectCharacter(p.name);
@@ -1159,19 +1541,19 @@ function place() {
     ref.className = 'calibration-marker';
     ref.style.left = (calibrationReference.x + c.dx) + 'px';
     ref.style.top = (calibrationReference.y + c.dy) + 'px';
-    ref.title = 'Ponto de referência — arraste para ajustar';
+    ref.title = 'Landmark — drag to adjust';
     m.appendChild(ref);
   }
   wrap.classList.toggle('calibrating', calibrating);
-  $('f-note').textContent = `${here.length} nesta zona`;
+  $('f-note').textContent = `${here.length} in this zone`;
 }
 
 function renderList() {
   const l = $('list');
   const query = ($('search').value || '').trim().toLowerCase();
   const filtered = query ? players.filter(p => p.name.toLowerCase().includes(query)) : players;
-  if (!players.length) { l.innerHTML = '<div class="empty">Ninguém online</div>'; return; }
-  if (!filtered.length) { l.innerHTML = '<div class="empty">Nenhum personagem corresponde à busca</div>'; return; }
+  if (!players.length) { l.innerHTML = '<div class="empty">Nobody online</div>'; return; }
+  if (!filtered.length) { l.innerHTML = '<div class="empty">No character matches the search</div>'; return; }
   l.innerHTML = '';
   for (const p of filtered) {
     const e = document.createElement('div');
@@ -1185,7 +1567,8 @@ function renderList() {
     nm.textContent = p.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    meta.textContent = `${p.level} ${p.class_name}${p.in_world ? ' · ' + p.zone_name : ' · instância ' + p.instance}`;
+    const where = p.map_coords ? `${p.zone_name} ${mapCoordsText(p)}` : p.zone_name;
+    meta.textContent = `${p.level} ${p.class_name} · ${p.in_world ? where : p.continent_name + ' (instance)'}`;
     e.append(dot, nm, meta);
     e.onclick = () => selectCharacter(p.name);
     l.appendChild(e);
@@ -1200,29 +1583,29 @@ async function tick() {
     $('s-online').textContent = s.online;
     $('s-world').textContent = s.in_world;
     $('s-inst').textContent = s.in_instance;
-    $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'sem ninguém no mundo';
-    $('f-refresh').textContent = 'atualizado ' + new Date().toLocaleTimeString();
+    $('sub').textContent = s.zones.length ? s.zones.join(' · ') : 'nobody in the world';
+    $('f-refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
     renderList(); place();
-  } catch (e) { $('sub').textContent = 'erro: ' + e; }
+  } catch (e) { $('sub').textContent = 'error: ' + e; }
   Inspect.refresh();
 }
 
 $('fit').onclick = () => place();
 $('tglTrail').onclick = (e) => {
   showTrail = !showTrail;
-  e.target.textContent = 'Rastro: ' + (showTrail ? 'on' : 'off');
+  e.target.textContent = 'Trail: ' + (showTrail ? 'on' : 'off');
   draw();
 };
 $('follow').onclick = (e) => {
   follow = !follow;
-  e.target.textContent = 'Seguir: ' + (follow ? 'on' : 'off');
+  e.target.textContent = 'Follow: ' + (follow ? 'on' : 'off');
   e.target.classList.toggle('on', follow);
   place();
 };
 $('calibrate').onclick = (e) => {
   calibrating = !calibrating;
   if (calibrating) resetCalibration();
-  e.target.textContent = 'Calibrar: ' + (calibrating ? 'on' : 'off');
+  e.target.textContent = 'Calibrate: ' + (calibrating ? 'on' : 'off');
   e.target.classList.toggle('on', calibrating);
   $('saveCalibration').hidden = !calibrating;
   place();
@@ -1255,10 +1638,10 @@ $('saveCalibration').onclick = async () => {
   const r = await fetch('/api/calibrate', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({area_id: currentArea.area_id, ...draftCalibration})});
   const saved = await r.json();
-  if (!r.ok) { $('f-note').textContent = 'erro ao salvar: ' + saved.error; return; }
+  if (!r.ok) { $('f-note').textContent = 'save failed: ' + saved.error; return; }
   currentArea.calibration = {dx: saved.dx, dy: saved.dy};
   draftCalibration = {...currentArea.calibration};
-  $('f-note').textContent = `calibração salva: ${saved.dx}px, ${saved.dy}px`;
+  $('f-note').textContent = `calibration saved: ${saved.dx}px, ${saved.dy}px`;
   place();
 };
 addEventListener('resize', () => place());
@@ -1367,9 +1750,12 @@ PAGE = (PAGE
         .replace("/* @chat-css */", CHAT_CSS)
         .replace("<!-- @chat-html -->", CHAT_HTML)
         .replace("<!-- @chat-js -->", CHAT_JS)
+        .replace("/* @agent-css */", AGENT_CSS)
+        .replace("<!-- @agent-js -->", AGENT_JS)
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 
 if __name__ == "__main__":
     log.info("wowmap on :%d (db=%s dbc=%s maps=%s)", LISTEN_PORT, MYSQL["host"], DBC_DIR, MAPS_DIR)
+    threading.Thread(target=names, name="load-names", daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
