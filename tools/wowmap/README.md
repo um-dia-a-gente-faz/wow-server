@@ -22,6 +22,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 |---|---|---|
 | `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc`, plus `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, and `Achievement.dbc` for names |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art |
+| `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
@@ -38,11 +39,11 @@ WorldMapArea rects do not always line up exactly with the visible map art. The
 map page therefore supports a small, per-zone translation after the normalised
 world-coordinate transform has been converted to image pixels.
 
-1. Select the affected zone and click **Calibrar: off** to enter calibration mode.
+1. Select the affected zone and click **Calibrate: off** to enter calibration mode.
 2. Click a known point on the map (for example, one identified with `.gps` or a
    creature spawn) and drag the reference crosshair until the player markers line up.
    The preview moves the markers immediately.
-3. Click **Salvar calibração**. This writes that zone's `{dx, dy}` pixel delta to
+3. Click **Save calibration**. This writes that zone's `{dx, dy}` pixel delta to
    `calibration.json`; future page loads use it automatically.
 
 The file is intentionally a tiny operator-maintained JSON dictionary keyed by
@@ -59,9 +60,9 @@ inspect drawer on the right. It shows:
 - **Status**: current health and the powers the class uses (warrior rage, rogue
   energy, death knight runic power, druid mana/rage/energy, everyone else mana),
   gold as `g s c`, playtime, last logout, and map/x/y/z.
-- **Equipado**: equipment slots 0-18 by slot name.
-- **Bolsas**: backpack slots 23-38, then each equipped bag's contents.
-- Collapsible **Banco**, **Chaveiro**, **Moedas** (only when non-empty), and
+- **Equipped**: equipment slots 0-18 by slot name.
+- **Bags**: backpack slots 23-38, then each equipped bag's contents.
+- Collapsible **Bank**, **Keyring**, **Currency** (only when non-empty), and
   **Talents** (grouped by spec and tree, with rank), **Reputation** (sorted by
   value, with tier), and **Achievements** (title, points, date). Names come from
   the client DBCs; an unknown id falls back to the raw id.
@@ -111,6 +112,21 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
   and also drives the open drawer's refresh — the chat tab doesn't add polling
   since it's push-based (SSE).
 
+## Agent mind (UM-50)
+
+Agents started with `AGENT_HTTP_PORT` serve a read-only API (`agent/http_api.py`).
+Point wowmap at them with `AGENT_API_URLS`, e.g.
+`AGENT_API_URLS=Luaprata=http://192.168.1.80:9601,Farstrider=http://192.168.1.80:9602`.
+
+- `GET /api/agents` lists the configured agent names (never their URLs).
+- `GET /api/agent/<name>/<view>` proxies the agent's `GET /<view>` for
+  `healthz`, `state`, `perception` and `brain` (`?n=` is forwarded for brain).
+  Unknown agent or view: 404; agent down: 502. Nothing else is forwarded.
+- Agent markers get a dashed cyan ring and an "agent" tag in the player list.
+  Inspecting one shows a **Character / Agent mind** tab strip; the Agent mind
+  tab polls brain + perception every 3 s while it is visible (goal, model,
+  tokens, reflexes, last 5 decisions, nearby units/players/objects).
+
 ## Character inspect endpoint
 
 `GET /api/character/<name>` returns a character's saved state. The name is URL
@@ -137,6 +153,10 @@ the character's base state.
   "position_y": -4415.2,
   "position_z": 22.1,
   "orientation": 1.2,
+  "continent_name": "Kalimdor",
+  "subzone": null,
+  "subzone_name": null,
+  "map_coords": {"x": 52.4, "y": 82.5},
   "money": 1234500,
   "money_gold": 123.45,
   "totaltime": 86400,
@@ -168,6 +188,15 @@ the character's base state.
   listed; grouping and hiding them is left to the reputation panel (#92).
 
 - `money` is in copper; `money_gold` is the same value divided by 10000.
+- Position (also on every `/api/players` entry): `map_name` is Map.dbc's directory
+  name ("Expansion01"). `continent_name` is the continent the game shows the zone
+  on: the map named by the zone's `WorldMapArea` DisplayMapID when set (Eversong
+  Woods on map 530 is "Eastern Kingdoms", Azuremyst Isle "Kalimdor"), else Map.dbc's
+  display name ("Outland", or the instance's name). `map_coords` are the in-game map coordinates (0-100) inside the
+  zone's `WorldMapArea` rect, `null` when the zone has none (most instances).
+  `subzone` comes from the area grid in the worldserver's `maps/*.map` (the same
+  lookup as `GridMap::getArea`); it ignores the WMO override for building interiors,
+  and is `null` when the grid has no subzone of the saved zone at that spot.
 - `health` and `power` hold current values from `characters.health` and
   `power1`-`power7`. The `power` keys follow TrinityCore's `Powers` enum
   (`POWER_MANA = 0` … `POWER_RUNIC_POWER = 6`), so `power1` is mana and `power7`

@@ -1,0 +1,18 @@
+{
+  "_comment": "A level-3 agent (guid 1) on Sunstrider Isle: one Mana Wyrm attacking it in melee range, one fighting someone else, a dead lootable wyrm nearby, an idle wyrm 14 yd away, and a level-10 mob too strong to pull.",
+  "position": {"map": 530, "x": 10340.0, "y": -6370.0, "z": 26.0},
+  "is_dead": false, "is_ghost": false, "corpse_position": null,
+  "nearby_units": [
+    {"guid": 4660, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 3.1, "level": 3, "health_pct": 0.6, "target_guid": 1, "in_combat": true},
+    {"guid": 4661, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 4.0, "level": 2, "health_pct": 0.0, "in_combat": false, "lootable": true},
+    {"guid": 4662, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 9.5, "level": 3, "health_pct": 0.9, "target_guid": 77, "in_combat": true},
+    {"guid": 4663, "entry": 15274, "name": "Mana Wyrm", "type": "unit", "distance": 14.2, "level": 2, "health_pct": 1.0, "in_combat": false},
+    {"guid": 4670, "entry": 15367, "name": "Felendren the Banished", "type": "unit", "distance": 30.0, "level": 10, "health_pct": 1.0, "in_combat": false}
+  ],
+  "nearby_players": [],
+  "nearby_objects": [],
+  "window": null, "trade": null, "mailbox": null, "has_new_mail": false,
+  "equipment": [], "inventory": [], "pending_invite": null, "chat_inbox": [], "channels": [],
+  "quest_log": [{"slot": 0, "quest_id": 8325, "state": 0, "state_name": "incomplete", "counters": [2, 0, 0, 0], "time": 0, "title": "Reclaiming Sunstrider Isle"}],
+  "me": {"level": 3, "health": "40/90", "mana": "60/100"}
+}

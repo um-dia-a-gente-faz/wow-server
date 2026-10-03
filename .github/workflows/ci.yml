@@ -41,6 +41,9 @@ jobs:
       - name: dbc unit tests
         run: python -m unittest discover -s tools/dbc/tests -v
 
+      - name: jev-mock unit tests
+        run: python -m unittest discover -s tools/jev-mock/tests -v
+
       # wowmap needs PyMySQL + cryptography (see its requirements.txt).
       - name: wowmap unit tests
         run: |

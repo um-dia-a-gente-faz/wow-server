@@ -1,0 +1,18 @@
+{
+  "_comment": "Nothing to fight: a vendor and three players (one name not resolved yet); one player has invited the agent to a group.",
+  "position": {"map": 530, "x": 9487.69, "y": -7279.2, "z": 14.29},
+  "is_dead": false, "is_ghost": false, "corpse_position": null,
+  "nearby_units": [
+    {"guid": 6001, "entry": 15287, "name": "Shara Sunwing", "type": "unit", "distance": 8.0, "level": 10, "health_pct": 1.0, "in_combat": false, "npc_flags": 128}
+  ],
+  "nearby_players": [
+    {"guid": 44, "entry": 0, "name": null, "type": "player", "distance": 3.0},
+    {"guid": 42, "entry": 0, "name": "Rubens", "type": "player", "distance": 6.0, "level": 12, "health_pct": 1.0, "in_combat": false},
+    {"guid": 43, "entry": 0, "name": "Luaprata", "type": "player", "distance": 11.0, "level": 4, "health_pct": 1.0, "in_combat": false}
+  ],
+  "nearby_objects": [],
+  "window": null, "trade": null, "mailbox": null, "has_new_mail": false,
+  "equipment": [], "inventory": [], "pending_invite": {"inviter_name": "Rubens"}, "chat_inbox": [], "channels": [],
+  "quest_log": [],
+  "me": {"level": 4}
+}

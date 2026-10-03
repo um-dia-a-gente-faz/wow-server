@@ -514,6 +514,20 @@ class StopAttackAction(Action):
 
 
 @register
+class IdleAction(Action):
+    """UM-97: an explicit "do nothing this cycle" choice, so a brain that
+    picks from a fixed candidate list (agent/candidates.py, for Jev) always
+    has a safe option that maps to a real registered action. Sends nothing."""
+    name = "idle"
+    description = "Do nothing this cycle (wait and watch). Always a valid choice."
+    params = {}
+    required = ()
+
+    def execute(self, session, world, **_) -> ActionResult:
+        return ActionResult(ok=True, detail={"idle": True})
+
+
+@register
 class CastSpellAction(Action):
     name = "cast_spell"
     description = "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted)."
@@ -862,6 +876,13 @@ class TrainSpellAction(Action):
 # functions above as Action subclasses so they show up in catalog() — until
 # now they were only reachable by calling the free functions directly, so
 # the LLM (agent/think.py) had no way to invoke them at all.
+#
+# UM-98 (docs/adr/0001-jev-in-the-think-loop.md): chat is deferred, not
+# dropped. The chat-generation actions (say/yell/whisper/emote, and
+# channel_say below) are no longer @register-ed, so catalog() doesn't offer
+# them to the brain; the classes and send functions stay for the future
+# roleplay layer. To bring one back, re-add @register.
+# invite_to_group/accept_group stay registered.
 
 def _known_player_name(session, world, target_name: str) -> bool:
     """A whisper target is "resolvable" if its name has shown up either as a
@@ -881,8 +902,7 @@ def _known_player_name(session, world, target_name: str) -> bool:
     return False
 
 
-@register
-class SayAction(Action):
+class SayAction(Action):  # not registered: chat deferred (UM-98)
     name = "say"
     description = "Speak a chat message aloud (/say) — audible to nearby players."
     params = {
@@ -895,8 +915,7 @@ class SayAction(Action):
         return ActionResult(ok=True, detail={"message": message})
 
 
-@register
-class YellAction(Action):
+class YellAction(Action):  # not registered: chat deferred (UM-98)
     name = "yell"
     description = "Shout a chat message (/yell) — audible over a much larger radius than say."
     params = {
@@ -909,8 +928,7 @@ class YellAction(Action):
         return ActionResult(ok=True, detail={"message": message})
 
 
-@register
-class WhisperAction(Action):
+class WhisperAction(Action):  # not registered: chat deferred (UM-98)
     name = "whisper"
     description = ("Send a private message (/whisper) to a specific player by name. The name "
                     "must be resolvable — either a currently-perceived player or the sender of "
@@ -952,8 +970,7 @@ class WhisperAction(Action):
         return ActionResult(ok=True, detail=detail)
 
 
-@register
-class EmoteAction(Action):
+class EmoteAction(Action):  # not registered: chat deferred (UM-98)
     name = "emote"
     description = "Send a free-text roleplay emote (/emote) — distinct from a predefined animated emote."
     params = {
@@ -2156,6 +2173,9 @@ class DeleteMailAction(Action):
 # ── Channel chat (UM-93) ──────────────────────────────────────────────────
 # Kept in its own section (not folded into _send_chat/say/whisper above) so
 # parallel work on those (UM-92's text validation) merges cleanly.
+# UM-98: ChannelSayAction is not registered (chat deferred, see the Chat /
+# social section above); joining channels stays so heard channel chat
+# still reaches chat_inbox and the chat-feed relay.
 
 CHAT_MSG_CHANNEL = 0x11  # enum ChatMsg (SharedDefines.h)
 
@@ -2189,8 +2209,7 @@ def channel_say(session, channel: str, message: str):
     session._send_packet(CMSG_MESSAGECHAT, build_channel_message(_racial_language(session), channel, message))
 
 
-@register
-class ChannelSayAction(Action):
+class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
     name = "channel_say"
     description = ("Say something in a chat channel you have joined (see the snapshot's "
                    "'channels', e.g. 'General - Eversong Woods'; 'General' is enough). "
