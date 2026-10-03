@@ -61,6 +61,31 @@ DBC's hit rect, `null` for 21 overlays, which then use `art`; `label` is the
 centre of `hit`, else of `art`. Hovering the map shows the name of the smallest
 rect under the cursor; **Labels** toggles every subzone name.
 
+## The map stage (Leaflet)
+
+The stage is a [Leaflet](https://leafletjs.com) map in `L.CRS.Simple`, with the
+zone art as an `L.imageOverlay`. Map units are zone-art pixels with y pointing
+down, so image point `(x, y)` is `LatLng(-y, x)` (`ll()` in the page).
+
+- **Zoom and pan:** mouse wheel or pinch, drag, double-click, and the +/−
+  buttons. The range is one level out to three levels in (8×) around the level
+  that fits the zone. **Fit zone** returns to the fitted view.
+- The 5 s refresh moves markers in place and never changes the view. Switching
+  zones fits the new zone. Resizing the window (or the sidebar, or opening the
+  inspect drawer) re-fits only if the view was still the fitted one.
+- **Markers** are Leaflet markers with a `divIcon`; clicking one opens the
+  inspect drawer. A plain click on the map closes the drawer; dragging does not.
+- **Trail** draws each character's path as a polyline in its class colour. The
+  server keeps no position history, so a trail holds what this page has seen
+  since it was opened (at most 720 points per character, one zone at a time).
+- **Follow** pans to the selected character on every refresh.
+
+Leaflet 1.9.4 is vendored in `static/` (`leaflet.js`, `leaflet.css`, unmodified
+npm `dist` files, BSD-2-Clause, licence in `static/leaflet-LICENSE`) and served
+by `app.py` under `/static/`. The realm is LAN-only, so the page loads nothing
+from a CDN, and there is still no build step. `tests/test_static.py` pins the
+files' SHA-256; update the hashes when upgrading Leaflet.
+
 ## Calibrating map art
 
 WorldMapArea rects do not always line up exactly with the visible map art. The
@@ -71,8 +96,13 @@ world-coordinate transform has been converted to image pixels.
 2. Click a known point on the map (for example, one identified with `.gps` or a
    creature spawn) and drag the reference crosshair until the player markers line up.
    The preview moves the markers immediately.
+   Dragging the map is off while calibrating; zooming still works, so zoom in
+   first for a finer offset.
 3. Click **Save calibration**. This writes that zone's `{dx, dy}` pixel delta to
    `calibration.json`; future page loads use it automatically.
+
+The offset is in zone-art pixels, which are the map's units, so it means the
+same at every zoom level and files saved before the Leaflet stage still apply.
 
 The file is intentionally a tiny operator-maintained JSON dictionary keyed by
 area ID. It is safe to edit while the service is stopped. `calibrate.py` remains
