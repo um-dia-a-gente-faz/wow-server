@@ -301,7 +301,7 @@ the character's base state.
   gems, empty sockets and the socket bonus, and `Requires <skill> (<rank>)` /
   `Requires <faction> - <rank>`. Not shown yet: cooldown and charge suffixes on spell
   lines, spell triggers 4/5/6, and any spell whose description uses a `$` variable
-  the resolver doesn't know (that line is left out rather than guessed; about 88% of
+  the resolver doesn't know (that line is left out rather than guessed; about 89% of
   the client's described spells resolve, the level-scaled ones do not). `$z` (the
   Hearthstone's bind point) reads "your home location".
 - `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
