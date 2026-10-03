@@ -23,6 +23,7 @@ from .session import WoWSession
 from .llm import LLMClient
 from .think import ThinkState, think_and_act
 from .audit import AuditLogger
+from .http_api import AgentObserver, start_server
 from .reflexes.follow import get_follow_reflex
 from .reflexes.rest import get_rest_reflex
 
@@ -97,17 +98,40 @@ def main():
                                 retention_days=cfg.audit_retention_days)
     log.info("audit log: %s (retention %d days)", audit_logger.agent_dir, audit_logger.retention_days)
 
+    observer, http_server = _start_observer(cfg, audit_logger, log)
+
     log.info("entering agent loop (ctrl+c to stop) ...")
     try:
         _supervise_connection(
             build_session=lambda: _connect_and_login(cfg, log),
             run_session=lambda sess: _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
-                                                llm_client=llm_client, audit_logger=audit_logger),
+                                                llm_client=llm_client, audit_logger=audit_logger,
+                                                observer=observer),
             log=log,
         )
     except KeyboardInterrupt:
         log.info("interrupted")
+    finally:
+        if http_server is not None:
+            http_server.shutdown()
     log.info("done.")
+
+
+def _start_observer(cfg, audit_logger, log):
+    """UM-50: start the read-only observability API if AGENT_HTTP_PORT is
+    set. Returns (observer, server), both None when it's off. A port that
+    can't be bound is logged and the agent plays on without it."""
+    if not cfg.http_port:
+        return None, None
+    observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model)
+    if audit_logger is not None:
+        audit_logger.on_record = observer.record_decision
+    try:
+        server = start_server(observer, cfg.http_bind, cfg.http_port)
+    except OSError as e:
+        log.error("observability API disabled: cannot bind %s:%d (%s)", cfg.http_bind, cfg.http_port, e)
+        return None, None
+    return observer, server
 
 
 def _authenticate_and_login(cfg, log) -> tuple:
@@ -168,7 +192,8 @@ def _connect_and_login(cfg, log) -> WoWSession:
     log.info("online — guid %d, position %s", sess.player_guid, sess.player_position)
     # UM-93: the server doesn't auto-join General at login (a real client
     # asks for it), so join the configured channels now. A failed join is
-    # logged and otherwise ignored; channel_say just won't list it.
+    # logged and otherwise ignored. Joining is kept with chat sending deferred
+    # (UM-98) so channel chat is still heard (chat_inbox, chat-feed relay).
     sess.join_channels(parse_channel_spec(getattr(cfg, "channels", None)))
     return sess
 
@@ -264,7 +289,7 @@ def _run_rest_reflex_loop(sess, stop_event: threading.Event,
 
 
 def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, llm_client=None,
-              audit_logger=None) -> bool:
+              audit_logger=None, observer=None) -> bool:
     start = time.monotonic()
 
     reflex_stop = threading.Event()
@@ -276,8 +301,10 @@ def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, 
         t.start()
     try:
         return _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump,
-                                llm_client=llm_client, audit_logger=audit_logger)
+                                llm_client=llm_client, audit_logger=audit_logger, observer=observer)
     finally:
+        if observer is not None:
+            observer.detach()
         reflex_stop.set()
         for t in reflex_threads:
             t.join(timeout=2.0)
@@ -302,13 +329,15 @@ def _reflex_state(sess) -> dict:
 
 
 def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
-                     llm_client=None, audit_logger=None) -> bool:
+                     llm_client=None, audit_logger=None, observer=None) -> bool:
     """Returns True if the loop ended because of an unexpected disconnect
     (agent.session.WoWSession.unexpected_disconnect, UM-43 — the reconnect
     supervisor should retry), False for a normal end (duration elapsed)."""
     log = logging.getLogger("agent")
     cycle = 0
     think_state = ThinkState()  # UM-90: recent-action history + loop guard, per session attempt
+    if observer is not None:
+        observer.attach(sess, think_state, _reflex_state)  # UM-50: read-only HTTP view
     while duration is None or time.monotonic() - start < duration:
         if sess.unexpected_disconnect:
             log.warning("world connection dropped unexpectedly — ending this session attempt")
