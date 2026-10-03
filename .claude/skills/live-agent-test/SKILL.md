@@ -90,6 +90,13 @@ Never trust only the agent's own view:
 - `curl -N http://192.168.1.64:9500/api/chat/stream` — public chat, for chat tests.
 - `AGENT_DUMP_PACKETS=<dir>` to capture raw payloads for fixtures.
 
+## Capability probe
+
+`python3 -m agent.tools.probe --help` runs login, chat, move, quest, combat, loot and
+rest as one scripted pass (#139). It is **manual-only and counts as a human
+intervention** under `docs/AGENT-RUN-1-10.md`: never during a counted run, never
+scheduled. Fixtures (`agent/known_targets.py`) are the NPCs and mobs in the table above.
+
 ## Known traps
 
 - **Agent characters own no starting gear**, so empty equipment/inventory is correct

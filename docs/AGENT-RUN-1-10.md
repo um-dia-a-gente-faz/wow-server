@@ -101,6 +101,49 @@ Watching dashboards, tailing logs, or replaying the audit log with
 `agent.tools.replay` is **not** an intervention — read-only observation
 doesn't touch the character.
 
+**The capability probe is an intervention.** `python3 -m agent.tools.probe`
+(#139) logs in as the character, then talks, walks, accepts a quest, fights,
+loots and rests, which is "manually sending packets and chat on the agent's
+behalf". So it is **manual-only**: never scheduled, never triggered by CI or
+another process, and never run against a character while a counted run is in
+progress. Run it on a character that is not in a counted run (a second agent
+account, or the same one before the run starts or after it ends). It refuses to
+run without `--confirm-manual-run`, and `--help` repeats this rule. See
+"Capability probe" below.
+
+## Capability probe
+
+Answers "is this agent working?" per capability instead of with one boolean: an
+agent can be logged in and unable to move, or able to move and unable to fight.
+**Manual-only, and a human intervention** (see above).
+
+```sh
+# Credentials as in .claude/skills/live-agent-test (WOW_ACCOUNT / WOW_PASSWORD / WOW_CHARACTER)
+python3 -m agent.tools.probe --help
+python3 -m agent.tools.probe --confirm-manual-run --out /tmp/probe-Farstrider.json
+```
+
+Steps, in order, each `ok` / `fail` / `skipped` with its raw action result and
+duration: **login**, **chat** (`say` a line from `agent/lines.py`, confirmed in
+the chat-feed rather than by the agent), **move** (`move_towards` Magistrix
+Erona), **quest** (`interact` + `accept_quest` 8325, confirmed in the quest log),
+**combat** (`set_target` + `auto_attack` a level-1 Springpaw Cub / Mana Wyrm:
+damage dealt, whether it died), **loot** (only if a corpse is there), **rest**
+(health regained). A step whose fixtures are missing (character not on the
+Sunstrider Isle map, NPC or mob not in view, quest already taken, nothing to
+rest from) is `skipped` with the reason; the probe never walks to a guessed
+spot. Fixtures live in `agent/known_targets.py`.
+
+It prints a compact per-step report, or the full JSON with `--json`; `--out FILE`
+saves the JSON. Exit status is 0 if no step failed, 1 if one did, 2 on a usage or
+config error. Side effects on the character: it says one standard line,
+accepts quest 8325 and fights one mob. No GM commands, no account or database
+changes, and never the owner's character.
+
+The standard chat lines (`agent/lines.py`) are a closed list: a caller names a
+line by id and gets the committed text; anything else is rejected, not
+sanitised.
+
 ## Success criteria
 
 A run counts as successful only if **all** of:
