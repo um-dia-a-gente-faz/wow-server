@@ -1,0 +1,21 @@
+[Unit]
+Description=Pull agent audit logs from the wow-agents guest (ADR 0002 D4)
+Documentation=file:///opt/wow-server/docs/WOW-AGENTS-PROVISIONING.md
+After=network-online.target
+Wants=network-online.target
+# A failed pull must be visible: this logs an error to the journal. It does not retry;
+# the timer fires again in 30 s.
+OnFailure=wow-audit-pull-failed.service
+
+[Service]
+Type=oneshot
+# Optional overrides (AUDIT_SRC_HOST is required): see the runbook.
+EnvironmentFile=/etc/default/wow-audit-pull
+ExecStart=/opt/wow-server/scripts/wow-agents/pull-audit.sh
+# /var/lib/wow-audit-pull holds last-success / last-failure.
+StateDirectory=wow-audit-pull
+TimeoutStartSec=90
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/wow-server-metrics

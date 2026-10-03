@@ -41,6 +41,13 @@ jobs:
       - name: dbc unit tests
         run: python -m unittest discover -s tools/dbc/tests -v
 
+      # Offline: pull-audit.sh / audit-pull-status.sh against temp dirs with a fake
+      # rsync (#135). Plain bash + coreutils, no network.
+      - name: wow-agents audit pull tests
+        run: |
+          for f in scripts/wow-agents/*.sh; do bash -n "$f"; done
+          python -m unittest discover -s scripts/wow-agents/tests -v
+
       - name: jev-mock unit tests
         run: python -m unittest discover -s tools/jev-mock/tests -v
 

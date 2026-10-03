@@ -1,0 +1,7 @@
+[Unit]
+Description=wow-agents audit pull FAILED (OnFailure hook)
+
+[Service]
+Type=oneshot
+# Journal only, on purpose: query with `journalctl -p err -t wow-audit-pull`.
+ExecStart=/usr/bin/logger -p user.err -t wow-audit-pull "audit pull FAILED: mirror /opt/wow-server-metrics/audit is going stale; see journalctl -u wow-audit-pull.service and scripts/wow-agents/audit-pull-status.sh"
