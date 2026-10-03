@@ -13,7 +13,7 @@
   },
   {
     "name": "freellmapi-auto",
-    "base_url": "http://192.168.1.60:3002/v1",
+    "base_url": "http://192.168.1.72:3001/v1",
     "api_key_env": "FREELLMAPI_API_KEY",
     "model": "auto"
   },
