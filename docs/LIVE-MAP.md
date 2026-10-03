@@ -10,20 +10,31 @@ it. Alignment within zones is approximate (see § Alignment below).
 `characters.position_x/y` into a normalised (0..1) position on that zone's world-map
 image, using the DBCs TrinityCore's `mapextractor` already produced.
 
-Validated against two independent datasets — 5/5 positions land inside their zone rect:
+Output of `python3 tools/wowmap/transform.py <dbc dir>` (norm x is horizontal, left to
+right; norm y is vertical, top to bottom; ×100 gives the in-game map coordinates):
 
 | position | area | norm x | norm y |
 |---|---|---|---|
-| Blood Elf start (`playercreateinfo` race 10) | 3430 | 0.7892 | 0.3797 |
-| character position (`characters.position_*`) | 3430 | 0.7879 | 0.3780 |
-| Draenei start (`playercreateinfo` race 11) | 3524 | 0.5698 | 0.8429 |
-| creature spawn min (`world.creature`) | 3524 | 0.2661 | 0.4142 |
-| creature spawn max (`world.creature`) | 3524 | 0.3840 | 0.2621 |
+| Blood Elf start (`playercreateinfo` race 10) | 3430 | 0.3797 | 0.2108 |
+| character position (`characters.position_*`) | 3430 | 0.3780 | 0.2121 |
+| Draenei start (`playercreateinfo` race 11) | 3524 | 0.8429 | 0.4302 |
+| creature spawn min (`world.creature`) | 3524 | 0.4142 | 0.7339 |
+| creature spawn max (`world.creature`) | 3524 | 0.2621 | 0.6160 |
 
-The non-obvious part: in `WorldMapArea.dbc` the four float fields are **not** in
-`(left, right, top, bottom)` order — the **Y extent comes first** (fields 4/5), then X
-(fields 6/7). Reading them the natural way puts *every* real position outside its zone.
-See the module docstring for the full layout.
+The non-obvious part: the zone map is the `WorldMapArea.dbc` rect **turned on its
+side**. The horizontal axis is world **Y** (fields 4/5) and the vertical axis is world
+**X** (fields 6/7), as the client computes it:
+
+    norm x = (field4 - Y) / (field4 - field5)
+    norm y = (field6 - X) / (field6 - field7)
+
+Before #109 the transform used world X for the horizontal axis. Every marker was then
+transposed, e.g. Rubens at (0.215, 0.380) in the sea west of Sunstrider Isle instead of
+on it at (0.380, 0.215). Checked after the fix by drawing known NPC spawns on the
+extracted art: Innkeeper Farley in Goldshire (Elwynn Forest), Innkeeper Grosk in Razor
+Hill (Durotar), Nazgrel in Thrallmar (Hellfire Peninsula), Innkeeper Keldamyr in
+Dolanaar (Teldrassil) and Megelon in Ammen Vale (Azuremyst Isle). Their ×100 values match
+the coordinates the game shows for them.
 
 ## Data sources
 
@@ -179,18 +190,19 @@ for the subzone names and rects in `/api/areas`.
 ### The DBC field order (bug that cost hours)
 
 `WorldMapArea.dbc` has four float fields. The natural guess is `(left, right,
-top, bottom)`. It is **not**. The actual layout:
+top, bottom)` with left/right in world X. It is **not**. World X grows north and
+world Y grows west, so the map's horizontal axis is world Y:
 
-    Field 4 = top    (world Y, north edge)
-    Field 5 = bottom (world Y, south edge)
-    Field 6 = left   (world X)
-    Field 7 = right  (world X)
+    Field 4 = left edge   (world Y, west, the larger value)
+    Field 5 = right edge  (world Y, east)
+    Field 6 = top edge    (world X, north, the larger value)
+    Field 7 = bottom edge (world X, south)
 
-Crucially, **`left > right`** in this DBC — the image X axis runs opposite to
-world X. Using `min()`/`max()` to normalise the range **silently mirrors every
-marker horizontally**. The transform in `transform.py` uses the raw values as-is
-and the formula `(world_x - left)/(right - left)` handles the inversion
-naturally.
+`transform.py` keeps these in `rects[area] = (f6, f7, f4, f5)` under the historical
+names `(left, right, top, bottom)`. Mind the names: there, `left`/`right` are the
+**vertical** extent. Use the raw values as-is; `min()`/`max()` drops the orientation
+and mirrors every marker. Until #109 the marker transform also put world X on the
+horizontal axis, which transposed every marker.
 
 Pass `WorldMapArea.dbc`, `AreaTable.dbc` (for zone names — the TDB has **no**
 `areatable` table, so zone names cannot come from the game database), and
@@ -198,14 +210,18 @@ Pass `WorldMapArea.dbc`, `AreaTable.dbc` (for zone names — the TDB has **no**
 
 ### Alignment
 
-The rect from `WorldMapArea.dbc` does not linearly cover the full 1024×768 tile
-sheet — Blizzard's zone art includes decorative borders and sea beyond the rect.
-The naive 0..1 mapping puts markers in the right zone but with an offset that
-varies per map. In practice: the player shows up in the correct zone, and the
-offset is not huge. A per-zone calibration step (manual or auto-fitted from
-creature spawns) would tighten it.
+The rect from `WorldMapArea.dbc` covers the game's **1002×668** map frame
+(FrameXML `WorldMapDetailFrame`), not the full 1024×768 tile sheet: the 4×3 tiles
+overflow the frame at the right and bottom, and that strip is blank. So a normalised
+position is multiplied by 1002×668 to get a pixel on the extracted PNG
+(`transform.MAP_FRAME_W/H`, and `px()` in the page). Scaling by 1024×768 put markers up
+to 100 px too low near the bottom of a zone (fixed with #109).
 
-Three calibration attempts documented in `tools/wowmap/`:
+With the axes and the frame right, markers sit where the game shows them, and
+`calibration.json` (per-zone pixel offsets, empty on the VM and in the repo when #109
+was fixed) should not be needed. Keep it for art that really is offset.
+
+Three earlier calibration attempts, from before the axis fix, are in `tools/wowmap/`:
 - `overlay_test.py` — draw specific points on a map image
 - `scatter_test.py` — dense scatter of creature spawns
 - `calibrate.py` + `fit_transform.py` — texture-based auto-fit (overfit)

@@ -38,11 +38,15 @@ zone names cannot be joined from SQL — read them from the DBC instead.
     from transform import DbcTables
     t = DbcTables("/path/to/server/data/dbc")
     t.to_normalised(area_id=3430, world_x=10349.6, world_y=-6357.29)
-    # -> (0.7892, 0.3797)   multiply by image width/height for pixels
+    # -> (0.3797, 0.2108)   fractions of the 1002x668 map frame, see to_pixel()
 """
 import os
 import struct
 
+# The game's zone map frame (FrameXML WorldMapDetailFrame) is 1002x668. The extracted
+# art is a 1024x768 sheet of 4x3 tiles that overflows the frame at the right and
+# bottom, so a normalised position is a fraction of 1002x668, not of the sheet.
+MAP_FRAME_W, MAP_FRAME_H = 1002, 668
 
 class DbcTables:
     """Loads and queries WorldMapArea.dbc / AreaTable.dbc / Map.dbc."""
@@ -52,10 +56,11 @@ class DbcTables:
         self._area, self._area_str = self._read(os.path.join(dbc_dir, "AreaTable.dbc"))
         self._map, self._map_str = self._read(os.path.join(dbc_dir, "Map.dbc"))
 
-        # area_id -> (left, right, top, bottom) in world coordinates, taken from the
-        # RAW field order. Do NOT normalise with min()/max() — that destroys the
-        # orientation, and in this DBC left > right (the image X axis runs opposite to
-        # world X), so min/max silently mirrors every marker horizontally.
+        # area_id -> (left, right, top, bottom) = raw fields (6, 7, 4, 5), in world
+        # coordinates. The names are historical: on the map image fields 6/7 (world X)
+        # are the VERTICAL extent and fields 4/5 (world Y) the horizontal one — see
+        # `to_normalised`. Do NOT normalise with min()/max(): that drops the orientation
+        # and mirrors every marker.
         self.rects = {}
         for r in self._wm:
             if r[3] == 0:
@@ -124,10 +129,25 @@ class DbcTables:
     def game_coords(self, area_id, world_x, world_y):
         """In-game map coordinates (0..100, 0..100) within a zone, like "38.0, 21.5".
 
-        The client's zone map is the WorldMapArea rect: its horizontal axis is world Y
-        (fields 4/5, `top`/`bottom` here) and its vertical axis is world X (fields 6/7,
-        `left`/`right` here). Checked against the Blood Elf start on Sunstrider Isle,
-        which the game shows at about 38, 21.
+        The same position as `to_normalised`, scaled to the 0..100 the game shows.
+        """
+        n = self.to_normalised(area_id, world_x, world_y)
+        return None if n is None else (n[0] * 100, n[1] * 100)
+
+    def to_normalised(self, area_id, world_x, world_y):
+        """World coords -> (0..1, 0..1) on that zone's map image, or None.
+
+        The client's zone map is the WorldMapArea rect turned on its side: the
+        HORIZONTAL axis is world Y (fields 4/5, `top`/`bottom` in `rects`) and the
+        VERTICAL axis is world X (fields 6/7, `left`/`right` in `rects`). World X grows
+        north and world Y grows west, so both run from the rect's first field to its
+        second, as the client computes it:
+
+            nx = (field4 - Y) / (field4 - field5)
+            ny = (field6 - X) / (field6 - field7)
+
+        Checked against Rubens on Sunstrider Isle, which the game shows at about
+        38, 21 and the extracted 3430.png shows at (0.380, 0.215) (issue #109).
         """
         rect = self.rects.get(area_id)
         if not rect:
@@ -135,22 +155,11 @@ class DbcTables:
         left, right, top, bottom = rect
         if right == left or top == bottom:
             return None
-        return ((top - world_y) / (top - bottom) * 100,
-                (left - world_x) / (left - right) * 100)
+        return ((top - world_y) / (top - bottom),
+                (left - world_x) / (left - right))
 
-    def to_normalised(self, area_id, world_x, world_y):
-        """World coords -> (0..1, 0..1) on that zone's map image, or None."""
-        rect = self.rects.get(area_id)
-        if not rect:
-            return None
-        left, right, top, bottom = rect
-        if right == left or top == bottom:
-            return None
-        nx = (world_x - left) / (right - left)
-        ny = (top - world_y) / (top - bottom)   # world Y grows up, image Y grows down
-        return nx, ny
-
-    def to_pixel(self, area_id, world_x, world_y, width, height):
+    def to_pixel(self, area_id, world_x, world_y, width=MAP_FRAME_W, height=MAP_FRAME_H):
+        """Pixel on the extracted zone art (top-left origin), or None."""
         n = self.to_normalised(area_id, world_x, world_y)
         return None if n is None else (n[0] * width, n[1] * height)
 

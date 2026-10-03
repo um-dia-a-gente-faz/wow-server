@@ -46,10 +46,10 @@ def main():
             continue
         wx, wy, label = spec.split(",", 2)
         wx, wy = float(wx), float(wy)
-        n = t.to_normalised(args.area, wx, wy)
-        if n is None:
+        p = t.to_pixel(args.area, wx, wy)
+        if p is None:
             continue
-        x, y = n[0] * W, n[1] * H
+        x, y = p
         land = "?" if not (0 <= x < W and 0 <= y < H) else ""
         # crosshair + label
         d.line([(x - 14, y), (x + 14, y)], fill=(255, 0, 0, 255), width=3)

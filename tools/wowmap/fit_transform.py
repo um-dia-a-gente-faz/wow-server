@@ -76,8 +76,9 @@ def score(ix0, ix1, iy0, iy1):
     """ix/iy are the fractions of the image the rect maps onto (inset fit)."""
     hits = 0
     for wx, wy in pts:
-        nx = (wx - left) / (right - left)
-        ny = (top - wy) / (top - bottom)
+        # client axes (#109): horizontal from world Y (fields 4/5), vertical from X (6/7)
+        nx = (top - wy) / (top - bottom)
+        ny = (left - wx) / (left - right)
         x = (ix0 + nx * (ix1 - ix0)) * W
         y = (iy0 + ny * (iy1 - iy0)) * H
         if 0 <= x < W and 0 <= y < H and mask[int(x), int(y)] >= thresh:
