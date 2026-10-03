@@ -384,13 +384,15 @@ def fetch_character(name):
             SELECT ci.bag, ci.slot, ci.item, ii.itemEntry,
                    COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count,
                    it.displayid, it.Quality, ii.flags, ii.durability, """
-            + ", ".join(f"it.`{c}`" for c in item_tooltip.COLUMNS) + """
+            + ", ".join(f"it.`{c}`" for c in item_tooltip.COLUMNS) + """,
+                   ii.randomPropertyId, ii.enchantments
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
             WHERE ci.guid = %s
             ORDER BY ci.bag, ci.slot
         """, (guid,), "inventory")
+        set_context = item_set_context(cur, inventory)
         talents = best_effort(cur, """
             SELECT spell, talentGroup
             FROM characters.character_talent
@@ -450,7 +452,7 @@ def fetch_character(name):
         # hasn't been saved since it was turned on).
         "max_health": stats[0][0] if stats else None,
         "max_power": dict(zip(POWER_NAMES, stats[0][1:])) if stats else None,
-        "inventory": [inventory_item(row) for row in inventory],
+        "inventory": [inventory_item(row, n, *set_context) for row in inventory],
         # Names from the client DBCs (tools/dbc/names.py); null when an id is unknown.
         "talents": [
             {"spell": spell, "spec": spec, **_talent_names(n, spell)}
@@ -472,12 +474,31 @@ def fetch_character(name):
     }
 
 
-def inventory_item(row):
+def item_set_context(cur, rows):
+    """(entries the character has equipped, {item set piece entry: name}) for the item
+    set block of the tooltips. Equipped = bag 0, slots 0..18 (Player.h EQUIPMENT_SLOT_*);
+    piece names come from world.item_template (ItemSet.dbc only has the entries)."""
+    equipped = {r[3] for r in rows if r[0] == 0 and 0 <= r[1] < 19}
+    col = 10 + item_tooltip.COLUMNS.index("itemset")
+    entries = item_tooltip.set_piece_entries({r[col] for r in rows if r[col]}, names())
+    if not entries:
+        return equipped, {}
+    found = best_effort(
+        cur, "SELECT entry, name FROM world.item_template WHERE entry IN (%s)"
+        % ", ".join(["%s"] * len(entries)), entries, "item set pieces")
+    return equipped, dict(found)
+
+
+def inventory_item(row, n=None, equipped=(), set_names=None):
     """One inventory row: (bag, slot, item guid, entry, name, count, displayid, Quality,
-    item_instance.flags, item_instance.durability, *item_tooltip.COLUMNS)."""
+    item_instance.flags, item_instance.durability, *item_tooltip.COLUMNS,
+    item_instance.randomPropertyId, item_instance.enchantments). `n` (GameNames) adds
+    the DBC-backed tooltip lines; `equipped`/`set_names` feed the item set block."""
     (bag, slot, item_guid, item_entry, item_name, count, display_id, quality,
      inst_flags, durability) = row[:10]
-    template = dict(zip(item_tooltip.COLUMNS, row[10:]))
+    n_cols = len(item_tooltip.COLUMNS)
+    template = dict(zip(item_tooltip.COLUMNS, row[10:10 + n_cols]))
+    random_property, enchantments = (tuple(row[10 + n_cols:]) + (0, ""))[:2]
     return {
         "bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
         "item_name": item_name, "count": count,
@@ -485,7 +506,10 @@ def inventory_item(row):
         "quality": quality, "icon": icon_url(display_id),
         # A bag's size (item_template.ContainerSlots), for drawing its grid; 0 otherwise.
         "container_slots": template.get("ContainerSlots") or 0,
-        "tooltip": item_tooltip.tooltip(item_name, template, count, inst_flags, durability),
+        "tooltip": item_tooltip.tooltip(
+            item_name, template, count, inst_flags, durability, names=n,
+            random_property=random_property or 0, enchantments=enchantments or "",
+            equipped=equipped, item_names=set_names),
     }
 
 

@@ -20,7 +20,7 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 
 | Env | Default | Meaning |
 |---|---|---|
-| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, and `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names) |
+| `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names, and for item tooltips `SpellDuration.dbc`, `SpellRadius.dbc`, `ItemSet.dbc`, `ItemRandomProperties.dbc`, `ItemRandomSuffix.dbc`, `SpellItemEnchantment.dbc`, `GemProperties.dbc`, `SkillLine.dbc`, `RandPropPoints.dbc`; a missing file is logged and only its tooltip lines are left out) |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art (and `<area_id>_base.png`) |
 | `ICONS_DIR` | `/icons` | directory containing extracted item icon PNGs (see *Item icons*); `ItemDisplayInfo.dbc` is read from `DBC_DIR` |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
@@ -290,9 +290,20 @@ the character's base state.
   of `quality`/`white`/`green`/`yellow`/`gray`/`red`, and `money` in copper for the
   sell price line, which is for the whole stack). `item_tooltip.py` builds it from
   `world.item_template` (column names as in TrinityCore's
-  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound) and
-  `.durability`. Not shown yet: spell lines (`Use:`/`Equip:` effects with a
-  spell), item set names, random suffixes, enchants and gems.
+  `ObjectMgr::LoadItemTemplates`) plus `item_instance.flags` (Soulbound),
+  `.durability`, `.randomPropertyId` ("of the Bear" and its stats) and
+  `.enchantments` (enchants and gems), and the client DBCs in `DBC_DIR`:
+  `Use:`/`Equip:`/`Chance on hit:` lines from `spellid_N`/`spelltrigger_N` (the
+  spell's `Description` with its `$` variables filled in, `tools/dbc/spelltext.py`),
+  the item set block (`itemset` → `ItemSet.dbc`; equipped pieces are the
+  character's bag 0 slots 0-18, piece names come from `world.item_template`),
+  random suffix/property names and stats, permanent/temporary enchants, socketed
+  gems, empty sockets and the socket bonus, and `Requires <skill> (<rank>)` /
+  `Requires <faction> - <rank>`. Not shown yet: cooldown and charge suffixes on spell
+  lines, spell triggers 4/5/6, and any spell whose description uses a `$` variable
+  the resolver doesn't know (that line is left out rather than guessed; about 88% of
+  the client's described spells resolve, the level-scaled ones do not). `$z` (the
+  Hearthstone's bind point) reads "your home location".
 - `quality` is `item_template.Quality` (0 poor … 7 heirloom). `icon` is a
   same-origin URL for the item's icon, or `null` when the display id has no
   icon or the PNG hasn't been extracted; clients draw a placeholder then.
