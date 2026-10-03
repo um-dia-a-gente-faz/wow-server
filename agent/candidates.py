@@ -10,7 +10,8 @@ arguments are decided here, in code, from `world.snapshot()`.
 Interface
 ---------
 
-    generate(snapshot, *, my_guid=None, reflex_state=None, limit=MAX_CANDIDATES)
+    generate(snapshot, *, my_guid=None, reflex_state=None, limit=MAX_CANDIDATES,
+             handles=None)
         -> list[dict]
 
 Each candidate is a plain JSON-serialisable dict:
@@ -43,11 +44,21 @@ lets the generator tell which units are attacking the agent. `reflex_state`
 is the dict agent/__main__.py's `_reflex_state()` returns (its "follow"
 entry decides between follow and stop_following/assist options).
 
+UM-89: snapshot GUID fields may hold short handle strings ("u3") instead of
+raw ints — that is what WorldState.snapshot() produces. `handles` (the
+world's HandleMap, passed through from think.py via Brain.decide) resolves
+them back to ints for the comparisons below (whose fight is it, what is
+attacking me). Candidate params keep the handle strings as the snapshot
+carries them: think.py's resolve_params maps them back before the action
+runs, so a handle and a raw int both work end to end.
+
 Candidates only reference actions that are already registered: the follow
 reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
 `idle` (agent/actions.py). Each action's own `check()` still runs when the
 chosen candidate is executed, so a stale candidate fails safely.
 """
+
+from .handles import UnknownHandle
 
 MAX_CANDIDATES = 15
 
@@ -77,7 +88,26 @@ def candidate(action: str, params: dict, label: str) -> dict:
 
 
 def _name(unit: dict) -> str:
-    return unit.get("name") or f"unit {unit.get('guid', 0):#x}"
+    if unit.get("name"):
+        return unit["name"]
+    guid = unit.get("guid")
+    # guid may be a handle string ("u3") on an encoded snapshot (UM-89).
+    return f"unit {guid:#x}" if isinstance(guid, int) else f"unit {guid or 'unknown'}"
+
+
+def _guid_value(unit: dict, key: str, handles) -> int | None:
+    """The int GUID behind a unit field, whether the snapshot carries it as
+    a raw int or as a short handle string (UM-89), so the comparisons in
+    generate() work on both shapes. None when it is neither."""
+    value = unit.get(key)
+    if isinstance(value, str):
+        if handles is None:
+            return None
+        try:
+            return handles.resolve(value)
+        except UnknownHandle:
+            return None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _dist(unit: dict) -> float:
@@ -148,8 +178,10 @@ def _window_candidates(snapshot: dict) -> list:
 
 
 def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict | None = None,
-             limit: int = MAX_CANDIDATES) -> list[dict]:
-    """Concrete candidates for this think cycle; see the module docstring."""
+             limit: int = MAX_CANDIDATES, handles=None) -> list[dict]:
+    """Concrete candidates for this think cycle; see the module docstring.
+    `handles` (world.handles) resolves handle-string GUIDs (UM-89) for the
+    unit comparisons; without it only raw-int snapshots are understood."""
     limit = max(1, limit)
     idle = candidate("idle", {}, "do nothing this cycle")
     out = []
@@ -169,12 +201,12 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
         inviter = invite.get("inviter_name") if isinstance(invite, dict) else None
         out.append(candidate("accept_group", {}, f"accept the group invite{' from ' + inviter if inviter else ''}"))
 
-    units = sorted((u for u in snapshot.get("nearby_units") or [] if isinstance(u.get("guid"), int)),
-                   key=_dist)
+    units = sorted((u for u in snapshot.get("nearby_units") or []
+                    if _guid_value(u, "guid", handles) is not None), key=_dist)
     my_level = _my_level(snapshot)
 
     threats = [u for u in units if _alive(u) and u.get("in_combat") and my_guid is not None
-               and u.get("target_guid") == my_guid]
+               and _guid_value(u, "target_guid", handles) == my_guid]
     for u in threats[:MAX_THREATS]:
         out.append(_engage(u, "attacking you"))
     threat_guids = {u["guid"] for u in threats}
@@ -209,7 +241,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
                and u["level"] <= my_level + ATTACK_LEVEL_MARGIN
                # someone else's fight: not ours to take (only knowable with my_guid)
                and not (my_guid is not None and u.get("in_combat")
-                        and u.get("target_guid") not in (None, 0, my_guid))]
+                        and _guid_value(u, "target_guid", handles) not in (None, 0, my_guid))]
     for u in targets[:MAX_ATTACK]:
         out.append(_engage(u, ""))
 

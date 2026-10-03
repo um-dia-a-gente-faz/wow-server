@@ -125,18 +125,21 @@ class Brain:
 
     def decide(self, snapshot: dict, *, persona: str = "", history: list | None = None,
                my_guid: int | None = None, reflex_state: dict | None = None,
-               blocked=None) -> Decision:
+               blocked=None, handles=None) -> Decision:
         """Pick one `(action, params)` for this cycle. Raises BrainError when
         no configured brain produced one. `blocked(action, params) -> bool`
         (ThinkState.repeat_blocked) drops candidates the loop guard would
-        refuse anyway, so Jev is not offered them (`idle` is always kept)."""
+        refuse anyway, so Jev is not offered them (`idle` is always kept).
+        `handles` (world.handles) lets the candidate generator resolve the
+        snapshot's handle-string GUIDs (UM-89) for its unit comparisons."""
         fallback = None
         if self.jev is not None:
             d = Decision(brain=BRAIN_JEV, model=getattr(self.jev, "model", None))
             fallback = self._jev_skip_reason()
             if fallback is None:
                 try:
-                    options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state)
+                    options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
+                                            handles=handles)
                     if blocked is not None:
                         options = [c for c in options
                                    if c["action"] == "idle" or not blocked(c["action"], c["params"])]

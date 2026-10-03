@@ -8,6 +8,7 @@ import unittest
 from agent import actions as ac
 from agent import candidates as cand
 from agent import perception as per
+from agent import update_fields as uf
 from agent import update_object as uo
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
 
@@ -263,6 +264,81 @@ class RealSnapshotTest(CandidateShapeMixin, unittest.TestCase):
             if c["action"] in ("auto_attack", "move_towards"):
                 self.assertNotIn(c["params"]["guid"], flagged)
                 self.assertLessEqual(levels[c["params"]["guid"]], 5 + cand.ATTACK_LEVEL_MARGIN)
+
+
+class HandleSnapshotTest(unittest.TestCase):
+    """GH-144 regression: what WorldState.snapshot() actually produces is
+    handle-encoded (UM-89) — unit "guid"/"target_guid" are strings like
+    "u3", not ints. generate() must resolve them through the world's
+    HandleMap (passed in from think.py via Brain.decide) or every
+    unit-based candidate silently vanishes and Jev is offered only idle."""
+
+    QG = 0xF1300000000000C8        # quest giver with a quest on offer, in reach
+    ATK = 0xF1300000000000C9       # in combat, targeting us, in melee range
+    FIGHTER = 0xF1300000000000CA   # in combat, but targeting someone else
+    OTHER = 0xF1300000000000CB     # the someone else
+    PEACEFUL = 0xF1300000000000CC  # attackable mob, out of melee range
+
+    def _block(self, guid, object_type=uo.TYPEID_UNIT, x=0.0, fields=None):
+        return uo.UpdateBlock(
+            update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=guid, object_type=object_type,
+            movement={"update_flags": uo.UPDATEFLAG_STATIONARY_POSITION,
+                      "x": x, "y": 0.0, "z": 0.0, "o": 0.0},
+            fields=fields or {})
+
+    def _snapshot(self):
+        ws = per.WorldState()
+        ws.set_my_guid(MY_GUID)
+        ws.set_my_map(530)
+        ws.update_object(self._block(MY_GUID, object_type=uo.TYPEID_PLAYER))
+        ws.update_object(self._block(self.QG, x=2.0))
+        ws.apply_questgiver_status({"guid": self.QG, "status": 4, "status_name": "available"})
+        combat = {uf.UNIT_FIELD_FLAGS: 0x00080000, uf.UNIT_FIELD_LEVEL: 2}  # UNIT_FLAG_IN_COMBAT
+        ws.update_object(self._block(self.ATK, x=1.0, fields={
+            **combat, uf.UNIT_FIELD_TARGET: MY_GUID, uf.UNIT_FIELD_TARGET + 1: 0}))
+        ws.update_object(self._block(self.FIGHTER, x=3.0, fields={
+            **combat, uf.UNIT_FIELD_TARGET: self.OTHER, uf.UNIT_FIELD_TARGET + 1: 0}))
+        ws.update_object(self._block(self.OTHER, x=4.0))
+        ws.update_object(self._block(self.PEACEFUL, x=10.0, fields={uf.UNIT_FIELD_LEVEL: 2}))
+        snap = ws.snapshot(my_position=(530, 0.0, 0.0, 0.0, 0.0))
+        snap["me"] = {"level": 5}  # think.py's _self_status(); enables unprovoked attacks
+        return ws, snap
+
+    def test_snapshot_is_really_handle_encoded(self):
+        _, snap = self._snapshot()
+        for unit in snap["nearby_units"]:
+            self.assertIsInstance(unit["guid"], str)
+
+    def test_unit_candidates_on_a_handle_encoded_snapshot(self):
+        ws, snap = self._snapshot()
+        cands = cand.generate(snap, my_guid=MY_GUID, handles=ws.handles)
+        by_action = {}
+        for c in cands:
+            by_action.setdefault(c["action"], []).append(c)
+
+        attack = by_action["auto_attack"][0]
+        self.assertIn("attacking you", attack["label"])
+        self.assertEqual(ws.handles.resolve(attack["params"]["guid"]), self.ATK)
+
+        talk = by_action["interact"][0]
+        self.assertIn("has a quest", talk["label"])
+        self.assertEqual(ws.handles.resolve(talk["params"]["guid"]), self.QG)
+
+        approach = by_action["move_towards"][0]
+        self.assertEqual(ws.handles.resolve(approach["params"]["guid"]), self.PEACEFUL)
+
+        # someone else's fight is not ours to take, handles or not
+        engaged = {ws.handles.resolve(c["params"]["guid"]) for c in cands
+                   if "guid" in c["params"]}
+        self.assertNotIn(self.FIGHTER, engaged)
+        self.assertEqual(cands[-1]["action"], "idle")
+
+    def test_handle_params_resolve_back_for_the_action(self):
+        # think.py runs actions with handles.resolve_params(candidate params).
+        ws, snap = self._snapshot()
+        cands = cand.generate(snap, my_guid=MY_GUID, handles=ws.handles)
+        attack = next(c for c in cands if c["action"] == "auto_attack")
+        self.assertEqual(ws.handles.resolve_params(attack["params"]), {"guid": self.ATK})
 
 
 class SnapshotFieldsTest(unittest.TestCase):

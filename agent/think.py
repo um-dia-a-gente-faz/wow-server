@@ -275,7 +275,8 @@ def think_and_act(session, world, brain, persona: str = "",
             history=state.for_prompt() if state is not None else None,
             my_guid=getattr(world, "my_guid", None) or None,
             reflex_state=reflex_state,
-            blocked=state.repeat_blocked if state is not None else None)
+            blocked=state.repeat_blocked if state is not None else None,
+            handles=getattr(world, "handles", None))
     except BrainError as e:
         decision = e.decision
         log.warning("%s", e)
@@ -301,7 +302,7 @@ def think_and_act(session, world, brain, persona: str = "",
         return ThinkResult(ok=False, action_name=action_name, params=params,
                             error=f"missing required params: {missing}")
 
-# UM-89: the model sees and sends short handles ("u3"), never raw
+    # UM-89: the model sees and sends short handles ("u3"), never raw
     # GUIDs; map them back here, the one place tool-call params enter the
     # game. `params` (handles) stays what the audit log/ThinkResult record.
     handles = getattr(world, "handles", None)
@@ -312,6 +313,7 @@ def think_and_act(session, world, brain, persona: str = "",
         except UnknownHandle as e:
             log.warning("action %s got an unknown handle (params=%r): %s", action_name, params, e)
             _audit(action_name=action_name, params=params, valid=False, error=str(e))
+            _remember(action_name, params, False, error=str(e))
             return ThinkResult(ok=False, action_name=action_name, params=params, error=str(e))
 
     if state is not None and state.repeat_blocked(action_name, params):

@@ -149,7 +149,7 @@ class FakeLLMClient:
         self.action_name, self.params = action_name, params
         self.snapshots = []
 
-    def choose_action(self, snapshot, catalog, persona=""):
+    def choose_action(self, snapshot, catalog, persona="", history=None):
         self.snapshots.append(snapshot)
         return self.action_name, self.params
 
@@ -190,6 +190,20 @@ class ThinkResolutionTest(unittest.TestCase):
         self.assertIn("unknown handle", result.error)
         self.assertIn("u999", result.error)
         self.assertEqual(sess._sent, [])
+
+    def test_unknown_handle_is_remembered_for_the_loop_guard(self):
+        # GH-144 review: every other failure path records in ThinkState; a
+        # model repeating the same bad handle must show up in the history
+        # too, so the loop guard (and the prompt) can see the streak.
+        from agent import think
+        ws, sess = self._world(), fake_session()
+        state = think.ThinkState()
+        for _ in range(think.LOOP_GUARD_REPEATS):
+            result = think_and_act(sess, ws, FakeLLMClient("interact", {"guid": "u999"}),
+                                   my_position=sess.player_position, state=state)
+            self.assertIn("unknown handle", result.error)
+        self.assertTrue(state.repeat_blocked("interact", {"guid": "u999"}))
+        self.assertIn("unknown handle", state.for_prompt()[-1]["error"])
 
     def test_mangled_float_guid_still_fails_as_before(self):
         ws, sess = self._world(), fake_session()
