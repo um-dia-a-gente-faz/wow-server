@@ -8,6 +8,7 @@ Serves:
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
     POST /api/calibrate       save a per-zone pixel offset
     GET /maps/<file>          extracted zone map images (static)
+    GET /icons/<file>         extracted item icons (static, see item_icons.py)
     GET /healthz              liveness
 
 Coordinates come from `characters.characters`; the world->normalised transform comes
@@ -18,6 +19,7 @@ Env:
     MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD   as elsewhere in this repo
     DBC_DIR     default /dbc        (WorldMapArea.dbc, AreaTable.dbc, Map.dbc)
     MAPS_DIR    default /maps       (extracted PNGs)
+    ICONS_DIR   default /icons      (item icon PNGs from extract_icons.py)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
 """
@@ -25,6 +27,7 @@ import json
 import logging
 import math
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +35,7 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
 
+import item_icons
 from transform import DbcTables
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -47,6 +51,7 @@ MYSQL: dict = dict(
 )
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
+ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
@@ -67,8 +72,12 @@ RACES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: "Taur
 # characters.power1..power7 in TrinityCore `Powers` enum order (SharedDefines.h:
 # POWER_MANA=0 .. POWER_RUNIC_POWER=6; Player::SaveToDB writes GetPower(i) to power<i+1>).
 POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
+# What item_icons.icon_file() produces; anything else under /icons/ is a 404.
+ICON_FILE_RE = re.compile(r"[a-z0-9_\-]+\.png")
 
 _tables = None
+_display_icons = None
+_icons_lock = threading.Lock()
 _calibration_lock = threading.Lock()
 
 
@@ -115,6 +124,30 @@ def tables():
     if _tables is None:
         _tables = DbcTables(DBC_DIR)
     return _tables
+
+
+def display_icons():
+    """{ItemDisplayInfo id: icon name}, loaded once; empty if the DBC is unavailable."""
+    global _display_icons
+    with _icons_lock:
+        if _display_icons is None:
+            path = os.path.join(DBC_DIR, "ItemDisplayInfo.dbc")
+            try:
+                _display_icons = item_icons.load_display_icons(path)
+            except (OSError, ValueError) as e:
+                log.warning("item icons disabled: %s", e)
+                _display_icons = {}
+        return _display_icons
+
+
+def icon_url(display_id):
+    """`/icons/<file>.png` for an item_template.displayid, or None when there is no
+    icon (unknown display id, or the PNG wasn't extracted). The UI shows a placeholder."""
+    name = display_icons().get(display_id) if display_id else None
+    fn = item_icons.icon_file(name) if name else ""
+    if fn and os.path.isfile(os.path.join(ICONS_DIR, fn)):
+        return "/icons/" + fn
+    return None
 
 
 def db():
@@ -227,7 +260,8 @@ def fetch_character(name):
         # of the container holding the item — `item_guid` lets callers resolve it.
         inventory = best_effort(cur, """
             SELECT ci.bag, ci.slot, ci.item, ii.itemEntry,
-                   COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count
+                   COALESCE(it.name, CONCAT('Item ', ii.itemEntry)), ii.count,
+                   it.displayid, it.Quality
             FROM characters.character_inventory ci
             JOIN characters.item_instance ii ON ci.item = ii.guid
             LEFT JOIN world.item_template it ON ii.itemEntry = it.entry
@@ -282,8 +316,11 @@ def fetch_character(name):
         "power": dict(zip(POWER_NAMES, powers)),
         "inventory": [
             {"bag": bag, "slot": slot, "item_guid": item_guid, "item_entry": item_entry,
-             "item_name": item_name, "count": count}
-            for bag, slot, item_guid, item_entry, item_name, count in inventory
+             "item_name": item_name, "count": count,
+             # Quality is item_template.Quality (0 poor .. 7 heirloom), None if unknown.
+             "quality": quality, "icon": icon_url(display_id)}
+            for bag, slot, item_guid, item_entry, item_name, count, display_id, quality
+            in inventory
         ],
         "talents": [{"spell": spell, "spec": spec} for spell, spec in talents],
         "reputation": [
@@ -362,6 +399,16 @@ class Handler(BaseHTTPRequestHandler):
                 if os.path.isfile(fp) and fn.endswith(".png"):
                     with open(fp, "rb") as f:
                         return self._send(200, f.read(), "image/png", cache="max-age=86400")
+                return self._send(404, {"error": "not found"})
+
+            if path.startswith("/icons/"):
+                fn = path[len("/icons/"):]
+                fp = os.path.join(ICONS_DIR, fn)
+                if ICON_FILE_RE.fullmatch(fn) and os.path.isfile(fp):
+                    with open(fp, "rb") as f:
+                        # Icons never change for a given client build.
+                        return self._send(200, f.read(), "image/png",
+                                          cache="public, max-age=2592000, immutable")
                 return self._send(404, {"error": "not found"})
 
             if path in ("/", "/index.html"):
@@ -533,6 +580,15 @@ INSPECT_CSS = r"""
   .drawer .kv .k, .drawer .item .k { color:var(--dim); flex:0 0 118px; }
   .drawer .kv .v, .drawer .item .v { flex:1; min-width:0; overflow-wrap:anywhere; }
   .drawer .item .n { color:var(--dim); }
+  .drawer .item { align-items:center; }
+  /* Item icon: 36 px, border in the item's quality colour (set inline from Q_COLORS). */
+  .drawer .ico { position:relative; flex:0 0 36px; width:36px; height:36px; box-sizing:border-box;
+                 border:1px solid #555; border-radius:4px; overflow:hidden; background:#0b0e16; }
+  .drawer .ico img { display:block; width:100%; height:100%; }
+  .drawer .ico.ph::before { content:'?'; display:grid; place-items:center; height:100%;
+                            color:var(--dim); font-weight:600; }
+  .drawer .ico .cnt { position:absolute; right:2px; bottom:0; font-size:11px; font-weight:600;
+                      color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
   .drawer .none { color:var(--dim); font-size:12px; padding:3px 0; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
@@ -625,12 +681,34 @@ const Inspect = (() => {
     return g;
   }
 
+  // item_template.Quality 0..7: poor, common, uncommon, rare, epic, legendary, artifact, heirloom.
+  const Q_COLORS = ['#9d9d9d', '#ffffff', '#1eff00', '#0070dd', '#a335ee', '#ff8000', '#e6cc80', '#e6cc80'];
+  // `it.icon` is a same-origin /icons/<file>.png URL from the API, or null (no icon
+  // extracted): then a '?' placeholder is drawn, as it is if the image fails to load.
+  function itemIcon(it) {
+    const q = Q_COLORS[it.quality];
+    const box = el('span', 'ico');
+    box.title = it.count > 1 ? `${it.item_name} ×${it.count}` : it.item_name;
+    if (q) box.style.borderColor = q;
+    if (it.icon) {
+      const img = el('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.addEventListener('error', () => { img.remove(); box.classList.add('ph'); });
+      img.src = it.icon;
+      box.append(img);
+    } else box.classList.add('ph');
+    if (it.count > 1) box.append(el('span', 'cnt', it.count));
+    return box;
+  }
+
   function itemRows(parent, items, label) {
     if (!items.length) { parent.append(el('div', 'none', 'vazio')); return; }
     for (const it of items) {
       const r = el('div', 'item');
-      r.append(el('span', 'k', label(it)));
+      r.append(el('span', 'k', label(it)), itemIcon(it));
       const v = el('span', 'v', it.item_name);
+      if (Q_COLORS[it.quality]) v.style.color = Q_COLORS[it.quality];
       v.append(' ', el('span', 'n', '×' + it.count));
       r.append(v);
       parent.append(r);
