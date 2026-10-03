@@ -110,6 +110,21 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
   and also drives the open drawer's refresh — the chat tab doesn't add polling
   since it's push-based (SSE).
 
+## Agent mind (UM-50)
+
+Agents started with `AGENT_HTTP_PORT` serve a read-only API (`agent/http_api.py`).
+Point wowmap at them with `AGENT_API_URLS`, e.g.
+`AGENT_API_URLS=Luaprata=http://192.168.1.80:9601,Farstrider=http://192.168.1.80:9602`.
+
+- `GET /api/agents` lists the configured agent names (never their URLs).
+- `GET /api/agent/<name>/<view>` proxies the agent's `GET /<view>` for
+  `healthz`, `state`, `perception` and `brain` (`?n=` is forwarded for brain).
+  Unknown agent or view: 404; agent down: 502. Nothing else is forwarded.
+- Agent markers get a dashed cyan ring and an "agent" tag in the player list.
+  Inspecting one shows a **Character / Agent mind** tab strip; the Agent mind
+  tab polls brain + perception every 3 s while it is visible (goal, model,
+  tokens, reflexes, last 5 decisions, nearby units/players/objects).
+
 ## Character inspect endpoint
 
 `GET /api/character/<name>` returns a character's saved state. The name is URL

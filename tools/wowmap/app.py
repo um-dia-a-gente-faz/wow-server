@@ -7,6 +7,9 @@ Serves:
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available
     POST /api/calibrate       save a per-zone pixel offset
+    GET /api/agents           names of agents with an observability API (UM-50)
+    GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
+                              (healthz, state, perception, brain)
     GET /maps/<file>          extracted zone map images (static)
     GET /healthz              liveness
 
@@ -20,6 +23,8 @@ Env:
     MAPS_DIR    default /maps       (extracted PNGs)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
+    AGENT_API_URLS default ""       "Name=http://host:9601,Name2=http://host:9602" — agent
+                                    observability APIs (agent/http_api.py) to proxy
 """
 import json
 import logging
@@ -28,6 +33,8 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse, parse_qs, unquote
 
 import pymysql
@@ -55,6 +62,47 @@ MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS below);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
 CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
+
+
+def parse_agent_urls(spec):
+    """AGENT_API_URLS -> {lowercased name: (name, base url)}. Malformed
+    entries are skipped; only http(s) URLs are accepted."""
+    out = {}
+    for part in (spec or "").split(","):
+        name, sep, url = part.strip().partition("=")
+        name, url = name.strip(), url.strip().rstrip("/")
+        if sep and name and url.startswith(("http://", "https://")):
+            out[name.lower()] = (name, url)
+    return out
+
+
+# UM-50: agents' read-only observability APIs. wowmap proxies them so the page
+# needs no extra ports or CORS; only these GET views are ever forwarded.
+AGENT_APIS = parse_agent_urls(os.environ.get("AGENT_API_URLS", ""))
+AGENT_VIEWS = ("healthz", "state", "perception", "brain")
+AGENT_PROXY_TIMEOUT_S = 3
+MAX_AGENT_RESPONSE_BYTES = 4 * 1024 * 1024
+
+
+def fetch_agent_view(name, view, n=None):
+    """GET <agent base>/<view> and return (status, body bytes). Unknown agent
+    or view -> 404; an unreachable agent -> 502. The agent's URL is never
+    echoed back to the browser."""
+    entry = AGENT_APIS.get((name or "").lower())
+    if entry is None or view not in AGENT_VIEWS:
+        return 404, json.dumps({"error": "unknown agent or view"}).encode()
+    url = f"{entry[1]}/{view}"
+    if view == "brain" and n is not None:
+        url += f"?n={int(n)}"
+    try:
+        with urllib.request.urlopen(url, timeout=AGENT_PROXY_TIMEOUT_S) as r:
+            return r.status, r.read(MAX_AGENT_RESPONSE_BYTES)
+    except urllib.error.HTTPError as e:
+        e.close()
+        return 502, json.dumps({"error": f"agent API returned {e.code}"}).encode()
+    except (OSError, ValueError) as e:
+        log.info("agent API %s unreachable: %s", entry[0], e)
+        return 502, json.dumps({"error": "agent API unreachable"}).encode()
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -338,6 +386,15 @@ class Handler(BaseHTTPRequestHandler):
                 if character is None:
                     return self._send(404, {"error": "character not found"})
                 return self._send(200, character)
+
+            if path == "/api/agents":
+                return self._send(200, {"agents": sorted(n for n, _ in AGENT_APIS.values())})
+
+            if path.startswith("/api/agent/"):
+                name, _, view = unquote(path[len("/api/agent/"):]).partition("/")
+                n = qs.get("n", [None])[0]
+                status, body = fetch_agent_view(name, view, int(n) if n and n.isdigit() else None)
+                return self._send(status, body, cache="no-store")
 
             if path == "/api/areas":
                 mid = qs.get("map", [None])[0]
@@ -803,6 +860,184 @@ const Inspect = (() => {
 </script>
 """
 
+# ---------------------------------------------------------------- page: agent mind
+# UM-50: agents that run an observability API (AGENT_API_URLS) get a distinct
+# ring on the map and an "Agent mind" tab in the inspect drawer, polled through
+# /api/agent/<name>/{brain,perception}. Self-contained: it only reads
+# Inspect.current() and adds its own elements, so the inspect panel is untouched.
+# Everything from the agent is rendered with textContent (chat and names are untrusted).
+AGENT_CSS = r"""
+  .marker.agent .ring { outline:2px dashed #5fd0d8; outline-offset:2px; }
+  .pl.agent .nm::after { content:" · agent"; color:#5fd0d8; font-size:11px; }
+  .mind-tabs { display:flex; gap:6px; padding:8px 16px 0; }
+  .mind-tabs button { flex:1; background:#141824; color:var(--dim); border:1px solid var(--line);
+                      border-radius:7px; padding:5px 4px; font:inherit; cursor:pointer; }
+  .mind-tabs button.on { background:#2b3550; border-color:#46557a; color:var(--fg); }
+  .mind .dec { padding:4px 0; border-bottom:1px solid #20263a; font-size:12.5px; overflow-wrap:anywhere; }
+  .mind .dec .when { color:var(--dim); font-size:11px; }
+  .mind .dec.fail .act { color:#ff8b8b; }
+  .mind .dec .err { color:var(--dim); }
+"""
+
+AGENT_JS = r"""
+<script>
+const AgentMind = (() => {
+  const drawer = document.getElementById('inspect');
+  const charBody = document.getElementById('inspect-body');
+  const status = document.getElementById('inspect-status');
+  const agents = new Map();  // lowercased name -> name
+  let tab = 'character', shownFor = null, seq = 0;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = String(text);
+    return e;
+  }
+  function kv(label, value) {
+    const r = el('div', 'kv');
+    r.append(el('span', 'k', label), el('span', 'v', value));
+    return r;
+  }
+  const isAgent = (n) => !!n && agents.has(n.toLowerCase());
+
+  const tabs = el('div', 'mind-tabs');
+  const bChar = el('button', 'on', 'Character'), bMind = el('button', null, 'Agent mind');
+  tabs.append(bChar, bMind);
+  tabs.hidden = true;
+  const pane = el('div', 'drawer-body mind');
+  pane.hidden = true;
+  drawer.insertBefore(tabs, charBody);
+  drawer.insertBefore(pane, status);
+
+  function setTab(t) {
+    tab = t;
+    bChar.classList.toggle('on', t === 'character');
+    bMind.classList.toggle('on', t === 'mind');
+    charBody.hidden = t === 'mind';
+    pane.hidden = t !== 'mind';
+    if (t === 'mind') refresh();
+  }
+  bChar.onclick = () => setTab('character');
+  bMind.onclick = () => setTab('mind');
+
+  function sync() {
+    const n = Inspect.current();
+    tabs.hidden = !isAgent(n);
+    if (!isAgent(n) && tab === 'mind') setTab('character');
+    if (n !== shownFor) {
+      shownFor = n;
+      seq++;
+      pane.replaceChildren(el('div', 'none', 'loading…'));
+      if (tab === 'mind' && isAgent(n)) refresh();
+    }
+  }
+
+  function args(a) {
+    const s = JSON.stringify(a || {});
+    return s === '{}' ? '' : s.length > 120 ? s.slice(0, 117) + '...' : s;
+  }
+  function unitLine(u) {
+    const bits = [u.name || `${u.type || 'object'} ${u.entry ?? ''}`];
+    if (u.level != null) bits.push(`L${u.level}`);
+    if (u.health_pct != null) bits.push(`${Math.round(u.health_pct * 100)}% hp`);
+    if (u.in_combat) bits.push('in combat');
+    return bits.join(' · ');
+  }
+
+  function render(brain, perc) {
+    const f = document.createDocumentFragment();
+    f.append(el('h3', null, 'Brain'));
+    f.append(kv('Status', brain.connected ? 'in game' : 'not connected'));
+    f.append(kv('Goal', brain.goal || '(none)'));
+    f.append(kv('Model', brain.model || '(none)'));
+    f.append(kv('Cycle', brain.cycle ?? '-'));
+    const t = brain.tokens || {};
+    f.append(kv('Tokens', `${t.prompt_total || 0} in · ${t.completion_total || 0} out · ${t.cycles || 0} cycles`));
+    for (const [k, v] of Object.entries(brain.reflexes || {})) f.append(kv(`Reflex: ${k}`, JSON.stringify(v)));
+
+    f.append(el('h3', null, 'Last decisions'));
+    const decs = (brain.decisions || []).slice().reverse();
+    if (!decs.length) f.append(el('div', 'none', 'no decisions yet'));
+    for (const d of decs) {
+      const ok = d.result && d.result.ok;
+      const r = el('div', 'dec' + (ok ? '' : ' fail'));
+      const tc = d.tool_call || {};
+      r.append(el('div', 'when', `#${d.cycle} · ${d.ts ? new Date(d.ts * 1000).toLocaleTimeString() : ''}`),
+               el('div', 'act', `${tc.name || '(no action)'} ${args(tc.args)}`));
+      if (!ok && d.result && d.result.error) r.append(el('div', 'err', d.result.error));
+      f.append(r);
+    }
+
+    f.append(el('h3', null, 'Nearby'));
+    if (perc && perc.connected !== false) {
+      const p = perc.position;
+      if (p) f.append(kv('Position', `map ${p.map} · ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`));
+      for (const [label, key] of [['Units', 'nearby_units'], ['Players', 'nearby_players'], ['Objects', 'nearby_objects']]) {
+        const list = (perc[key] || []).slice(0, 8);
+        f.append(el('h4', null, `${label} (${(perc[key] || []).length})`));
+        if (!list.length) f.append(el('div', 'none', 'none'));
+        for (const u of list) f.append(kv(`${u.distance} yd`, unitLine(u)));
+      }
+      for (const key of ['window', 'trade', 'pending_invite']) {
+        if (perc[key]) f.append(kv(key.replace('_', ' '), JSON.stringify(perc[key]).slice(0, 200)));
+      }
+    } else {
+      f.append(el('div', 'none', 'no perception'));
+    }
+    const top = pane.scrollTop;
+    pane.replaceChildren(f);
+    pane.scrollTop = top;
+  }
+
+  async function getJson(who, view) {
+    const r = await fetch(`/api/agent/${encodeURIComponent(who)}/${view}` + (view === 'brain' ? '?n=5' : ''));
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'error ' + r.status);
+    return j;
+  }
+
+  async function refresh() {
+    const who = Inspect.current();
+    if (!isAgent(who) || tab !== 'mind') return;
+    const mine = ++seq;
+    try {
+      const [brain, perc] = await Promise.all([getJson(who, 'brain'), getJson(who, 'perception')]);
+      if (mine !== seq) return;
+      render(brain, perc);
+      status.textContent = 'agent updated ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      if (mine === seq) pane.replaceChildren(el('div', 'none', 'agent API: ' + e.message));
+    }
+  }
+
+  function tag(root) {
+    for (const e of root.querySelectorAll('.marker, .pl')) e.classList.toggle('agent', isAgent(e.dataset.name));
+  }
+  async function loadAgents() {
+    try {
+      const j = await (await fetch('/api/agents')).json();
+      agents.clear();
+      for (const n of j.agents || []) agents.set(n.toLowerCase(), n);
+      tag(document);
+      sync();
+    } catch (e) { /* no agents configured or wowmap restarting */ }
+  }
+  // Markers and the player list are rebuilt on every tick; tag the new nodes.
+  for (const id of ['markers', 'list']) {
+    const root = document.getElementById(id);
+    if (root) new MutationObserver(() => tag(root)).observe(root, {childList: true});
+  }
+
+  loadAgents();
+  setInterval(loadAgents, 60000);
+  setInterval(sync, 500);
+  setInterval(refresh, 3000);
+  return {refresh, agents: () => [...agents.values()]};
+})();
+</script>
+"""
+
 PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><title>WoW — Live map</title>
@@ -878,6 +1113,7 @@ PAGE = r"""<!doctype html>
   }
 /* @inspect-css */
 /* @chat-css */
+/* @agent-css */
 </style></head>
 <body>
 <aside id="aside">
@@ -929,6 +1165,7 @@ PAGE = r"""<!doctype html>
 <!-- @inspect-js -->
 <script>window.CHAT_FEED_URL = "__CHAT_FEED_URL__";</script>
 <!-- @chat-js -->
+<!-- @agent-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -1289,6 +1526,8 @@ PAGE = (PAGE
         .replace("/* @chat-css */", CHAT_CSS)
         .replace("<!-- @chat-html -->", CHAT_HTML)
         .replace("<!-- @chat-js -->", CHAT_JS)
+        .replace("/* @agent-css */", AGENT_CSS)
+        .replace("<!-- @agent-js -->", AGENT_JS)
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 
