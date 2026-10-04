@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the wow-agents audit pull every 30 s
+
+[Timer]
+OnBootSec=30s
+# Measured from the end of the previous run, so runs never overlap.
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=wow-audit-pull.service
+
+[Install]
+WantedBy=timers.target
