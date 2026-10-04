@@ -6,6 +6,7 @@ Serves:
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
+    GET /api/character/<name>/kind  agent or human, from the character's account (#174)
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available, subzones
                               and `continents`: the continent maps and their zones' boxes
     POST /api/calibrate       save a per-zone pixel offset
@@ -178,6 +179,32 @@ def fetch_agent_view(name, view, n=None):
     except (OSError, ValueError) as e:
         log.info("agent API %s unreachable: %s", entry[0], e)
         return 502, json.dumps({"error": "agent API unreachable"}).encode()
+
+
+# #174: agent characters live on accounts AGENT01..AGENT25 (agents/roster.json).
+AGENT_ACCOUNT_RE = re.compile(r"AGENT\d+", re.IGNORECASE)
+
+
+def is_agent_account(username):
+    return bool(username) and AGENT_ACCOUNT_RE.fullmatch(username) is not None
+
+
+def character_kind(name):
+    """GET /api/character/<name>/kind: agent or human, from the character's account.
+    None for an unknown character. A human's login name is never returned."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT c.name, a.username FROM characters.characters c
+                       LEFT JOIN auth.account a ON a.id = c.account
+                       WHERE c.name = %s LIMIT 1""", (name,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    char_name, username = row
+    if not is_agent_account(username):
+        return {"name": char_name, "kind": "human"}
+    return {"name": char_name, "kind": "agent", "account": username,
+            "agent_api": char_name.lower() in AGENT_APIS,
+            "fleet_configured": bool(AGENT_APIS)}
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -746,6 +773,12 @@ class Handler(BaseHTTPRequestHandler):
                 if explored is None:
                     return self._send(404, {"error": "character not found"})
                 return self._send(200, explored, cache="no-store")
+
+            if path.startswith("/api/character/") and path.endswith("/kind"):
+                kind = character_kind(unquote(path[len("/api/character/"):-len("/kind")]))
+                if kind is None:
+                    return self._send(404, {"error": "character not found"})
+                return self._send(200, kind, cache="no-store")
 
             if path.startswith("/api/character/"):
                 name = unquote(path[len("/api/character/"):])
@@ -1609,6 +1642,10 @@ const AgentMind = (() => {
   const status = document.getElementById('inspect-status');
   const agents = new Map();  // lowercased name -> name
   let tab = 'character', shownFor = null, seq = 0;
+  // #174: /api/character/<n>/kind for shownFor (agent or human, decided server-side),
+  // and the last time each agent's brain answered.
+  let kind = null;
+  const lastOk = new Map();
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -1645,14 +1682,31 @@ const AgentMind = (() => {
 
   function sync() {
     const n = Inspect.current();
-    tabs.hidden = !isAgent(n);
-    if (!isAgent(n) && tab === 'mind') setTab('character');
+    tabs.hidden = !n;
     if (n !== shownFor) {
       shownFor = n;
+      kind = null;
       seq++;
       pane.replaceChildren(el('div', 'none', 'loading…'));
-      if (tab === 'mind' && isAgent(n)) refresh();
+      if (n) loadKind(n);
     }
+  }
+
+  async function loadKind(n) {
+    try {
+      const r = await fetch(`/api/character/${encodeURIComponent(n)}/kind`);
+      const j = await r.json().catch(() => ({}));
+      if (n !== shownFor) return;
+      kind = r.ok ? j : {kind: 'error', error: r.status === 404 ? 'character not found' : j.error || 'error ' + r.status};
+    } catch (e) {
+      if (n !== shownFor) return;
+      kind = {kind: 'error', error: e.message};
+    }
+    refresh();
+  }
+
+  function say(...lines) {
+    pane.replaceChildren(...lines.map((t, i) => el('div', i ? 'none' : null, t)));
   }
 
   function args(a) {
@@ -1724,15 +1778,28 @@ const AgentMind = (() => {
 
   async function refresh() {
     const who = Inspect.current();
-    if (!isAgent(who) || tab !== 'mind') return;
+    if (!who || who !== shownFor || tab !== 'mind' || !kind) return;
+    if (kind.kind === 'error') return say(`Could not tell whether ${who} is an agent`, kind.error);
+    if (kind.kind === 'human') return say('Human player — no agent brain attached', `Character: ${kind.name}`);
+    if (!kind.fleet_configured) {
+      return say(`Agent ${kind.name} (${kind.account}) — the agent fleet is not configured on this page`,
+                 'AGENT_API_URLS is empty, so wowmap has no brain API to ask.');
+    }
+    if (!kind.agent_api) {
+      return say(`Agent ${kind.name} (${kind.account}) — no brain API for this agent is configured on this page`);
+    }
     const mine = ++seq;
     try {
       const [brain, perc] = await Promise.all([getJson(who, 'brain'), getJson(who, 'perception')]);
       if (mine !== seq) return;
+      lastOk.set(who, new Date());
       render(brain, perc);
       status.textContent = 'agent updated ' + new Date().toLocaleTimeString();
     } catch (e) {
-      if (mine === seq) pane.replaceChildren(el('div', 'none', 'agent API: ' + e.message));
+      if (mine !== seq) return;
+      const last = lastOk.get(who);
+      say(`Agent ${kind.name} — brain API unreachable`,
+          'last successful poll: ' + (last ? last.toLocaleTimeString() : 'never this session'), e.message);
     }
   }
 
@@ -1746,7 +1813,9 @@ const AgentMind = (() => {
       for (const n of j.agents || []) agents.set(n.toLowerCase(), n);
       tag(document);
       sync();
-    } catch (e) { /* no agents configured or wowmap restarting */ }
+    } catch (e) {
+      status.textContent = 'agent list unavailable: ' + e.message;
+    }
   }
   // The player list is rebuilt on every tick; tag the new nodes. Map markers live in
   // Leaflet's marker pane, so the page calls AgentMind.tag() when it places them.
