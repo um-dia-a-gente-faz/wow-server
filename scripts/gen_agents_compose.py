@@ -67,7 +67,8 @@ x-agent: &agent-defaults
     LLM_BASE_URL: ${LLM_BASE_URL:-}
     LLM_API_KEY: ${LLM_API_KEY:-}
     LLM_MODEL: ${LLM_MODEL:-}  # one id, or a comma-separated fallback list (UM-94, see .env.example)
-    # UM-101: Jev, the primary brain when set (agent/brain.py); empty = off.
+    # UM-101/#191: Jev is opt-in (agent/brain.py): the LLM plays unless AGENT_BRAIN=jev;
+    # a configured Jev key with AGENT_BRAIN=llm only logs a warning.
     # Same trap as above: unless passed through here, a key in .env never
     # reaches the containers.
     AGENT_BRAIN: ${AGENT_BRAIN:-llm}  # llm | jev (#161)
