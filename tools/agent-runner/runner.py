@@ -10,6 +10,9 @@ never needs the Docker socket.
     GET  /agents/<name>           one entry                          (token)
     POST /agents/<name>/start     compose up -d [--build] <service>  (token)
     POST /agents/<name>/stop      compose stop <service>             (token)
+    POST /agents                  create a level-1 character (#138)  (token)
+    POST /agents/<name>/retire    stop + mark retired, never delete  (token)
+    GET  /characters?account=X    what the realm has for an account  (token)
 
 Each agent entry keeps its signals apart, never one boolean:
   container   running | exited | absent | unknown, + status, exit_code, since
@@ -35,6 +38,10 @@ Environment:
                               (default http://192.168.1.64:9400)
     AGENT_RUNNER_AGENT_HOST   where the agents' published APIs answer
                               (default 127.0.0.1)
+    AGENT_RUNNER_REALM_HOST   realm for character creation (default 192.168.1.64)
+    AGENT_RUNNER_REALM_PORT   its auth port (default 3724)
+    AGENT_PASSWORD            shared account password; used to log in and to
+                              create accounts, never returned, logged or stored
 
 Never touches the worldserver, a GM command or the realm database. Output from
 docker is scrubbed of the token and of every *PASSWORD/*KEY/*TOKEN/*SECRET
@@ -56,7 +63,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
+
+import characters
 
 LOG = logging.getLogger("agent-runner")
 
@@ -75,6 +84,7 @@ BUILD_TIMEOUT_S = 900
 STOP_TIMEOUT_S = 60
 DOCKER_TIMEOUT_S = 15
 MAX_DETAIL_CHARS = 600
+MAX_BODY_BYTES = 4096
 SECRET_NAME = re.compile(r"PASSWORD|KEY|TOKEN|SECRET", re.I)
 AUDIT_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
 
@@ -82,10 +92,14 @@ AUDIT_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
 class RunnerError(Exception):
     """An action that failed in a way the caller should see (HTTP `status`)."""
 
-    def __init__(self, message, status=502, detail=None):
+    def __init__(self, message, status=502, detail=None, extra=None):
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self.extra = extra or {}
+
+    def body(self):
+        return {"error": str(self), "detail": self.detail, **self.extra}
 
 
 def scrub(text, extra=()):
@@ -121,6 +135,8 @@ class Config:
         self.project = env.get("AGENT_RUNNER_PROJECT", DEFAULT_PROJECT)
         self.character_url = env.get("AGENT_RUNNER_CHARACTER_URL", DEFAULT_CHARACTER_URL).rstrip("/")
         self.agent_host = env.get("AGENT_RUNNER_AGENT_HOST", "127.0.0.1")
+        self.realm_host = env.get("AGENT_RUNNER_REALM_HOST", "192.168.1.64")
+        self.realm_port = int(env.get("AGENT_RUNNER_REALM_PORT", 3724))
 
     @property
     def compose_path(self):
@@ -140,14 +156,24 @@ def load_generator(repo):
 class Fleet:
     """The configured agents and the signals about each one."""
 
-    def __init__(self, config, gen=None):
+    def __init__(self, config, gen=None, character_service=None):
         self.cfg = config
         self.gen = gen or load_generator(config.repo)
+        self._character_service = character_service
         self._write_lock = threading.Lock()
+        self._create_lock = threading.Lock()  # one create at a time: it spans realm + state + docker
         self._char_cache = {}
         # Two pools: an entry waits on its probes, so they cannot share one.
         self._entry_pool = ThreadPoolExecutor(max_workers=32)
         self._pool = ThreadPoolExecutor(max_workers=16)
+
+    @property
+    def characters(self):
+        if self._character_service is None:
+            car = characters.load_script(self.cfg.repo, "create_agent_roster")
+            self._character_service = characters.CharacterService(
+                car, self.cfg.realm_host, self.cfg.realm_port)
+        return self._character_service
 
     # ── configuration ────────────────────────────────────────────────
     def roster(self):
@@ -168,7 +194,8 @@ class Fleet:
             slug = a["character"].lower()
             entries.append({"name": a["character"], "account": a["account"], "slug": slug,
                             "service": f"agent-{slug}", "container": f"wow-agent-{slug}",
-                            "port": self.gen.FIRST_PORT + i, "planned": a})
+                            "port": self.gen.FIRST_PORT + i, "planned": a,
+                            "retired": bool(a.get("retired"))})
         return entries
 
     def find(self, name):
@@ -339,7 +366,7 @@ class Fleet:
         else:
             agent_api = {"state": "unreachable", "error": "container not running"}
         return {"name": e["name"], "account": e["account"], "service": e["service"],
-                "container": container, "agent_api": agent_api, "audit": audit,
+                "retired": e["retired"], "container": container, "agent_api": agent_api, "audit": audit,
                 "brain": brain, "character": char_f.result()}
 
     def status(self):
@@ -354,8 +381,24 @@ class Fleet:
         return self._entry(e, self.containers([e])[e["container"]])
 
     # ── actions ──────────────────────────────────────────────────────
+    def save_agent(self, planned):
+        """Record an agent entry in the runtime state (D5): replaces the entry
+        with the same account, or appends. Atomic; never touches the checkout."""
+        with self._write_lock:
+            state_path = self.cfg.runtime_dir / "state.json"
+            state = json.loads(state_path.read_text()) if state_path.exists() else {}
+            agents = [a for a in state.get("agents", []) if a["account"] != planned["account"]]
+            agents.append(planned)
+            state["agents"] = agents
+            self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
+            tmp = state_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state, indent=2) + "\n")
+            os.replace(tmp, state_path)
+
     def start(self, name, build=False):
         e = self.find(name)
+        if e["retired"]:
+            raise RunnerError(f"{e['name']} is retired; start is refused", status=409)
         with self._write_lock:
             self.write_compose()
             image = self.image()
@@ -370,6 +413,54 @@ class Fleet:
             self.write_compose()
             self.compose(["stop", e["service"]], STOP_TIMEOUT_S)
         return self.one(name), {}
+
+    def retire(self, name):
+        """Stop the container and mark the agent retired. The character stays on
+        the realm (D6). Idempotent; an already-gone container is fine."""
+        e = self.find(name)
+        self.stop(name)
+        self.save_agent({**e["planned"], "retired": True})
+        return self.one(name), {}
+
+    def list_characters(self, account):
+        try:
+            return self.characters.list(account)
+        except characters.CharacterError as err:
+            raise RunnerError(scrub(str(err)), status=err.status)
+
+    def create_agent(self, body):
+        """Create the character on the realm, record it, start its container.
+        A failure after the character exists reports exactly what exists."""
+        try:
+            account, name, race, class_, gender = self.characters.validate(body)
+        except characters.CharacterError as err:
+            raise RunnerError(scrub(str(err)), status=err.status)
+        with self._create_lock:
+            taken = {e["name"].lower() for e in self.roster() if e["account"] != account}
+            try:
+                made = self.characters.create(account, name, race, class_, gender, taken)
+            except characters.CharacterError as err:
+                raise RunnerError(scrub(str(err)), status=err.status,
+                                  extra={"code": err.code} if err.code else None)
+            planned = {k: made[k] for k in ("account", "character", "race", "class", "gender")}
+            partial = {"character_created": True, "account": made["account"],
+                       "character": made["character"], "level": made["level"]}
+            try:
+                self.save_agent(planned)
+            except OSError as err:
+                raise RunnerError("character created, but runtime state could not be written",
+                                  detail=scrub(str(err)),
+                                  extra={"partial": {**partial, "recorded": False,
+                                                     "container_started": False}})
+            try:
+                entry, _ = self.start(made["character"])
+            except RunnerError as err:
+                raise RunnerError("character created and recorded, but its container did not start;"
+                                  f" retry with POST /agents/{made['character']}/start",
+                                  status=502, detail=err.detail or str(err),
+                                  extra={"partial": {**partial, "recorded": True,
+                                                     "container_started": False}})
+        return entry, {"character": made}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -399,43 +490,71 @@ class Handler(BaseHTTPRequestHandler):
                              "caller": self.client_address[0],
                              "token": self.config.token_label, "result": result}))
 
+    def _read_json(self):
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_BODY_BYTES:
+            raise RunnerError("a JSON object body is required", status=400)
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            raise RunnerError("body is not valid JSON", status=400)
+        if not isinstance(body, dict):
+            raise RunnerError("body must be a JSON object", status=400)
+        return body
+
     def do_GET(self):  # noqa: N802
-        path = urlsplit(self.path).path.rstrip("/") or "/"
+        url = urlsplit(self.path)
+        path = url.path.rstrip("/") or "/"
         if path == "/healthz":
             return self._send(200, {"ok": True})
         parts = [unquote(p) for p in path.split("/")[1:]]
-        if parts[0] != "agents" or len(parts) > 2:
+        if parts[0] not in ("agents", "characters") or len(parts) > (1 if parts[0] == "characters" else 2):
             return self._send(404, {"error": "not found"})
         if not self._authorized():
             self._audit_write(f"GET {path}", None, "401")
             return self._send(401, {"error": "token required"})
         try:
+            if parts[0] == "characters":
+                account = parse_qs(url.query).get("account", [""])[0]
+                return self._send(200, self.fleet.list_characters(account))
             if len(parts) == 1:
                 return self._send(200, self.fleet.status())
             return self._send(200, self.fleet.one(parts[1]))
         except RunnerError as e:
-            return self._send(e.status, {"error": str(e), "detail": e.detail})
+            return self._send(e.status, e.body())
 
     def do_POST(self):  # noqa: N802
         path = urlsplit(self.path).path.rstrip("/")
         parts = [unquote(p) for p in path.split("/")[1:]]
-        if len(parts) != 3 or parts[0] != "agents" or parts[2] not in ("start", "stop"):
+        create = parts == ["agents"]
+        if not create and (len(parts) != 3 or parts[0] != "agents"
+                           or parts[2] not in ("start", "stop", "retire")):
             return self._send(404, {"error": "not found"})
-        name, action = parts[1], parts[2]
+        name, action = (None, "create") if create else (parts[1], parts[2])
         if not self._authorized():
             self._audit_write(action, name, "401")
             return self._send(401, {"error": "token required"})
         try:
-            if action == "start":
+            if create:
+                body = self._read_json()
+                name = body.get("account")
+                entry, extra = self.fleet.create_agent(body)
+                name = entry["name"]
+            elif action == "start":
                 query = urlsplit(self.path).query
                 entry, extra = self.fleet.start(name, build="build=1" in query.split("&"))
+            elif action == "retire":
+                entry, extra = self.fleet.retire(name)
             else:
                 entry, extra = self.fleet.stop(name)
         except RunnerError as e:
             self._audit_write(action, name, f"error: {e}")
-            return self._send(e.status, {"error": str(e), "detail": e.detail})
+            return self._send(e.status, e.body())
         self._audit_write(action, name, "ok")
-        return self._send(200, {"action": action, **extra, "agent": entry})
+        return self._send(201 if create else 200, {"action": action, **extra, "agent": entry})
 
 
 def make_server(config, fleet=None):

@@ -35,6 +35,9 @@ runner refuses to start without a token. Locally:
 | `AGENT_RUNNER_PROJECT` | `wow-agents` | compose project name |
 | `AGENT_RUNNER_CHARACTER_URL` | `http://192.168.1.64:9400` | wowmap, source of level/zone/playtime |
 | `AGENT_RUNNER_AGENT_HOST` | `127.0.0.1` | where the agents' published APIs answer |
+| `AGENT_RUNNER_REALM_HOST` | `192.168.1.64` | realm used to create characters and accounts |
+| `AGENT_RUNNER_REALM_PORT` | `3724` | its auth port |
+| `AGENT_PASSWORD` | required for characters | shared account password; handed to the realm and the worldserver console only |
 
 ## API
 
@@ -45,6 +48,9 @@ runner refuses to start without a token. Locally:
 | `GET /agents/<name>` | one agent (name is the character, case-insensitive) |
 | `POST /agents/<name>/start` | `compose up -d <service>`; adds `--build` when the image is missing or older than the last commit touching `agent/` or `Dockerfile`, or with `?build=1` |
 | `POST /agents/<name>/stop` | `compose stop <service>` |
+| `POST /agents` | create a level-1 character, record it, start its container (below) |
+| `POST /agents/<name>/retire` | stop the container and mark the agent retired; the character is never deleted |
+| `GET /characters?account=AGENT07` | what the realm has for that account: `exists`, `characters`, `free_slot` |
 
 Everything but `/healthz` needs the token (401 without). Writes return the
 agent's resulting status. Both are idempotent: starting a running agent or
@@ -75,6 +81,40 @@ An agent entry keeps its signals separate:
 - If the runner itself is down, the caller gets no answer at all and must show
   *unknown*.
 
+## Creating and retiring characters (#138, ADR 0002 D6)
+
+`POST /agents` with `{"account": "AGENT07", "race": 10, "class": 8}` plus optional
+`name` and `gender` (0/1):
+
+1. Validates before touching the realm: account `AGENT01..AGENT25`, a Horde race with a
+   class it can play (the table in `scripts/create_agent_roster.py`), no death knight
+   (they need an existing level-55 character), name 2-12 letters with no letter three
+   times in a row. A name already used by an agent in the roster is refused locally;
+   the realm answers for every other name.
+2. Logs in as the account; if it does not exist, creates it through the worldserver
+   console (the shared password is used there and nowhere else) and waits for it.
+3. Refuses with 409 if the account already has a character (one per account).
+4. Sends `CMSG_CHAR_CREATE` (`WoWSession.create_character`), then lists the account again
+   and returns the character as the realm reports it (`level` 1).
+   A name in use comes back as 409 `CHAR_CREATE_NAME_IN_USE` with `code` 50, a rejected
+   name as 400, any other refusal as 502 with the server's `code`. There is no retry:
+   the caller picks another name.
+5. Records the agent in `<runtime>/state.json`, regenerates the runner's compose file
+   (`AGENT_NAME` is the character name, so audit files land under that name) and starts the
+   container. Answers 201 with the new agent's status entry and a `character` block.
+
+If the character exists but the container did not start, the answer is 502 with
+`partial`: `character_created`, `recorded`, `container_started` and the account and
+name. The character is recorded, so `POST /agents/<name>/start` finishes the job.
+
+`POST /agents/<name>/retire` stops the container and sets `retired: true` in the state
+file. It is idempotent and fine when the container is already gone. A retired agent
+stays in the list (so the other agents' ports do not shift) and `start` on it is a 409.
+
+Nothing here deletes a character, writes `agents/roster.json` or touches the checkout.
+Not built: a ready-to-paste roster snippet for a runtime-created agent. The state file is
+the record; adding agents to the committed plan stays a normal PR.
+
 ## What it does to the host
 
 - The runner generates its own compose file at
@@ -87,9 +127,11 @@ An agent entry keeps its signals separate:
   result`. Refused writes are logged too.
 - Docker output is scrubbed of the token and of every `*PASSWORD`, `*KEY`,
   `*TOKEN` and `*SECRET` value in the environment before it is logged or
-  returned.
-- It never touches the worldserver, never runs a GM command and never writes to
-  the realm database.
+  returned. The shared account password is never returned, logged or written to the
+  state file or the compose file.
+- It never restarts the worldserver, never runs a GM command on a character and never
+  writes to the realm database. The one console command it can send is `account create`
+  for a missing `AGENTnn` account; characters are created through the game protocol.
 
 ## Test
 
