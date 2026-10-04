@@ -166,7 +166,7 @@ class Brain:
             if fallback is None:
                 try:
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
-                                            handles=handles)
+                                            handles=handles, history=history)
                     if blocked is not None:
                         options = [c for c in options
                                    if c["action"] == "idle" or not blocked(c["action"], c["params"])]

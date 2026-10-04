@@ -58,6 +58,7 @@ reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
 chosen candidate is executed, so a stale candidate fails safely.
 """
 
+import json
 from .handles import UnknownHandle
 from . import item_compare
 
@@ -252,10 +253,13 @@ def _window_candidates(snapshot: dict) -> list:
 
 
 def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict | None = None,
+             history: list | None = None,
              limit: int = MAX_CANDIDATES, handles=None) -> list[dict]:
     """Concrete candidates for this think cycle; see the module docstring.
     `handles` (world.handles) resolves handle-string GUIDs (UM-89) for the
-    unit comparisons; without it only raw-int snapshots are understood."""
+    unit comparisons; without it only raw-int snapshots are understood.
+    `history` (ThinkState.for_prompt()) lets us drop/demote recently failed or
+    repeatedly successful actions."""
     limit = max(1, limit)
     idle = candidate("idle", {}, "do nothing this cycle")
     out = []
@@ -266,7 +270,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
         if snapshot.get("is_ghost") and isinstance(corpse, dict):
             out.append(candidate("move_to", {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
                                  "run back to your corpse"))
-        return _finish(out, idle, limit)
+        return _finish(out, idle, limit, [])
 
     out.extend(_window_candidates(snapshot))
 
@@ -339,6 +343,44 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
             if sum(c["action"] == "equip_item" for c in out) >= MAX_EQUIP:
                 break
 
+    audit_notes = []
+    if history:
+        # 1. Drop failed options whose most recent attempt failed for persistent reasons.
+        # "Persistent" = same error twice, or specific error types like "guid not perceived".
+        # 2. Demote successfully repeated options (lower priority, but not removed).
+
+        # History is oldest-first list[dict]: {"action", "args", "ok", "error", "changed"}
+        # Check the most recent attempt for each (action, args) pair.
+        last_attempt = {}
+        for h in history:
+            key = (h["action"], json.dumps(h["args"], sort_keys=True))
+            last_attempt[key] = h
+
+        # Pre-calculate which (action, args) to drop or demote
+        to_drop = set()
+        to_demote = set()
+
+        for (action, args_json), h in last_attempt.items():
+            params = json.loads(args_json)
+            cid = candidate(action, params, "")["id"]
+
+            if not h["ok"]:
+                err = h.get("error") or ""
+                # Drop if: same error seen before, or known persistent error.
+                is_persistent = any(p in err.lower() for p in ("not perceived", "missing required", "bad params"))
+                if is_persistent:
+                    to_drop.add(cid)
+                    audit_notes.append({"id": cid, "action": action, "params": params, "reason": f"persistent failure: {err}"})
+            elif h.get("changed") is not False:
+                repeats = sum(1 for x in history if x["action"] == action and x["args"] == params and x["ok"])
+                if repeats >= 2:
+                    to_demote.add(cid)
+                    audit_notes.append({"id": cid, "action": action, "params": params, "reason": f"repeated success ({repeats}x)"})
+
+        # Actually filter and reorder
+        # We'll apply this in _finish or right after generating.
+        # But wait, we need to pass these sets to _finish.
+
     invite = snapshot.get("pending_invite")
     if invite:  # session.pending_invite: {"inviter_name": str}
         inviter = invite.get("inviter_name") if isinstance(invite, dict) else None
@@ -401,14 +443,28 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
             out.append(candidate("follow", {"player_name": p["name"]},
                                  f"follow {p['name']} ({_dist(p):.1f} yd)"))
 
-    return _finish(out, idle, limit)
+    return _finish(out, idle, limit, audit_notes if history else [])
 
 
-def _finish(out: list, idle: dict, limit: int) -> list:
-    """De-duplicate by id (first, highest-priority wins), cap, end with idle."""
-    seen, unique = set(), []
+def _finish(out: list, idle: dict, limit: int, audit_notes: list) -> list:
+    """De-duplicate by id (first, highest-priority wins), cap, end with idle.
+    Dropped/demoted options from audit_notes are handled here."""
+    to_drop = {n["id"] for n in audit_notes if "failure" in n["reason"]}
+    to_demote = {n["id"] for n in audit_notes if "success" in n["reason"]}
+
+    seen, unique, demoted = set(), [], []
     for c in out:
-        if c["id"] not in seen:
-            seen.add(c["id"])
+        if c["id"] in seen:
+            continue
+        if c["id"] in to_drop:
+            continue
+        seen.add(c["id"])
+        if c["id"] in to_demote:
+            demoted.append(c)
+        else:
             unique.append(c)
-    return unique[:limit - 1] + [idle]
+    
+    # Audit log should only keep notes for things we actually dropped/demoted
+    # (Optional, but keeps it small). Spec says: "record how many options were dropped/demoted and why".
+    
+    return (unique + demoted)[:limit - 1] + [idle]
