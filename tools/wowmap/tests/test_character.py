@@ -1,4 +1,8 @@
+import json
 import pathlib
+import re
+import shutil
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -357,6 +361,42 @@ class ItemTooltipWiringTests(unittest.TestCase):
         left = [l["left"] for l in item["tooltip"]]
         self.assertIn("The Gladiator (1/2)", left)
         self.assertIn("Gladiator Chain", left)
+
+
+class StatRowTests(unittest.TestCase):
+    """#176: icon + label + human value per stat row, exact value on hover."""
+
+    def test_stat_rows_have_icons_and_exact_titles(self):
+        for n in ("health", "mana", "gold", "played", "logout"):
+            self.assertIn(f"stat('{n}'", app.PAGE, n)
+        self.assertIn("`played ${c.totaltime}s`", app.PAGE)
+        self.assertIn("`last logout ${when(c.logout_time)}`", app.PAGE)
+        self.assertIn("`${nf.format(c.money)} copper`", app.PAGE)
+
+    def test_never_seen_character_shows_dashes(self):
+        self.assertIn("c.totaltime ? duration(c.totaltime) : '—'", app.PAGE)
+        self.assertIn("c.logout_time ? ago(c.logout_time) : '—'", app.PAGE)
+
+    def test_relative_age_is_one_helper_shared_with_the_activity_feed(self):
+        self.assertEqual(app.PAGE.count("function ago("), 1)
+        self.assertIn("function ago(", app.INSPECT_JS)
+        self.assertIn("ago(e.t)", app.ACTIVITY_JS)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_ago_formats_relative_age(self):
+        fn = re.search(r"^function ago\(t\) \{.*?^\}", app.INSPECT_JS, re.S | re.M).group(0)
+        js = (fn + "\nDate.now = () => 1000000 * 1000;\n"
+              "console.log(JSON.stringify([5, 120, 7200, 86400 * 4 + 3600].map(d => ago(1000000 - d))));")
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), ["5s ago", "2m ago", "2h ago", "4d ago"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_scripts_parse(self):
+        for name in ("INSPECT_JS", "ACTIVITY_JS"):
+            js = getattr(app, name).replace("<script>", "").replace("</script>", "")
+            r = subprocess.run(["node", "--check", "-"], input=js, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, name + r.stderr)
 
 
 if __name__ == "__main__":
