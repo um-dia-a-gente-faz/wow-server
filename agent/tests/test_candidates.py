@@ -11,6 +11,7 @@ from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
+from agent.reflexes import rest  # noqa: F401 registers rest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 MY_GUID = 1
@@ -62,7 +63,7 @@ class CandidateShapeMixin:
             for key, value in c["params"].items():
                 if isinstance(value, str):
                     self.assertIn(value, snapshot_strings, f"{c['id']}: {key}={value!r} not from the snapshot")
-                    self.assertEqual(c["action"], "follow")
+                    self.assertIn(c["action"], {"follow", "cast_spell", "train_spell", "sell_item"})
                 else:
                     self.assertIsInstance(value, (int, float, bool), c)
                     self.assertNotIn(key, FREE_TEXT_PARAMS, c)
@@ -365,6 +366,32 @@ class SnapshotFieldsTest(unittest.TestCase):
         unit = self._snap_unit({uf.UNIT_DYNAMIC_FLAGS: per.UNIT_DYNFLAG_LOOTABLE, uf.UNIT_NPC_FLAGS: 2})
         self.assertIs(unit["lootable"], True)
         self.assertEqual(unit["npc_flags"], 2)
+
+
+class RegistryCoverageTest(unittest.TestCase):
+    def test_every_registered_action_is_offered_or_documented(self):
+        offered = {c["action"] for c in cand.generate({})}
+        # Candidate branches' actions, including actions not active in an
+        # empty snapshot. A new registration must be exercised or explained.
+        offered.update({"move_to", "move_towards", "interact", "gossip_select", "accept_quest",
+                        "complete_quest", "turn_in_quest", "abandon_quest", "loot", "auto_attack",
+                        "follow", "assist", "stop_following", "accept_group", "close_window",
+                        "cast_spell", "train_spell", "equip_item", "use_item", "sell_item"})
+        self.assertEqual(set(ac.REGISTRY) - offered - set(cand.NOT_OFFERED), set())
+        self.assertTrue(all(isinstance(reason, str) and reason for reason in cand.NOT_OFFERED.values()))
+
+    def test_new_candidates_require_their_snapshot_preconditions(self):
+        threat = {"guid": 2, "target_guid": 1, "in_combat": True, "distance": 3,
+                  "name": "rat", "health_pct": 1}
+        base = {"me": {"class_id": 8}, "spells": [{"id": 133, "name": "Fireball"}],
+                "nearby_units": [threat], "inventory": [], "equipment": {}, "window": None}
+        actions = [c["action"] for c in cand.generate(base, my_guid=1)]
+        self.assertIn("cast_spell", actions)
+        self.assertNotIn("train_spell", actions)
+        self.assertNotIn("sell_item", actions)
+        trainer = dict(base, window={"kind": "trainer", "npc_guid": "u2", "spells": [{"spell_id": 587}]})
+        self.assertIn("train_spell", [c["action"] for c in cand.generate(trainer, my_guid=1)])
+        self.assertNotIn("cast_spell", [c["action"] for c in cand.generate(dict(base, spells=[]), my_guid=1)])
 
 
 if __name__ == "__main__":

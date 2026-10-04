@@ -457,3 +457,15 @@ to Path A if needed.
 - [WoW Client Protocol (3.3.5a)](https://github.com/TrinityCore/TrinityCore)
 - [vmangos — Classic WoW server with bot support](https://github.com/vmangos/core)
 - [playerbots — TrinityCore module for AI bots](https://github.com/liyunfan1223/playerbots)
+# Candidate coverage
+
+Jev's candidate generator offers known metadata-backed spells against combat
+threats, unlearned trainer spells while a trainer window is open, cached
+inventory upgrades, consumables/quest items, and grey-quality items for sale
+at an open vendor. Purchases remain disabled by default until a buying policy
+is decided. The generator's `NOT_OFFERED` map documents deliberate gaps:
+combat micro actions, trade and mail, destructive actions, and social invites.
+`agent/tests/test_candidates.py` pins every registered action to either a
+candidate branch or a documented exclusion. Candidate lists reserve their
+last slot for `idle`; on overflow `_finish` keeps the earliest candidates in
+generator priority order and drops the tail before `idle`.

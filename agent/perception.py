@@ -941,6 +941,9 @@ class WorldState:
                 if item_obj is not None:
                     d["entry"] = item_obj.entry
                     d["name"] = item_obj.name or None
+                    template = self.items.items.get(item_obj.entry) if item_obj.entry is not None else None
+                    if template:
+                        d["template"] = template
                     count = item_obj.raw_fields and uf.decode_item_fields(item_obj.raw_fields).get("count")
                     if count is not None:
                         d["count"] = count
