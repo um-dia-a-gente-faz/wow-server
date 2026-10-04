@@ -395,6 +395,14 @@ Point wowmap at them with `AGENT_API_URLS`, e.g.
   Inspecting one shows a **Character / Agent mind** tab strip; the Agent mind
   tab polls brain + perception every 3 s while it is visible (goal, model,
   tokens, reflexes, last 5 decisions, nearby units/players/objects).
+- `GET /api/character/<name>/kind` (#174) says whether a character is an agent
+  (its account matches `AGENT<nn>`, as in `agents/roster.json`) or a human, read
+  from `auth.account`; 404 for an unknown character. Agents also get `account`,
+  `agent_api` (in `AGENT_API_URLS`) and `fleet_configured`; a human's login name
+  is never returned. The tab strip shows for every character, and the Agent mind
+  tab always says which state it is in: human player, fleet not configured on
+  this page, no brain API for this agent, brain API unreachable (with the last
+  successful poll time), or the live mind.
 
 ## Character inspect endpoint
 
