@@ -42,6 +42,16 @@ log = logging.getLogger("agent.brain")
 BRAIN_JEV = "jev"
 BRAIN_LLM = "llm"
 
+# Confidence policy (GH-165): the one threshold and the one rule. Applied in
+# `Brain.decide()` only, to Jev's answer, and never calls the LLM. Default 0.0
+# = the rule never fires until a threshold is chosen from measured data
+# (JEV_MIN_CONFIDENCE, .env.example).
+DEFAULT_JEV_MIN_CONFIDENCE = 0.0
+SAFE_ACTION = "idle"
+RULE_ACTED = "acted"
+RULE_LOW_CONFIDENCE = "low_confidence_safe_fallback"
+RULE_UNKNOWN = "confidence_unknown"
+
 JEV_AUTH_COOLDOWN_S = 300.0       # 401/402/403: key or credits, will not fix itself in seconds
 JEV_RATE_LIMIT_COOLDOWN_S = 30.0  # 429
 _COOLDOWNS = {401: JEV_AUTH_COOLDOWN_S, 402: JEV_AUTH_COOLDOWN_S,
@@ -77,6 +87,9 @@ class Decision:
     latency_ms: float | None = None
     fallback: str | None = None         # why Jev did not decide, when it was configured
     candidates: int | None = None       # how many candidates Jev was offered
+    confidence_threshold: float | None = None  # threshold applied (Jev only)
+    confidence_rule: str | None = None  # RULE_ACTED / RULE_LOW_CONFIDENCE / RULE_UNKNOWN
+    overridden: str | None = None       # candidate id Jev chose before the safe substitution
 
 
 def llm_catalog() -> list[dict]:
@@ -90,9 +103,11 @@ class Brain:
     both None there is nothing to decide with (see `from_config`, which
     returns None in that case so the main loop idles as before)."""
 
-    def __init__(self, jev=None, llm=None, clock=time.monotonic):
+    def __init__(self, jev=None, llm=None, clock=time.monotonic,
+                 min_confidence: float = DEFAULT_JEV_MIN_CONFIDENCE):
         self.jev = jev
         self.llm = llm
+        self.min_confidence = min_confidence
         self._clock = clock
         self._jev_cooldown_until = 0.0
         self._jev_cooldown_reason = None
@@ -106,7 +121,7 @@ class Brain:
             llm = LLMClient(cfg.llm_base_url, cfg.llm_model, api_key=cfg.llm_api_key)
         if jev is None and llm is None:
             return None
-        return cls(jev=jev, llm=llm)
+        return cls(jev=jev, llm=llm, min_confidence=cfg.jev_min_confidence)
 
     def describe(self) -> str:
         parts = []
@@ -147,6 +162,7 @@ class Brain:
                     d.action, d.params = self.jev.choose_action(snapshot, options, persona=persona,
                                                                 history=history)
                     self._fill_jev(d)
+                    self._apply_confidence_policy(d, options)
                     return d
                 except JevError as e:
                     self._fill_jev(d)
@@ -186,6 +202,27 @@ class Brain:
             self._jev_cooldown_until = self._clock() + seconds
             self._jev_cooldown_reason = f"HTTP {e.status}"
             log.warning("jev returned HTTP %d — not calling it for %.0fs", e.status, seconds)
+
+    def _apply_confidence_policy(self, d: Decision, options: list[dict]):
+        """The confidence rule. `confidence >= threshold` acts as chosen;
+        below it the generator's safe candidate (`idle`, always offered)
+        replaces the choice; no reported confidence is its own audited
+        state and acts as chosen (not zero, not high). Never calls a model."""
+        d.confidence_threshold = self.min_confidence
+        if d.confidence is None:
+            d.confidence_rule = RULE_UNKNOWN
+            return
+        if d.confidence >= self.min_confidence or d.action == SAFE_ACTION:
+            d.confidence_rule = RULE_ACTED
+            return
+        safe = next((c for c in options if c["action"] == SAFE_ACTION), None)
+        if safe is None:  # generator contract broken; do not invent one
+            d.confidence_rule = RULE_ACTED
+            return
+        d.overridden = next((c["id"] for c in options
+                             if c["action"] == d.action and c["params"] == d.params), d.action)
+        d.action, d.params = safe["action"], dict(safe["params"])
+        d.confidence_rule = RULE_LOW_CONFIDENCE
 
     def _fill_jev(self, d: Decision):
         usage = getattr(self.jev, "last_usage", None) or {}

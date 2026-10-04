@@ -74,6 +74,9 @@ class Config:
     jev_api_key: str = field(default_factory=lambda: _env_str(
         "JEV_API_KEY") or _env_str("OPENROUTER_API_KEY"))
     jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL") or "typesafe/jev-1.13")
+    # Confidence policy (GH-165, agent/brain.py): below this Jev's choice is
+    # replaced by the safe candidate (idle). 0.0 = rule off until measured.
+    jev_min_confidence: float = field(default_factory=lambda: _env_float("JEV_MIN_CONFIDENCE", 0.0))
     jev_enabled: bool = field(default_factory=lambda: bool(
         _env_str("JEV_BASE_URL") or _env_str("JEV_API_KEY") or _env_str("OPENROUTER_API_KEY")))
 
@@ -134,6 +137,7 @@ class Config:
             "jev": "on" if self.jev_enabled else "(off)",
             "jev_base_url": self.jev_base_url,
             "jev_model": self.jev_model,
+            "jev_min_confidence": self.jev_min_confidence,
             "jev_api_key": "***" if self.jev_api_key else "(unset)",
             "log_level": self.log_level,
             "dump_packets": self.dump_packets_dir or "(off)",
