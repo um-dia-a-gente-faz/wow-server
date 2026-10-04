@@ -191,7 +191,9 @@ class Brain:
                     d.action, d.params = self.jev.choose_action(snapshot, options, persona=persona,
                                                                 history=history)
                     self._fill_jev(d)
-                    d.jev_status = "success"
+                    d.jev_status = ("skipped_single_candidate"
+                                    if getattr(self.jev, "skipped_single_candidate", False)
+                                    else "success")
                     self._apply_confidence_policy(d, options)
                     return d
                 except JevError as e:

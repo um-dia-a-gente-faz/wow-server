@@ -390,8 +390,14 @@ class FakeJevClient:
         self.confidence = confidence
         self.calls = []
         self.last_usage, self.last_latency_ms, self.last_confidence = {}, None, None
+        self.skipped_single_candidate = False
 
     def choose_action(self, snapshot, candidates, persona="", history=None):
+        self.skipped_single_candidate = len(candidates) == 1
+        if self.skipped_single_candidate:
+            self.last_usage, self.last_latency_ms, self.last_confidence = {}, None, None
+            chosen = candidates[0]
+            return chosen["action"], dict(chosen["params"])
         self.calls.append({"snapshot": snapshot, "candidates": candidates,
                            "persona": persona, "history": history})
         if self.error is not None:
@@ -463,6 +469,19 @@ class BrainSeamTest(unittest.TestCase):
         self.assertIsNone(rec["fallback"])
         self.assertFalse(rec["substituted"])
         self.assertEqual(rec["tool_call"], {"name": "test_action", "args": {"value": 2}})
+
+    def test_single_candidate_cycle_is_audited_as_skipped_not_success(self):
+        self.generate.side_effect = lambda *a, **k: [{"id": "only", "action": "test_action",
+                                                       "params": {"value": 4}}]
+        jev = FakeJevClient(pick=0)
+        result = self._think(brain.Brain(jev=jev))
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(jev.calls, [])
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["jev_status"], "skipped_single_candidate")
+        self.assertIsNone(rec["confidence"])
+        self.assertEqual(rec["candidates"], 1)
 
     def test_llm_only_path_is_unchanged_and_audits_brain_llm(self):
         llm = FakeLLMClient(action_name="test_action", params={"value": 7})
