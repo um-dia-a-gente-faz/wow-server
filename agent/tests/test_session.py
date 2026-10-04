@@ -4,6 +4,7 @@ No network and no crypto: WoWSession runs against an in-memory fake socket.
 """
 
 import os
+import pathlib
 import socket
 import struct
 import tempfile
@@ -1024,6 +1025,49 @@ class LootDispatchTest(unittest.TestCase):
         self.assertEqual(sess.coinage, 150)
         self.assertEqual(sess.events[-1], {**sess.events[-1], "kind": "money_changed",
                                             "old": 100, "new": 150, "delta": 50})
+
+
+class CharEnumRealPayloadTest(unittest.TestCase):
+    """gh-199: enum_characters() against a real 3-character SMSG_CHAR_ENUM.
+
+    The per-character tail after the character flags is 224 bytes
+    (customizeFlags uint32 + firstLogin uint8 + pet 3 x uint32 + 23 equipment
+    slots of uint32 displayId / uint8 inventoryType / uint32 enchantVisual),
+    not the 108 the parser used to skip, so every character after the first
+    started 47 bytes early: on an account holding 2+ characters the agent
+    could not find the character it was asked to play and logged into the
+    first one instead.
+    """
+
+    FIXTURE = (pathlib.Path(__file__).parent / "fixtures" / "char_enum"
+               / "three_characters.bin")
+
+    def _chars(self):
+        payload = self.FIXTURE.read_bytes()
+        sess = make_session(server_packet(se.SMSG_CHAR_ENUM, payload))
+        return sess.enum_characters()
+
+    def test_every_character_after_the_first_parses(self):
+        chars = self._chars()
+        self.assertEqual([c["name"] for c in chars],
+                         ["Luaprata", "Dawnrunner", "Jevrun"])
+        self.assertEqual([c["guid"] for c in chars], [2, 7, 8])
+        self.assertEqual([c["level"] for c in chars], [1, 1, 1])
+        self.assertEqual([(c["race"], c["class_"]) for c in chars], [(10, 2)] * 3)
+
+    def test_last_character_map_and_position(self):
+        last = self._chars()[-1]
+        # Sunstrider Isle start area, Eversong Woods (map 530).
+        self.assertEqual(last["map"], 530)
+        self.assertAlmostEqual(last["x"], 10349.6, places=1)
+        self.assertAlmostEqual(last["y"], -6357.3, places=1)
+
+    def test_first_character_still_parses(self):
+        # The old parser got record 1 right; this guards the head half too.
+        first = self._chars()[0]
+        self.assertEqual(first["name"], "Luaprata")
+        self.assertEqual(first["map"], 530)
+        self.assertAlmostEqual(first["x"], 9918.8, places=1)
 
 
 if __name__ == '__main__':

@@ -639,8 +639,21 @@ class WoWSession:
             z = struct.unpack_from('<f', payload, off)[0]; off += 4
             off += 4  # guild
             char_flags = struct.unpack_from('<I', payload, off)[0]; off += 4
-            if char_flags & 0x08: off += 4
-            off += 4 + 12 + 23*4  # rest
+            # Everything after the flags, exactly as TrinityCore 3.3.5's
+            # Player::BuildEnumData() writes it (Player.cpp, branch 3.3.5):
+            # a uint32 customizeFlags that is ALWAYS present (the old
+            # `if char_flags & 0x08` guess skipped it for most characters), a
+            # uint8 firstLogin, the pet's three uint32s, then one record per
+            # INVENTORY_SLOT_BAG_END (=23) slot: uint32 displayId, uint8
+            # inventoryType, uint32 enchantVisual = 9 bytes each. That is
+            # 4 + 1 + 12 + 207 = 224 bytes. The old `4 + 12 + 23*4` (108)
+            # started every character after the first 47 bytes early, so on an
+            # account holding 2+ characters the agent could not find the one it
+            # was told to play and logged into the wrong one (gh-199).
+            off += 4       # customizeFlags
+            off += 1       # firstLogin
+            off += 12      # pet displayId, level, family
+            off += 23 * 9  # equipment: displayId(u32), inventoryType(u8), enchantVisual(u32)
             chars.append({
                 'guid': guid, 'name': name, 'race': race, 'class_': cls,
                 'gender': gender, 'level': level, 'map': map_id,
