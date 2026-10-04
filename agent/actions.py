@@ -489,8 +489,10 @@ class AutoAttackAction(Action):
         return None
 
     def execute(self, session, world, guid: int, **_) -> ActionResult:
-        # The server won't start a swing unless the attacker faces the victim
-        # (same reason CastSpellAction faces first).
+        # The server won't swing unless the victim is in our 120-degree front arc:
+        # Player::Update (Player.cpp, TC 3.3.5 @092eb27) checks
+        # HasInArc(2*M_PI/3, victim), else SMSG_ATTACKSWING_BADFACING. Attack()
+        # still sends SMSG_ATTACK_START, so that alone doesn't prove a swing.
         target = world.get_object(guid)
         if target is not None and target.position is not None and session.player_position is not None:
             FaceAction().execute(session, world, guid=guid)
