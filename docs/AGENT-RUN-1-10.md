@@ -40,7 +40,10 @@ Record here once created:
 
 1. Pick one agent profile in `docker-compose.agents.yml`, point its
    `WOW_ACCOUNT` / `WOW_CHARACTER` at the fresh character above.
-2. Set `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` in
+2. Pick the brain: `AGENT_BRAIN=llm` (default) or `jev` (#161). They are peers;
+   a Jev error is a failed cycle, never a silent LLM call, unless
+   `AGENT_BRAIN_FALLBACK=llm` is set (audit rows then carry `substituted: true`).
+   Set `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` in
    `.env` (see Preflight below; `LLM_MODEL` is a pinned ordered list, `auto` last) — record the exact model name in the results log, settings don't
    transfer between runs.
 3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited).

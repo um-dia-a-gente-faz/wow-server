@@ -35,8 +35,10 @@ Record shape (one JSON object per line):
                       cycle, or the last one tried when none did
     confidence       float or None: Jev's confidence in its choice (Jev only)
     fallback         str or None: why Jev did not decide (call failed or
-                      cooling down) when it is configured and the LLM was
-                      used or the cycle was skipped
+                      cooling down), whether the cycle was then skipped or
+                      (AGENT_BRAIN_FALLBACK=llm) handed to the LLM
+    substituted      bool: true only when the LLM decided in Jev's place
+                      (explicit AGENT_BRAIN_FALLBACK=llm); brain is "llm"
     candidates       int or None: how many candidates Jev was offered
 
 Never writes the LLM API key or account password — nothing in this module
@@ -120,6 +122,7 @@ class AuditRecord:
     brain: str | None = None
     confidence: float | None = None
     fallback: str | None = None
+    substituted: bool = False
     candidates: int | None = None
     snapshot: dict | None = None  # only set when this cycle carries the full snapshot
 
@@ -141,6 +144,7 @@ class AuditRecord:
             "brain": self.brain,
             "confidence": self.confidence,
             "fallback": self.fallback,
+            "substituted": self.substituted,
             "candidates": self.candidates,
         }
         if self.snapshot is not None:
@@ -190,7 +194,7 @@ class AuditLogger:
                model: str | None = None, latency_ms: float | None = None,
                brain: str | None = None, confidence: float | None = None,
                fallback: str | None = None, candidates: int | None = None,
-               ts: float | None = None) -> AuditRecord:
+               substituted: bool = False, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snapshot = snapshot or {}
         compact = _compact_json(snapshot)
@@ -206,7 +210,7 @@ class AuditLogger:
             valid=valid, result=result or {"ok": False, "error": None},
             reflex=reflex or {}, goal=goal,
             brain=brain, confidence=confidence, fallback=fallback, candidates=candidates,
-            snapshot=snapshot if include_full else None,
+            substituted=substituted, snapshot=snapshot if include_full else None,
         )
 
         if self.on_record is not None:

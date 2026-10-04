@@ -2,30 +2,31 @@
 """Brain seam (UM-101, ADR 0001): one place that decides which model picks
 this think cycle's action.
 
-Two brains sit behind `Brain.decide()`:
+Two peer brains sit behind `Brain.decide()`; AGENT_BRAIN=llm|jev (default
+llm) picks one per agent (#161):
 
 - **Jev** (agent/jev.py, UM-99): the candidate generator (agent/candidates.py,
   UM-97) turns the snapshot into concrete `(action, params)` options and Jev
-  picks one. Used whenever a JevClient is configured.
+  picks one. Used when AGENT_BRAIN=jev.
 - **LLM** (agent/llm.py, UM-44): the action catalog goes out as tools and the
-  model fills in the arguments. Used when Jev is not configured, and as the
-  per-cycle fallback when a Jev call fails.
+  model fills in the arguments. Used when AGENT_BRAIN=llm; Jev is then never
+  constructed.
 
-Fallback policy (Jev configured):
+Failure policy (Jev brain): no silent substitution.
 
 - Any JevError (network error, any HTTP status, malformed answer, a choice we
-  did not offer) falls back to the LLM for that cycle, when an LLM is
-  configured. Without one, the cycle takes no action, like an LLM failure
-  does today.
+  did not offer) is a failed cycle, audited as brain=jev with the reason and
+  no LLM call. Only with AGENT_BRAIN_FALLBACK=llm does the LLM decide in
+  Jev's place, and then the Decision says `substituted=True`.
 - 401/402/403 (bad key, out of credits) also start a JEV_AUTH_COOLDOWN_S
   cooldown, and 429 (rate limited) a JEV_RATE_LIMIT_COOLDOWN_S one. During a
-  cooldown Jev is not called at all: the LLM decides, or, without an LLM, the
-  cycle is skipped. Retrying a dead key or an empty account every 3-5 s only
-  burns requests. Other failures have no cooldown: they are usually one-offs.
+  cooldown Jev is not called at all: the cycle is skipped (or substituted,
+  when the fallback is on). Retrying a dead key or an empty account every
+  3-5 s only burns requests. Other failures have no cooldown.
 
 `decide()` returns a Decision that carries everything the audit log needs
 (UM-51): which brain decided, Jev's confidence, model, token usage, latency,
-and why Jev was skipped when the LLM decided as a fallback.
+and, when Jev failed, why (and `substituted` if the LLM stood in).
 """
 
 import logging
@@ -75,7 +76,8 @@ class Decision:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     latency_ms: float | None = None
-    fallback: str | None = None         # why Jev did not decide, when it was configured
+    fallback: str | None = None         # why Jev did not decide, when it was the brain
+    substituted: bool = False           # the LLM decided in place of a failed Jev (explicit opt-in)
     candidates: int | None = None       # how many candidates Jev was offered
 
 
@@ -86,9 +88,10 @@ def llm_catalog() -> list[dict]:
 
 
 class Brain:
-    """Routes one decision to Jev or the LLM. Either client may be None; with
-    both None there is nothing to decide with (see `from_config`, which
-    returns None in that case so the main loop idles as before)."""
+    """Routes one decision to Jev or the LLM. With only `llm` it is the llm
+    brain; with `jev` it is the jev brain, and an `llm` alongside it is the
+    explicit fallback (AGENT_BRAIN_FALLBACK=llm). `from_config` is what
+    decides which clients exist, so a Brain never substitutes by accident."""
 
     def __init__(self, jev=None, llm=None, clock=time.monotonic):
         self.jev = jev
@@ -100,9 +103,18 @@ class Brain:
     @classmethod
     def from_config(cls, cfg) -> "Brain | None":
         jev = llm = None
-        if cfg.jev_enabled:
+        if cfg.agent_brain == BRAIN_JEV:
+            if not cfg.jev_enabled:
+                log.warning("AGENT_BRAIN=jev but no JEV_BASE_URL/JEV_API_KEY set")
+                return None
             jev = JevClient(cfg.jev_base_url, model=cfg.jev_model, api_key=cfg.jev_api_key)
-        if cfg.llm_base_url and cfg.llm_model:
+            want_llm = cfg.agent_brain_fallback == BRAIN_LLM
+        elif cfg.agent_brain == BRAIN_LLM:
+            want_llm = True
+        else:
+            log.warning("unknown AGENT_BRAIN %r (want llm or jev)", cfg.agent_brain)
+            return None
+        if want_llm and cfg.llm_base_url and cfg.llm_model:
             llm = LLMClient(cfg.llm_base_url, cfg.llm_model, api_key=cfg.llm_api_key)
         if jev is None and llm is None:
             return None
@@ -114,7 +126,7 @@ class Brain:
             parts.append(f"jev {self.jev.model} @ {self.jev.base_url}")
         if self.llm is not None:
             parts.append(f"llm {self.llm.model} @ {self.llm.base_url}"
-                         + (" (fallback)" if self.jev is not None else ""))
+                         + (" (explicit fallback)" if self.jev is not None else ""))
         return ", ".join(parts) or "(none)"
 
     @property
@@ -152,12 +164,13 @@ class Brain:
                     self._fill_jev(d)
                     fallback = f"jev call failed: {e}"
                     self._maybe_cool_down(e)
-                    log.warning("%s%s", fallback, " — falling back to the llm" if self.llm else "")
+                    log.warning("%s%s", fallback, " — substituting the llm" if self.llm else "")
             if self.llm is None:
                 d.fallback = fallback
                 raise BrainError(fallback, d)
 
-        d = Decision(brain=BRAIN_LLM, model=getattr(self.llm, "model", None), fallback=fallback)
+        d = Decision(brain=BRAIN_LLM, model=getattr(self.llm, "model", None), fallback=fallback,
+                     substituted=self.jev is not None)
         try:
             if history is not None:
                 d.action, d.params = self.llm.choose_action(snapshot, llm_catalog(), persona=persona,

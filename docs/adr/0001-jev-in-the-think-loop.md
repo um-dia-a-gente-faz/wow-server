@@ -106,3 +106,23 @@ to "Later — autonomy & multi-agent," deferred, not dropped.
 - **Self-host a decision model.** Rejected: Jev isn't open-weight or
   self-hostable; no local equivalent exists today. Revisit if OpenRouter
   pricing or availability ever becomes a blocker.
+
+## Update 2026-10-04: peer brains, no automatic fallback (#161)
+
+The owner's decision supersedes the "Jev primary, LLM as per-cycle fallback"
+framing above (`docs/AGENT-DIRECTION.md` still overrides this ADR):
+
+- **The LLM and Jev are peer brains.** Each agent is played by exactly one,
+  chosen with `AGENT_BRAIN=llm|jev` (default `llm`, so nothing changes until
+  asked for). The LLM path stays first-class and plays exactly as before;
+  with `AGENT_BRAIN=llm` no Jev client is ever constructed.
+- **No silent substitution.** With `AGENT_BRAIN=jev`, a Jev error (including a
+  cooldown skip) is a failed cycle: audited as `brain=jev` with the reason in
+  `fallback`, and no LLM call that cycle.
+- **Fallback is explicit and off by default.** `AGENT_BRAIN_FALLBACK=llm` lets
+  the LLM decide when Jev fails. The audit row then has `brain=llm` and
+  `substituted=true`, so "jev decided", "llm decided" and "llm substituted for
+  jev" are distinguishable.
+
+If the agent-host ADR (0002 is taken; its in-review successor) merges first and
+this update is split out, it becomes ADR 0003 and says so.
