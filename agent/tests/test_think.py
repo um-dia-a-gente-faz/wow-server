@@ -583,6 +583,27 @@ class BrainSeamTest(unittest.TestCase):
             self.assertTrue(self._think(b).ok)
         self.assertEqual(len(jev.calls), 5)
 
+    def test_token_budget_survives_a_restart_via_the_audit_log(self):
+        import tempfile
+        from agent.audit import AuditLogger
+        with tempfile.TemporaryDirectory() as d:
+            log = AuditLogger("a1", base_dir=d)
+            now = 1_700_000_000.0
+            for age, tokens in ((4000, 900), (1800, 400), (60, 300)):  # first is outside the hour
+                log.record(cycle=1, snapshot={}, tool_call={}, valid=True, result={"ok": True},
+                           usage={"input_tokens": tokens, "output_tokens": 0}, ts=now - age)
+            t = [50.0]
+            jev = FakeJevClient(pick=0)
+            b = brain.Brain(jev=jev, clock=lambda: t[0], max_tokens_per_hour=700)
+            b.restore_jev_spend(d, "a1", now=now)
+            result = self._think(b)                 # 700 still in the window: no call
+            self.assertFalse(result.ok)
+            self.assertIn("700 of 700", result.error)
+            self.assertEqual(len(jev.calls), 0)
+            t[0] += 1800 + 1                        # the 400-token call ages out
+            self.assertTrue(self._think(b).ok)
+            self.assertEqual(len(jev.calls), 1)
+
     def test_token_budget_breach_with_explicit_llm_fallback_audits_the_status(self):
         t = [0.0]
         jev = FakeJevClient(pick=0)

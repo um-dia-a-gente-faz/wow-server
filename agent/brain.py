@@ -30,6 +30,7 @@ and, when Jev failed, why (and `substituted` if the LLM stood in).
 """
 
 import logging
+import os
 from collections import deque
 import time
 from dataclasses import dataclass, field
@@ -267,6 +268,25 @@ class Brain:
             return None
         return (f"jev token budget exhausted: {used} of {self.max_tokens_per_hour} "
                 f"tokens used in the last hour (AGENT_MAX_TOKENS_PER_HOUR)")
+
+    def restore_jev_spend(self, audit_dir: str, agent: str, now: float | None = None):
+        """Reload the last hour's Jev spend from this agent's audit log, so a
+        restart does not reset the budget. The audit `usage` field holds Jev
+        usage only (LLM tokens go to prompt/completion_tokens)."""
+        if not self.max_tokens_per_hour:
+            return
+        from .metrics import find_audit_files, iter_records
+        now = time.time() if now is None else now
+        cutoff, mono, spend = now - JEV_BUDGET_WINDOW_S, self._clock(), []
+        for path in find_audit_files(audit_dir, agent):
+            if os.path.getmtime(path) <= cutoff:
+                continue  # last written before the window: nothing in it counts
+            for rec in iter_records(path):
+                usage, ts = rec.get("usage") or {}, rec.get("ts") or 0
+                tokens = sum(int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens"))
+                if ts > cutoff and tokens > 0:
+                    spend.append((mono - (now - ts), tokens))
+        self._jev_spend.extendleft(sorted(spend, reverse=True))
 
     def _record_jev_spend(self, d: Decision):
         tokens = sum(int(d.usage.get(k, 0)) for k in ("input_tokens", "output_tokens"))

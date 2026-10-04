@@ -48,7 +48,8 @@ Record here once created:
    transfer between runs.
 3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited). It is
    enforced per agent over a rolling hour (`agent/brain.py`, #213); on breach the
-   cycle fails with audit `jev_status: budget_exhausted`. See `.env.example` for
+   cycle fails with audit `jev_status: budget_exhausted`. The last hour's spend
+   is reloaded from the audit log on start, so a restart does not reset it. See `.env.example` for
    the monthly ceiling.
 4. Confirm the audit log volume (`/opt/wow-server-metrics/audit`, UM-51) is
    mounted — it's the only record of what the agent actually decided.
