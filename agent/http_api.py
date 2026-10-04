@@ -6,12 +6,17 @@ set (off by default). Every endpoint is GET and returns JSON; any other
 method gets 405. There is no write or control endpoint on purpose: actions
 stay inside the agent loop.
 
+The single exception (#178) is `POST /control/walk`, which exists only when
+AGENT_CONTROL_TOKEN is set (bearer-authenticated, called by tools/agent-runner,
+see agent/control.py). With no token configured every POST is still a 405.
+
     GET /healthz     liveness, agent name, whether a session is attached
     GET /state       own stats, spellbook, quest log, equipment, inventory
     GET /perception  WorldState.snapshot(), the same view the LLM gets
     GET /brain       goal, brain (jev/llm), model, last decisions (from the audit records),
                      recent-action history, reflexes, token usage
     GET /events      Server-Sent Events: session.events + decisions
+    POST /control/walk   operator walk, only with AGENT_CONTROL_TOKEN set (agent/control.py)
 
 Threading: the recv thread and the think loop mutate state; handlers only
 read it, through the same locked getters the think loop uses
@@ -23,6 +28,7 @@ Secrets: nothing here reads Config.password or Config.llm_api_key, and every
 response passes through agent.audit._redact as a second line of defence.
 """
 
+import hmac
 import json
 import logging
 import threading
@@ -31,6 +37,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from . import control
 from . import spells as sp
 from . import update_fields as uf
 from .audit import _redact
@@ -41,6 +48,7 @@ DECISIONS_MAXLEN = 50     # decisions kept in memory for /brain and /events
 DEFAULT_BRAIN_DECISIONS = 10
 SSE_POLL_S = 0.5
 SSE_KEEPALIVE_S = 15.0
+MAX_CONTROL_BODY_BYTES = 2048
 MAX_SSE_CLIENTS = 4       # each stream holds a thread; cap them
 
 
@@ -80,6 +88,10 @@ class AgentObserver:
         self._seq = 0
         self._lock = threading.Lock()  # guards _seq/token totals only
         self.tokens = {"prompt": 0, "completion": 0, "cycles": 0}
+        # #178: held by the think loop for each cycle and by an operator walk for its
+        # whole duration, so the two never drive the character at once.
+        self.action_lock = threading.Lock()
+        self.control_token = ""  # set by the main loop from AGENT_CONTROL_TOKEN; "" = no control endpoint
 
     # ── fed by the agent loop ────────────────────────────────────────
     def attach(self, session, think_state=None, reflex_state_fn=None):
@@ -239,8 +251,40 @@ class _Handler(BaseHTTPRequestHandler):
     def _method_not_allowed(self):
         self._send_json(405, {"error": "read-only API: only GET is allowed"}, {"Allow": "GET"})
 
-    do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = do_TRACE = do_CONNECT = \
+    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = do_HEAD = do_TRACE = do_CONNECT = \
         _method_not_allowed
+
+    def do_POST(self):
+        url = urlsplit(self.path)
+        obs = self.observer
+        if not obs.control_token or url.path.rstrip("/") != "/control/walk":
+            return self._method_not_allowed()
+        header = self.headers.get("Authorization", "")
+        supplied = header[7:] if header.lower().startswith("bearer ") else ""
+        if not hmac.compare_digest(supplied.encode("utf-8"), obs.control_token.encode("utf-8")):
+            return self._send_json(401, {"error": "control token required"})
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_CONTROL_BODY_BYTES:
+            return self._send_json(400, {"ok": False, "outcome": "refused", "code": "bad_request",
+                                         "error": "a JSON object body is required"})
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            return self._send_json(400, {"ok": False, "outcome": "refused", "code": "bad_request",
+                                         "error": "body is not valid JSON"})
+        dry = parse_qs(url.query).get("dry_run", [""])[0] in ("1", "true")
+        status, result = control.walk(obs, body, dry_run=dry)
+        log.info("operator walk from %s: %s -> %s %s", self.client_address[0],
+                 json.dumps({k: body.get(k) for k in ("x", "y", "z", "near_player")}
+                            if isinstance(body, dict) else None),
+                 result.get("outcome"), "(dry run)" if dry else "")
+        try:
+            self._send_json(status, result)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self):
         url = urlsplit(self.path)

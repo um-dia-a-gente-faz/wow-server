@@ -100,6 +100,9 @@ class Config:
     # published (see docker-compose.agents.yml).
     http_port: int = field(default_factory=lambda: _env_int("AGENT_HTTP_PORT", 0))
     http_bind: str = field(default_factory=lambda: _env_str("AGENT_HTTP_BIND", "127.0.0.1"))
+    # #178: bearer token for the one write endpoint, POST /control/walk (agent/control.py).
+    # Empty (default) = the API stays strictly read-only. Never logged or returned.
+    control_token: str = field(default_factory=lambda: _env_str("AGENT_CONTROL_TOKEN"))
 
     def validate(self, require_character: bool = True) -> list[str]:
         """Return a list of configuration problems (empty = OK)."""

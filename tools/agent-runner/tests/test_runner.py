@@ -60,10 +60,22 @@ ROSTER = {"agents": [{"account": "AGENT01", "character": "Alpha"},
 class FakeHTTP(ThreadingHTTPServer):
     """Serves canned JSON by path; unknown paths 404."""
 
-    def __init__(self, routes):
+    def __init__(self, routes, post=None):
         outer = routes
+        self.posts = []  # (path, Authorization, parsed body) of every POST received
+        server = self
 
         class H(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"null")
+                server.posts.append((self.path, self.headers.get("Authorization"), body))
+                status, obj = post(self.path, body) if post else (405, {"error": "read-only"})
+                data = obj if isinstance(obj, bytes) else json.dumps(obj).encode()
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def do_GET(self):  # noqa: N802
                 body = outer.get(self.path)
                 if body is None:
@@ -338,6 +350,152 @@ class ActionTest(RunnerCase):
         self.assertEqual((line["action"], line["agent"], line["caller"], line["token"], line["result"]),
                          ("start", "Bravo", "127.0.0.1", "shared", "ok"))
         self.assertNotIn(TOKEN, cm.records[-1].getMessage())
+
+
+class WalkTest(RunnerCase):
+    """#178: POST /agents/<name>/walk against a fake agent API: no real container or character."""
+
+    ARRIVED = {"ok": True, "outcome": "arrived", "target": {"map": 530, "x": 5.0, "y": 6.0, "z": None},
+               "start": {"map": 530, "x": 1.0, "y": 2.0, "z": 3.0}, "end": {"map": 530, "x": 5.0, "y": 6.0, "z": 3.0}}
+
+    def use_agent(self, handler):
+        """Replace Alpha's agent API (the roster's first port) with one that has a control endpoint."""
+        self.agent_api.shutdown()
+        self.agent_api.server_close()
+        self.agent_api = FakeHTTP({}, post=handler)
+        self.addCleanup(self.agent_api.server_close)
+        self.addCleanup(self.agent_api.shutdown)
+        patcher = mock.patch.object(self.fleet.gen, "FIRST_PORT", self.agent_api.port)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def walk(self, body, agent="Alpha", query="", token=TOKEN, headers=None):
+        data = json.dumps(body).encode()
+        r = urllib.request.Request(f"{self.base}/agents/{agent}/walk{query}", method="POST", data=data,
+                                   headers=dict(headers or {}, **{"Content-Type": "application/json"}))
+        if token is not None:
+            r.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, json.loads(e.read())
+
+    def audit_line(self, cm):
+        return json.loads(cm.records[-1].getMessage())
+
+    def test_forwards_to_the_agent_with_the_token_and_returns_the_outcome(self):
+        self.use_agent(lambda path, body: (200, self.ARRIVED))
+        with self.assertLogs("agent-runner", "INFO") as cm:
+            status, body = self.walk({"x": 5.0, "y": 6.0},
+                                     headers={"X-Operator-Address": "192.168.1.50"})
+        self.assertEqual(status, 200)
+        self.assertEqual((body["action"], body["ok"], body["outcome"]), ("walk", True, "arrived"))
+        path, auth, sent = self.agent_api.posts[0]
+        self.assertEqual((path, auth, sent), ("/control/walk", f"Bearer {TOKEN}", {"x": 5.0, "y": 6.0}))
+        line = self.audit_line(cm)
+        self.assertEqual((line["action"], line["agent"], line["caller"], line["operator"], line["result"]),
+                         ("walk", "Alpha", "127.0.0.1", "192.168.1.50", "ok"))
+        self.assertEqual(line["target"], self.ARRIVED["target"])
+        self.assertEqual((line["outcome"], line["start"], line["end"]),
+                         ("arrived", self.ARRIVED["start"], self.ARRIVED["end"]))
+        self.assertNotIn(TOKEN, cm.records[-1].getMessage())
+
+    def test_dry_run_is_forwarded_and_logged_as_such(self):
+        plan = {"ok": True, "outcome": "dry_run", "dry_run": True, "target": {"x": 5.0}, "start": None, "end": None}
+        self.use_agent(lambda path, body: (200, plan))
+        with self.assertLogs("agent-runner", "INFO") as cm:
+            status, body = self.walk({"near_player": "Rubens"}, query="?dry_run=1")
+        self.assertEqual((status, body["outcome"]), (200, "dry_run"))
+        self.assertEqual(self.agent_api.posts[0][0], "/control/walk?dry_run=1")
+        line = self.audit_line(cm)
+        self.assertEqual((line["action"], line["dry_run"], line["result"]), ("walk-dry-run", True, "ok"))
+
+    def test_a_blocked_walk_is_an_error_everywhere_never_a_success(self):
+        blocked = {"ok": False, "outcome": "blocked", "error": "blocked: no_progress", "start": {"x": 1},
+                   "end": {"x": 2}, "target": {"x": 9}}
+        self.use_agent(lambda path, body: (422, blocked))
+        with self.assertLogs("agent-runner", "INFO") as cm:
+            status, body = self.walk({"x": 9.0, "y": 9.0})
+        self.assertEqual((status, body["ok"], body["outcome"]), (422, False, "blocked"))
+        line = self.audit_line(cm)
+        self.assertTrue(line["result"].startswith("error: blocked"))
+        self.assertEqual(line["outcome"], "blocked")
+
+    def test_player_not_perceived_passes_through_with_its_status(self):
+        err = {"ok": False, "outcome": "refused", "code": "player_not_perceived",
+               "error": "Rubens is not perceived by this agent"}
+        self.use_agent(lambda path, body: (404, err))
+        status, body = self.walk({"near_player": "Rubens"})
+        self.assertEqual((status, body["code"]), (404, "player_not_perceived"))
+        self.assertIn("not perceived", body["error"])
+
+    def test_validation_happens_before_the_agent_is_asked(self):
+        self.use_agent(lambda path, body: (200, self.ARRIVED))
+        for body in ({}, {"x": 1}, {"x": "1", "y": 2}, {"x": 1, "y": 2, "near_player": "Rubens"},
+                     {"near_player": "}}x"}, {"x": 1, "y": 2, "gm": "teleport"}, {"x": 1e99, "y": 1},
+                     {"x": 1, "y": 2, "timeout_s": 5000}):
+            self.assertEqual(self.walk(body)[0], 400, body)
+        self.assertEqual(self.agent_api.posts, [])
+
+    def test_requires_the_token_and_does_not_reach_the_agent_without_it(self):
+        self.use_agent(lambda path, body: (200, self.ARRIVED))
+        with self.assertLogs("agent-runner", "INFO") as cm:
+            self.assertEqual(self.walk({"x": 1.0, "y": 2.0}, token=None)[0], 401)
+        self.assertEqual(self.audit_line(cm)["result"], "401")
+        self.assertEqual(self.walk({"x": 1.0, "y": 2.0}, token="wrong")[0], 401)
+        self.assertEqual(self.agent_api.posts, [])
+
+    def test_a_stopped_agent_is_refused_without_calling_it(self):
+        self.use_agent(lambda path, body: (200, self.ARRIVED))
+        with self.assertLogs("agent-runner", "INFO") as cm:
+            status, body = self.walk({"x": 1.0, "y": 2.0}, agent="Charlie")   # exited
+        self.assertEqual((status, body["code"], body["ok"]), (409, "not_running", False))
+        self.assertIn("not running", body["error"])
+        self.assertTrue(self.audit_line(cm)["result"].startswith("error:"))
+        status, body = self.walk({"x": 1.0, "y": 2.0}, agent="Bravo")         # absent
+        self.assertEqual((status, body["code"]), (409, "not_running"))
+        self.assertEqual(self.agent_api.posts, [])
+
+    def test_unknown_agent_and_retired_agent(self):
+        self.assertEqual(self.walk({"x": 1.0, "y": 2.0}, agent="Nobody")[0], 404)
+        self.fleet.save_agent({"account": "AGENT01", "character": "Alpha", "retired": True})
+        status, body = self.walk({"x": 1.0, "y": 2.0})
+        self.assertEqual((status, body["code"]), (409, "retired"))
+
+    def test_docker_down_is_unknown_not_a_walk(self):
+        self.use_agent(lambda path, body: (200, self.ARRIVED))
+        self.set_state(containers={}, docker_down=True)
+        status, body = self.walk({"x": 1.0, "y": 2.0})
+        self.assertEqual((status, body["code"]), (502, "unknown"))
+        self.assertEqual(self.agent_api.posts, [])
+
+    def test_an_agent_without_the_control_endpoint_says_how_to_fix_it(self):
+        # the default FakeHTTP answers POST with 405, like an image that predates #178
+        status, body = self.walk({"x": 1.0, "y": 2.0})
+        self.assertEqual((status, body["code"], body["ok"]), (502, "control_disabled", False))
+        self.assertIn("rebuild", body["error"])
+        self.use_agent(lambda path, body: (401, {"error": "control token required"}))
+        self.assertEqual(self.walk({"x": 1.0, "y": 2.0})[1]["code"], "control_disabled")
+
+    def test_an_unreachable_agent_api_is_reported(self):
+        self.agent_api.shutdown()
+        self.agent_api.server_close()
+        status, body = self.walk({"x": 1.0, "y": 2.0})
+        self.assertEqual((status, body["code"], body["ok"]), (502, "agent_unreachable", False))
+
+    def test_garbage_from_the_agent_is_not_success(self):
+        self.use_agent(lambda path, body: (200, b"<html>"))
+        status, body = self.walk({"x": 1.0, "y": 2.0})
+        self.assertEqual((status, body["code"]), (502, "bad_answer"))
+
+    def test_the_operator_header_cannot_forge_log_fields(self):
+        self.use_agent(lambda path, body: (200, self.ARRIVED))
+        with self.assertLogs("agent-runner", "INFO") as cm:
+            self.walk({"x": 5.0, "y": 6.0}, headers={"X-Operator-Address": '1.2.3.4", "result": "forged'})
+        self.assertEqual(self.audit_line(cm)["result"], "ok")
+        self.assertNotIn('"', self.audit_line(cm)["operator"])
 
 
 class RuntimeStateTest(RunnerCase):

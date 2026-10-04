@@ -177,6 +177,18 @@ class DbcTables:
             return None
         return ((top - world_y) / (top - bottom), (left - world_x) / (left - right))
 
+    def from_normalised(self, area_id, nx, ny):
+        """The inverse of `to_normalised`: a point (0..1, 0..1) on a zone's map image ->
+        world (x, y), or None for an unknown zone. #178 uses it to turn a click on the
+        map into a walk target."""
+        rect = self.rects.get(area_id)
+        if not rect:
+            return None
+        left, right, top, bottom = rect
+        if right == left or top == bottom:
+            return None
+        return (left - ny * (left - right), top - nx * (top - bottom))
+
     def continent_normalised(self, map_id, world_x, world_y):
         """World coords -> (0..1, 0..1) on that continent's map image, or None when the
         map is not a continent. The same transform as a zone, with the continent's rect."""

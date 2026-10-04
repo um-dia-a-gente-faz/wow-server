@@ -10,6 +10,7 @@ Modes:
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import sys
@@ -135,6 +136,7 @@ def _start_observer(cfg, audit_logger, log, brain=None):
                                  brain="jev" if brain.jev is not None else "llm")
     else:
         observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model)
+    observer.control_token = cfg.control_token  # #178: "" keeps the API read-only
     if audit_logger is not None:
         audit_logger.on_record = observer.record_decision
     try:
@@ -392,10 +394,13 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
         # ── think + act (brain call → one validated action per cycle) ────
         if brain is not None:
             cycle += 1
-            result = think_and_act(sess, sess.world_state, brain,
-                                    persona=cfg.persona, my_position=sess.player_position,
-                                    audit_logger=audit_logger, cycle=cycle,
-                                    reflex_state=_reflex_state(sess), state=think_state)
+            # #178: an operator walk (agent/control.py) holds this lock while it moves the
+            # character, so a think cycle never starts a competing move mid-walk.
+            with (observer.action_lock if observer is not None else contextlib.nullcontext()):
+                result = think_and_act(sess, sess.world_state, brain,
+                                        persona=cfg.persona, my_position=sess.player_position,
+                                        audit_logger=audit_logger, cycle=cycle,
+                                        reflex_state=_reflex_state(sess), state=think_state)
             if not result.ok:
                 log.info("think cycle: no action taken (%s)", result.error)
 

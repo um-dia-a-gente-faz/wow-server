@@ -81,6 +81,10 @@ x-agent: &agent-defaults
     # whole LAN, but no secrets and no write endpoints. Set
     # AGENT_HTTP_PUBLISH_IP=127.0.0.1 in .env to keep it host-local.
     AGENT_HTTP_BIND: 0.0.0.0
+    # #178: the one write endpoint (POST /control/walk, agent/control.py), used by
+    # tools/agent-runner for "walk to" from the console. It reuses the runner's own
+    # token, so nothing new goes in .env; empty = the API stays read-only.
+    AGENT_CONTROL_TOKEN: ${AGENT_RUNNER_TOKEN:-}
   # Decision audit log (UM-51) — one JSONL file per agent per day. Host path
   # matches monitoring/docker-compose.yml's node-exporter textfile mount
   # input (see monitoring/agent_metrics_textfile.py), so the same directory
