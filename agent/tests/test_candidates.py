@@ -197,17 +197,22 @@ class IdleScenarioTest(CandidateShapeMixin, unittest.TestCase):
 
 
 class DeadScenarioTest(CandidateShapeMixin, unittest.TestCase):
+    def test_ghost_without_corpse_position_can_reclaim(self):
+        snap = load("combat")
+        snap.update(is_dead=False, is_ghost=True, corpse_position=None)
+        self.assertEqual(ids(cand.generate(snap, my_guid=MY_GUID)), ["reclaim_corpse", "idle"])
+
     def test_ghost_runs_to_corpse_only(self):
         snap = load("combat")
         snap.update(is_dead=False, is_ghost=True, corpse_position={"map": 530, "x": 10300.5, "y": -6350.0, "z": 20.0})
         cands = cand.generate(snap, my_guid=MY_GUID)
         self.assert_well_formed(snap, cands)
-        self.assertEqual(ids(cands), ["move_to:x=10300.5,y=-6350.0,z=20.0", "idle"])
+        self.assertEqual(ids(cands), ["reclaim_corpse", "move_to:x=10300.5,y=-6350.0,z=20.0", "idle"])
 
-    def test_dead_before_release_is_idle(self):
+    def test_dead_before_release_offers_release_spirit(self):
         snap = load("combat")
         snap["is_dead"] = True
-        self.assertEqual(ids(cand.generate(snap, my_guid=MY_GUID)), ["idle"])
+        self.assertEqual(ids(cand.generate(snap, my_guid=MY_GUID)), ["release_spirit", "idle"])
 
 
 class BoundsTest(CandidateShapeMixin, unittest.TestCase):
@@ -380,6 +385,7 @@ class RegistryCoverageTest(unittest.TestCase):
         offered.update(c["action"] for c in cand.generate(trainer))
         reward = {"window": {"kind": "quest_offer_reward", "npc_guid": 8, "quest_id": 9}}
         offered.update(c["action"] for c in cand.generate(reward))
+        offered.update(c["action"] for c in cand.generate({"is_dead": True}))
         offered.update(c["action"] for c in cand.generate({"is_ghost": True,
                                                             "corpse_position": {"x": 1, "y": 2, "z": 3}}))
         offered.update(c["action"] for c in cand.generate({

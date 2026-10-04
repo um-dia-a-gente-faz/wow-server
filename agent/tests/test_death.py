@@ -113,7 +113,7 @@ class ReleaseSpiritActionTest(unittest.TestCase):
             dt.actions._wait_for = orig_wait_for
 
         self.assertTrue(result.ok)
-        self.assertEqual(sess._sent, [(dt.CMSG_REPOP_REQUEST, struct.pack('<B', 0))])
+        self.assertEqual(sess._sent, [(dt.CMSG_REPOP_REQUEST, struct.pack('<B', 0)), (dt.MSG_CORPSE_QUERY, b'')])
 
 
 class CorpseRunTest(unittest.TestCase):
@@ -164,11 +164,21 @@ class ReclaimCorpseActionTest(unittest.TestCase):
         action = ac.REGISTRY["reclaim_corpse"]
         self.assertEqual(action.check(sess, world), "not a ghost — call release_spirit first")
 
-    def test_check_requires_corpse_position(self):
+    def test_unknown_corpse_position_is_queried(self):
         sess, world, _ = fast_session()
         create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
         action = ac.REGISTRY["reclaim_corpse"]
-        self.assertIn("corpse position unknown", action.check(sess, world))
+        self.assertIsNone(action.check(sess, world))
+        sent = []
+
+        def answer(opcode, payload=b''):
+            sent.append(opcode)
+            if opcode == dt.MSG_CORPSE_QUERY:
+                sess.corpse_position = (0, 5.0, 0.0, 0.0)
+
+        sess._send_packet = answer
+        self.assertTrue(dt._query_corpse(sess))
+        self.assertEqual(sent, [dt.MSG_CORPSE_QUERY])
 
     def test_check_respects_reclaim_cooldown(self):
         sess, world, clock = fast_session()
