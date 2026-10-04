@@ -407,6 +407,15 @@ class RegistryCoverageTest(unittest.TestCase):
         self.assertEqual(set(ac.REGISTRY) - offered - set(cand.NOT_OFFERED), set())
         self.assertTrue(all(isinstance(reason, str) and reason for reason in cand.NOT_OFFERED.values()))
 
+    def test_low_health_offers_self_heal_without_offensive_spell(self):
+        snap = {"me": {"health": "5/58", "mana": "40/40"}, "spells": [{"id": 635, "name": "Holy Light"}],
+                "nearby_units": [], "inventory": [], "equipment": {}, "window": None}
+        cands = cand.generate(snap, my_guid=1)
+        heal = [c for c in cands if c["action"] == "cast_spell"]
+        self.assertEqual([c["params"] for c in heal], [{"spell_id": 635}])
+        healthy = dict(snap, me={"health": "58/58", "mana": "40/40"})
+        self.assertNotIn("cast_spell", [c["action"] for c in cand.generate(healthy, my_guid=1)])
+
     def test_new_candidates_require_their_snapshot_preconditions(self):
         threat = {"guid": 2, "target_guid": 1, "in_combat": True, "distance": 3,
                   "name": "rat", "health_pct": 1}
