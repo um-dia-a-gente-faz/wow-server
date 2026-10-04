@@ -46,7 +46,10 @@ Record here once created:
    Set `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` in
    `.env` (see Preflight below; `LLM_MODEL` is a pinned ordered list, `auto` last) — record the exact model name in the results log, settings don't
    transfer between runs.
-3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited).
+3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited). It is
+   enforced per agent over a rolling hour (`agent/brain.py`, #213); on breach the
+   cycle fails with audit `jev_status: budget_exhausted`. See `.env.example` for
+   the monthly ceiling.
 4. Confirm the audit log volume (`/opt/wow-server-metrics/audit`, UM-51) is
    mounted — it's the only record of what the agent actually decided.
 5. **Ask the human before starting.** A 1→10 run is hours of wall-clock time

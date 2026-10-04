@@ -555,6 +555,46 @@ class BrainSeamTest(unittest.TestCase):
         self.assertEqual(len(jev.calls), 1)
         self.assertIsNone(self.action.executed_with)
 
+    def test_token_budget_breach_fails_the_cycle_and_is_audited(self):
+        t = [1000.0]
+        jev = FakeJevClient(pick=0)
+        b = brain.Brain(jev=jev, clock=lambda: t[0], max_tokens_per_hour=600)
+        self.assertTrue(self._think(b).ok)      # 321 used
+        t[0] += 60
+        self.assertTrue(self._think(b).ok)      # 642 used: over, but the call was allowed
+        t[0] += 60
+        result = self._think(b)                 # breach: no third call
+        self.assertFalse(result.ok)
+        self.assertIn("token budget exhausted", result.error)
+        self.assertEqual(len(jev.calls), 2)
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["jev_status"], "budget_exhausted")
+        self.assertIn("AGENT_MAX_TOKENS_PER_HOUR", rec["fallback"])
+        self.assertEqual(rec["brain"], "jev")
+        # The window slides: once the first call is >1h old there is room again.
+        t[0] += 3600 - 120 + 1
+        self.assertTrue(self._think(b).ok)
+        self.assertEqual(len(jev.calls), 3)
+
+    def test_token_budget_zero_is_unlimited(self):
+        jev = FakeJevClient(pick=0)
+        b = brain.Brain(jev=jev, max_tokens_per_hour=0)
+        for _ in range(5):
+            self.assertTrue(self._think(b).ok)
+        self.assertEqual(len(jev.calls), 5)
+
+    def test_token_budget_breach_with_explicit_llm_fallback_audits_the_status(self):
+        t = [0.0]
+        jev = FakeJevClient(pick=0)
+        b = brain.Brain(jev=jev, llm=FakeLLMClient("test_action", {"value": 1}),
+                        clock=lambda: t[0], max_tokens_per_hour=100)
+        self._think(b)
+        self._think(b)
+        rec = self.audit.records[-1]
+        self.assertEqual(len(jev.calls), 1)
+        self.assertEqual(rec["jev_status"], "budget_exhausted")
+        self.assertTrue(rec["substituted"])
+
     def test_jev_error_survives_the_llm_fallback_in_the_audit_record(self):
         from agent.metrics import derive_metrics, render_prometheus_text
         cases = [(JevError("HTTP 429", status=429), "http_4xx"),
