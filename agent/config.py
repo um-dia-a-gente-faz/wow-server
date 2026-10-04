@@ -59,15 +59,23 @@ class Config:
     # "none" disables. See agent/channels.py::parse_channel_spec.
     channels: str = field(default_factory=lambda: _env_str("AGENT_CHANNELS", "General"))
 
-    # ── LLM (layer 3, unused until the brain lands) ────────────
+    # ── Brain selection (#161, ADR 0001) ──────────────────────
+    # One brain per agent: "llm" (default) or "jev". A Jev failure is a failed
+    # cycle unless AGENT_BRAIN_FALLBACK=llm explicitly lets the LLM take over.
+    agent_brain: str = field(default_factory=lambda: _env_str("AGENT_BRAIN", "llm").lower() or "llm")
+    agent_brain_fallback: str = field(default_factory=lambda: _env_str(
+        "AGENT_BRAIN_FALLBACK", "none").lower() or "none")
+
+    # ── LLM (the llm brain, or the opt-in fallback) ────────────
     llm_base_url: str = field(default_factory=lambda: _env_str("LLM_BASE_URL", ""))
     llm_api_key: str = field(default_factory=lambda: _env_str("LLM_API_KEY"))
     llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", ""))
 
     # ── Jev decision model (UM-99, ADR 0001) ──────────────────
     # OpenRouter Decisions API. The key is JEV_API_KEY, else OPENROUTER_API_KEY.
-    # Jev is the think step's brain (UM-101, agent/brain.py) when a key or an
-    # explicit JEV_BASE_URL is set (tools/jev-mock needs no key); see jev_enabled.
+    # Jev is the think step's brain (UM-101, agent/brain.py) only when
+    # AGENT_BRAIN=jev; jev_enabled says whether a key or an explicit
+    # JEV_BASE_URL is set (tools/jev-mock needs no key).
     # `or`, not a default: compose passes unset vars through as "".
     jev_base_url: str = field(default_factory=lambda: _env_str(
         "JEV_BASE_URL") or "https://openrouter.ai/api/alpha")
@@ -120,6 +128,10 @@ class Config:
             problems.append(f"WOW_AUTH_PORT out of range: {self.wow_auth_port}")
         if self.http_port < 0 or self.http_port > 65535:
             problems.append(f"AGENT_HTTP_PORT out of range: {self.http_port}")
+        if self.agent_brain not in ("llm", "jev"):
+            problems.append(f"AGENT_BRAIN must be llm or jev, got {self.agent_brain!r}")
+        if self.agent_brain_fallback not in ("none", "llm"):
+            problems.append(f"AGENT_BRAIN_FALLBACK must be none or llm, got {self.agent_brain_fallback!r}")
         return problems
 
     def redacted(self) -> dict:
@@ -133,6 +145,8 @@ class Config:
             "agent_name": self.agent_name,
             "think_interval": self.think_interval,
             "run_duration": self.run_duration or "forever",
+            "brain": self.agent_brain,
+            "brain_fallback": self.agent_brain_fallback,
             "llm_model": self.llm_model or "(unset)",
             "jev": "on" if self.jev_enabled else "(off)",
             "jev_base_url": self.jev_base_url,

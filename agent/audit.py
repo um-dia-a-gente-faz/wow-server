@@ -35,8 +35,10 @@ Record shape (one JSON object per line):
                       cycle, or the last one tried when none did
     confidence       float or None: Jev's confidence in its choice (Jev only)
     fallback         str or None: why Jev did not decide (call failed or
-                      cooling down) when it is configured and the LLM was
-                      used or the cycle was skipped
+                      cooling down), whether the cycle was then skipped or
+                      (AGENT_BRAIN_FALLBACK=llm) handed to the LLM
+    substituted      bool: true only when the LLM decided in Jev's place
+                      (explicit AGENT_BRAIN_FALLBACK=llm); brain is "llm"
     candidates       int or None: how many candidates Jev was offered
     confidence_threshold  float or None: JEV_MIN_CONFIDENCE applied (Jev only)
     confidence_rule  "acted", "low_confidence_safe_fallback" (the safe
@@ -126,6 +128,7 @@ class AuditRecord:
     brain: str | None = None
     confidence: float | None = None
     fallback: str | None = None
+    substituted: bool = False
     candidates: int | None = None
     confidence_threshold: float | None = None
     confidence_rule: str | None = None
@@ -150,6 +153,7 @@ class AuditRecord:
             "brain": self.brain,
             "confidence": self.confidence,
             "fallback": self.fallback,
+            "substituted": self.substituted,
             "candidates": self.candidates,
             "confidence_threshold": self.confidence_threshold,
             "confidence_rule": self.confidence_rule,
@@ -204,7 +208,7 @@ class AuditLogger:
                fallback: str | None = None, candidates: int | None = None,
                confidence_threshold: float | None = None,
                confidence_rule: str | None = None, overridden: str | None = None,
-               ts: float | None = None) -> AuditRecord:
+               substituted: bool = False, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snapshot = snapshot or {}
         compact = _compact_json(snapshot)
@@ -221,7 +225,7 @@ class AuditLogger:
             reflex=reflex or {}, goal=goal,
             brain=brain, confidence=confidence, fallback=fallback, candidates=candidates,
             confidence_threshold=confidence_threshold, confidence_rule=confidence_rule,
-            overridden=overridden,
+            overridden=overridden, substituted=substituted,
             snapshot=snapshot if include_full else None,
         )
 

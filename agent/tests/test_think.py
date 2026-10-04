@@ -432,7 +432,7 @@ class BrainSeamTest(unittest.TestCase):
 
         self.assertTrue(result.ok, result.error)
         self.assertEqual(self.action.executed_with, {"value": 2})
-        self.assertEqual(llm.calls, [])  # the LLM is only a fallback
+        self.assertEqual(llm.calls, [])  # the LLM is only an opt-in fallback
         self.assertEqual(len(jev.calls), 1)
         self.generate.assert_called_once()
         _, kwargs = self.generate.call_args
@@ -448,6 +448,7 @@ class BrainSeamTest(unittest.TestCase):
         self.assertEqual(rec["latency_ms"], 12.5)
         self.assertEqual(rec["candidates"], 3)
         self.assertIsNone(rec["fallback"])
+        self.assertFalse(rec["substituted"])
         self.assertEqual(rec["tool_call"], {"name": "test_action", "args": {"value": 2}})
 
     def test_llm_only_path_is_unchanged_and_audits_brain_llm(self):
@@ -490,6 +491,7 @@ class BrainSeamTest(unittest.TestCase):
         rec = self.audit.records[-1]
         self.assertEqual(rec["brain"], "llm")
         self.assertIn("jev call failed: HTTP 500", rec["fallback"])
+        self.assertTrue(rec["substituted"])
 
         # A 500 has no cooldown: the next cycle tries Jev again.
         self._think(b)
@@ -531,6 +533,7 @@ class BrainSeamTest(unittest.TestCase):
         rec = self.audit.records[-1]
         self.assertEqual(rec["brain"], "jev")
         self.assertIn("jev call failed", rec["fallback"])
+        self.assertFalse(rec["substituted"])
         self.assertFalse(rec["result"]["ok"])
         # And while it cools down, cycles are skipped without calling Jev.
         result = self._think(b)
@@ -538,6 +541,34 @@ class BrainSeamTest(unittest.TestCase):
         self.assertIn("cooling down", result.error)
         self.assertEqual(len(jev.calls), 1)
         self.assertIsNone(self.action.executed_with)
+
+    def test_jev_brain_failure_is_a_failed_cycle_with_no_llm_call(self):
+        jev = FakeJevClient(error=JevError("HTTP 500 from x: boom", status=500))
+        llm = FakeLLMClient(action_name="test_action", params={"value": 5})
+        with mock.patch.dict(os.environ, {"AGENT_BRAIN": "jev", "JEV_BASE_URL": "http://j/api",
+                                          "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}, clear=True):
+            cfg = config.Config()
+        with mock.patch("agent.brain.LLMClient", return_value=llm) as llm_cls:
+            b = brain.Brain.from_config(cfg)
+            llm_cls.assert_not_called()
+        b.jev = jev
+        result = self._think(b)
+        self.assertFalse(result.ok)
+        self.assertIn("jev call failed: HTTP 500", result.error)
+        self.assertEqual(llm.calls, [])
+        self.assertIsNone(self.action.executed_with)
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["brain"], "jev")
+        self.assertFalse(rec["substituted"])
+        self.assertFalse(rec["result"]["ok"])
+
+    def test_llm_brain_never_touches_jev(self):
+        llm = FakeLLMClient(action_name="test_action", params={"value": 4})
+        self.assertTrue(self._think(brain.Brain(llm=llm)).ok)
+        rec = self.audit.records[-1]
+        self.assertEqual(rec["brain"], "llm")
+        self.assertFalse(rec["substituted"])
+        self.generate.assert_not_called()
 
     def test_jev_and_llm_both_failing_reports_both(self):
         jev = FakeJevClient(error=JevError("timeout"))
@@ -646,17 +677,44 @@ class BrainFromConfigTest(unittest.TestCase):
         for env in ({"JEV_API_KEY": "sekrit"}, {"OPENROUTER_API_KEY": "sekrit"},
                     {"JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha"}):
             with self.subTest(env=list(env)):
-                b = brain.Brain.from_config(self._cfg(env))
+                b = brain.Brain.from_config(self._cfg({"AGENT_BRAIN": "jev", **env}))
                 self.assertIsNotNone(b.jev)
                 self.assertIsNone(b.llm)
                 self.assertNotIn("sekrit", b.describe())
 
-    def test_jev_with_llm_fallback(self):
-        b = brain.Brain.from_config(self._cfg({"JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha",
-                                               "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}))
+    def test_jev_settings_alone_do_not_select_jev(self):
+        env = {"JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha", "JEV_API_KEY": "k",
+               "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}
+        with mock.patch("agent.brain.JevClient") as jev_cls:
+            b = brain.Brain.from_config(self._cfg(env))
+            jev_cls.assert_not_called()  # AGENT_BRAIN=llm never constructs Jev
+        self.assertIsNone(b.jev)
+        self.assertEqual(b.llm.model, "m")
+        with mock.patch("agent.brain.JevClient") as jev_cls:
+            self.assertIsNone(brain.Brain.from_config(self._cfg({"JEV_API_KEY": "k"})))
+            jev_cls.assert_not_called()
+
+    def test_agent_brain_jev_has_no_llm_unless_fallback_is_enabled(self):
+        env = {"AGENT_BRAIN": "jev", "JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha",
+               "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}
+        b = brain.Brain.from_config(self._cfg(env))
         self.assertEqual(b.jev.base_url, "http://127.0.0.1:8090/api/alpha")
         self.assertEqual(b.model, "typesafe/jev-1.13")
-        self.assertIn("(fallback)", b.describe())
+        self.assertIsNone(b.llm)
+        b = brain.Brain.from_config(self._cfg({**env, "AGENT_BRAIN_FALLBACK": "llm"}))
+        self.assertIsNotNone(b.llm)
+        self.assertIn("(explicit fallback)", b.describe())
+
+    def test_agent_brain_jev_without_jev_config_is_no_brain(self):
+        cfg = self._cfg({"AGENT_BRAIN": "jev", "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"})
+        self.assertIsNone(brain.Brain.from_config(cfg))
+
+    def test_invalid_brain_values_are_config_problems(self):
+        cfg = self._cfg({"AGENT_BRAIN": "gpt", "AGENT_BRAIN_FALLBACK": "maybe"})
+        problems = " ".join(cfg.validate(require_character=False))
+        self.assertIn("AGENT_BRAIN must be", problems)
+        self.assertIn("AGENT_BRAIN_FALLBACK must be", problems)
+        self.assertIsNone(brain.Brain.from_config(cfg))
 
 
 if __name__ == "__main__":

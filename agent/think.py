@@ -201,7 +201,7 @@ def think_and_act(session, world, brain, persona: str = "",
     2. Ask the brain (agent.brain.Brain, UM-101) for exactly one action:
        Jev picking from agent.candidates.generate(), or the LLM picking
        from the action catalog exposed as tools, with the LLM as Jev's
-       per-cycle fallback. A bare LLM client (anything with LLMClient's
+       explicit opt-in per-cycle fallback. A bare LLM client (anything with LLMClient's
        choose_action) is accepted too and wrapped as an LLM-only Brain.
     3. Validate the model's choice against the action registry — unknown
        action name, or an action whose check() rejects the params, never
@@ -264,6 +264,7 @@ def think_and_act(session, world, brain, persona: str = "",
                 brain=decision.brain,
                 confidence=decision.confidence,
                 fallback=decision.fallback,
+                substituted=decision.substituted,
                 candidates=decision.candidates,
                 confidence_threshold=decision.confidence_threshold,
                 confidence_rule=decision.confidence_rule,

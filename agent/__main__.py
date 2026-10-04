@@ -92,14 +92,15 @@ def main():
         log.info("dry-run complete.")
         return
 
-    # UM-101: Jev when JEV_* is configured, the LLM as its per-cycle
-    # fallback (or alone); neither -> no think step, the agent idles.
+    # #161: the one brain AGENT_BRAIN selects (llm by default); its client
+    # missing -> no think step, the agent idles.
     brain = Brain.from_config(cfg)
     if brain is not None:
         log.info("brain: %s", brain.describe())
     else:
-        log.warning("neither JEV_BASE_URL/JEV_API_KEY nor LLM_BASE_URL/LLM_MODEL set — "
-                    "think step disabled, agent will idle")
+        log.warning("AGENT_BRAIN=%s has no usable config (LLM_BASE_URL/LLM_MODEL or "
+                    "JEV_BASE_URL/JEV_API_KEY) — "
+                    "think step disabled, agent will idle", cfg.agent_brain)
 
     audit_logger = AuditLogger(cfg.agent_name, base_dir=cfg.audit_dir,
                                 retention_days=cfg.audit_retention_days)
