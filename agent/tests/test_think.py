@@ -445,6 +445,8 @@ class BrainSeamTest(unittest.TestCase):
         self.assertEqual(rec["model"], "typesafe/jev-test")
         self.assertEqual(rec["prompt_tokens"], 321)
         self.assertEqual(rec["completion_tokens"], 0)
+        self.assertEqual(rec["usage"], {"input_tokens": 321, "output_tokens": 0, "cost": 0.0})
+        self.assertEqual(rec["jev_status"], "success")
         self.assertEqual(rec["latency_ms"], 12.5)
         self.assertEqual(rec["candidates"], 3)
         self.assertIsNone(rec["fallback"])
@@ -541,6 +543,48 @@ class BrainSeamTest(unittest.TestCase):
         self.assertIn("cooling down", result.error)
         self.assertEqual(len(jev.calls), 1)
         self.assertIsNone(self.action.executed_with)
+
+    def test_jev_error_survives_the_llm_fallback_in_the_audit_record(self):
+        from agent.metrics import derive_metrics, render_prometheus_text
+        cases = [(JevError("HTTP 429", status=429), "http_4xx"),
+                 (JevError("HTTP 500", status=500), "http_5xx"),
+                 (JevError("timeout"), "error")]
+        for err, expected in cases:
+            with self.subTest(expected=expected):
+                self.audit.records.clear()
+                jev = FakeJevClient(error=err)
+                llm = FakeLLMClient(action_name="test_action", params={"value": 7})
+                result = self._think(brain.Brain(jev=jev, llm=llm))
+                self.assertTrue(result.ok, result.error)
+                rec = self.audit.records[-1]
+                self.assertEqual(rec["brain"], "llm")
+                self.assertTrue(rec["substituted"])
+                self.assertEqual(rec["jev_status"], expected)
+                text = render_prometheus_text(derive_metrics([dict(rec, agent="A")]))
+                self.assertIn(f'wow_agent_jev_errors_total{{agent="A",status="{expected}"}} 1', text)
+                self.assertIn('wow_agent_jev_fallback_total{agent="A"} 1', text)
+
+    def test_failed_jev_call_usage_is_kept_on_the_llm_fallback(self):
+        class BilledFailure(FakeJevClient):
+            def choose_action(self, *a, **kw):
+                try:
+                    return super().choose_action(*a, **kw)
+                finally:
+                    self.last_usage = {"input_tokens": 50, "output_tokens": 1, "cost": 0.002}
+        jev = BilledFailure(error=JevError("HTTP 500", status=500))
+        llm = FakeLLMClient(action_name="test_action", params={"value": 7})
+        self.assertTrue(self._think(brain.Brain(jev=jev, llm=llm)).ok)
+        self.assertEqual(self.audit.records[-1]["usage"],
+                         {"input_tokens": 50, "output_tokens": 1, "cost": 0.002})
+
+    def test_low_confidence_substitution_is_counted(self):
+        from agent.metrics import derive_metrics, render_prometheus_text
+        jev = FakeJevClient(pick=0, confidence=0.01)
+        self.assertTrue(self._think(brain.Brain(jev=jev, min_confidence=0.9)).ok)
+        rec = dict(self.audit.records[-1], agent="A")
+        self.assertEqual(rec["confidence_rule"], brain.RULE_LOW_CONFIDENCE)
+        text = render_prometheus_text(derive_metrics([rec]))
+        self.assertIn('wow_agent_jev_low_confidence_total{agent="A"} 1', text)
 
     def test_jev_brain_failure_is_a_failed_cycle_with_no_llm_call(self):
         jev = FakeJevClient(error=JevError("HTTP 500 from x: boom", status=500))

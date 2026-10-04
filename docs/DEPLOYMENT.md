@@ -157,6 +157,7 @@ Prometheus jobs: `node_wow`, `cadvisor_wow`, `wow_game` (all labelled
   - **WoW — Jogadores & Atividade** (`wow-players`)
   - **WoW — Saúde do Realm** (`wow-realm-health`)
   - **Wow Server — Host & Containers** (`wow-server-host`)
+  - **Jev — decision usage** (`jev-decision-usage`)
 
 Dashboards are managed by dropping a raw dashboard JSON into
 `/opt/pandora/grafana/dashboards/` on the docker-stack VM (file provisioning, ~30 s
