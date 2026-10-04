@@ -1,4 +1,4 @@
-# ADR 0001: Jev as the agent's primary decision brain, chat deferred
+# ADR 0001: Jev as the agent's decision brain (opt-in), chat deferred
 
 ## Status
 
@@ -36,7 +36,8 @@ chat/roleplay does right now.
 
 ## Decision
 
-Jev becomes the primary decision-maker for the agent's existing tactical
+Jev becomes the decision-maker (selected per agent with `AGENT_BRAIN=jev`; the
+default stays `llm`, see the 2026-10-04 update below) for the agent's existing tactical
 action set: combat, target, loot, quest accept/turn-in/abandon, movement,
 party-accept, and follow/assist. A candidate generator (UM-97) enumerates
 concrete `(action, params)` options from `world.snapshot()` each think
@@ -125,7 +126,9 @@ framing above (`docs/AGENT-DIRECTION.md` still overrides this ADR):
 
 - **The LLM and Jev are peer brains.** Each agent is played by exactly one,
   chosen with `AGENT_BRAIN=llm|jev` (default `llm`, so nothing changes until
-  asked for). The LLM path stays first-class and plays exactly as before;
+  asked for). Jev is opt-in: a Jev key/URL alone does not select it, and the
+  agent logs a warning when Jev is configured but `AGENT_BRAIN` is not `jev`.
+  The LLM path stays first-class and plays exactly as before;
   with `AGENT_BRAIN=llm` no Jev client is ever constructed.
 - **No silent substitution.** With `AGENT_BRAIN=jev`, a Jev error (including a
   cooldown skip) is a failed cycle: audited as `brain=jev` with the reason in
