@@ -598,6 +598,58 @@ class BrainSeamTest(unittest.TestCase):
         self.assertEqual(len(jev.calls[0]["history"]), think.LOOP_GUARD_REPEATS)
 
 
+class ConfidencePolicyTest(BrainSeamTest):
+    """GH-165: one threshold, one rule, no LLM on any Jev path."""
+
+    def _run(self, confidence, threshold=0.6, pick=1):
+        jev = FakeJevClient(pick=pick, confidence=confidence)
+        llm = FakeLLMClient(action_name="test_action", params={"value": 99})
+        result = self._think(brain.Brain(jev=jev, llm=llm, min_confidence=threshold))
+        self.assertEqual(llm.calls, [], "a Jev cycle must never reach the LLM")
+        return result, self.audit.records[-1]
+
+    def test_high_confidence_acts_as_chosen(self):
+        result, rec = self._run(0.9)
+        self.assertEqual(self.action.executed_with, {"value": 2})
+        self.assertEqual((rec["confidence_rule"], rec["confidence_threshold"], rec["confidence"]),
+                         ("acted", 0.6, 0.9))
+        self.assertIsNone(rec["overridden"])
+
+    def test_threshold_is_inclusive(self):
+        self._run(0.6)
+        self.assertEqual(self.action.executed_with, {"value": 2})
+
+    def test_low_confidence_substitutes_idle_and_audits(self):
+        result, rec = self._run(0.2)
+        self.assertIsNone(self.action.executed_with)
+        self.assertEqual(result.action_name, "idle")
+        self.assertEqual((rec["confidence_rule"], rec["confidence_threshold"], rec["confidence"]),
+                         ("low_confidence_safe_fallback", 0.6, 0.2))
+        self.assertEqual(rec["overridden"], "test_action:value=2")
+        self.assertEqual(rec["tool_call"]["name"], "idle")
+
+    def test_missing_confidence_is_its_own_state(self):
+        result, rec = self._run(None)
+        self.assertEqual(self.action.executed_with, {"value": 2})
+        self.assertEqual(rec["confidence_rule"], "confidence_unknown")
+        self.assertIsNone(rec["confidence"])
+        self.assertEqual(rec["confidence_threshold"], 0.6)
+
+    def test_zero_confidence_is_not_unknown(self):
+        result, rec = self._run(0.0)
+        self.assertEqual(rec["confidence_rule"], "low_confidence_safe_fallback")
+
+    def test_default_threshold_never_fires(self):
+        jev = FakeJevClient(pick=1, confidence=0.0)
+        self._think(brain.Brain(jev=jev))
+        self.assertEqual(self.audit.records[-1]["confidence_rule"], "acted")
+
+    def test_low_confidence_idle_choice_is_left_alone(self):
+        result, rec = self._run(0.1, pick=2)  # Jev already chose idle
+        self.assertEqual(rec["confidence_rule"], "acted")
+        self.assertIsNone(rec["overridden"])
+
+
 class BrainFromConfigTest(unittest.TestCase):
     def _cfg(self, env):
         with mock.patch.dict(os.environ, env, clear=True):

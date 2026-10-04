@@ -107,6 +107,17 @@ to "Later — autonomy & multi-agent," deferred, not dropped.
   self-hostable; no local equivalent exists today. Revisit if OpenRouter
   pricing or availability ever becomes a blocker.
 
+## Update (GH-165): confidence policy
+
+`Brain.decide()` (agent/brain.py) is the single place Jev's confidence is
+used. `JEV_MIN_CONFIDENCE` (default `0.0` = off until chosen from measured
+data): `confidence >= threshold` acts as chosen; below it the generator's
+`idle` candidate runs instead and the audit records
+`confidence_rule=low_confidence_safe_fallback`, `confidence_threshold`,
+`confidence` and `overridden` (the candidate Jev chose). No confidence
+reported is `confidence_unknown`: acted as chosen, counted separately. The
+rule never calls the LLM.
+
 ## Update 2026-10-04: peer brains, no automatic fallback (#161)
 
 The owner's decision supersedes the "Jev primary, LLM as per-cycle fallback"

@@ -40,6 +40,12 @@ Record shape (one JSON object per line):
     substituted      bool: true only when the LLM decided in Jev's place
                       (explicit AGENT_BRAIN_FALLBACK=llm); brain is "llm"
     candidates       int or None: how many candidates Jev was offered
+    confidence_threshold  float or None: JEV_MIN_CONFIDENCE applied (Jev only)
+    confidence_rule  "acted", "low_confidence_safe_fallback" (the safe
+                      candidate replaced Jev's choice) or "confidence_unknown"
+                      (Jev reported none; acted as chosen); None off Jev
+    overridden       str or None: candidate id Jev chose before the safe
+                      substitution
 
 Never writes the LLM API key or account password — nothing in this module
 ever touches `Config.llm_api_key`/`password`; only `Config.redacted()`-safe
@@ -124,6 +130,9 @@ class AuditRecord:
     fallback: str | None = None
     substituted: bool = False
     candidates: int | None = None
+    confidence_threshold: float | None = None
+    confidence_rule: str | None = None
+    overridden: str | None = None
     snapshot: dict | None = None  # only set when this cycle carries the full snapshot
 
     def to_dict(self) -> dict:
@@ -146,6 +155,9 @@ class AuditRecord:
             "fallback": self.fallback,
             "substituted": self.substituted,
             "candidates": self.candidates,
+            "confidence_threshold": self.confidence_threshold,
+            "confidence_rule": self.confidence_rule,
+            "overridden": self.overridden,
         }
         if self.snapshot is not None:
             d["snapshot"] = self.snapshot
@@ -194,6 +206,8 @@ class AuditLogger:
                model: str | None = None, latency_ms: float | None = None,
                brain: str | None = None, confidence: float | None = None,
                fallback: str | None = None, candidates: int | None = None,
+               confidence_threshold: float | None = None,
+               confidence_rule: str | None = None, overridden: str | None = None,
                substituted: bool = False, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snapshot = snapshot or {}
@@ -210,7 +224,9 @@ class AuditLogger:
             valid=valid, result=result or {"ok": False, "error": None},
             reflex=reflex or {}, goal=goal,
             brain=brain, confidence=confidence, fallback=fallback, candidates=candidates,
-            substituted=substituted, snapshot=snapshot if include_full else None,
+            confidence_threshold=confidence_threshold, confidence_rule=confidence_rule,
+            overridden=overridden, substituted=substituted,
+            snapshot=snapshot if include_full else None,
         )
 
         if self.on_record is not None:
