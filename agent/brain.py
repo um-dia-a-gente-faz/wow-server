@@ -92,6 +92,7 @@ class Decision:
     confidence_threshold: float | None = None  # threshold applied (Jev only)
     confidence_rule: str | None = None  # RULE_ACTED / RULE_LOW_CONFIDENCE / RULE_UNKNOWN
     overridden: str | None = None       # candidate id Jev chose before the safe substitution
+    history_notes: list | None = None   # candidates dropped/demoted because of history, with why
 
 
 def llm_catalog() -> list[dict]:
@@ -165,8 +166,10 @@ class Brain:
             fallback = self._jev_skip_reason()
             if fallback is None:
                 try:
+                    notes = []
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
-                                            handles=handles)
+                                            handles=handles, history=history, notes=notes)
+                    d.history_notes = notes or None
                     if blocked is not None:
                         options = [c for c in options
                                    if c["action"] == "idle" or not blocked(c["action"], c["params"])]
