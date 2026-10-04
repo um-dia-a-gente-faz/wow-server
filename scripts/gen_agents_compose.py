@@ -73,11 +73,28 @@ x-agent: &agent-defaults
     # reaches the containers.
     AGENT_BRAIN: ${AGENT_BRAIN:-llm}  # llm | jev (#161)
     AGENT_BRAIN_FALLBACK: ${AGENT_BRAIN_FALLBACK:-none}  # none | llm: only with AGENT_BRAIN=jev
+    # JEV_PROVIDER=openrouter opts in to OpenRouter's base URL and
+    # OPENROUTER_API_KEY (#164); the direct provider is the default.
+    JEV_PROVIDER: ${JEV_PROVIDER:-}
     JEV_BASE_URL: ${JEV_BASE_URL:-}
     JEV_PATH: ${JEV_PATH:-}
     JEV_API_KEY: ${JEV_API_KEY:-}
     JEV_MODEL: ${JEV_MODEL:-}
+    JEV_MIN_CONFIDENCE: ${JEV_MIN_CONFIDENCE:-}  # #165 confidence policy; empty = 0.0 = rule off
+    # Read only when JEV_PROVIDER=openrouter (agent/config.py); passed so
+    # setting it in .env reaches the containers (#190).
+    OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
+    # #190: documented in .env.example and read by agent/config.py, so they must
+    # be passed or setting them in .env silently does nothing. Empty = the
+    # code's own default (AGENT_CHANNELS is _env_str, so it needs the default
+    # spelled out). WOW_CHAR_GUID is deliberately not passed: every service
+    # names its own WOW_CHARACTER (see agent/tests/test_compose_env.py).
+    VERBOSE_PACKETS: ${VERBOSE_PACKETS:-}
+    AGENT_DUMP_PACKETS: ${AGENT_DUMP_PACKETS:-}
+    AGENT_PERSONA: ${AGENT_PERSONA:-}
+    AGENT_RUN_DURATION_S: ${AGENT_RUN_DURATION_S:-}
+    AGENT_CHANNELS: ${AGENT_CHANNELS:-General}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
     # all interfaces inside the container so the published port works; the
