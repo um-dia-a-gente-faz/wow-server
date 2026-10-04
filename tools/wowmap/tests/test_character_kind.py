@@ -46,7 +46,8 @@ class AgentAccountTests(unittest.TestCase):
             self.assertTrue(app.is_agent_account(name), name)
 
     def test_other_accounts(self):
-        for name in ("RUBENS", "AGENT", "AGENTX1", "MYAGENT01", "", None):
+        for name in ("RUBENS", "AGENT", "AGENTX1", "MYAGENT01", "", None,
+                     "AGENT00", "AGENT26", "AGENT99", "AGENT1", "AGENT001"):
             self.assertFalse(app.is_agent_account(name), name)
 
 
@@ -73,6 +74,11 @@ class CharacterKindTests(unittest.TestCase):
         self.assertEqual(got["kind"], "human")
         self.assertNotIn("account", got)
         self.assertNotIn("RUBENS", repr(got))
+
+    def test_out_of_roster_agent_name_is_human(self):
+        got = kind(("Imposter", "AGENT26"))
+        self.assertEqual(got["kind"], "human")
+        self.assertNotIn("AGENT26", repr(got))
 
     def test_character_with_no_account_row_is_human(self):
         self.assertEqual(kind(("Orphan", None))["kind"], "human")

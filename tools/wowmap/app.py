@@ -182,7 +182,7 @@ def fetch_agent_view(name, view, n=None):
 
 
 # #174: agent characters live on accounts AGENT01..AGENT25 (agents/roster.json).
-AGENT_ACCOUNT_RE = re.compile(r"AGENT\d+", re.IGNORECASE)
+AGENT_ACCOUNT_RE = re.compile(r"AGENT(?:0[1-9]|1[0-9]|2[0-5])", re.IGNORECASE)
 
 
 def is_agent_account(username):
