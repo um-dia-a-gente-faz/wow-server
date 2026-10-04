@@ -2,7 +2,8 @@
 
 TrinityCore 3.3.5a WoW server (LAN-only) plus `agent/`, headless Python agents that
 play on it with an LLM, and `tools/wowmap`, the internal observability site.
-Linear (`UM-*`, team *Um Dia a Gente Faz*) is the tracker of record.
+GitHub issues and the org project *wow-server* (project 7) are the tracker of record.
+Linear (`UM-*`) is the older mirror and is no longer kept up to date.
 
 ## Never
 
@@ -10,8 +11,9 @@ Linear (`UM-*`, team *Um Dia a Gente Faz*) is the tracker of record.
   auto-deploys the VM within 5 minutes, which disconnects everyone playing.
 - **Never use GM commands on agent characters** (`.go`, `.die`, `.modify`, …) and never
   modify accounts or the owner's character (Rubens). Relog or walk instead.
-- **Never merge a PR**, force-push a shared branch, or push to `main`. Reviewing and
-  merging belong to a separate reviewer agent (see *Working model*).
+- **Never merge a PR** unless it is your own, another agent has reviewed it, CI is green
+  and no change request is open (see *Working model*). Never force-push a shared
+  branch or push to `main`.
 - **Never print, log or commit credentials.** They live in `.env` on the VM.
 - **Never claim something works because the code looks right.** Verify against the
   TrinityCore source and, where it matters, against the live server.
@@ -44,12 +46,15 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
 
 - **Author agent (default, you):** writes the code, runs the tests, opens the PR to
   `main`, keeps CI green, rebases when it conflicts, and answers review comments.
-  It stops there and never approves or merges a PR, not even one that looks ready.
+  It never approves a PR and never merges one it did not open. It merges **its own**
+  PR only once a reviewer agent has reviewed it, the review's fixes are applied, CI is
+  green, there are no conflicts and no open change requests (the `milestone-loop`
+  skill does this end to end).
 - **Reviewer agent:** a separate session the owner starts. It reviews, checks
-  mergeability, and merges with `gh pr merge --squash --delete-branch` when the PR
+  mergeability, and may merge with `gh pr merge --squash --delete-branch` when the PR
   is well tested: CI green, no conflicts, tests pass after merging main into it,
   the template is followed, no open change requests, and wire formats checked
-  against the TrinityCore source.
+  against the TrinityCore source. The author never reviews its own PR.
 - **Every merge is a deploy** that disconnects players, so merges happen one at a
   time and only on purpose.
 - **PRs can depend on each other.** When one changes a signature another PR also
@@ -58,8 +63,8 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
   "shelving" means don't extend or merge it.
 - **The board is the operating picture** (org project *wow-server*, project 7): the
   author moves the issue to *In progress* when the branch starts and to *In Review* when
-  the PR is open with CI green; *Done* belongs to the reviewer on merge. Author
-  sessions never merge, so they never move an issue to *Done*.
+  the PR is open with CI green; *Done* is set by whoever merges, which closes the
+  issue through `Closes #<n>`.
 
 ## Where things are
 
@@ -82,4 +87,5 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
 ## Skills (`.claude/skills/`)
 
 `live-agent-test` (test on the live server) · `trinity-protocol` (wire formats) ·
-`pr-workflow` (ship a change) · `wowmap-dev` (the observability site).
+`pr-workflow` (ship a change) · `milestone-loop` (work a milestone end to end, merge
+after another agent's review) · `wowmap-dev` (the observability site).
