@@ -256,18 +256,36 @@ class ConfigTest(unittest.TestCase):
     def test_defaults(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             cfg = config.Config()
-        self.assertEqual(cfg.jev_base_url, "https://openrouter.ai/api/alpha")
+        self.assertEqual(cfg.jev_base_url, "")
+        self.assertFalse(cfg.jev_enabled)
         self.assertEqual(cfg.jev_model, "typesafe/jev-1.13")
         self.assertEqual(cfg.jev_api_key, "")
         self.assertEqual(cfg.redacted()["jev_api_key"], "(unset)")
 
-    def test_openrouter_key_fallback_and_redaction(self):
+    def test_no_silent_openrouter_fallback(self):
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=True):
-            self.assertEqual(config.Config().jev_api_key, "or-key")
-        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key",
-                                          "JEV_API_KEY": "jev-key"}, clear=True):
             cfg = config.Config()
-        self.assertEqual(cfg.jev_api_key, "jev-key")
+        self.assertEqual(cfg.jev_api_key, "")
+        self.assertEqual(cfg.jev_base_url, "")
+        self.assertFalse(cfg.jev_enabled)
+        with mock.patch.dict(os.environ, {"JEV_API_KEY": "k"}, clear=True):
+            self.assertFalse(config.Config().jev_enabled)  # key without a base URL
+
+    def test_openrouter_is_explicit_opt_in(self):
+        env = {"JEV_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "or-key"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            cfg = config.Config()
+        self.assertTrue(cfg.jev_enabled)
+        self.assertEqual(cfg.jev_api_key, "or-key")
+        self.assertEqual(cfg.jev_base_url, "https://openrouter.ai/api/alpha")
+        with mock.patch.dict(os.environ, {"JEV_PROVIDER": "openrouter"}, clear=True):
+            self.assertFalse(config.Config().jev_enabled)  # no key: still off
+
+    def test_key_redaction(self):
+        env = {"JEV_BASE_URL": "https://jev.example/v1", "JEV_API_KEY": "jev-key"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            cfg = config.Config()
+        self.assertTrue(cfg.jev_enabled)
         self.assertEqual(cfg.redacted()["jev_api_key"], "***")
         self.assertNotIn("jev-key", json.dumps(cfg.redacted()))
 
@@ -288,8 +306,13 @@ class EndpointUrlTest(unittest.TestCase):
             client.choose_action({}, self.CANDS)
         return seen[0]
 
-    def test_default_is_openrouter_decisions(self):
-        self.assertEqual(self.requested_url(jev.JevClient()),
+    def test_openrouter_provider_config(self):
+        env = {"JEV_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "k"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            cfg = config.Config()
+        c = jev.JevClient(cfg.jev_base_url, model=cfg.jev_model, api_key=cfg.jev_api_key,
+                          path=cfg.jev_path)
+        self.assertEqual(self.requested_url(c),
                          "https://openrouter.ai/api/alpha/decisions")
 
     def test_native_typesafe(self):

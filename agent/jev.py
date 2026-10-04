@@ -9,11 +9,14 @@ client asks Jev which one, and returns that candidate's `(action, params)`.
 Since the answer can only be one of the keys we sent, a hallucinated action
 name or a mangled GUID cannot happen.
 
-Wire format: `POST {JEV_BASE_URL}{JEV_PATH}`, bearer auth. Two providers:
-OpenRouter's Decisions API (default: base `https://openrouter.ai/api/alpha`,
-path `/decisions`, model `typesafe/jev-1.13`, OpenRouter key) and TypeSafe's
-native API (base `https://api.typesafe.ai`, path `/v1/systemone`, model
-`jev-latest`, TypeSafe key; GH-195). Field names follow OpenRouter's Jev tutorial and Decisions
+Wire format: `POST {JEV_BASE_URL}{JEV_PATH}`, bearer auth with JEV_API_KEY.
+`JEV_PATH` defaults to `/decisions` (agent/config.py). The base URL is always
+explicit; the OpenRouter base below is only used for JEV_PROVIDER=openrouter.
+Two providers share this shape: OpenRouter's Decisions API (base
+`https://openrouter.ai/api/alpha`, path `/decisions`, model
+`typesafe/jev-1.13`, OpenRouter key) and TypeSafe's native API (base
+`https://api.typesafe.ai`, path `/v1/systemone`, model `jev-latest`, TypeSafe
+key; GH-195). Field names follow OpenRouter's Jev tutorial and Decisions
 API reference (checked 2026-10-02, not yet against a real call):
 
     request:  {"model", "state", "questions": {name: {"type": "choice",
@@ -34,7 +37,7 @@ import urllib.request
 
 from agent.llm import compact_snapshot
 
-DEFAULT_BASE_URL = "https://openrouter.ai/api/alpha"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"  # JEV_PROVIDER=openrouter only
 DEFAULT_PATH = "/decisions"
 DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_TIMEOUT_S = 20.0
@@ -126,12 +129,12 @@ def build_request(model: str, snapshot: dict, by_key: dict[str, dict],
 
 
 class JevClient:
-    """OpenRouter Decisions API client. Same call shape as
+    """Decisions API client. Same call shape as
     agent.llm.LLMClient.choose_action, except the second argument is the
     candidate list instead of the action catalog. One instance is reused
     across think cycles."""
 
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, model: str = DEFAULT_MODEL,
+    def __init__(self, base_url: str, model: str = DEFAULT_MODEL,
                  api_key: str = "", timeout: float = DEFAULT_TIMEOUT_S,
                  path: str = DEFAULT_PATH):
         self.base_url = base_url.rstrip("/")
