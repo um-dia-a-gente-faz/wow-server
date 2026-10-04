@@ -83,7 +83,7 @@ def run(paths, brains, from_cycle=None, limit=None, max_calls=100, estimated_cos
         clients["llm"] = LLMClient(cfg.llm_base_url, cfg.llm_model, cfg.llm_api_key)
     if "jev" in brains:
         clients["jev"] = FixtureJev(fixture_path) if fixture_path else JevClient(
-            cfg.jev_base_url, cfg.jev_model, cfg.jev_api_key)
+            cfg.jev_base_url, cfg.jev_model, cfg.jev_api_key, path=cfg.jev_path)
     fixture_out = open(record_path, "a", encoding="utf8") if record_path else None
     rows = []
     for path, rec in records:

@@ -272,5 +272,54 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("jev-key", json.dumps(cfg.redacted()))
 
 
+class EndpointUrlTest(unittest.TestCase):
+    """GH-195: the URL actually requested, per provider configuration."""
+
+    CANDS = [{"action": "idle", "params": {}}, {"action": "move", "params": {"x": 1}}]
+
+    def requested_url(self, client):
+        seen = []
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req.full_url)
+            return FakeResponse(json.dumps(decisions_response("idle")).encode())
+
+        with mock.patch.object(jev.urllib.request, "urlopen", fake_urlopen):
+            client.choose_action({}, self.CANDS)
+        return seen[0]
+
+    def test_default_is_openrouter_decisions(self):
+        self.assertEqual(self.requested_url(jev.JevClient()),
+                         "https://openrouter.ai/api/alpha/decisions")
+
+    def test_native_typesafe(self):
+        c = jev.JevClient("https://api.typesafe.ai", "jev-latest", api_key="k",
+                          path="/v1/systemone")
+        self.assertEqual(self.requested_url(c), "https://api.typesafe.ai/v1/systemone")
+
+    def test_slashes_are_normalised(self):
+        c = jev.JevClient("https://api.typesafe.ai/", "m", path="v1/systemone")
+        self.assertEqual(self.requested_url(c), "https://api.typesafe.ai/v1/systemone")
+
+    def test_mock_keeps_default_path(self):
+        c = jev.JevClient("http://jev-mock:8090/api/alpha")
+        self.assertEqual(self.requested_url(c), "http://jev-mock:8090/api/alpha/decisions")
+
+    def test_env_reaches_the_request_url(self):
+        env = {"JEV_BASE_URL": "https://api.typesafe.ai", "JEV_PATH": "/v1/systemone",
+               "JEV_MODEL": "jev-latest"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            cfg = config.Config()
+        c = jev.JevClient(cfg.jev_base_url, model=cfg.jev_model, api_key=cfg.jev_api_key,
+                          path=cfg.jev_path)
+        self.assertEqual(self.requested_url(c), "https://api.typesafe.ai/v1/systemone")
+        self.assertEqual(c.model, "jev-latest")
+
+    def test_env_unset_or_empty_path_defaults(self):
+        for env in ({}, {"JEV_PATH": ""}):
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertEqual(config.Config().jev_path, "/decisions")
+
+
 if __name__ == "__main__":
     unittest.main()

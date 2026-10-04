@@ -122,7 +122,8 @@ class Brain:
             if not cfg.jev_enabled:
                 log.warning("AGENT_BRAIN=jev but no JEV_BASE_URL/JEV_API_KEY set")
                 return None
-            jev = JevClient(cfg.jev_base_url, model=cfg.jev_model, api_key=cfg.jev_api_key)
+            jev = JevClient(cfg.jev_base_url, model=cfg.jev_model, api_key=cfg.jev_api_key,
+                             path=cfg.jev_path)
             want_llm = cfg.agent_brain_fallback == BRAIN_LLM
         elif cfg.agent_brain == BRAIN_LLM:
             want_llm = True

@@ -72,7 +72,9 @@ class Config:
     llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", ""))
 
     # ── Jev decision model (UM-99, ADR 0001) ──────────────────
-    # OpenRouter Decisions API. The key is JEV_API_KEY, else OPENROUTER_API_KEY.
+    # OpenRouter Decisions API or native TypeSafe (JEV_PATH, GH-195). The key is
+    # JEV_API_KEY, else OPENROUTER_API_KEY (which docker-compose.agents.yml does
+    # not pass through, GH-190, so set JEV_API_KEY there).
     # Jev is the think step's brain (UM-101, agent/brain.py) only when
     # AGENT_BRAIN=jev; jev_enabled says whether a key or an explicit
     # JEV_BASE_URL is set (tools/jev-mock needs no key).
@@ -81,6 +83,9 @@ class Config:
         "JEV_BASE_URL") or "https://openrouter.ai/api/alpha")
     jev_api_key: str = field(default_factory=lambda: _env_str(
         "JEV_API_KEY") or _env_str("OPENROUTER_API_KEY"))
+    # Endpoint path appended to jev_base_url: "/decisions" for OpenRouter,
+    # "/v1/systemone" for native TypeSafe (GH-195).
+    jev_path: str = field(default_factory=lambda: _env_str("JEV_PATH") or "/decisions")
     jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL") or "typesafe/jev-1.13")
     # Confidence policy (GH-165, agent/brain.py): below this Jev's choice is
     # replaced by the safe candidate (idle). 0.0 = rule off until measured.
@@ -150,6 +155,7 @@ class Config:
             "llm_model": self.llm_model or "(unset)",
             "jev": "on" if self.jev_enabled else "(off)",
             "jev_base_url": self.jev_base_url,
+            "jev_path": self.jev_path,
             "jev_model": self.jev_model,
             "jev_min_confidence": self.jev_min_confidence,
             "jev_api_key": "***" if self.jev_api_key else "(unset)",
