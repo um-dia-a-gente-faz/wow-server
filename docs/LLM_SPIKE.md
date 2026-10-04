@@ -55,7 +55,7 @@ endpoint (`192.168.1.72:3001`; it was `192.168.1.60:3002` when this spike
 was written), which is the integration UM-44 already
 targets (`agent/config.py`'s `LLM_BASE_URL`/`LLM_MODEL`, `.env.example`).
 
-Earlier prototype note (`docs/HANDOFF.md`, cited in UM-44): `auto` routing
+Earlier prototype note (an old handoff note, cited in UM-44, no longer in the repo): `auto` routing
 gave **~50% valid tool-call rate** — not enough for UM-44's ≥90% bar. `auto`
 picks whichever free model is available that moment, including ones with
 weak or no tool-call support, so the fix is to **pin specific models**
@@ -133,7 +133,7 @@ already competes with the 8 GB budget before compute does).
 2. **Tool catalog** — `scripts/llm_bench/tools_catalog.py`: a stand-in for
    UM-36/UM-44's real action registry (not built yet), shaped after the
    action catalog in `docs/AI-AGENT-SPEC.md` so the same JSON-schema
-   validation UM-44's `loop.py` will need (exactly one tool call, known
+   validation UM-44's think loop (`agent/think.py`) will need (exactly one tool call, known
    name, required args present) gets exercised here.
 3. **Harness** — `scripts/llm_bench/benchmark.py`: stdlib-only
    (`urllib`, per `CONTRIBUTING.md`), OpenAI-compatible
@@ -170,7 +170,7 @@ python3 scripts/llm_bench/benchmark.py --config scripts/llm_bench/candidates.jso
 python3 scripts/llm_bench/benchmark.py --config scripts/llm_bench/candidates.json --concurrency 25  # raid-size load
 ```
 
-`candidates.json` is gitignored-by-convention the same way `.env` is (don't
+`candidates.json` is a local, untracked file (only the `.example` is in the repo), gitignored-by-convention the same way `.env` is (don't
 commit real endpoints/keys beyond the `.example` file). Add
 `--json-out results.json` to keep the raw per-call data for the
 sensible/acceptable/wrong rubric pass.

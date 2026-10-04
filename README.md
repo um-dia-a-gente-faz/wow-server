@@ -95,7 +95,7 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/AI-AGENT-SPEC.md` | Spec for autonomous AI agents playing on the server |
 | `CLAUDE.md` / `AGENTS.md` | Entry point for coding agents: hard rules, where things are, what to read. Skills live in `.claude/skills/` |
 | `docs/AGENT-DIRECTION.md` | Owner decisions for the agents (autonomy, free models, in-game-only chat, milestones); overrides the spec where they differ |
-| `docs/NEXT-AGENT-HANDOFF.md` | Handoff for the `agent/` protocol client: what works, how to run it |
+| `docs/NEXT-AGENT-HANDOFF.md` | Superseded pointer to the current agent docs |
 | `docs/PROTOCOL-NOTES.md` | 3.3.5a wire-format notes (update-object layout, field indices), each checked against TrinityCore source |
 | `docs/CHAT_FEED_SPIKE.md` | Why the chat feed tails `Server.log` instead of polling the DB |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
