@@ -106,6 +106,29 @@ class FakeClock:
 
 
 class SimulateArrivalTest(unittest.TestCase):
+    def test_unreleased_dead_player_sends_no_movement(self):
+        sess = fake_session()
+        world = per.WorldState()
+        world.get_my_object = lambda: SimpleNamespace(is_dead=lambda: True, is_ghost=lambda: False)
+        result = mv._simulate(sess, world, lambda: (10.0, 0.0, 0.0), stop_distance=1.0,
+                              run_speed=7.0, tick_interval=0.3, stop_event=threading.Event(),
+                              clock=FakeClock().clock, sleep=FakeClock().sleep)
+        self.assertEqual(result["error"], "dead before spirit release")
+        self.assertEqual(sess._sent, [])
+
+    def test_death_during_move_exits_without_sending_stop_position(self):
+        sess = fake_session()
+        world = per.WorldState()
+        me = SimpleNamespace(dead=False, is_dead=lambda: me.dead, is_ghost=lambda: False)
+        world.get_my_object = lambda: me
+        def become_dead(_dt):
+            me.dead = True
+        result = mv._simulate(sess, world, lambda: (100.0, 0.0, 0.0), stop_distance=1.0,
+                              run_speed=7.0, tick_interval=0.3, stop_event=threading.Event(),
+                              clock=FakeClock().clock, sleep=become_dead)
+        self.assertEqual(result["error"], "dead before spirit release")
+        self.assertEqual([opcode for opcode, _ in sess._sent], [mv.MSG_MOVE_START_FORWARD])
+
     def test_arrives_within_stop_distance(self):
         sess = fake_session(position=(530, 0.0, 0.0, 0.0, 0.0))
         world = per.WorldState()

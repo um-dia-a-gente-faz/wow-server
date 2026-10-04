@@ -134,6 +134,12 @@ def run_speed_of(obj) -> float:
     return DEFAULT_RUN_SPEED_YPS
 
 
+def _dead_before_release(world) -> bool:
+    """A dead player remains at the corpse until the server releases the spirit."""
+    me = world.get_my_object() if world is not None else None
+    return bool(me is not None and me.is_dead() and not me.is_ghost())
+
+
 def _heading(from_x: float, from_y: float, to_x: float, to_y: float) -> float:
     return math.atan2(to_y - from_y, to_x - from_x) % (2 * math.pi)
 
@@ -158,6 +164,8 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
     so this module never needs to import actions.py, which imports this one).
     """
     map_id, sx, sy, sz, _so = session.player_position
+    if _dead_before_release(world):
+        return {"ok": False, "error": "dead before spirit release", "detail": {}}
     target = get_target()
     if target is None:
         return {"ok": False, "error": "no target position", "detail": {}}
@@ -193,10 +201,18 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
         return {"ok": ok, "error": error, "detail": detail}
 
     while True:
+        # Do not send even a stop packet here: TrinityCore treats client
+        # movement as authoritative, and a stop carrying a changed position
+        # can move the unreleased corpse too.
+        if _dead_before_release(world):
+            return {"ok": False, "error": "dead before spirit release", "detail": {}}
         if stop_event.is_set():
             return _stop_and_report(False, "stopped", {})
 
         sleep(tick_interval)
+
+        if _dead_before_release(world):
+            return {"ok": False, "error": "dead before spirit release", "detail": {}}
 
         target = get_target()
         if target is None:
