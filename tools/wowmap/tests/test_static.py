@@ -2,6 +2,7 @@
 import hashlib
 import os
 import pathlib
+import re
 import sys
 import threading
 import unittest
@@ -63,6 +64,31 @@ class PageTests(unittest.TestCase):
         self.assertIn("function fitZone()", app.PAGE)
         for gone in ('id="mapimg"', 'id="wrap"', "stageScale"):
             self.assertNotIn(gone, app.PAGE)
+
+
+class StatIconTests(unittest.TestCase):
+    """#176: health/mana/gold/played/logout icons are an inline SVG sprite, no fetch."""
+    NAMES = ("health", "mana", "gold", "played", "logout")
+
+    def sprite(self):
+        m = re.search(r'<svg id="stat-icons".*?</svg>', app.PAGE, re.S)
+        self.assertIsNotNone(m, "inline icon sprite missing")
+        return m.group(0)
+
+    def test_every_stat_icon_is_an_inline_symbol(self):
+        sprite = self.sprite()
+        for n in self.NAMES:
+            self.assertIn(f'<symbol id="i-{n}"', sprite, n)
+
+    def test_sprite_makes_no_network_request(self):
+        sprite = self.sprite()
+        for ref in ("http", "url(", "<image", "xlink:href", "@import"):
+            self.assertNotIn(ref, sprite)
+        self.assertIn("`#i-${name}`", app.PAGE)  # icons only reference the inline sprite
+
+    def test_icons_are_labelled(self):
+        self.assertIn("setAttribute('aria-label', label)", app.PAGE)
+        self.assertIn("setAttribute('role', 'img')", app.PAGE)
 
 
 if __name__ == "__main__":
