@@ -32,7 +32,7 @@ renderList();
 for (const key of ['Enter', ' ', 'a']) list.children[0].onkeydown({key, preventDefault() {}});
 console.log(JSON.stringify(list.children.map(r => ({
   title: r.title, tabIndex: r.tabIndex, attrs: r.attrs, selected,
-  cells: r.children.map(c => ({cls: c.className, text: String(c.textContent), bg: c.style.background})),
+  cells: r.children.map(c => ({cls: c.className, text: String(c.textContent), bg: c.style.background, ink: c.style.color})),
 }))));
 """
 
@@ -47,16 +47,26 @@ PLAYERS = [
 ]
 
 
+def contrast(a, b):
+    """WCAG 2 contrast ratio of two #rrggbb colours."""
+    def lum(h):
+        c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        r, g, b = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class PlayerRowTests(unittest.TestCase):
-    def rows(self):
+    def rows(self, players=PLAYERS):
         # placeText, mapCoordsText and playerTip sit together before worldText.
         script = (js_fn("placeText", "\nfunction worldText")
                   + js_fn("renderList", "\nasync function tick") + FAKE_DOM)
         with tempfile.TemporaryDirectory() as d:
             f = pathlib.Path(d) / "row.js"
             f.write_text(script)
-            r = subprocess.run(["node", str(f), json.dumps(PLAYERS)], capture_output=True, text=True)
+            r = subprocess.run(["node", str(f), json.dumps(players)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)
 
@@ -92,6 +102,14 @@ class PlayerRowTests(unittest.TestCase):
         self.assertIn("Warrior Blood Elf lvl 12", world["attrs"]["aria-label"])
         self.assertIn("34.2, 61.8", world["attrs"]["aria-label"])
         self.assertEqual(world["selected"], ["Kaelthasidus", "Kaelthasidus"])  # Enter and Space, not 'a'
+
+    def test_badge_numeral_contrast_is_at_least_4_5_for_every_class(self):
+        colours = list(app.CLASS_COLORS.values()) + ["#888888"]  # #888888: unknown-class fallback
+        rows = self.rows([dict(PLAYERS[0], class_color=c) for c in colours])
+        for colour, row in zip(colours, rows):
+            ink = row["cells"][0].get("ink") or "#10131a"  # unset inline: the CSS var(--bg)
+            with self.subTest(colour=colour, ink=ink):
+                self.assertGreaterEqual(contrast(colour, ink), 4.5)
 
     def test_marker_tooltip_uses_the_same_text(self):
         self.assertTrue("e.title = playerTip(p);" in app.PAGE)

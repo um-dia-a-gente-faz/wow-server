@@ -1997,7 +1997,7 @@ PAGE = r"""<!doctype html>
         column-gap:8px; padding:7px 8px; border-radius:7px; cursor:pointer; }
   .pl:hover { background:#212836; }
   .dot { width:9px; height:9px; border-radius:50%; flex:0 0 9px; box-shadow:0 0 6px currentColor; }
-  .pl .dot { width:20px; height:20px; grid-row:span 2; color:var(--bg); font-size:10px;
+  .pl .dot { width:20px; height:20px; grid-row:span 2; font-size:10px;
              font-weight:700; line-height:20px; text-align:center; font-variant-numeric:tabular-nums; }
   .pl .nm, .pl .meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pl .meta { color:var(--dim); font-size:12px; }
@@ -2539,6 +2539,8 @@ function renderList() {
     dot.className = 'dot';
     dot.style.background = p.class_color;
     dot.style.boxShadow = `0 0 6px ${p.class_color}`;
+    // #175: >= 4.5:1 numeral; only DK red and Shaman blue are too dark for black.
+    dot.style.color = ['#C41F3B', '#0070DE'].includes(p.class_color) ? '#ffffff' : '#000000';
     dot.textContent = p.level;
     const nm = document.createElement('span');
     nm.className = 'nm';
