@@ -282,7 +282,7 @@ class EndpointUrlTest(unittest.TestCase):
 
         def fake_urlopen(req, timeout=None):
             seen.append(req.full_url)
-            return FakeResponse(json.dumps(decisions_response("idle")).encode())
+            return FakeResponse(json.dumps(decisions_response("idle()")).encode())
 
         with mock.patch.object(jev.urllib.request, "urlopen", fake_urlopen):
             client.choose_action({}, self.CANDS)

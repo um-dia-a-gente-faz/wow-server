@@ -73,6 +73,7 @@ x-agent: &agent-defaults
     AGENT_BRAIN: ${AGENT_BRAIN:-llm}  # llm | jev (#161)
     AGENT_BRAIN_FALLBACK: ${AGENT_BRAIN_FALLBACK:-none}  # none | llm: only with AGENT_BRAIN=jev
     JEV_BASE_URL: ${JEV_BASE_URL:-}
+    JEV_PATH: ${JEV_PATH:-}
     JEV_API_KEY: ${JEV_API_KEY:-}
     JEV_MODEL: ${JEV_MODEL:-}
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
