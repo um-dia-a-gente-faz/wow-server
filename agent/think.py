@@ -114,7 +114,14 @@ class ThinkState:
 
     def repeat_blocked(self, action: str, args: dict, n: int = LOOP_GUARD_REPEATS) -> bool:
         """True when each of the last `n` recorded cycles was this exact
-        action with these exact args and either failed or changed nothing."""
+        action with these exact args and either failed or changed nothing.
+
+        `idle` is the candidate generator's safe fallback when it has no
+        actionable option. Blocking it cannot make the brain choose something
+        else and would turn an empty candidate set into a permanent deadlock.
+        """
+        if action == "idle":
+            return False
         if len(self.history) < n:
             return False
         key = _args_key(args)
