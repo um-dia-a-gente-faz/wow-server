@@ -19,17 +19,19 @@ def js_fn(name, end):
 
 # A tiny DOM, enough for renderList to build its rows.
 FAKE_DOM = r"""
-const node = () => ({style: {}, dataset: {}, children: [], className: '', textContent: '', title: '',
-                     append(...c) { this.children.push(...c); }});
+const node = () => ({style: {}, dataset: {}, children: [], className: '', textContent: '', title: '', attrs: {},
+                     append(...c) { this.children.push(...c); }, setAttribute(k, v) { this.attrs[k] = v; }});
 const document = {createElement: node};
 const list = Object.assign(node(), {innerHTML: '', appendChild(c) { this.children.push(c); }});
 const $ = id => id === 'list' ? list : {value: ''};
 const Inspect = {current: () => null};
-const selectCharacter = () => {};
+const selected = [];
+const selectCharacter = n => selected.push(n);
 let players = JSON.parse(process.argv[2]);
 renderList();
+for (const key of ['Enter', ' ', 'a']) list.children[0].onkeydown({key, preventDefault() {}});
 console.log(JSON.stringify(list.children.map(r => ({
-  title: r.title,
+  title: r.title, tabIndex: r.tabIndex, attrs: r.attrs, selected,
   cells: r.children.map(c => ({cls: c.className, text: String(c.textContent), bg: c.style.background})),
 }))));
 """
@@ -80,6 +82,16 @@ class PlayerRowTests(unittest.TestCase):
             self.assertIn(part, world["title"])
         for part in ("Mage", "Human", "lvl 7", "Deadmines"):
             self.assertIn(part, inst["title"])
+
+    def test_row_details_reach_keyboard_and_screen_readers(self):
+        world, inst = self.rows()
+        for row in (world, inst):
+            self.assertEqual(row["tabIndex"], 0)
+            self.assertEqual(row["attrs"]["role"], "button")
+            self.assertEqual(row["attrs"]["aria-label"], row["title"].replace("\n", ", "))
+        self.assertIn("Warrior Blood Elf lvl 12", world["attrs"]["aria-label"])
+        self.assertIn("34.2, 61.8", world["attrs"]["aria-label"])
+        self.assertEqual(world["selected"], ["Kaelthasidus", "Kaelthasidus"])  # Enter and Space, not 'a'
 
     def test_marker_tooltip_uses_the_same_text(self):
         self.assertTrue("e.title = playerTip(p);" in app.PAGE)

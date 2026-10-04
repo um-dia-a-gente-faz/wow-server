@@ -2444,6 +2444,11 @@ function renderList() {
     e.className = 'pl' + (p.name === Inspect.current() ? ' sel' : '');
     e.dataset.name = p.name;
     e.title = playerTip(p);
+    // #175: class, race and coords left the visible row; the label keeps them for screen readers.
+    e.setAttribute('role', 'button');
+    e.setAttribute('aria-label', e.title.replace(/\n/g, ', '));
+    e.tabIndex = 0;
+    e.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectCharacter(p.name); } };
     const dot = document.createElement('span');
     dot.className = 'dot';
     dot.style.background = p.class_color;
