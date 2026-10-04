@@ -489,6 +489,11 @@ class AutoAttackAction(Action):
         return None
 
     def execute(self, session, world, guid: int, **_) -> ActionResult:
+        # The server won't start a swing unless the attacker faces the victim
+        # (same reason CastSpellAction faces first).
+        target = world.get_object(guid)
+        if target is not None and target.position is not None and session.player_position is not None:
+            FaceAction().execute(session, world, guid=guid)
         sent_at = time.monotonic()
         send_target(session, guid)
         send_attack(session, guid)
