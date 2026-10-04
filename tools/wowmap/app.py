@@ -1087,6 +1087,12 @@ function placeText(p) {
 function mapCoordsText(p) {
   return p.map_coords ? `${p.map_coords.x.toFixed(1)}, ${p.map_coords.y.toFixed(1)}` : '';
 }
+// Hover text for a marker and a list row: the class, race, level and coordinates
+// the row itself leaves out (#175).
+function playerTip(p) {
+  return `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
+    + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
+}
 function worldText(x, y, z) {
   return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
 }
@@ -1899,11 +1905,15 @@ PAGE = r"""<!doctype html>
   .stat b { display:block; font-size:20px; line-height:1.1; }
   .stat span { color:var(--dim); font-size:11px; }
   .list { flex:1; overflow:auto; padding:0 8px 12px; }
-  .pl { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:7px;
-        cursor:pointer; }
+  /* #175: class badge with the level inside on the left, name over zone so each gets
+     the full width of a narrow sidebar; class, race and coords are in the title. */
+  .pl { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center;
+        column-gap:8px; padding:7px 8px; border-radius:7px; cursor:pointer; }
   .pl:hover { background:#212836; }
   .dot { width:9px; height:9px; border-radius:50%; flex:0 0 9px; box-shadow:0 0 6px currentColor; }
-  .pl .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pl .dot { width:20px; height:20px; grid-row:span 2; color:var(--bg); font-size:10px;
+             font-weight:700; line-height:20px; text-align:center; font-variant-numeric:tabular-nums; }
+  .pl .nm, .pl .meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pl .meta { color:var(--dim); font-size:12px; }
   .empty { color:var(--dim); padding:16px; text-align:center; font-size:13px; }
   main { flex:1; position:relative; display:flex; flex-direction:column; min-width:0; }
@@ -2291,8 +2301,7 @@ function fillMarker(e, p) {
     e.replaceChildren(ring, lbl);
   }
   e.classList.toggle('sel', p.name === selected);
-  e.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
-    + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
+  e.title = playerTip(p);
 }
 
 function place() {
@@ -2434,16 +2443,18 @@ function renderList() {
     const e = document.createElement('div');
     e.className = 'pl' + (p.name === Inspect.current() ? ' sel' : '');
     e.dataset.name = p.name;
+    e.title = playerTip(p);
     const dot = document.createElement('span');
     dot.className = 'dot';
-    dot.style.background = dot.style.color = p.class_color;
+    dot.style.background = p.class_color;
+    dot.style.boxShadow = `0 0 6px ${p.class_color}`;
+    dot.textContent = p.level;
     const nm = document.createElement('span');
     nm.className = 'nm';
     nm.textContent = p.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    const where = p.map_coords ? `${p.zone_name} ${mapCoordsText(p)}` : p.zone_name;
-    meta.textContent = `${p.level} ${p.class_name} · ${p.in_world ? where : p.continent_name + ' (instance)'}`;
+    meta.textContent = p.in_world ? p.zone_name : p.continent_name + ' (instance)';
     e.append(dot, nm, meta);
     e.onclick = () => selectCharacter(p.name);
     l.appendChild(e);
