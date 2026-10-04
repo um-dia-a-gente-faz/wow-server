@@ -50,6 +50,7 @@ runner refuses to start without a token. Locally:
 | `POST /agents/<name>/stop` | `compose stop <service>` |
 | `POST /agents` | create a level-1 character, record it, start its container (below) |
 | `POST /agents/<name>/retire` | stop the container and mark the agent retired; the character is never deleted |
+| `POST /agents/<name>/walk` | walk the agent's character with its own movement (#178, below) |
 | `GET /characters?account=AGENT07` | what the realm has for that account: `exists`, `characters`, `free_slot` |
 
 Everything but `/healthz` needs the token (401 without). Writes return the
@@ -114,6 +115,34 @@ stays in the list (so the other agents' ports do not shift) and `start` on it is
 Nothing here deletes a character, writes `agents/roster.json` or touches the checkout.
 Not built: a ready-to-paste roster snippet for a runtime-created agent. The state file is
 the record; adding agents to the committed plan stays a normal PR.
+
+## Walking an agent (#178)
+
+`POST /agents/<name>/walk` with `{"x": .., "y": .., "z": ..}` (z optional, current map) or
+`{"near_player": "Rubens"}`; optional `map` (refused unless it is the character's map),
+`stop_distance` (yards) and `timeout_s` (default 60, max 120). `?dry_run=1` resolves the
+target and returns the plan (target, distance, method) without moving anything.
+
+The runner checks the container is running, then forwards to the agent's own
+`POST /control/walk` (`agent/control.py`, enabled by `AGENT_CONTROL_TOKEN`, which the
+generated compose file maps from `AGENT_RUNNER_TOKEN`). The character walks with its own
+`move_to` / `move_towards`: never a teleport, a GM command or a database write. The think loop
+is held for the duration, so the brain cannot start a competing move.
+
+The answer always has `ok` and `outcome`; only `outcome: "arrived"` (HTTP 200) is success:
+
+| outcome | HTTP | meaning |
+|---|---|---|
+| `arrived` | 200 | within `stop_distance`; `start`, `end`, `end_distance`, `moved` reported |
+| `blocked` | 422 | no progress for 3 s or a server position correction (terrain, a mob, no straight path) |
+| `timeout` | 422 | not there after `timeout_s`; the character was stopped |
+| `stopped`, `target_lost`, `failed` | 422 | interrupted, the player left perception, anything else |
+| `refused` | 400/404/409/502 | nothing moved; `code` says why: `player_not_perceived`, `not_running`, `retired`, `wrong_map`, `too_far`, `dead`, `not_connected`, `busy`, `control_disabled` (agent image older than #178 or token mismatch: start it with a rebuild), `agent_unreachable`, ... |
+
+Movement is a straight line with no pathfinding, and `start`/`end` are the session's own view
+of where it last told the server it was, not a database read. Every call is logged with
+`caller` (wowmap's address), `operator` (the browser's, from `X-Operator-Address`), `agent`,
+`target`, `outcome`, `start`, `end` and `http`; refused and failed calls are logged too.
 
 ## What it does to the host
 

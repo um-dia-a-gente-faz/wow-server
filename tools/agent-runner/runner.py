@@ -12,6 +12,8 @@ never needs the Docker socket.
     POST /agents/<name>/stop      compose stop <service>             (token)
     POST /agents                  create a level-1 character (#138)  (token)
     POST /agents/<name>/retire    stop + mark retired, never delete  (token)
+    POST /agents/<name>/walk      walk to {x,y[,z]} or {near_player} (#178)  (token)
+                                  [?dry_run=1 resolves and plans without moving]
     GET  /characters?account=X    what the realm has for an account  (token)
 
 Each agent entry keeps its signals apart, never one boolean:
@@ -42,6 +44,12 @@ Environment:
     AGENT_RUNNER_REALM_PORT   its auth port (default 3724)
     AGENT_PASSWORD            shared account password; used to log in and to
                               create accounts, never returned, logged or stored
+
+Walk (#178) forwards the command to the agent's own session, which walks with its own
+movement code (agent/control.py): never a teleport, a GM command or a database write.
+The runner checks the container is running, passes its token to the agent as
+AGENT_CONTROL_TOKEN (compose maps it from AGENT_RUNNER_TOKEN), and logs one line per
+command with caller IP, operator, agent, target, outcome and start/end positions.
 
 Never touches the worldserver, a GM command or the realm database. Output from
 docker is scrubbed of the token and of every *PASSWORD/*KEY/*TOKEN/*SECRET
@@ -85,6 +93,11 @@ STOP_TIMEOUT_S = 60
 DOCKER_TIMEOUT_S = 15
 MAX_DETAIL_CHARS = 600
 MAX_BODY_BYTES = 4096
+WALK_DEFAULT_TIMEOUT_S = 60.0
+WALK_MAX_TIMEOUT_S = 120.0
+WALK_AGENT_SLACK_S = 60.0     # the agent may wait for its think cycle (45 s) before it walks
+WALK_KEYS = {"x", "y", "z", "near_player", "map", "stop_distance", "timeout_s"}
+OPERATOR_RE = re.compile(r"[^0-9A-Za-z.:_\-]")
 SECRET_NAME = re.compile(r"PASSWORD|KEY|TOKEN|SECRET", re.I)
 AUDIT_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
 
@@ -422,6 +435,82 @@ class Fleet:
         self.save_agent({**e["planned"], "retired": True})
         return self.one(name), {}
 
+    # ── walk (#178) ──────────────────────────────────────────────────
+    @staticmethod
+    def walk_request(body):
+        """Shape-check a walk body and keep only known fields (the agent re-checks all of it)."""
+        if not isinstance(body, dict):
+            raise RunnerError("body must be a JSON object", status=400)
+        unknown = sorted(set(body) - WALK_KEYS)
+        if unknown:
+            raise RunnerError(f"unknown field(s): {', '.join(unknown)}", status=400)
+        has_point, has_player = "x" in body or "y" in body, body.get("near_player") is not None
+        if has_point == has_player:
+            raise RunnerError("give either x and y (a point) or near_player (a player), not both and not neither",
+                              status=400)
+        if has_point:
+            for key in ("x", "y"):
+                v = body.get(key)
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or abs(v) > 40000:
+                    raise RunnerError(f"{key} must be a finite number", status=400)
+        elif not isinstance(body["near_player"], str) or not 2 <= len(body["near_player"].strip()) <= 12 \
+                or not body["near_player"].strip().isalpha():
+            raise RunnerError("near_player must be a character name (2-12 letters)", status=400)
+        timeout = body.get("timeout_s")
+        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                                    or not 1 <= timeout <= WALK_MAX_TIMEOUT_S):
+            raise RunnerError(f"timeout_s must be a number between 1 and {WALK_MAX_TIMEOUT_S:g}", status=400)
+        return {k: v for k, v in body.items() if v is not None}
+
+    def walk(self, name, body, dry_run=False):
+        """Ask the agent's session to walk -> (http status, body). The body always has
+        `ok` and `outcome`; only `outcome == "arrived"` (or "dry_run") is a success.
+        Raises RunnerError for refusals and for an agent that could not be asked."""
+        req = self.walk_request(body)
+        e = self.find(name)
+        if e["retired"]:
+            raise RunnerError(f"{e['name']} is retired", status=409,
+                              extra={"ok": False, "outcome": "refused", "code": "retired"})
+        state = self.container_signal(self.containers([e])[e["container"]])
+        if state["state"] == "unknown":
+            raise RunnerError("could not tell whether the container is running", status=502,
+                              detail=state.get("error"),
+                              extra={"ok": False, "outcome": "refused", "code": "unknown"})
+        if state["state"] != "running":
+            raise RunnerError(f"{e['name']}'s container is {state['state']}, not running: start the agent first",
+                              status=409, extra={"ok": False, "outcome": "refused", "code": "not_running"})
+        timeout = float(req.get("timeout_s") or WALK_DEFAULT_TIMEOUT_S)
+        url = f"http://{self.cfg.agent_host}:{e['port']}/control/walk" + ("?dry_run=1" if dry_run else "")
+        http_req = urllib.request.Request(url, data=json.dumps(req).encode(), method="POST", headers={
+            "Content-Type": "application/json", "Authorization": f"Bearer {self.cfg.token}"})
+        wait = (0 if dry_run else timeout) + WALK_AGENT_SLACK_S
+        try:
+            with urllib.request.urlopen(http_req, timeout=wait) as r:
+                status, raw = r.status, r.read(MAX_BODY_BYTES * 16)
+        except urllib.error.HTTPError as err:
+            with err:
+                status, raw = err.code, err.read(MAX_BODY_BYTES * 16)
+        except (OSError, ValueError) as err:
+            refused = isinstance(getattr(err, "reason", err), ConnectionRefusedError)
+            raise RunnerError("the agent's API did not answer"
+                              + ("" if refused or dry_run else "; the walk may still be running"),
+                              status=502, detail=scrub(str(err))[:200],
+                              extra={"ok": False, "outcome": "unknown", "code": "agent_unreachable"})
+        if status in (401, 405):
+            raise RunnerError("the agent does not accept walk commands: its image predates #178 or its control "
+                              "token does not match the runner's; start it with a rebuild",
+                              status=502, extra={"ok": False, "outcome": "refused", "code": "control_disabled"})
+        try:
+            result = json.loads(scrub(raw.decode("utf-8", "replace")))
+            if not isinstance(result, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            raise RunnerError(f"the agent answered HTTP {status} with something other than JSON", status=502,
+                              extra={"ok": False, "outcome": "unknown", "code": "bad_answer"})
+        result.setdefault("ok", status == 200)
+        result.setdefault("outcome", "arrived" if status == 200 else "failed")
+        return status, result
+
     def list_characters(self, account):
         try:
             return self.characters.list(account)
@@ -485,10 +574,15 @@ class Handler(BaseHTTPRequestHandler):
         supplied = header[7:] if header.lower().startswith("bearer ") else ""
         return hmac.compare_digest(supplied.encode("utf-8"), self.config.token.encode("utf-8"))
 
-    def _audit_write(self, action, agent, result):
+    def _audit_write(self, action, agent, result, **extra):
         LOG.info(json.dumps({"ts": iso(time.time()), "action": action, "agent": agent,
                              "caller": self.client_address[0],
-                             "token": self.config.token_label, "result": result}))
+                             "token": self.config.token_label, "result": result, **extra}))
+
+    def _operator(self):
+        """Who asked wowmap, when wowmap says (X-Operator-Address): the audit then shows the
+        person's address next to wowmap's own, which is the `caller`."""
+        return OPERATOR_RE.sub("", self.headers.get("X-Operator-Address", ""))[:45] or None
 
     def _read_json(self):
         try:
@@ -526,17 +620,46 @@ class Handler(BaseHTTPRequestHandler):
         except RunnerError as e:
             return self._send(e.status, e.body())
 
+    @staticmethod
+    def _walk_audit(request, status, result):
+        """The audit fields of one walk: target, outcome and where the agent started and ended."""
+        request = request if isinstance(request, dict) else {}
+        target = result.get("target") or {k: request.get(k) for k in ("x", "y", "z", "near_player")
+                                          if k in request}
+        return {"target": target, "outcome": result.get("outcome"), "code": result.get("code"),
+                "dry_run": bool(result.get("dry_run")), "start": result.get("start"),
+                "end": result.get("end"), "http": status}
+
+    def _walk(self, name, query):
+        dry = "dry_run=1" in query.split("&")
+        action = "walk-dry-run" if dry else "walk"
+        body = {}
+        try:
+            body = self._read_json()
+            status, result = self.fleet.walk(name, body, dry_run=dry)
+        except RunnerError as e:
+            result = e.body()
+            self._audit_write(action, name, f"error: {e}", operator=self._operator(),
+                              **self._walk_audit(body, e.status, result))
+            return self._send(e.status, result)
+        ok = result.get("outcome") in ("arrived", "dry_run")
+        self._audit_write(action, name, "ok" if ok else f"error: {result.get('outcome')}: {result.get('error')}",
+                          operator=self._operator(), **self._walk_audit(body, status, result))
+        return self._send(status, {"action": action, **result})
+
     def do_POST(self):  # noqa: N802
         path = urlsplit(self.path).path.rstrip("/")
         parts = [unquote(p) for p in path.split("/")[1:]]
         create = parts == ["agents"]
         if not create and (len(parts) != 3 or parts[0] != "agents"
-                           or parts[2] not in ("start", "stop", "retire")):
+                           or parts[2] not in ("start", "stop", "retire", "walk")):
             return self._send(404, {"error": "not found"})
         name, action = (None, "create") if create else (parts[1], parts[2])
         if not self._authorized():
             self._audit_write(action, name, "401")
             return self._send(401, {"error": "token required"})
+        if action == "walk":
+            return self._walk(name, urlsplit(self.path).query)
         try:
             if create:
                 body = self._read_json()

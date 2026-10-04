@@ -11,6 +11,8 @@ Serves:
     POST /api/calibrate       save a per-zone pixel offset
     GET /api/fleet            the agent fleet panel's data, from the agent runner (#137, fleet.py)
     POST /api/fleet/agents/<name>/start|stop   forwarded to the runner (token stays server-side)
+    POST /api/fleet/agents/<name>/walk[?dry_run=1]   walk an agent to a map point or next to a
+                                  player, with its own movement, via the runner (#178, walk.py)
     GET /api/agents           names of agents with an observability API (UM-50)
     GET /api/agent/<name>/<view>  proxy to that agent's read-only GET /<view>
                               (healthz, state, perception, brain)
@@ -62,6 +64,7 @@ import activity as activity_feed
 import item_icons
 import fleet
 import fog
+import walk
 import item_tooltip
 from overlays import load_overlays, subzones
 from transform import MAP_FRAME_H, MAP_FRAME_W, DbcTables, GridAreas
@@ -693,8 +696,28 @@ class Handler(BaseHTTPRequestHandler):
         # CORS preflight, which wowmap never answers: so the header proves it is our page.
         if self.headers.get("X-Fleet-Action") != "1":
             return self._send(403, {"error": "missing X-Fleet-Action header"})
+        if action == "walk":
+            return self._fleet_walk(name, parse_qs(urlparse(self.path).query))
         status, body = RUNNER.act(name, action)
         return self._send(status, body, cache="no-store")
+
+    def _fleet_walk(self, name, qs):
+        """#178: translate the page's click into world coordinates and hand it to the runner."""
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= walk.MAX_BODY_BYTES:
+                raise walk.WalkError(400, "a JSON object body is required")
+            try:
+                payload = json.loads(self.rfile.read(length))
+            except ValueError:
+                raise walk.WalkError(400, "body is not valid JSON")
+            body = walk.build_runner_body(payload, tables())
+        except walk.WalkError as e:
+            return self._send(e.status, {"ok": False, "outcome": "refused", "code": "bad_request", "error": str(e)},
+                              cache="no-store")
+        dry = qs.get("dry_run", [""])[0] in ("1", "true")
+        status, out = RUNNER.walk(name, body, dry_run=dry, operator=self.client_address[0])
+        return self._send(status, out, cache="no-store")
 
     def do_GET(self):  # noqa: N802
         u = urlparse(self.path)
@@ -1941,6 +1964,7 @@ PAGE = r"""<!doctype html>
 /* @activity-css */
 /* @agent-css */
 /* @fleet-css */
+/* @walk-css */
 </style></head>
 <body>
 <aside id="aside">
@@ -1996,6 +2020,7 @@ PAGE = r"""<!doctype html>
 <!-- @chat-js -->
 <!-- @agent-js -->
 <!-- @fleet-js -->
+<!-- @walk-js -->
 <script>
 const $ = (id) => document.getElementById(id);
 const CLASS_DEFAULT = "#8b93a7";
@@ -2154,6 +2179,7 @@ function markListAndMarkersSelected() {
 // Unified selection: called from the player list, a map marker, or a chat sender —
 // highlights the character everywhere and pans the map to their zone.
 function selectCharacter(name) {
+  if (Walk.pickPlayer(name)) return;              // "walk to a player" is armed (#178)
   selected = name;
   if (!calibrating) Inspect.open(name);
   const p = players.find(pl => pl.name === name);
@@ -2537,6 +2563,7 @@ addEventListener('resize', onResize);
 // On a continent it opens the zone under the pointer instead.
 map.on('click', (e) => {
   if (calibrating) return;
+  if (Walk.pickPoint(e)) return;                  // "walk to a point" is armed (#178)
   if (currentArea && currentArea.continent_view) {
     const z = zoneAt(e.latlng.lng, -e.latlng.lat);
     const a = z && areaFor(z.area_id);
@@ -2660,6 +2687,8 @@ PAGE = (PAGE
         .replace("/* @fleet-css */", fleet.FLEET_CSS)
         .replace("<!-- @fleet-html -->", fleet.FLEET_HTML)
         .replace("<!-- @fleet-js -->", fleet.FLEET_JS)
+        .replace("/* @walk-css */", walk.WALK_CSS)
+        .replace("<!-- @walk-js -->", walk.WALK_JS)
         .replace("__CHAT_FEED_URL__", CHAT_FEED_URL))
 
 

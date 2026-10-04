@@ -356,6 +356,25 @@ holds no Docker socket:
 `fleet.py` holds the proxy and the panel's CSS/HTML/JS; `tests/test_fleet.py` runs it
 against a fake runner. Every string from the runner is rendered with `textContent`.
 
+### Walk an agent (#178)
+
+With an agent open in the inspect drawer, a **Walk** block offers **Walk to a point** (then
+click the zone map) and **Walk to a player** (then click a player in the list or on the map),
+each behind a confirm, plus a **dry run** checkbox that only shows the plan. The agent walks
+with its own movement through the runner (`POST /agents/<name>/walk`, see
+`tools/agent-runner/README.md`); wowmap never teleports anything. The block is disabled, with
+the reason, for a human character, an agent whose container is not running or that is not
+logged in, a retired agent, an agent in an instance, and when no runner is configured. On a
+continent map the point mode asks for a zone first.
+
+- `POST /api/fleet/agents/<name>/walk[?dry_run=1]` (needs `X-Fleet-Action: 1`) takes
+  `{"area_id", "nx", "ny"}` (a click as a fraction of the zone art; wowmap inverts the map
+  transform with the zone's WorldMapArea rect, after the page removes the zone's calibration offset) or `{"near_player"}`, never raw
+  world coordinates. It forwards the browser's address as `X-Operator-Address` so the runner's
+  audit names the person. A walk that did not arrive comes back non-2xx with the reason.
+
+`walk.py` holds the conversion, the block's CSS/JS and `tests/test_walk.py`.
+
 ## Agent mind (UM-50)
 
 Agents started with `AGENT_HTTP_PORT` serve a read-only API (`agent/http_api.py`).
