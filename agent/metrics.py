@@ -125,6 +125,8 @@ def derive_metrics(records) -> dict:
             m.jev_cost_usd_total += float(cost)
             if isinstance(ts, (int, float)) and ts >= now - 86400:
                 m.jev_cost_24h_usd += float(cost)
+        if rec.get("confidence_rule") == "low_confidence_safe_fallback":
+            m.jev_low_confidence_total += 1
         confidence = rec.get("confidence")
         if rec.get("brain") == "jev" and isinstance(confidence, (int, float)):
             m.jev_confidence = float(confidence)

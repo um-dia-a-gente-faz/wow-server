@@ -94,13 +94,23 @@ class Decision:
     overridden: str | None = None       # candidate id Jev chose before the safe substitution
     usage: dict = field(default_factory=dict)
     jev_status: str | None = None
-    brain_rule: str | None = None
+    history_notes: list | None = None   # candidates dropped/demoted because of history, with why
 
 
 def llm_catalog() -> list[dict]:
     """The action catalog as the LLM sees it: every registered action except
     LLM_EXCLUDED_ACTIONS."""
     return [s for s in ac.catalog() if s["name"] not in LLM_EXCLUDED_ACTIONS]
+
+
+def _jev_error_status(status) -> str:
+    """Bounded audit class for a failed Jev call."""
+    if isinstance(status, int):
+        if 400 <= status < 500:
+            return "http_4xx"
+        if 500 <= status < 600:
+            return "http_5xx"
+    return "error"
 
 
 class Brain:
@@ -163,13 +173,16 @@ class Brain:
         `handles` (world.handles) lets the candidate generator resolve the
         snapshot's handle-string GUIDs (UM-89) for its unit comparisons."""
         fallback = None
+        failed_jev = None
         if self.jev is not None:
             d = Decision(brain=BRAIN_JEV, model=getattr(self.jev, "model", None))
             fallback = self._jev_skip_reason()
             if fallback is None:
                 try:
+                    notes = []
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
-                                            handles=handles)
+                                            handles=handles, history=history, notes=notes)
+                    d.history_notes = notes or None
                     if blocked is not None:
                         options = [c for c in options
                                    if c["action"] == "idle" or not blocked(c["action"], c["params"])]
@@ -177,22 +190,25 @@ class Brain:
                     d.action, d.params = self.jev.choose_action(snapshot, options, persona=persona,
                                                                 history=history)
                     self._fill_jev(d)
+                    d.jev_status = "success"
                     self._apply_confidence_policy(d, options)
                     return d
                 except JevError as e:
                     self._fill_jev(d)
-                    status = getattr(e, "status", None)
-                    d.jev_status = ("http_4xx" if 400 <= status < 500 else
-                                    "http_5xx" if 500 <= status < 600 else "error") if status else "error"
+                    d.jev_status = _jev_error_status(getattr(e, "status", None))
                     fallback = f"jev call failed: {e}"
                     self._maybe_cool_down(e)
                     log.warning("%s%s", fallback, " — substituting the llm" if self.llm else "")
+                    failed_jev = d
             if self.llm is None:
                 d.fallback = fallback
                 raise BrainError(fallback, d)
 
         d = Decision(brain=BRAIN_LLM, model=getattr(self.llm, "model", None), fallback=fallback,
                      substituted=self.jev is not None)
+        if failed_jev is not None:
+            # The failed Jev call still happened: keep its status and billed usage.
+            d.jev_status, d.usage = failed_jev.jev_status, failed_jev.usage
         try:
             if history is not None:
                 d.action, d.params = self.llm.choose_action(snapshot, llm_catalog(), persona=persona,
@@ -251,7 +267,6 @@ class Brain:
         d.completion_tokens = usage.get("output_tokens")
         d.latency_ms = getattr(self.jev, "last_latency_ms", None)
         d.confidence = getattr(self.jev, "last_confidence", None)
-        d.jev_status = "success" if d.latency_ms is not None else "error"
 
     def _fill_llm(self, d: Decision):
         usage = getattr(self.llm, "last_usage", None) or {}

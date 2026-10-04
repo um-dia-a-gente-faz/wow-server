@@ -61,10 +61,9 @@ class AuditLoggerWriteTest(unittest.TestCase):
                                result={"ok": True}, brain="jev",
                                usage={"input_tokens": 10, "output_tokens": 2, "cost": 0.001,
                                       "api_key": "not-a-secret-to-store", "extra": "discard"},
-                               brain_rule="low confidence", jev_status="success")
+                               jev_status="success")
             d = rec.to_dict()
             self.assertEqual(d["usage"], {"input_tokens": 10, "output_tokens": 2, "cost": 0.001})
-            self.assertEqual(d["brain_rule"], "low confidence")
             self.assertEqual(d["jev_status"], "success")
 
     def test_full_snapshot_included_every_nth_cycle_only(self):

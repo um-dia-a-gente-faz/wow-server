@@ -47,7 +47,8 @@ Record shape (one JSON object per line):
     overridden       str or None: candidate id Jev chose before the safe
                       substitution
     usage            bounded Jev token/cost fields only; no response payload
-    brain_rule       short confidence-rule outcome/reason, when applicable
+    history_notes    list or None: candidates dropped/demoted because of the
+                      recent action history ({"id", "effect", "reason"})
 
 Never writes the LLM API key or account password — nothing in this module
 ever touches `Config.llm_api_key`/`password`; only `Config.redacted()`-safe
@@ -136,8 +137,8 @@ class AuditRecord:
     confidence_rule: str | None = None
     overridden: str | None = None
     usage: dict = field(default_factory=dict)
-    brain_rule: str | None = None
     jev_status: str | None = None
+    history_notes: list | None = None
     snapshot: dict | None = None  # only set when this cycle carries the full snapshot
 
     def to_dict(self) -> dict:
@@ -164,8 +165,8 @@ class AuditRecord:
             "confidence_rule": self.confidence_rule,
             "overridden": self.overridden,
             "usage": self.usage,
-            "brain_rule": self.brain_rule,
             "jev_status": self.jev_status,
+            "history_notes": self.history_notes,
         }
         if self.snapshot is not None:
             d["snapshot"] = self.snapshot
@@ -216,8 +217,9 @@ class AuditLogger:
                fallback: str | None = None, candidates: int | None = None,
                confidence_threshold: float | None = None,
                confidence_rule: str | None = None, overridden: str | None = None,
-               usage: dict | None = None, brain_rule: str | None = None,
+               usage: dict | None = None,
                jev_status: str | None = None,
+               history_notes: list | None = None,
                substituted: bool = False, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snapshot = snapshot or {}
@@ -235,10 +237,10 @@ class AuditLogger:
             reflex=reflex or {}, goal=goal,
             brain=brain, confidence=confidence, fallback=fallback, candidates=candidates,
             confidence_threshold=confidence_threshold, confidence_rule=confidence_rule,
-            overridden=overridden, substituted=substituted,
+            overridden=overridden,
             usage={k: usage[k] for k in ("input_tokens", "output_tokens", "cost")
                    if isinstance(usage, dict) and isinstance(usage.get(k), (int, float))},
-            brain_rule=(str(brain_rule)[:120] if brain_rule else None), jev_status=jev_status,
+            jev_status=jev_status, history_notes=history_notes, substituted=substituted,
             snapshot=snapshot if include_full else None,
         )
 
