@@ -95,12 +95,9 @@ def main():
     # #161: the one brain AGENT_BRAIN selects (llm by default; Jev is opt-in); its client
     # missing -> no think step, the agent idles.
     brain = Brain.from_config(cfg)
+    _warn_jev_unselected(cfg, log)
     if brain is not None:
         log.info("brain: %s", brain.describe())
-        if cfg.jev_enabled and cfg.agent_brain != "jev":
-            log.warning("Jev is configured (JEV_BASE_URL/JEV_API_KEY) but not selected: "
-                        "AGENT_BRAIN=%s, so Jev will never be called. Set AGENT_BRAIN=jev "
-                        "to use it", cfg.agent_brain)
     else:
         log.warning("AGENT_BRAIN=%s has no usable config (LLM_BASE_URL/LLM_MODEL or "
                     "JEV_BASE_URL/JEV_API_KEY) — "
@@ -128,6 +125,15 @@ def main():
         if http_server is not None:
             http_server.shutdown()
     log.info("done.")
+
+
+def _warn_jev_unselected(cfg, log):
+    """Warn when Jev is configured but AGENT_BRAIN selects another brain, whether
+    or not that brain has a usable config."""
+    if cfg.jev_enabled and cfg.agent_brain != "jev":
+        log.warning("Jev is configured (JEV_BASE_URL/JEV_API_KEY) but not selected: "
+                    "AGENT_BRAIN=%s, so Jev will never be called. Set AGENT_BRAIN=jev "
+                    "to use it", cfg.agent_brain)
 
 
 def _start_observer(cfg, audit_logger, log, brain=None):
