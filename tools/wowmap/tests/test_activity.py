@@ -1,6 +1,8 @@
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -248,6 +250,79 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("@activity-", app.PAGE)
         self.assertIn("window.ActivityFeed", app.PAGE)
         self.assertIn("Recent activity", app.PAGE)
+
+
+# Minimal DOM stand-in: enough for ActivityFeed to render, then dump every row's
+# text with each <mark> shown as [..].
+FEED_HARNESS = r"""
+const node = (tag) => ({tag, children: [], className: '', style: {}, value: '',
+  set textContent(v) { this.children = [String(v)]; },
+  append(...k) { this.children.push(...k); }, replaceChildren(f) { this.children = f.children; },
+  setAttribute() {}, focus() {}, setSelectionRange() {}});
+globalThis.document = {createElement: node, createDocumentFragment: () => node('#frag'),
+  addEventListener() {}, hidden: true};
+globalThis.window = globalThis;
+globalThis.setInterval = () => 0;
+globalThis.ago = () => '1m ago';
+globalThis.Inspect = {current: () => 'Rubens'};
+globalThis.fetch = async () => ({ok: true, json: async () => ({sources: {}, events: EVENTS})});
+const txt = (n) => typeof n === 'string' ? n
+  : n.tag === 'mark' ? '[' + n.children.join('') + ']' : n.children.map(txt).join('');
+//SCRIPT//
+(async () => {
+  const box = window.ActivityFeed.section('Rubens');
+  await new Promise((r) => setTimeout(r, 0));
+  const [, search, list] = box.children;
+  search.value = QUERY;
+  search.oninput();
+  console.log(JSON.stringify(list.children.filter((r) => r.className.startsWith('act')).map(txt)));
+})();
+"""
+
+
+def feed_rows(events, query):
+    js = (FEED_HARNESS.replace("EVENTS", json.dumps(events)).replace("QUERY", json.dumps(query))
+          .replace("//SCRIPT//", app.ACTIVITY_JS.replace("<script>", "").replace("</script>", "")))
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+class FeedUiTests(unittest.TestCase):
+    """#173: timestamps, search and scrolling in the drawer's Recent activity."""
+    js, css = app.ACTIVITY_JS, app.ACTIVITY_CSS
+
+    def test_absolute_and_relative_time(self):
+        self.assertIn("const clock = ", self.js)
+        self.assertIn("${clock(e.t)} · ${ago(e.t)}", self.js)
+
+    def test_timer_only_while_tab_visible(self):
+        self.assertIn("if (!document.hidden) refresh()", self.js)
+        self.assertIn("visibilitychange", self.js)
+
+    def test_search_box_is_its_own_and_filters_client_side(self):
+        self.assertIn("'act-search'", self.js)
+        self.assertIn(".activity .act-search", self.css)
+        self.assertIn("search.oninput = render", self.js)
+        self.assertIn("no matches", self.js)
+        self.assertIn("el('mark', null", self.js)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_every_search_match_is_highlighted(self):
+        ev = {"t": 1, "kind": "trade", "text": "Gave Linen Cloth to Bob", "source": "db",
+              "detail": {"item": 2589, "to": "Bob"}}
+        self.assertIn("[trade]", feed_rows([ev], "trade")[0])
+        self.assertIn("[database]", feed_rows([ev], "database")[0])
+        self.assertIn("to [Bob]", feed_rows([ev], "bob")[0])
+        self.assertEqual(feed_rows([ev], "2589"), [])  # hidden detail values can't be highlighted
+
+    def test_list_scrolls_and_says_how_far_back(self):
+        self.assertRegex(self.css, r"\.activity \.act-list \{[^}]*overflow-y:auto")
+        self.assertIn("back to", self.js)
+
+    def test_untrusted_text_never_goes_through_innerhtml(self):
+        self.assertNotIn("innerHTML", self.js)
+        self.assertNotIn("insertAdjacentHTML", self.js)
 
 
 if __name__ == "__main__":

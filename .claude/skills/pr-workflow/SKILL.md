@@ -1,6 +1,6 @@
 ---
 name: pr-workflow
-description: Ship a change in this repo end to end — branch naming, commits, the PR template, CI, and the Linear bookkeeping (attach the PR, set status, record what a human still has to verify). Use when starting work on a UM issue, opening or updating a PR, or reviewing someone else's.
+description: Ship a change in this repo end to end — branch naming, commits, the PR template, CI, and the board bookkeeping (link the PR, set status, record what a human still has to verify). Use when starting work on an issue, opening or updating a PR, or reviewing someone else's.
 ---
 
 # Shipping a change
@@ -9,11 +9,12 @@ Details live in `CONTRIBUTING.md`; this is the loop.
 
 ## Before writing code
 
-1. Read the Linear issue in full: description, acceptance criteria, comments (owner
-   decisions often live in a comment and override the description), and its agent brief.
+1. Read the GitHub issue in full: description, acceptance criteria, `## Blocked by`, and
+   comments (owner decisions often live in a comment and override the description).
 2. Check `docs/AGENT-DIRECTION.md` for constraints on the area you're touching.
-3. Branch from `main`: `feature/UM-<n>-<slug>` or `bugfix/UM-<n>-<slug>`.
-   Use a worktree for parallel work: `git worktree add ../wowwork-<slug> -b feature/UM-<n>-<slug>`.
+3. Branch from `main`: `feature/gh-<n>-<slug>` or `bugfix/gh-<n>-<slug>` (`UM-<n>` only for an issue
+   mirrored from Linear).
+   Use a worktree for parallel work: `git worktree add ../wowwork-<slug> -b feature/gh-<n>-<slug> origin/main`.
 
 ## While working
 
@@ -31,8 +32,8 @@ Details live in `CONTRIBUTING.md`; this is the loop.
 
 ## Opening the PR
 
-- Title `UM-<n>: <brief summary>`; body from `.github/PULL_REQUEST_TEMPLATE.md`, starting
-  with `Issue: UM-<n>`.
+- Title `#<n>: <brief summary>`; body from `.github/PULL_REQUEST_TEMPLATE.md`, starting
+  with `Issue: #<n>`.
 - Every issue is linked to a PR, so the body says `Closes <ref>` — never `Refs`, which
   links nothing. If live or human steps remain, keep `Closes`, leave them unticked
   and add the note from `CONTRIBUTING.md` (issue is to be reopened if they fail).
@@ -46,17 +47,19 @@ Details live in `CONTRIBUTING.md`; this is the loop.
   Never tick a box you didn't check.
 - Wait for CI (`gh pr checks <n> --watch`). Green before you call it done.
 
-## Linear bookkeeping
+## Board bookkeeping
 
-- Attach the PR link to the issue and leave it **In Progress**. Don't mark it Done —
-  the owner merges and closes.
+- The issue is *In progress* while you write it and *In Review* once the PR is open with
+  CI green. Merging closes it through `Closes #<n>`, which moves it to *Done*.
 - Comment on the issue with what you verified live and what is still open.
 - File new problems you found as their own issue in the right milestone rather than
   widening this PR's scope.
 
 ## Never
 
-- Never merge your own PR, and never push to `main`.
+- Never merge a PR that is not yours, or one no other agent has reviewed, or one with red
+  CI or open change requests. Never push to `main`. To merge your own reviewed PR, follow
+  `milestone-loop`.
 - Never force-push a branch someone may have based work on; never delete a branch another
   PR uses as its base.
 - Never restart the worldserver or run `scripts/deploy.sh` — merging auto-deploys.
