@@ -142,6 +142,42 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the conventional commit standard, PR 
 
 This repo follows [Conventional Commits](https://www.conventionalcommits.org/) — every commit message is `<type>(<scope>): <description>` (e.g. `feat(exporter): add position metrics`). PRs use the template at `.github/PULL_REQUEST_TEMPLATE.md`.
 
+## Offline brain A/B replay
+
+`python3 -m agent.tools.ab` replays full snapshots in agent audit JSONL files
+through the registered-action LLM tools and Jev candidate choices, then writes
+a comparable JSON result (default `ab-results.json`). Copy an audit file from
+the VM's `/opt/wow-server-metrics/audit/<agent>/<day>.jsonl` to this checkout;
+the harness does not connect to the realm. For example:
+
+```sh
+LLM_BASE_URL=https://your-llm-gateway/v1 LLM_MODEL=your-model \
+JEV_API_KEY="$JEV_API_KEY" python3 -m agent.tools.ab /path/to/2026-10-04.jsonl \
+  --brains llm,jev --from 20 --limit 50 --max-calls 100 \
+  --estimated-cost-per-call 0 --output docs/ab-run.json
+```
+
+The estimated cost is printed before provider calls; it is a user-supplied
+per-call estimate because provider prices vary. `--max-calls` counts LLM calls
+and Jev calls that have more than one candidate. Actual reported cost sums the
+provider's returned `usage.cost` values. A good first signal is a high valid
+choice rate and agreement rate; disagreements and invalid LLM tool calls need
+review against their recorded outcomes, rather than a prose score. LLM output
+is expected to be stable for a pinned model and input, but gateways/models can
+be nondeterministic. Jev inputs (snapshot and generated candidates) are stable;
+provider Jev choices may also vary.
+
+Audit logs omit full snapshots on most successful cycles (they retain only a
+hash), so those records are reported as skipped. `--record fixtures.jsonl`
+appends real Jev choices keyed by a hash of snapshot plus candidates;
+`--fixtures fixtures.jsonl` replays those choices offline with no provider
+calls. CI uses only the offline fixture adapter and never calls a provider.
+
+No real comparison artifact is included yet: this checkout has no VM audit log
+with attached snapshots and no configured LLM gateway/Jev credentials. The
+first-run command above is the human step needed to produce one. A real fixture
+can likewise only be captured when Jev is configured and reachable.
+
 ## Architecture
 
 ```
