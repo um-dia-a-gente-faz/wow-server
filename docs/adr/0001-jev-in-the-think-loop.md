@@ -24,6 +24,13 @@ It is available through OpenRouter as `typesafe/jev-1.13` (alias
 `~typesafe/jev-latest`), authenticated with a plain OpenRouter API key (no
 separate TypeSafe account), via `POST https://openrouter.ai/api/alpha/decisions`
 or the TypeSafe SDK pointed at `POST https://openrouter.ai/api/v1/systemone`.
+
+**Provider (GH-195):** native TypeSafe is the intended production provider
+(`POST https://api.typesafe.ai/v1/systemone`, model `jev-latest`, a TypeSafe
+key); the OpenRouter proxy remains supported and is the code default so
+existing setups and `tools/jev-mock` keep working. The endpoint path is
+`JEV_PATH` and the model id `JEV_MODEL`, so switching is `.env`-only (see
+`.env.example`). `answers.{name}` has the same shape on both.
 Because the output is constrained to the options handed to it, it cannot
 hallucinate an action name or emit malformed params — the entire problem
 class UM-89/UM-92 exist to patch around disappears by construction. It

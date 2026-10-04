@@ -77,6 +77,7 @@ x-agent: &agent-defaults
     # OPENROUTER_API_KEY (#164); the direct provider is the default.
     JEV_PROVIDER: ${JEV_PROVIDER:-}
     JEV_BASE_URL: ${JEV_BASE_URL:-}
+    JEV_PATH: ${JEV_PATH:-}
     JEV_API_KEY: ${JEV_API_KEY:-}
     JEV_MODEL: ${JEV_MODEL:-}
     JEV_MIN_CONFIDENCE: ${JEV_MIN_CONFIDENCE:-}  # #165 confidence policy; empty = 0.0 = rule off

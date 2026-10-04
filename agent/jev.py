@@ -9,9 +9,14 @@ client asks Jev which one, and returns that candidate's `(action, params)`.
 Since the answer can only be one of the keys we sent, a hallucinated action
 name or a mangled GUID cannot happen.
 
-Wire format: the Decisions API, `POST {JEV_BASE_URL}/decisions`, bearer auth
-with JEV_API_KEY. The base URL is always explicit (agent/config.py); the
-OpenRouter base below is only used for JEV_PROVIDER=openrouter. Field names follow OpenRouter's Jev tutorial and Decisions
+Wire format: `POST {JEV_BASE_URL}{JEV_PATH}`, bearer auth with JEV_API_KEY.
+`JEV_PATH` defaults to `/decisions` (agent/config.py). The base URL is always
+explicit; the OpenRouter base below is only used for JEV_PROVIDER=openrouter.
+Two providers share this shape: OpenRouter's Decisions API (base
+`https://openrouter.ai/api/alpha`, path `/decisions`, model
+`typesafe/jev-1.13`, OpenRouter key) and TypeSafe's native API (base
+`https://api.typesafe.ai`, path `/v1/systemone`, model `jev-latest`, TypeSafe
+key; GH-195). Field names follow OpenRouter's Jev tutorial and Decisions
 API reference (checked 2026-10-02, not yet against a real call):
 
     request:  {"model", "state", "questions": {name: {"type": "choice",
@@ -33,6 +38,7 @@ import urllib.request
 from agent.llm import compact_snapshot
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"  # JEV_PROVIDER=openrouter only
+DEFAULT_PATH = "/decisions"
 DEFAULT_MODEL = "typesafe/jev-1.13"
 DEFAULT_TIMEOUT_S = 20.0
 
@@ -129,8 +135,10 @@ class JevClient:
     across think cycles."""
 
     def __init__(self, base_url: str, model: str = DEFAULT_MODEL,
-                 api_key: str = "", timeout: float = DEFAULT_TIMEOUT_S):
+                 api_key: str = "", timeout: float = DEFAULT_TIMEOUT_S,
+                 path: str = DEFAULT_PATH):
         self.base_url = base_url.rstrip("/")
+        self.path = "/" + (path or DEFAULT_PATH).lstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
@@ -149,8 +157,12 @@ class JevClient:
         self.last_confidence = None
         self.last_probabilities = {}
 
-    def _post(self, path: str, body: dict) -> dict:
-        url = f"{self.base_url}{path}"
+    @property
+    def url(self) -> str:
+        return f"{self.base_url}{self.path}"
+
+    def _post(self, body: dict) -> dict:
+        url = self.url
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -192,7 +204,7 @@ class JevClient:
 
         body = build_request(self.model, snapshot, by_key, persona=persona, history=history)
         t0 = time.monotonic()
-        response = self._post("/decisions", body)
+        response = self._post(body)
         self.last_latency_ms = (time.monotonic() - t0) * 1000.0
         usage = response.get("usage")
         self.last_usage = usage if isinstance(usage, dict) else {}

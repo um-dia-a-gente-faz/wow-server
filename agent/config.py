@@ -87,6 +87,10 @@ class Config:
         OPENROUTER_BASE_URL if _env_str("JEV_PROVIDER").lower() == "openrouter" else ""))
     jev_api_key: str = field(default_factory=lambda: _env_str("JEV_API_KEY") or (
         _env_str("OPENROUTER_API_KEY") if _env_str("JEV_PROVIDER").lower() == "openrouter" else ""))
+    # Endpoint path appended to jev_base_url (GH-195): "/decisions" for the
+    # OpenRouter proxy, "/v1/systemone" for native TypeSafe. `or`, not a
+    # default: an unset or empty JEV_PATH falls back to "/decisions".
+    jev_path: str = field(default_factory=lambda: _env_str("JEV_PATH") or "/decisions")
     jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL") or "typesafe/jev-1.13")
     # Confidence policy (GH-165, agent/brain.py): below this Jev's choice is
     # replaced by the safe candidate (idle). 0.0 = rule off until measured.
@@ -158,6 +162,7 @@ class Config:
             "llm_model": self.llm_model or "(unset)",
             "jev": "on" if self.jev_enabled else "(off)",
             "jev_base_url": self.jev_base_url,
+            "jev_path": self.jev_path,
             "jev_model": self.jev_model,
             "jev_min_confidence": self.jev_min_confidence,
             "jev_api_key": "***" if self.jev_api_key else "(unset)",
