@@ -8,6 +8,9 @@ interact through the game server (chat, party, trade).
 import os
 from dataclasses import dataclass, field
 
+# Only used when JEV_PROVIDER=openrouter; see Config.jev_base_url.
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"
+
 
 def _env_str(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
@@ -72,21 +75,26 @@ class Config:
     llm_model: str = field(default_factory=lambda: _env_str("LLM_MODEL", ""))
 
     # ── Jev decision model (UM-99, ADR 0001) ──────────────────
-    # OpenRouter Decisions API. The key is JEV_API_KEY, else OPENROUTER_API_KEY.
+    # Direct provider (#164): JEV_BASE_URL, JEV_API_KEY and JEV_MODEL are all
+    # explicit; there is no default endpoint and no OPENROUTER_API_KEY fallback.
     # Jev is the think step's brain (UM-101, agent/brain.py) only when
-    # AGENT_BRAIN=jev; jev_enabled says whether a key or an explicit
-    # JEV_BASE_URL is set (tools/jev-mock needs no key).
-    # `or`, not a default: compose passes unset vars through as "".
-    jev_base_url: str = field(default_factory=lambda: _env_str(
-        "JEV_BASE_URL") or "https://openrouter.ai/api/alpha")
-    jev_api_key: str = field(default_factory=lambda: _env_str(
-        "JEV_API_KEY") or _env_str("OPENROUTER_API_KEY"))
+    # AGENT_BRAIN=jev and JEV_BASE_URL is set (tools/jev-mock needs no key);
+    # a key without a base URL is off.
+    # JEV_PROVIDER=openrouter opts back in to OpenRouter's default base URL and
+    # its OPENROUTER_API_KEY. `or`, not a default: compose passes unset vars as "".
+    jev_provider: str = field(default_factory=lambda: _env_str("JEV_PROVIDER").lower())
+    jev_base_url: str = field(default_factory=lambda: _env_str("JEV_BASE_URL") or (
+        OPENROUTER_BASE_URL if _env_str("JEV_PROVIDER").lower() == "openrouter" else ""))
+    jev_api_key: str = field(default_factory=lambda: _env_str("JEV_API_KEY") or (
+        _env_str("OPENROUTER_API_KEY") if _env_str("JEV_PROVIDER").lower() == "openrouter" else ""))
     jev_model: str = field(default_factory=lambda: _env_str("JEV_MODEL") or "typesafe/jev-1.13")
     # Confidence policy (GH-165, agent/brain.py): below this Jev's choice is
     # replaced by the safe candidate (idle). 0.0 = rule off until measured.
     jev_min_confidence: float = field(default_factory=lambda: _env_float("JEV_MIN_CONFIDENCE", 0.0))
     jev_enabled: bool = field(default_factory=lambda: bool(
-        _env_str("JEV_BASE_URL") or _env_str("JEV_API_KEY") or _env_str("OPENROUTER_API_KEY")))
+        _env_str("JEV_BASE_URL") or (
+            _env_str("JEV_PROVIDER").lower() == "openrouter"
+            and (_env_str("JEV_API_KEY") or _env_str("OPENROUTER_API_KEY")))))
 
     # ── Logging ───────────────────────────────────────────────
     log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))

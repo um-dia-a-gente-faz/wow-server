@@ -67,17 +67,21 @@ x-agent: &agent-defaults
     LLM_BASE_URL: ${LLM_BASE_URL:-}
     LLM_API_KEY: ${LLM_API_KEY:-}
     LLM_MODEL: ${LLM_MODEL:-}  # one id, or a comma-separated fallback list (UM-94, see .env.example)
-    # UM-101: Jev, the primary brain when set (agent/brain.py); empty = off.
+    # UM-101/#191: Jev is opt-in (agent/brain.py): the LLM plays unless AGENT_BRAIN=jev;
+    # a configured Jev key with AGENT_BRAIN=llm only logs a warning.
     # Same trap as above: unless passed through here, a key in .env never
     # reaches the containers.
     AGENT_BRAIN: ${AGENT_BRAIN:-llm}  # llm | jev (#161)
     AGENT_BRAIN_FALLBACK: ${AGENT_BRAIN_FALLBACK:-none}  # none | llm: only with AGENT_BRAIN=jev
+    # JEV_PROVIDER=openrouter opts in to OpenRouter's base URL and
+    # OPENROUTER_API_KEY (#164); the direct provider is the default.
+    JEV_PROVIDER: ${JEV_PROVIDER:-}
     JEV_BASE_URL: ${JEV_BASE_URL:-}
     JEV_API_KEY: ${JEV_API_KEY:-}
     JEV_MODEL: ${JEV_MODEL:-}
     JEV_MIN_CONFIDENCE: ${JEV_MIN_CONFIDENCE:-}  # #165 confidence policy; empty = 0.0 = rule off
-    # Fallback for JEV_API_KEY (agent/config.py). Passed so setting only this
-    # key in .env reaches the containers (#190).
+    # Read only when JEV_PROVIDER=openrouter (agent/config.py); passed so
+    # setting it in .env reaches the containers (#190).
     OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     AGENT_MAX_TOKENS_PER_HOUR: ${AGENT_MAX_TOKENS_PER_HOUR:-0}
     # #190: documented in .env.example and read by agent/config.py, so they must

@@ -1,0 +1,667 @@
+{
+  "uid": "jev-decision-usage",
+  "title": "Jev \u2014 decision usage",
+  "tags": [
+    "wow",
+    "wow-server",
+    "agents",
+    "jev",
+    "usage"
+  ],
+  "timezone": "browser",
+  "refresh": "30s",
+  "editable": true,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Jev calls / sec",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "calls/s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (rate(wow_agent_jev_calls_total[5m]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Jev errors / sec",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "errors/s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, status) (rate(wow_agent_jev_errors_total[5m]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Input tokens",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (increase(wow_agent_jev_prompt_tokens_total[1d]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(wow_agent_jev_prompt_tokens_total[1d]))",
+          "legendFormat": "total",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Output tokens",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (increase(wow_agent_jev_completion_tokens_total[1d]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(wow_agent_jev_completion_tokens_total[1d]))",
+          "legendFormat": "total",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Spend per agent, last 24h",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (increase(wow_agent_jev_cost_usd_total[24h]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Daily spend (rolling 24h)",
+      "description": "Observed Jev cost per agent over the last 24 hours, refreshed from the audit log.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (wow_agent_jev_cost_usd_24h)",
+          "legendFormat": "{{agent}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Spend total, last 24h",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(wow_agent_jev_cost_usd_total[24h]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Daily cost projection",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(wow_agent_jev_cost_usd_total[1d])) * 86400",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Weekly cost projection",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(wow_agent_jev_cost_usd_total[7d])) * 604800",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Latest confidence",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "wow_agent_jev_confidence",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Low-confidence substitutions",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (increase(wow_agent_jev_low_confidence_total[24h]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Jev decision latency p95",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, agent) (rate(wow_agent_jev_latency_ms_bucket[5m])))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Think cycles per agent",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (increase(wow_agent_audit_cycles_total[1h]))",
+          "legendFormat": "{{agent}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Jev activity vs active agents",
+      "description": "Non-zero agent cycle series with zero Jev calls means Jev is idle, disabled, or misconfigured. Calls remain zero until a Decisions request is observed.",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(wow_agent_jev_calls_total) or vector(0)",
+          "legendFormat": "Jev calls total"
+        },
+        {
+          "refId": "B",
+          "expr": "count(wow_agent_audit_cycles_total)",
+          "legendFormat": "agents with audit cycles"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": []
+  }
+}

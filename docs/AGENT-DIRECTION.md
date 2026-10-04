@@ -41,6 +41,10 @@ reconnect; UM-43). The LLM turns reflexes on and off; the reflex executes.
 
 ### 3. Models are free only
 
+The LLM is the default brain; Jev is opt-in per agent with `AGENT_BRAIN=jev`
+([ADR 0001](adr/0001-jev-in-the-think-loop.md), update 2026-10-04). The tiers
+below describe the LLM brain.
+
 - **Primary:** [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi),
   routing to free models (OpenRouter, OpenCode, and others). Pin a short list
   of models that are good at tool calls; `auto` gave only ~50% valid tool
@@ -64,7 +68,7 @@ UM-61 benchmarks the options and sizes the capacity. Estimates until then:
 
 > **Paused (UM-98, 2026-10).** Chat is deferred, not dropped:
 > [ADR 0001](adr/0001-jev-in-the-think-loop.md) makes Jev, which cannot
-> generate text, the primary decision brain. `say`, `yell`, `whisper`,
+> generate text, the decision brain when `AGENT_BRAIN=jev`. `say`, `yell`, `whisper`,
 > `emote` and `channel_say` are no longer registered in
 > `agent.actions.REGISTRY`, so the brain is never offered them. The send
 > functions and action classes stay in `agent/actions.py` for the LLM

@@ -91,6 +91,40 @@ class DeriveMetricsMultiAgentTest(unittest.TestCase):
         self.assertEqual(by_agent["A"].valid_tool_calls_total, 1)
         self.assertEqual(by_agent["B"].invalid_tool_calls_total, 1)
 
+    def test_jev_usage_errors_and_zero_series(self):
+        records = [
+            {"agent": "Jev1", "ts": __import__("time").time(), "brain": "jev",
+             "jev_status": "success", "usage": {"input_tokens": 123, "output_tokens": 4, "cost": 0.01},
+             "confidence": 0.8, "latency_ms": 120, "valid": True, "result": {"ok": True}},
+            {"agent": "Jev1", "ts": __import__("time").time(), "brain": "llm",
+             "jev_status": "http_429", "fallback": "jev failed", "valid": True, "result": {"ok": True}},
+        ]
+        # Unknown status text is intentionally ignored to keep labels bounded.
+        records[-1]["jev_status"] = "http_4xx"
+        text = render_prometheus_text(derive_metrics(records))
+        self.assertIn('wow_agent_jev_calls_total{agent="Jev1"} 1', text)
+        self.assertIn('wow_agent_jev_errors_total{agent="Jev1",status="http_4xx"} 1', text)
+        self.assertIn('wow_agent_jev_fallback_total{agent="Jev1"} 1', text)
+        self.assertIn('wow_agent_jev_prompt_tokens_total{agent="Jev1"} 123', text)
+        self.assertIn('wow_agent_jev_confidence{agent="Jev1"} 0.8', text)
+
+    def test_jev_metric_families_exist_with_no_agents(self):
+        text = render_prometheus_text({})
+        for name in ("wow_agent_jev_calls_total", "wow_agent_jev_errors_total",
+                     "wow_agent_jev_fallback_total", "wow_agent_jev_prompt_tokens_total",
+                     "wow_agent_jev_completion_tokens_total", "wow_agent_jev_cost_usd_total",
+                     "wow_agent_jev_cost_usd_24h", "wow_agent_jev_confidence",
+                     "wow_agent_jev_low_confidence_total", "wow_agent_jev_latency_ms"):
+            self.assertIn(f"# TYPE {name}", text)
+
+    def test_non_jev_cycle_renders_zero_jev_series(self):
+        rec = {"agent": "IdleJev", "ts": 1, "brain": "llm", "valid": True,
+               "result": {"ok": True}, "tool_call": {"name": "face", "args": {}}}
+        text = render_prometheus_text(derive_metrics([rec]))
+        self.assertIn('wow_agent_jev_calls_total{agent="IdleJev"} 0', text)
+        self.assertIn('wow_agent_jev_cost_usd_24h{agent="IdleJev"} 0.0', text)
+        self.assertIn('wow_agent_jev_errors_total{agent="IdleJev",status="http_5xx"} 0', text)
+
 
 if __name__ == "__main__":
     unittest.main()

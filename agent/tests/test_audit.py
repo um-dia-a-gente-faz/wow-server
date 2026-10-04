@@ -54,6 +54,18 @@ class AuditLoggerWriteTest(unittest.TestCase):
             fallback="jev call failed: HTTP 429")
         self.assertEqual(rec.to_dict()["fallback"], "jev call failed: HTTP 429")
 
+    def test_jev_usage_is_bounded_and_keeps_only_token_cost_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = AuditLogger("Jev", base_dir=tmp)
+            rec = audit.record(cycle=1, snapshot={}, tool_call={}, valid=True,
+                               result={"ok": True}, brain="jev",
+                               usage={"input_tokens": 10, "output_tokens": 2, "cost": 0.001,
+                                      "api_key": "not-a-secret-to-store", "extra": "discard"},
+                               jev_status="success")
+            d = rec.to_dict()
+            self.assertEqual(d["usage"], {"input_tokens": 10, "output_tokens": 2, "cost": 0.001})
+            self.assertEqual(d["jev_status"], "success")
+
     def test_full_snapshot_included_every_nth_cycle_only(self):
         logger = AuditLogger("A", base_dir=self.tmp.name, full_snapshot_every=3)
         snap = {"position": {"x": 1}}
