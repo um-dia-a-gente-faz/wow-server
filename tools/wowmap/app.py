@@ -1004,6 +1004,8 @@ INSPECT_CSS = r"""
   .drawer .meter-bar .fill { position:absolute; inset:0 auto 0 0; }
   .drawer .meter-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
                       line-height:16px; text-shadow:0 0 2px #000, 0 0 2px #000; }
+  .drawer .kv .k .si { width:13px; height:13px; vertical-align:-2px; margin-right:5px; fill:currentColor; }
+  .si.health { color:#3fbf5a; } .si.mana { color:#4f7fe8; } .si.gold { color:#f3b84b; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
   /* UM-80: paper doll, bag bar and bag grids (38 px squares, game layout). */
@@ -1066,6 +1068,14 @@ INSPECT_CSS = r"""
 """
 
 INSPECT_HTML = r"""
+<!-- #176: stat icons, inline so the page fetches nothing for them. -->
+<svg id="stat-icons" width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-health" viewBox="0 0 16 16"><path d="M8 14.5 1.8 8.4A3.8 3.8 0 0 1 8 3.6a3.8 3.8 0 0 1 6.2 4.8z"/></symbol>
+  <symbol id="i-mana" viewBox="0 0 16 16"><path d="M8 1.5C6 5 3.5 7.6 3.5 10.3a4.5 4.5 0 0 0 9 0C12.5 7.6 10 5 8 1.5z"/></symbol>
+  <symbol id="i-gold" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="4" fill="#0000" stroke="#0006" stroke-width="1.2"/></symbol>
+  <symbol id="i-played" viewBox="0 0 16 16"><path d="M3 1.5h10v1.5h-1v1.8L9.2 8l2.8 3.2V13h1v1.5H3V13h1v-1.8L6.8 8 4 4.8V3H3zm2.5 1.5v1.2L8 7l2.5-2.8V3z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 16 16"><path d="M2 2h7v2H4v8h5v2H2zm8 2.5L13.5 8 10 11.5V9H6V7h4z"/></symbol>
+</svg>
 <section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspect character">
   <div class="drawer-head">
     <div class="dh-main" id="inspect-head"></div>
@@ -1089,6 +1099,14 @@ function mapCoordsText(p) {
 }
 function worldText(x, y, z) {
   return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
+}
+// Relative age ("2h ago"), shared by the drawer stats and the activity feed (#176).
+function ago(t) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - t));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
 // In-game style item tooltip (UM-80). The API sends ready-made lines
@@ -1217,6 +1235,21 @@ const Inspect = (() => {
     v.append(b);
     r.append(v);
     return r;
+  }
+  // #176: icon in front of a kv/meter row's label, exact value on hover.
+  function stat(name, label, row, title) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', `si ${name}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', label);
+    const t = document.createElementNS(svg.namespaceURI, 'title');
+    t.textContent = label;
+    const use = document.createElementNS(svg.namespaceURI, 'use');
+    use.setAttribute('href', `#i-${name}`);
+    svg.append(t, use);
+    row.querySelector('.k').prepend(svg);
+    if (title) row.title = title;
+    return row;
   }
   function money(copper) {
     const c = Number(copper) || 0;
@@ -1447,17 +1480,21 @@ const Inspect = (() => {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(meter('Health', c.health, c.max_health, BAR_COLORS.health));
+    f.append(stat('health', 'Health', meter('Health', c.health, c.max_health, BAR_COLORS.health),
+                  `health ${c.health} / ${c.max_health ?? '?'}`));
     const power = c.power || {}, maxPower = c.max_power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
       const scale = POWER_SCALE[key] || 1;
-      f.append(meter(POWER_LABELS[key], Math.floor(power[key] / scale),
-                     Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]));
+      const row = meter(POWER_LABELS[key], Math.floor(power[key] / scale),
+                        Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]);
+      f.append(key === 'mana' ? stat('mana', 'Mana', row, `mana ${power.mana} / ${maxPower.mana ?? '?'}`) : row);
     }
-    f.append(kv('Gold', money(c.money)));
-    f.append(kv('Played time', duration(c.totaltime)));
-    f.append(kv('Last logout', when(c.logout_time)));
+    f.append(stat('gold', 'Gold', kv('Gold', money(c.money)), `${nf.format(c.money)} copper`));
+    f.append(stat('played', 'Played time', kv('Played time', c.totaltime ? duration(c.totaltime) : '—'),
+                  `played ${c.totaltime}s`));
+    f.append(stat('logout', 'Last logout', kv('Last logout', c.logout_time ? ago(c.logout_time) : '—'),
+                  `last logout ${when(c.logout_time)}`));
 
     f.append(el('h3', null, 'Position'));
     f.append(kv('Location', placeText(c)));
@@ -1830,14 +1867,6 @@ window.ActivityFeed = (() => {
       i = j + q.length;
     }
     parent.append(s.slice(i));
-  }
-
-  function ago(t) {
-    const s = Math.max(0, Math.round(Date.now() / 1000 - t));
-    if (s < 60) return `${s}s ago`;
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-    return `${Math.floor(s / 86400)}d ago`;
   }
 
   function render() {
