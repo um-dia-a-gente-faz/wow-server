@@ -1,6 +1,6 @@
 ---
 name: milestone-loop
-description: Work a GitHub milestone end to end as a senior dev, in a loop — pick an unblocked issue, branch from main, build it, open the PR, wait for another agent's review, apply its fixes, merge your own PR, repeat until the milestone is done. Use when asked to "work the milestone", "loop the issues of M3", or run `/milestone-loop <milestone>`.
+description: Work GitHub milestones end to end as a senior dev, in a loop — pick an unblocked issue, branch from main, build it, open the PR, wait for another agent's review, apply its fixes, merge your own PR, repeat until the milestone is done, then move on to the next milestone. Use when asked to "work the milestone", "loop the issues of M3", or run `/milestone-loop <milestone>`.
 ---
 
 # Milestone loop
@@ -10,7 +10,13 @@ re-arms itself with `ScheduleWakeup` (300 s). Everything is derived from GitHub,
 tick can be killed and restarted at any point. Read `CLAUDE.md` and `pr-workflow`
 first; this skill only adds the loop and the merge rules.
 
-Argument: the milestone title. Default `M3 - Jev decision brain`.
+Arguments: `[<start milestone title>] [idle=<n>]`. Default start `M3 - Jev decision brain`.
+`idle` is the count of consecutive idle ticks; the loop carries it in its own re-arm prompt.
+
+**Milestone order.** Sort milestones by their `M<n>` number ascending, `Later - …` last
+(`gh api repos/um-dia-a-gente-faz/wow-server/milestones?state=open`). The **current
+milestone** is the first one at or after the start milestone that still has open issues. When
+it is finished the loop moves to the next one by itself; it never goes back before the start.
 
 Repo `um-dia-a-gente-faz/wow-server`, board = org project 7. Use
 `gh` (auth: `gh auth status`). Never run anything on the VM.
@@ -65,7 +71,7 @@ End the tick.
 ### 2. Pick an issue
 
 Only if I have no open PR waiting on me. Eligible = all of:
-- open, in the milestone: `gh issue list -R … --milestone "<m>" --state open --json number,title,labels,assignees,body`
+- open, in the current milestone: `gh issue list -R … --milestone "<m>" --state open --json number,title,labels,assignees,body`
 - board status *Todo* (`gh project item-list 7 --owner um-dia-a-gente-faz --limit 200 --format json`)
 - no assignee, and no open PR already closing it
 - **no open blocker**: parse the `## Blocked by` section of the body for `#<n>` and check each
@@ -74,7 +80,7 @@ Only if I have no open PR waiting on me. Eligible = all of:
 - not an umbrella/staged issue you cannot finish in one PR (e.g. a multi-stage roster plan):
   report it instead of starting it
 
-Take the lowest-numbered eligible one. None eligible → see *Idle* below.
+Take the lowest-numbered eligible one. None eligible in the current milestone → see *Idle*.
 
 ### 3. Develop it
 
@@ -97,16 +103,25 @@ Take the lowest-numbered eligible one. None eligible → see *Idle* below.
 
 ### 4. Re-arm
 
-Call `ScheduleWakeup` with `delaySeconds: 300`, prompt `/milestone-loop <milestone>`,
+Call `ScheduleWakeup` with `delaySeconds: 300`, prompt `/milestone-loop <current milestone> idle=<n>`,
 `noop: true` when this tick changed nothing (still waiting), `false` otherwise. Write a
 two-line summary in the reply: what you did, what you are waiting for.
 
-## Idle and stop
+## Idle, advancing, stop
 
-- Nothing eligible but my PRs or other agents' PRs are open → wait (`noop: true`).
-- Twelve idle ticks in a row (about an hour) → stop and report.
-- **Milestone done** = no open issues in it, and none of my PRs open → `ScheduleWakeup` with
-  `stop: true`, then report: issues merged, issues skipped and why, human steps left over.
+- Nothing eligible but my PRs or other agents' PRs are open → wait (`noop: true`, `idle`+1).
+  Any tick that acts resets `idle` to 0.
+- **Milestone done** = every issue in it is closed (merged) and none of my PRs is open. Then
+  the current milestone becomes the next one in order, and the same tick continues from
+  step 2 on it. Say so in the tick summary: milestone name, issues merged.
+- **Milestone stuck** = `idle` reaches 12 (about an hour) with open issues left that I cannot
+  act on (blocked by something outside my PRs, skipped as ambiguous or too big, or owned by
+  another agent). Do not wait forever: record them as *left over* for the final report,
+  treat the milestone as passed, move to the next one and reset `idle`.
+- **All done** = no later milestone has open issues, and none of my PRs is open →
+  `ScheduleWakeup` with `stop: true`, then report per milestone: issues merged, left over and
+  why, human steps still open.
+- Left-over issues are revisited only if the owner restarts the loop at that milestone.
 
 ## Never
 
