@@ -11,7 +11,7 @@ from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
-from agent.reflexes import rest  # noqa: F401 registers rest
+from agent.reflexes import rest  # noqa: F401 registers rest for candidate registry coverage
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 MY_GUID = 1
@@ -370,13 +370,40 @@ class SnapshotFieldsTest(unittest.TestCase):
 
 class RegistryCoverageTest(unittest.TestCase):
     def test_every_registered_action_is_offered_or_documented(self):
-        offered = {c["action"] for c in cand.generate({})}
-        # Candidate branches' actions, including actions not active in an
-        # empty snapshot. A new registration must be exercised or explained.
-        offered.update({"move_to", "move_towards", "interact", "gossip_select", "accept_quest",
-                        "complete_quest", "turn_in_quest", "abandon_quest", "loot", "auto_attack",
-                        "follow", "assist", "stop_following", "accept_group", "close_window",
-                        "cast_spell", "train_spell", "equip_item", "use_item", "sell_item"})
+        offered = set()
+        # Gather actions emitted by actual scenario shapes, rather than a
+        # manually maintained list that could outlive a deleted branch.
+        for name in ("combat", "quest", "loot", "idle"):
+            offered.update(c["action"] for c in cand.generate(load(name), my_guid=MY_GUID))
+        trainer = {"window": {"kind": "trainer", "npc_guid": 8,
+                              "spells": [{"spell_id": 587}]}}
+        offered.update(c["action"] for c in cand.generate(trainer))
+        reward = {"window": {"kind": "quest_offer_reward", "npc_guid": 8, "quest_id": 9}}
+        offered.update(c["action"] for c in cand.generate(reward))
+        offered.update(c["action"] for c in cand.generate({"is_ghost": True,
+                                                            "corpse_position": {"x": 1, "y": 2, "z": 3}}))
+        offered.update(c["action"] for c in cand.generate({
+            "me": {"level": 3}, "nearby_units": [{"guid": 5, "quest_giver_status": "available",
+                                                       "distance": 3, "name": "trainer"}] }))
+        threat_case = {"spells": [{"id": 133, "name": "Fireball"}], "nearby_units": [
+            {"guid": 2, "target_guid": 1, "in_combat": True, "distance": 3, "health_pct": 1}
+        ]}
+        offered.update(c["action"] for c in cand.generate(threat_case, my_guid=1))
+        offered.update(c["action"] for c in cand.generate({}, reflex_state={"follow": {"enabled": True}}))
+        gear = {"me": {"class_id": 8}, "equipment": {}, "inventory": [
+            {"slot": 23, "template": {"inventory_type": 5, "class_": 4,
+                                         "quality": 1, "item_level": 20,
+                                         "allowable_class": -1, "subclass": 1, "stats": []}}
+        ]}
+        offered.update(c["action"] for c in cand.generate(gear))
+        usable = {"me": {"health": "20/100"}, "inventory": [
+            {"slot": 23, "template": {"spells": [{"trigger": 0}]}}
+        ]}
+        offered.update(c["action"] for c in cand.generate(usable))
+        vendor = {"window": {"kind": "vendor", "npc_guid": 8}, "inventory": [
+            {"slot": 23, "name": "grey cloth", "template": {"quality": 0}}
+        ]}
+        offered.update(c["action"] for c in cand.generate(vendor))
         self.assertEqual(set(ac.REGISTRY) - offered - set(cand.NOT_OFFERED), set())
         self.assertTrue(all(isinstance(reason, str) and reason for reason in cand.NOT_OFFERED.values()))
 
@@ -392,6 +419,56 @@ class RegistryCoverageTest(unittest.TestCase):
         trainer = dict(base, window={"kind": "trainer", "npc_guid": "u2", "spells": [{"spell_id": 587}]})
         self.assertIn("train_spell", [c["action"] for c in cand.generate(trainer, my_guid=1)])
         self.assertNotIn("cast_spell", [c["action"] for c in cand.generate(dict(base, spells=[]), my_guid=1)])
+
+    def test_inventory_candidates_are_backpack_only_and_need_driven(self):
+        good = {"quality": 0, "inventory_type": 5, "class_": 4, "subclass": 1,
+                "allowable_class": -1, "item_level": 20, "stats": [],
+                "spells": [{"trigger": 0}]}
+        snap = {"me": {"class_id": 8, "health": "20/100", "mana": "20/100"},
+                "equipment": {}, "inventory": [
+                    {"slot": 19, "name": "bag", "template": dict(good)},
+                    {"slot": 23, "name": "backpack item", "template": dict(good)},
+                ], "window": {"kind": "vendor", "npc_guid": "u1"}}
+        actions = [c["action"] for c in cand.generate(snap)]
+        self.assertEqual(actions.count("use_item"), 1)
+        self.assertEqual(actions.count("equip_item"), 1)
+        self.assertEqual(actions.count("sell_item"), 1)
+        snap["me"].update(health="100/100", mana="100/100")
+        self.assertNotIn("use_item", [c["action"] for c in cand.generate(snap)])
+
+    def test_sell_and_use_skip_equipped_bag_slots_and_non_equippables(self):
+        snap = {"me": {"class_id": 1, "health": "10/100", "mana": "10/100"},
+                "equipment": {}, "inventory": [
+                    {"slot": 19, "template": {"quality": 0, "spells": [{"trigger": 0}]}}
+                ], "window": {"kind": "vendor", "npc_guid": 1}}
+        actions = [c["action"] for c in cand.generate(snap)]
+        self.assertNotIn("sell_item", actions)
+        self.assertNotIn("use_item", actions)
+        snap["inventory"] = [{"slot": 23, "template": {"inventory_type": 0,
+                          "class_": 4, "stats": [{"type": 4, "value": 100}]}}]
+        self.assertNotIn("equip_item", [c["action"] for c in cand.generate(snap)])
+
+    def test_ring_upgrade_compares_against_weakest_ring(self):
+        old_weak = {"template": {"stats": [{"type": 4, "value": 1}], "item_level": 1}}
+        old_strong = {"template": {"stats": [{"type": 4, "value": 10}], "item_level": 1}}
+        ring = {"slot": 23, "template": {"inventory_type": 11, "class_": 4,
+                "allowable_class": -1, "stats": [{"type": 4, "value": 2}], "item_level": 1}}
+        snap = {"me": {"class_id": 1}, "inventory": [ring],
+                "equipment": {10: old_weak, 11: old_strong}}
+        self.assertIn("equip_item", [c["action"] for c in cand.generate(snap)])
+        snap["equipment"][10] = old_strong
+        self.assertNotIn("equip_item", [c["action"] for c in cand.generate(snap)])
+
+    def test_equipment_mapping_handles_pairs_and_ignores_non_equippable(self):
+        def item(slot, score, inv_type):
+            return {"slot": slot, "template": {"quality": 1, "inventory_type": inv_type,
+                    "class_": 4, "subclass": 1, "allowable_class": -1,
+                    "item_level": score, "stats": []}}
+        snap = {"me": {"class_id": 8}, "inventory": [item(23, 15, 11), item(24, 30, 0)],
+                "equipment": {10: {"template": {"item_level": 10, "stats": []}},
+                              11: {"template": {"item_level": 20, "stats": []}}}}
+        self.assertEqual([c["params"]["slot"] for c in cand.generate(snap)
+                          if c["action"] == "equip_item"], [23])
 
 
 if __name__ == "__main__":
