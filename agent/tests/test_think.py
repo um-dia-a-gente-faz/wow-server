@@ -334,6 +334,17 @@ class LoopGuardTest(unittest.TestCase):
         self.assertIn("loop guard", result.error)
         self.assertIsNone(action.executed_with)
 
+    def test_idle_is_never_blocked_as_the_only_fallback(self):
+        for _ in range(think.LOOP_GUARD_REPEATS + 2):
+            result = think_and_act(
+                self.sess, self.world,
+                FakeLLMClient(action_name="idle"),
+                state=self.state,
+            )
+            self.assertTrue(result.ok, result.error)
+            self.assertEqual(result.action_name, "idle")
+        self.assertFalse(self.state.repeat_blocked("idle", {}))
+
     def test_does_not_block_repeats_that_make_progress(self):
         action = RecordingAction()
         for i in range(think.LOOP_GUARD_REPEATS + 2):
