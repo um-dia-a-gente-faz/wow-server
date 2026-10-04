@@ -270,6 +270,7 @@ def think_and_act(session, world, brain, persona: str = "",
                 confidence_threshold=decision.confidence_threshold,
                 confidence_rule=decision.confidence_rule,
                 overridden=decision.overridden,
+                history_notes=decision.history_notes,
             )
         except OSError as e:  # never let audit I/O crash a think cycle
             log.warning("audit log write failed: %s", e)

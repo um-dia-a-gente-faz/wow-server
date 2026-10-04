@@ -490,5 +490,77 @@ class RegistryCoverageTest(unittest.TestCase):
         self.assertNotIn("guid", template)
 
 
+class HistoryAwareTest(unittest.TestCase):
+    """GH-166: history drops options that cannot work and demotes no-op repeats."""
+
+    BASE = ["auto_attack:guid=4660", "loot:guid=4661",
+            "move_towards:guid=4663,stop_distance=3.0", "idle"]
+
+    def gen(self, history, notes=None):
+        return cand.generate(load("combat"), my_guid=MY_GUID, history=history, notes=notes)
+
+    @staticmethod
+    def entry(action, args, ok=True, error=None, changed=None):
+        e = {"action": action, "args": args, "ok": ok}
+        if error:
+            e["error"] = error
+        if changed is False:
+            e["changed"] = False
+        return e
+
+    def test_no_history_matches_baseline(self):
+        base = ids(cand.generate(load("combat"), my_guid=MY_GUID))
+        self.assertEqual(base, self.BASE)
+        for h in (None, [], [None, "x", {}, {"action": 3}]):
+            self.assertEqual(ids(self.gen(h)), base)
+
+    def test_drops_deterministic_rejection(self):
+        notes = []
+        h = [self.entry("loot", {"guid": 4661}, False, "bad params: x")]
+        self.assertEqual(ids(self.gen(h, notes)),
+                         ["auto_attack:guid=4660", "move_towards:guid=4663,stop_distance=3.0", "idle"])
+        self.assertEqual([(n["id"], n["effect"]) for n in notes], [("loot:guid=4661", "dropped")])
+
+    def test_drops_same_error_twice_but_not_once(self):
+        move = {"guid": 4663, "stop_distance": 3.0}
+        once = [self.entry("move_towards", move, False, "stuck")]
+        self.assertEqual(ids(self.gen(once)), self.BASE)
+        twice = once * 2
+        self.assertNotIn("move_towards:guid=4663,stop_distance=3.0", ids(self.gen(twice)))
+
+    def test_drop_expires_and_is_cleared_by_later_success(self):
+        rej = self.entry("loot", {"guid": 4661}, False, "missing required params: ['guid']")
+        fill = [self.entry("idle", {})] * cand.HISTORY_DROP_WINDOW
+        self.assertEqual(ids(self.gen([rej] + fill)), self.BASE)
+        self.assertEqual(ids(self.gen([rej, self.entry("loot", {"guid": 4661})])), self.BASE)
+
+    def test_demotes_consecutive_no_effect_repeats(self):
+        notes = []
+        loot = self.entry("loot", {"guid": 4661}, changed=False)
+        self.assertEqual(ids(self.gen([loot], [])), self.BASE)   # once is not enough
+        self.assertEqual(ids(self.gen([loot, loot], notes)),
+                         ["auto_attack:guid=4660", "move_towards:guid=4663,stop_distance=3.0",
+                          "loot:guid=4661", "idle"])
+        self.assertEqual([n["effect"] for n in notes], ["demoted"])
+
+    def test_no_demotion_when_changed_unknown_or_not_consecutive(self):
+        loot = self.entry("loot", {"guid": 4661}, changed=False)
+        changed_unknown = self.entry("loot", {"guid": 4661})   # `changed` absent: it had an effect
+        self.assertEqual(ids(self.gen([changed_unknown] * 3)), self.BASE)
+        self.assertEqual(ids(self.gen([loot, self.entry("idle", {}), loot])), self.BASE)
+
+    def test_threat_is_never_dropped_or_demoted(self):
+        atk = {"guid": 4660}
+        rejected = [self.entry("auto_attack", atk, False, "bad params: x")]
+        repeated = [self.entry("auto_attack", atk, changed=False)] * 3
+        for h in (rejected, repeated):
+            self.assertEqual(ids(self.gen(h)), self.BASE)
+
+    def test_malformed_entries_are_skipped(self):
+        h = [{"action": "loot"}, {"action": "loot", "args": object(), "ok": False},
+             {"args": {}}, self.entry("loot", {"guid": 4661}, False, "bad params: x")]
+        self.assertNotIn("loot:guid=4661", ids(self.gen(h)))
+
+
 if __name__ == "__main__":
     unittest.main()
