@@ -33,6 +33,12 @@ Details live in `CONTRIBUTING.md`; this is the loop.
 
 - Title `UM-<n>: <brief summary>`; body from `.github/PULL_REQUEST_TEMPLATE.md`, starting
   with `Issue: UM-<n>`.
+- Every issue is linked to a PR, so the body says `Closes <ref>` — never `Refs`, which
+  links nothing. If live or human steps remain, keep `Closes`, leave them unticked
+  and add the note from `CONTRIBUTING.md` (issue is to be reopened if they fail).
+  Verify the link with GraphQL `closingIssuesReferences`; edit a body with
+  `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -F body=@file` when `gh pr edit`
+  fails, then re-check the issue's board status (*In Review*).
 - Fill "How to test" with commands someone can actually run, and paste live-run log
   excerpts when the change is protocol-level.
 - **Anything you couldn't verify stays unticked and is listed as a human step**
