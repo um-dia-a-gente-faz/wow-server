@@ -55,7 +55,7 @@ endpoint (`192.168.1.72:3001`; it was `192.168.1.60:3002` when this spike
 was written), which is the integration UM-44 already
 targets (`agent/config.py`'s `LLM_BASE_URL`/`LLM_MODEL`, `.env.example`).
 
-Earlier prototype note (`docs/HANDOFF.md`, cited in UM-44): `auto` routing
+Earlier prototype note (an old handoff note, cited in UM-44, no longer in the repo): `auto` routing
 gave **~50% valid tool-call rate** — not enough for UM-44's ≥90% bar. `auto`
 picks whichever free model is available that moment, including ones with
 weak or no tool-call support, so the fix is to **pin specific models**

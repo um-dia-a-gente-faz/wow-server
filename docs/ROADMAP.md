@@ -50,100 +50,13 @@ longer drops the whole packet it's in, and nearby objects get a simple
 straight-line position interpolation between their own update-object/
 `MONSTER_MOVE` ticks instead of going stale.
 
-Original plan (kept below for context; superseded by the actual PRs above):
-
-This is the actual point of the repo (`docs/AI-AGENT-SPEC.md`) and the
-highest-leverage next task — everything else is scaffolding around it. The
-protocol client (`agent/`) already does SRP6 auth, world handshake, login,
-keepalive, chat, and target actions end to end against the live server. The
-one missing piece is **perception**: `agent/perception.py::WorldState`
-currently only records that a GUID exists, with no position/health/name data,
-and `agent/session.py::_parse_update_object()` deliberately stops after
-reading each block's GUID.
-
-Reading the current stub closely surfaces a few things the handoff doc doesn't
-call out, all worth fixing as part of this work, not after:
-
-- **Byte-offset desync risk.** `_parse_update_object` never consumes the
-  bytes after a block's GUID (the values update for VALUES, and objectTypeId +
-  movement update + values update for CREATE_OBJECT, per
-  `docs/PROTOCOL-NOTES.md`), so `off` doesn't advance past them. With more than one block per packet
-  (the common case once nearby entities exist), every block after the first
-  gets parsed from the wrong offset. This has to be fixed *while* adding
-  field parsing, not as a follow-up — a partially-correct version that reads
-  the wrong number of bytes is worse than the current no-op stub.
-- **`type 5` (NEAR_OBJECTS) block still falls through to `continue` with zero
-  bytes consumed** — same desync risk. `type 4` (OUT_OF_RANGE_OBJECTS) is
-  handled but wrong: the real format is `uint32 count` followed by `count`
-  packed GUIDs (objects that left range), not one packed GUID guarded by a
-  reused `mask` variable.
-- **`SMSG_UPDATE_OBJECT` opcode is wrong.** `agent/session.py` defines it as
-  `0x1F7`, which is `SMSG_PLAY_SPELL_IMPACT`. The correct value is `0x0A9`
-  (`Opcodes.h`). The server sends small update packets (≤ 100 bytes)
-  uncompressed, so those are currently missed.
-- **`self.player_guid` is declared in `WoWSession.__init__` but never
-  assigned.** `login_character(self, guid)` receives the GUID and never
-  stores it. Perception needs to know its own GUID (to distinguish "my
-  position updated" from "a nearby player moved") — set it there and call
-  `world_state.set_my_guid(guid)` at the same point.
-
-Steps, in order:
-
-1. **Fix `player_guid` assignment** in `login_character()` — trivial, unblocks
-   testing everything else against "is this update about me."
-2. **Add a movement-block parser** — new function, e.g.
-   `_parse_movement_block(data, off) -> (dict, new_off)`, handling
-   `UPDATEFLAG_LIVING` (movement_flags, timestamp, x/y/z/orientation, fall
-   time, speeds). The movement block has conditional sub-fields (on
-   transport, swimming, spline movement in progress) that multiply the
-   parsing surface — for a first pass, parse the common ground-movement case
-   and raise a distinguishable exception (e.g. `UnhandledMovementFlags`) for
-   flag combinations not yet handled, rather than guessing wrong and silently
-   corrupting the offset.
-3. **Wrap each block's parse in try/except in `_parse_update_object`** — on
-   any parse error (including the new `UnhandledMovementFlags`), log it once
-   (rate-limited — this will be noisy at first) and **abort parsing the rest
-   of this packet**, not the connection. One bad block shouldn't crash the
-   recv thread or corrupt state from prior packets. This is the safety net
-   that makes iterating on step 2 and step 4 tolerable.
-4. **Add the update-mask + values parser** — `uint8 mask_length` (word
-   count), `mask_length * 4` bytes as little-endian `uint32` words, then one
-   `uint32` per set bit, in bit order. Store as a raw `{field_index: value}`
-   dict on the block for now — don't hand-map every field yet.
-5. **Map the raw fields dict to `ObjectInfo`** for the field indices already
-   listed in `docs/PROTOCOL-NOTES.md` (`OBJECT_FIELD_ENTRY`,
-   `UNIT_FIELD_HEALTH`/`MAXHEALTH`/`LEVEL`/`FACTIONTEMPLATE`,
-   `UNIT_NPC_FLAGS`, `PLAYER_FLAGS`). Extend `ObjectInfo.__slots__`
-   (`agent/perception.py`) with `entry_id`, `max_health`, `faction`,
-   `npc_flags`, and a `raw_fields` dict for anything not mapped yet — cheaper
-   to keep the raw dict around than to re-add slots every time a new field
-   turns out to matter.
-6. **Wire position from the movement block**, not from fields — replace
-   `WorldState.record_guid()` with an `update_object(guid, update_type,
-   fields, movement)` method that creates-or-merges an `ObjectInfo` and sets
-   `.position` when a movement block was present. Use the same method to
-   update `session.player_position` when `guid == self.player_guid`.
-7. **Fix the OUT_OF_RANGE block** (`uint32 count` + `count` packed GUIDs) and
-   add `WorldState.remove_guid(guid)`, called for each.
-8. **Fixture-based tests**, mirroring `tools/chat-feed/tests`' pattern: run
-   `--dry-run` with `VERBOSE_PACKETS=1` once against the live server, capture
-   a handful of raw `SMSG_UPDATE_OBJECT` payloads (hex-dump them behind a
-   debug flag), and commit them as fixtures so the parser has a regression
-   suite instead of only manual live verification.
-
-**Definition of done** (from the handoff doc — unchanged):
-1. `python3 -m agent --dry-run` logs "perception: N objects tracked" with N > 0
-2. `session.player_position` updates when the character moves (teleport via
-   `.go xyz` from the web UI console and confirm the change)
-3. Nearby NPCs show up in the object list with entry IDs
-
-**Effort:** medium. The hard crypto/protocol plumbing (auth, session
-encryption, packet framing) is already done; this is careful, defensively-
-written binary parsing against a documented but conditional wire format.
+The step-by-step plan that used to sit here was executed and removed; the wire formats
+it relied on are in `docs/PROTOCOL-NOTES.md`, the code in `agent/update_object.py`,
+`agent/update_fields.py` and `agent/perception.py`.
 
 ### Phase 2 — basic actions
 
-Once perception works, `agent/actions.py` currently only has chat, party
+Perception is in place; `agent/actions.py` started with only chat, party
 invite, and target/attack-start. Build in this order — each item both depends
 on perception and is a dependency for the next:
 
