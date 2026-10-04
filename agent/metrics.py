@@ -38,6 +38,18 @@ class AgentMetrics:
     last_ts: float | None = None
     last_xp: int | None = None
     first_xp: int | None = None
+    jev_calls_total: int = 0
+    jev_errors: dict = field(default_factory=lambda: {s: 0 for s in ("http_4xx", "http_5xx", "error")})
+    jev_fallback_total: int = 0
+    jev_prompt_tokens_total: int = 0
+    jev_completion_tokens_total: int = 0
+    jev_cost_usd_total: float = 0.0
+    jev_cost_24h_usd: float = 0.0
+    jev_confidence: float | None = None
+    jev_low_confidence_total: int = 0
+    jev_latency_count: int = 0
+    jev_latency_sum_ms: float = 0.0
+    jev_latency_buckets: dict = field(default_factory=lambda: {b: 0 for b in LATENCY_BUCKETS_MS})
 
     def outcome_pairs(self):
         return sorted(self.actions_total.items())
@@ -83,6 +95,7 @@ def derive_metrics(records) -> dict:
     shape doesn't reserve one — this reads best-effort, defaulting to 0/None
     when the data isn't there (e.g. synthetic fixtures)."""
     by_agent: dict[str, AgentMetrics] = {}
+    now = time.time()
 
     for rec in records:
         agent = rec.get("agent", "unknown")
@@ -93,6 +106,37 @@ def derive_metrics(records) -> dict:
         if isinstance(ts, (int, float)):
             m.first_ts = ts if m.first_ts is None else min(m.first_ts, ts)
             m.last_ts = ts if m.last_ts is None else max(m.last_ts, ts)
+
+        status = rec.get("jev_status")
+        if status == "success":
+            m.jev_calls_total += 1
+        elif status in m.jev_errors:
+            m.jev_errors[status] += 1
+        if rec.get("brain") == "llm" and rec.get("fallback"):
+            m.jev_fallback_total += 1
+        usage = rec.get("usage") if isinstance(rec.get("usage"), dict) else {}
+        for key, attr in (("input_tokens", "jev_prompt_tokens_total"),
+                          ("output_tokens", "jev_completion_tokens_total")):
+            value = usage.get(key)
+            if isinstance(value, (int, float)):
+                setattr(m, attr, getattr(m, attr) + int(value))
+        cost = usage.get("cost")
+        if isinstance(cost, (int, float)):
+            m.jev_cost_usd_total += float(cost)
+            if isinstance(ts, (int, float)) and ts >= now - 86400:
+                m.jev_cost_24h_usd += float(cost)
+        confidence = rec.get("confidence")
+        if rec.get("brain") == "jev" and isinstance(confidence, (int, float)):
+            m.jev_confidence = float(confidence)
+        latency = rec.get("latency_ms")
+        if isinstance(latency, (int, float)) and status is not None:
+            m.jev_latency_count += 1
+            m.jev_latency_sum_ms += latency
+            bucket = _bucket_for(latency)
+            if bucket is not None:
+                for bound in LATENCY_BUCKETS_MS:
+                    if bound >= bucket:
+                        m.jev_latency_buckets[bound] += 1
 
         valid = bool(rec.get("valid", False))
         result = rec.get("result") or {}
@@ -204,5 +248,38 @@ def render_prometheus_text(by_agent: dict) -> str:
         rate = xp_per_hour(m)
         if rate is not None:
             lines.append(f'wow_agent_xp_per_hour{{agent="{m.agent}"}} {rate}')
+
+    for name, help_text, mtype in (
+        ("wow_agent_jev_calls_total", "Successful Jev Decisions API calls", "counter"),
+        ("wow_agent_jev_errors_total", "Jev decision errors by bounded status class", "counter"),
+        ("wow_agent_jev_fallback_total", "Cycles where Jev fell back to another brain", "counter"),
+        ("wow_agent_jev_prompt_tokens_total", "Jev input tokens consumed", "counter"),
+        ("wow_agent_jev_completion_tokens_total", "Jev output tokens consumed", "counter"),
+        ("wow_agent_jev_cost_usd_total", "Jev reported cost in USD", "counter"),
+        ("wow_agent_jev_cost_usd_24h", "Jev reported cost in the last 24 hours", "gauge"),
+        ("wow_agent_jev_confidence", "Latest Jev decision confidence", "gauge"),
+        ("wow_agent_jev_low_confidence_total", "Low confidence substitutions recorded", "counter"),
+        ("wow_agent_jev_latency_ms", "Jev Decisions API latency histogram", "histogram"),
+    ):
+        emit(name, help_text, mtype)
+    for m in by_agent.values():
+        label = f'{{agent="{m.agent}"}}'
+        for name, value in (("wow_agent_jev_calls_total", m.jev_calls_total),
+                            ("wow_agent_jev_fallback_total", m.jev_fallback_total),
+                            ("wow_agent_jev_prompt_tokens_total", m.jev_prompt_tokens_total),
+                            ("wow_agent_jev_completion_tokens_total", m.jev_completion_tokens_total),
+                            ("wow_agent_jev_cost_usd_total", m.jev_cost_usd_total),
+                            ("wow_agent_jev_cost_usd_24h", m.jev_cost_24h_usd),
+                            ("wow_agent_jev_low_confidence_total", m.jev_low_confidence_total)):
+            lines.append(f"{name}{label} {value}")
+        for status, count in m.jev_errors.items():
+            lines.append(f'wow_agent_jev_errors_total{{agent="{m.agent}",status="{status}"}} {count}')
+        if m.jev_confidence is not None:
+            lines.append(f"wow_agent_jev_confidence{label} {m.jev_confidence}")
+        for bucket in LATENCY_BUCKETS_MS:
+            lines.append(f'wow_agent_jev_latency_ms_bucket{{agent="{m.agent}",le="{bucket}"}} {m.jev_latency_buckets[bucket]}')
+        lines.append(f'wow_agent_jev_latency_ms_bucket{{agent="{m.agent}",le="+Inf"}} {m.jev_latency_count}')
+        lines.append(f"wow_agent_jev_latency_ms_sum{label} {m.jev_latency_sum_ms}")
+        lines.append(f"wow_agent_jev_latency_ms_count{label} {m.jev_latency_count}")
 
     return "\n".join(lines) + "\n"

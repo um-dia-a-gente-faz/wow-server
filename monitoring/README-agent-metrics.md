@@ -56,6 +56,27 @@ On the wow-server VM (192.168.1.64), run the exporter script periodically
 | `wow_agent_deaths_total` | counter | `agent` | Deaths observed |
 | `wow_agent_levelups_total` | counter | `agent` | Level-ups observed |
 | `wow_agent_xp_per_hour` | gauge | `agent` | XP/hour over the log's time span |
+| `wow_agent_jev_calls_total` | counter | `agent` | Successful Jev Decisions requests |
+| `wow_agent_jev_errors_total` | counter | `agent`, `status` | Failed requests (`http_4xx`, `http_5xx`, `error`) |
+| `wow_agent_jev_fallback_total` | counter | `agent` | Cycles where Jev was configured but another brain decided |
+| `wow_agent_jev_prompt_tokens_total` / `wow_agent_jev_completion_tokens_total` | counter | `agent` | Jev input/output tokens |
+| `wow_agent_jev_cost_usd_total` | counter | `agent` | Cumulative provider reported USD cost in retained audit records |
+| `wow_agent_jev_cost_usd_24h` | gauge | `agent` | Rolling 24-hour reported spend |
+| `wow_agent_jev_confidence` | gauge | `agent` | Latest recorded Jev confidence |
+| `wow_agent_jev_low_confidence_total` | counter | `agent` | Confidence-triggered substitutions (zero until such a rule is implemented) |
+| `wow_agent_jev_latency_ms` | histogram | `agent` | Decisions API latency |
+
+The **Jev — decision usage** dashboard is in
+`monitoring/grafana-dashboard-jev-decision-usage.json`. No confidence
+substitution threshold currently exists in the decision code, so the audit
+field and counter are ready to report it once a rule is introduced; this
+observability change does not add a new decision policy. Metrics are rebuilt
+from retained audit rows on each textfile-exporter run, so totals reflect the
+retention window rather than lifetime spend. Agents with audit cycles but no
+Jev calls are highlighted on the dashboard.
+The live Prometheus instance currently has no Jev samples; panel expressions
+parse, and these panels need a real Jev-backed cycle after deployment to show
+usage.
 
 `prompt_tokens`/`completion_tokens`/deaths/level-ups/XP depend on the LLM
 provider reporting `usage` and on `result.detail` (or the snapshot) carrying

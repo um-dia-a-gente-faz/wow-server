@@ -92,6 +92,9 @@ class Decision:
     confidence_threshold: float | None = None  # threshold applied (Jev only)
     confidence_rule: str | None = None  # RULE_ACTED / RULE_LOW_CONFIDENCE / RULE_UNKNOWN
     overridden: str | None = None       # candidate id Jev chose before the safe substitution
+    usage: dict = field(default_factory=dict)
+    jev_status: str | None = None
+    brain_rule: str | None = None
 
 
 def llm_catalog() -> list[dict]:
@@ -178,6 +181,9 @@ class Brain:
                     return d
                 except JevError as e:
                     self._fill_jev(d)
+                    status = getattr(e, "status", None)
+                    d.jev_status = ("http_4xx" if 400 <= status < 500 else
+                                    "http_5xx" if 500 <= status < 600 else "error") if status else "error"
                     fallback = f"jev call failed: {e}"
                     self._maybe_cool_down(e)
                     log.warning("%s%s", fallback, " — substituting the llm" if self.llm else "")
@@ -239,10 +245,13 @@ class Brain:
 
     def _fill_jev(self, d: Decision):
         usage = getattr(self.jev, "last_usage", None) or {}
+        d.usage = {k: usage[k] for k in ("input_tokens", "output_tokens", "cost")
+                   if isinstance(usage.get(k), (int, float))}
         d.prompt_tokens = usage.get("input_tokens")
         d.completion_tokens = usage.get("output_tokens")
         d.latency_ms = getattr(self.jev, "last_latency_ms", None)
         d.confidence = getattr(self.jev, "last_confidence", None)
+        d.jev_status = "success" if d.latency_ms is not None else "error"
 
     def _fill_llm(self, d: Decision):
         usage = getattr(self.llm, "last_usage", None) or {}

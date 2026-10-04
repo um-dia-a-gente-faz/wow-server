@@ -445,6 +445,8 @@ class BrainSeamTest(unittest.TestCase):
         self.assertEqual(rec["model"], "typesafe/jev-test")
         self.assertEqual(rec["prompt_tokens"], 321)
         self.assertEqual(rec["completion_tokens"], 0)
+        self.assertEqual(rec["usage"], {"input_tokens": 321, "output_tokens": 0, "cost": 0.0})
+        self.assertEqual(rec["jev_status"], "success")
         self.assertEqual(rec["latency_ms"], 12.5)
         self.assertEqual(rec["candidates"], 3)
         self.assertIsNone(rec["fallback"])
