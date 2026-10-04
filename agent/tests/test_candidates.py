@@ -470,6 +470,25 @@ class RegistryCoverageTest(unittest.TestCase):
         self.assertEqual([c["params"]["slot"] for c in cand.generate(snap)
                           if c["action"] == "equip_item"], [23])
 
+    def test_item_template_snapshot_projection_excludes_unneeded_fields(self):
+        ws = per.WorldState()
+        ws.set_my_guid(1)
+        ws.set_my_map(530)
+        ws.items.items[42] = {"entry": 42, "name": "test", "quality": 1,
+                              "inventory_type": 5, "stats": [], "spells": [],
+                              "guid": 0xF130000000000042, "description": "large"}
+        player_fields = {uf.PLAYER_FIELD_INV_SLOT_HEAD: 42,
+                         uf.PLAYER_FIELD_INV_SLOT_HEAD + 1: 0,
+                         uf.PLAYER_FIELD_INV_SLOT_HEAD + 19 * 2: 0,
+                         uf.PLAYER_FIELD_PACK_SLOT_1: 42,
+                         uf.PLAYER_FIELD_PACK_SLOT_1 + 1: 0}
+        ws.objects[1] = per.ObjectInfo(guid=1, object_type="player", raw_fields=player_fields)
+        ws.objects[42] = per.ObjectInfo(guid=42, object_type="item", entry=42)
+        _, inventory = ws.build_equipment_and_inventory()
+        template = inventory[0]["template"]
+        self.assertEqual(set(template), {"quality", "inventory_type", "stats", "spells"})
+        self.assertNotIn("guid", template)
+
 
 if __name__ == "__main__":
     unittest.main()
