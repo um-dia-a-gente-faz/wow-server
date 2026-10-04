@@ -148,6 +148,7 @@ def _self_status(session, world) -> dict:
     me = world.get_my_object()
     if me is not None:
         mine = {"level": me.level}
+        mine["class_id"] = getattr(session, "class_", None)
         if me.health is not None and me.max_health:
             mine["health"] = f"{me.health}/{me.max_health}"
         for name, cur in (me.power or {}).items():

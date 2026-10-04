@@ -450,6 +450,19 @@ to Path A if needed.
 - [ ] PvP scenarios
 - [ ] Agent-vs-agent economy simulation
 
+## Candidate coverage
+
+Jev's candidate generator offers known damaging spells against combat
+threats, unlearned trainer spells while a trainer window is open, cached
+inventory upgrades, on-use items when health or mana is low, and grey-quality
+backpack items for sale at an open vendor. Purchases remain disabled by
+default until a buying policy is decided. The generator's `NOT_OFFERED` map
+documents deliberate gaps: combat micro actions, trade and mail, destructive
+actions, and social invites. `agent/tests/test_candidates.py` pins registered
+actions to candidate branches or documented exclusions. Candidate lists
+reserve their last slot for `idle`; on overflow `_finish` keeps earlier
+candidates in generator priority order.
+
 ## References
 
 - [TrinityCore](https://trinitycore.org/)

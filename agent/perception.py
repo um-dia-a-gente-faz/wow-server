@@ -941,6 +941,15 @@ class WorldState:
                 if item_obj is not None:
                     d["entry"] = item_obj.entry
                     d["name"] = item_obj.name or None
+                    template = self.items.items.get(item_obj.entry) if item_obj.entry is not None else None
+                    if template:
+                        # Snapshot consumers need only comparison/offer fields.
+                        # The cached query response is larger and is serialized
+                        # into every Jev prompt; keep this projection bounded.
+                        d["template"] = {key: template[key] for key in (
+                            "quality", "inventory_type", "class_", "subclass",
+                            "allowable_class", "item_level", "stats", "spells",
+                        ) if key in template}
                     count = item_obj.raw_fields and uf.decode_item_fields(item_obj.raw_fields).get("count")
                     if count is not None:
                         d["count"] = count

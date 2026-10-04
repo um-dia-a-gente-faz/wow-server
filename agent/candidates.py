@@ -59,6 +59,7 @@ chosen candidate is executed, so a stale candidate fails safely.
 """
 
 from .handles import UnknownHandle
+from . import item_compare
 
 MAX_CANDIDATES = 15
 
@@ -74,6 +75,63 @@ MAX_ATTACK = 3
 MAX_FOLLOW = 2
 MAX_GOSSIP_OPTIONS = 4
 MAX_ABANDON = 2
+MAX_SPELLS = 3
+MAX_TRAIN = 3
+MAX_EQUIP = 3
+MAX_USE_ITEMS = 2
+MAX_SELL = 3
+
+# ItemTemplate.InventoryType -> Player equipment slot(s), following
+# EQUIPMENT_SLOT_* in TrinityCore. Paired slots are deliberately both checked.
+_EQUIP_SLOTS = {
+    1: (0,), 2: (1,), 3: (2,), 4: (3,), 5: (4,), 6: (5,), 7: (6,),
+    8: (7,), 9: (8,), 10: (9,), 11: (10, 11), 12: (12, 13),
+    13: (15, 16), 14: (16,), 15: (17,), 16: (14,), 17: (15, 16),
+    19: (18,), 20: (4,), 21: (15,), 22: (16,), 23: (16,),
+    25: (17,), 26: (17,), 28: (17,),
+}
+_BACKPACK_FIRST, _BACKPACK_LAST = 23, 38
+
+
+def _backpack(item: dict) -> bool:
+    return isinstance(item.get("slot"), int) and _BACKPACK_FIRST <= item["slot"] <= _BACKPACK_LAST
+
+
+def _resource_pct(me: dict, resource: str) -> float | None:
+    value = me.get(resource)
+    if isinstance(value, str) and "/" in value:
+        try:
+            current, maximum = (float(part) for part in value.split("/", 1))
+            return current / maximum if maximum > 0 else None
+        except ValueError:
+            return None
+    return None
+
+# Registered actions deliberately absent from the candidate generator. Kept
+# adjacent to it so registry growth is visible and the coverage test pins it.
+NOT_OFFERED = {
+    "set_target": "combat micro; auto_attack selects targets",
+    "face": "combat micro; cast and movement actions orient as needed",
+    "stop_attack": "combat micro; no levelling decision currently needs it",
+    "stop_movement": "combat micro; no levelling decision currently needs it",
+    "buy_item": "buy nothing by default until an item purchasing policy is decided",
+    "destroy_item": "destructive inventory action is intentionally excluded",
+    "compare_items": "comparison is used internally to offer equip upgrades",
+    "rest": "reflex-controlled survival action, not an explicit candidate",
+    "release_spirit": "death reflex controls release timing",
+    "reclaim_corpse": "death reflex controls corpse reclaim timing",
+    "invite_to_group": "social grouping is out of scope",
+    "open_trade": "trade family is out of scope",
+    "accept_trade_request": "trade family is out of scope",
+    "offer_item": "trade family is out of scope",
+    "offer_gold": "trade family is out of scope",
+    "accept_trade": "trade family is out of scope",
+    "cancel_trade": "trade family is out of scope",
+    "open_mailbox": "mail family is out of scope",
+    "send_mail": "mail family is out of scope",
+    "take_mail": "mail family is out of scope",
+    "delete_mail": "mail family is out of scope",
+}
 
 # agent.quests.QUEST_GIVER_STATUS_NAMES values worth walking over for.
 _QUEST_GIVER_WORTH_VISITING = {"available": "has a quest", "reward": "quest ready to turn in",
@@ -143,6 +201,22 @@ def _window_candidates(snapshot: dict) -> list:
     in_log = {q.get("quest_id") for q in snapshot.get("quest_log") or []}
     out = []
 
+    if kind == "trainer" and npc_guid is not None:
+        known = {s.get("id") for s in snapshot.get("spells") or []}
+        for spell in (window.get("spells") or [])[:MAX_TRAIN]:
+            if spell.get("spell_id") not in known:
+                out.append(candidate("train_spell", {"trainer_guid": npc_guid, "spell_id": spell["spell_id"]},
+                                     f"train spell {spell['spell_id']}"))
+    if kind == "vendor" and npc_guid is not None:
+        inventory = snapshot.get("inventory") or []
+        for item in inventory:
+            if item.get("template", {}).get("quality") == 0 and _backpack(item):
+                out.append(candidate("sell_item", {"vendor_guid": npc_guid, "bag": 255,
+                                                     "slot": item["slot"]},
+                                     f"sell grey item {item.get('name') or item.get('entry')}"))
+                if sum(c["action"] == "sell_item" for c in out) >= MAX_SELL:
+                    break
+
     if kind == "quest_details" and npc_guid is not None:
         out.append(candidate("accept_quest", {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
                              f"accept quest {window.get('title') or window['quest_id']}"))
@@ -195,6 +269,75 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
         return _finish(out, idle, limit)
 
     out.extend(_window_candidates(snapshot))
+
+    # Known, metadata-backed spells only; only combat threats, and pass their
+    # snapshot handle through unchanged for UM-89 resolution at execution.
+    threats_snapshot = [u for u in snapshot.get("nearby_units") or []
+                        if _alive(u) and u.get("in_combat") and my_guid is not None
+                        and _guid_value(u, "target_guid", handles) == my_guid]
+    # The spell metadata table contains heals, buffs and utility actions too.
+    # Keep this candidate path to the known damaging spells; prefer the
+    # highest known rank for a spell family.
+    offensive_ids = {20271: "judgement", 2812: "holy_wrath", 2973: "raptor",
+                     1978: "serpent_sting", 1752: "sinister_strike", 2098: "eviscerate",
+                     585: "smite", 589: "shadow_word_pain", 133: "fireball",
+                     116: "frostbolt", 143: "fireball"}
+    rank = {133: 1, 143: 2}
+    spell_by_family = {}
+    for spell in snapshot.get("spells") or []:
+        family = offensive_ids.get(spell.get("id"))
+        if family and (family not in spell_by_family or rank.get(spell["id"], 1) >
+                       rank.get(spell_by_family[family]["id"], 1)):
+            spell_by_family[family] = spell
+    for spell in list(spell_by_family.values())[:MAX_SPELLS]:
+        if threats_snapshot:
+            out.append(candidate("cast_spell", {"spell_id": spell["id"],
+                                                  "target_guid": threats_snapshot[0]["guid"]},
+                                 f"cast {spell.get('name') or spell['id']} at {_name(threats_snapshot[0])}"))
+
+    # Offer on-use consumables only when a health or mana resource is low.
+    # Quest items aren't consumables and remain available to quest actions.
+    me = snapshot.get("me") or {}
+    health_pct = _resource_pct(me, "health")
+    mana_pct = _resource_pct(me, "mana")
+    needs_health, needs_mana = health_pct is not None and health_pct < 0.7, mana_pct is not None and mana_pct < 0.5
+    use_count = 0
+    for item in sorted((snapshot.get("inventory") or []),
+                       key=lambda it: (-it.get("template", {}).get("quality", 0), it.get("slot", 999))):
+        template = item.get("template") or {}
+        spells = template.get("spells") or []
+        usable = any(s.get("trigger") == 0 for s in spells)
+        if usable and _backpack(item) and (needs_health or needs_mana):
+            out.append(candidate("use_item", {"bag": 255, "slot": item["slot"]},
+                                 f"use {item.get('name') or item.get('entry')}"))
+            use_count += 1
+            if use_count >= MAX_USE_ITEMS:
+                break
+
+    # Only offer an item if its cached template proves it scores above the
+    # currently equipped item in the same slot and is usable by this class.
+    class_id = me.get("class_id")
+    equipment = snapshot.get("equipment") or {}
+    for item in (snapshot.get("inventory") or []):
+        tpl = item.get("template")
+        if not tpl or class_id not in item_compare.CLASS_PRIMARY_STAT or not _backpack(item):
+            continue
+        equip_slot = tpl.get("inventory_type")
+        slots = _EQUIP_SLOTS.get(equip_slot)
+        if not slots:
+            continue
+        current_items = [equipment[s] for s in slots if s in equipment and equipment[s].get("template")]
+        # Two-handed items replace the main/off-hand pair, so compare against
+        # their combined value. For paired rings/trinkets/weapons, beat the
+        # weaker occupied slot to avoid requiring two replacements at once.
+        current_scores = [item_compare.score_item(e["template"], class_id) for e in current_items]
+        current_score = sum(current_scores) if equip_slot == 17 else (min(current_scores) if current_scores else None)
+        if (item_compare.usability_error(tpl, class_id) is None and
+                (current_score is None or item_compare.score_item(tpl, class_id) > current_score)):
+            out.append(candidate("equip_item", {"bag": 255, "slot": item["slot"]},
+                                 f"equip upgrade {item.get('name') or item.get('entry')}"))
+            if sum(c["action"] == "equip_item" for c in out) >= MAX_EQUIP:
+                break
 
     invite = snapshot.get("pending_invite")
     if invite:  # session.pending_invite: {"inviter_name": str}
