@@ -664,7 +664,7 @@ class BrainFromConfigTest(unittest.TestCase):
         cfg = self._cfg({"JEV_BASE_URL": "", "JEV_API_KEY": "", "JEV_MODEL": "",
                          "LLM_BASE_URL": "", "LLM_MODEL": ""})
         self.assertIsNone(brain.Brain.from_config(cfg))
-        self.assertEqual(cfg.jev_base_url, "https://openrouter.ai/api/alpha")
+        self.assertEqual(cfg.jev_base_url, "")
         self.assertEqual(cfg.jev_model, "typesafe/jev-1.13")
 
     def test_llm_only(self):
@@ -673,8 +673,12 @@ class BrainFromConfigTest(unittest.TestCase):
         self.assertEqual(b.llm.model, "m")
         self.assertEqual(b.model, "m")
 
-    def test_jev_by_key_or_by_explicit_base_url(self):
-        for env in ({"JEV_API_KEY": "sekrit"}, {"OPENROUTER_API_KEY": "sekrit"},
+    def test_jev_by_explicit_base_url_only(self):
+        for env in ({"JEV_API_KEY": "sekrit"}, {"OPENROUTER_API_KEY": "sekrit"}):
+            with self.subTest(env=list(env)):
+                self.assertIsNone(brain.Brain.from_config(self._cfg(env)))
+        for env in ({"JEV_BASE_URL": "https://jev.example/v1", "JEV_API_KEY": "sekrit"},
+                    {"JEV_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "sekrit"},
                     {"JEV_BASE_URL": "http://127.0.0.1:8090/api/alpha"}):
             with self.subTest(env=list(env)):
                 b = brain.Brain.from_config(self._cfg({"AGENT_BRAIN": "jev", **env}))
