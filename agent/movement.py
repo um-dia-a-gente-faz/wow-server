@@ -118,7 +118,7 @@ def send_stop(session, x: float, y: float, z: float, o: float):
 RUN_SPEED_INDEX = 1
 DEFAULT_RUN_SPEED_YPS = 7.0  # base run speed for most races/classes at low level, no auras
 
-TICK_INTERVAL_S = 0.3               # 250-500 ms, per the card
+TICK_INTERVAL_S = 0.1               # frequent position updates keep observers' interpolation smooth
 ARRIVE_STOP_DISTANCE_YD = 1.0
 REFACE_DRIFT_DEG = 10.0
 SERVER_DRIFT_MAX_YD = 3.0           # self position from perception vs. our simulation
@@ -173,7 +173,8 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
     session.player_position = (map_id, cur[0], cur[1], cur[2], heading)
     world.update_my_position_from_simulation((map_id, cur[0], cur[1], cur[2], heading))
 
-    last_check_t = clock()
+    last_tick_t = clock()
+    last_check_t = last_tick_t
     last_check_remaining = math.hypot(tx - cur[0], ty - cur[1])
     start_remaining = last_check_remaining or 1e-6
     # The server doesn't echo our own position back via update-object for
@@ -197,6 +198,7 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
             return _stop_and_report(False, "stopped", {})
 
         sleep(tick_interval)
+        now = clock()
 
         target = get_target()
         if target is None:
@@ -209,7 +211,13 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
         if remaining <= stop_distance:
             return _stop_and_report(True, None, {"distance": remaining})
 
-        step = min(speed * tick_interval, remaining)
+        # Advance by elapsed wall time rather than the requested sleep. Thread
+        # scheduling and packet work can make a tick longer than its interval;
+        # using a fixed step then makes our reported coordinates lag movement
+        # timestamps and invites the client to correct the character backwards.
+        elapsed = max(0.0, now - last_tick_t)
+        last_tick_t = now
+        step = min(speed * elapsed, remaining)
         cur[0] += (tx - cur[0]) / remaining * step
         cur[1] += (ty - cur[1]) / remaining * step
         # No terrain height (no navmesh in v1): interpolate z by overall
@@ -230,7 +238,6 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
             if server_drift > SERVER_DRIFT_MAX_YD:
                 return _stop_and_report(False, "stuck", {"reason": "server_drift", "drift": server_drift})
 
-        now = clock()
         if now - last_check_t >= STUCK_PROGRESS_WINDOW_S:
             progressed = last_check_remaining - remaining
             last_check_t = now
