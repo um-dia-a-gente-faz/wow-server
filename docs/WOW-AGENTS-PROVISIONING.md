@@ -105,8 +105,8 @@ never creates or overwrites `.env`**; it checks `.env` and prints what is missin
 
 Create `/opt/wow-server/.env`, mode 600, owner root, from the wow-server VM's `.env`
 over a trusted channel or by hand. The agents need `AGENT_PASSWORD` (required),
-`LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` and/or `JEV_BASE_URL`/`JEV_API_KEY`/`JEV_MODEL`
-for the brain, optionally `AGENT_HTTP_PUBLISH_IP`. The guest does **not** need
+`AGENT_BRAIN` (`llm` default, or `jev`) with that brain's own settings,
+`LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` or `JEV_BASE_URL`/`JEV_API_KEY`/`JEV_MODEL`, optionally `AGENT_HTTP_PUBLISH_IP`. The guest does **not** need
 `MYSQL_ROOT_PASSWORD` or `ACCESS_PASSWORD`; leave them out. Do not copy
 `.env.example` verbatim (its `change-me` values would log in with a wrong password).
 
