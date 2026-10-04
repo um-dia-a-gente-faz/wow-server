@@ -40,8 +40,8 @@ Record here once created:
 
 1. Pick one agent profile in `docker-compose.agents.yml`, point its
    `WOW_ACCOUNT` / `WOW_CHARACTER` at the fresh character above.
-2. Set `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` in
-   `.env` — record the exact model name in the results log, settings don't
+2. Set `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` in
+   `.env` (see Preflight below; `LLM_MODEL` is a pinned ordered list, `auto` last) — record the exact model name in the results log, settings don't
    transfer between runs.
 3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited).
 4. Confirm the audit log volume (`/opt/wow-server-metrics/audit`, UM-51) is
@@ -49,6 +49,53 @@ Record here once created:
 5. **Ask the human before starting.** A 1→10 run is hours of wall-clock time
    and real token spend. This doc does not authorize starting one; UM-55
    itself gates that decision.
+
+## Preflight: confirm the brain answers
+
+Do this **before** every run, and again after any change to `LLM_BASE_URL`,
+`LLM_API_KEY` or `LLM_MODEL`. An agent with a dead gateway still logs in and
+perceives; it just never acts (#133: HTTP 503 `no_providers_configured`).
+The gateway is the FreeLLMAPI router at `http://192.168.1.72:3001/v1`, and
+the key must come from that instance.
+
+Run on the VM (or any LAN host). Sourcing `.env` and the check below print no
+key. It sends one tiny forced tool call, the same shape the agent sends
+(`agent/llm.py`), against the first id of `LLM_MODEL`:
+
+```sh
+set -a; . /opt/wow-server/.env; set +a
+curl -sS -m 60 "$LLM_BASE_URL/chat/completions" \
+  -H "Authorization: Bearer $LLM_API_KEY" -H 'Content-Type: application/json' \
+  -d "{\"model\":\"${LLM_MODEL%%,*}\",\"tool_choice\":\"required\",
+       \"messages\":[{\"role\":\"user\",\"content\":\"Call the ping tool.\"}],
+       \"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"ping\",
+         \"description\":\"Reply to a health check\",
+         \"parameters\":{\"type\":\"object\",\"properties\":{}}}}]}" \
+| python3 -c 'import sys,json; r=json.load(sys.stdin); m=r["choices"][0]["message"]; print("model:", r.get("model")); print("tool_calls:", [t["function"]["name"] for t in m.get("tool_calls") or []] or "NONE")'
+```
+
+Pass only if it prints `tool_calls: ['ping']`. A traceback with `KeyError:
+'choices'` means an error body (401 wrong key, 503 no provider key or no
+tool-capable model enabled, 429 cooling down); drop the `| python3 ...` part
+to read it. Repeat with each id in `LLM_MODEL` to see which ones work. A
+single success does not prove the >= 90% bar; it only proves the gateway is
+not the blocker.
+
+After the agent has run a few cycles, the newest ones must show no 503/429
+and a valid tool call:
+
+```sh
+python3 -m agent.tools.replay /opt/wow-server-metrics/audit/<agent>/<YYYY-MM-DD>.jsonl --failures
+```
+
+Working model id (a human fills this in after the preflight and one agent
+cycle both pass, then commits it here and to `.env.example`):
+
+| Field | Value |
+|---|---|
+| Model id(s) verified | _(not yet verified)_ |
+| Router | `http://192.168.1.72:3001/v1` |
+| Verified (date, by) | |
 
 ## How to start a run
 

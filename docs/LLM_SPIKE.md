@@ -31,9 +31,10 @@ The harness could not be exercised against real traffic in this environment:
 - The candidate local-model hosts (laptop, desktop, Pandora) are the
   owner's physical machines; this environment has no GPU and can't reach
   them to install/run llama.cpp or Ollama.
-- `192.168.1.60:3002` (FreeLLMAPI) is reachable from this environment and
-  answers `401 Invalid API key` — reachability confirmed, credentials are
-  not.
+- `192.168.1.60:3002` (FreeLLMAPI) was reachable from this environment and
+  answered `401 Invalid API key` — reachability confirmed, credentials were
+  not. That instance was removed on 2026-10-03 (#133); FreeLLMAPI now runs
+  at `192.168.1.72:3001` (LXC 301 `freellmapi` on pv1).
 
 So: the **script is ready to run** (validated end-to-end with `--mock`, and
 against the real OpenRouter endpoint where it correctly reports `401`s
@@ -50,7 +51,8 @@ follow-up, filed as UM-66/UM-67 below.
 
 FreeLLMAPI (https://github.com/tashfeenahmed/freellmapi) proxies to
 OpenRouter's free tier (and others) behind a single OpenAI-compatible
-endpoint (`192.168.1.60:3002`), which is the integration UM-44 already
+endpoint (`192.168.1.72:3001`; it was `192.168.1.60:3002` when this spike
+was written), which is the integration UM-44 already
 targets (`agent/config.py`'s `LLM_BASE_URL`/`LLM_MODEL`, `.env.example`).
 
 Earlier prototype note (`docs/HANDOFF.md`, cited in UM-44): `auto` routing
