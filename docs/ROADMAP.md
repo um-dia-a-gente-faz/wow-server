@@ -33,8 +33,7 @@ All 8 dashboards/services are live on 192.168.1.64 and 192.168.1.60. See
 
 Landed as UM-31 (fixtures + harness), UM-32 (block framing + movement),
 UM-33 (VALUES field mapping), UM-34 (WorldState wiring + snapshot API) —
-PRs #16-#19. See "Definition of done" below for what was and wasn't
-live-verified, and `agent/tests/fixtures/update_object/README.md` for a
+PRs #16-#19. See `docs/PROTOCOL-NOTES.md` for the verified wire formats, and `agent/tests/fixtures/update_object/README.md` for a
 documented gap (no live `OUT_OF_RANGE_OBJECTS`/standalone `MOVEMENT` capture
 — same-map `.go` GM teleports don't trigger TrinityCore's live visibility
 resync without a `MSG_MOVE_TELEPORT_ACK` this agent doesn't send yet; a
@@ -56,8 +55,10 @@ it relied on are in `docs/PROTOCOL-NOTES.md`, the code in `agent/update_object.p
 
 ### Phase 2 — basic actions
 
-Perception is in place; `agent/actions.py` started with only chat, party
-invite, and target/attack-start. Build in this order — each item both depends
+Perception is in place and `agent/actions.py` now registers the basic
+catalog (chat, party, face/target, auto-attack, cast, move-to, interact,
+loot, vendor buy/sell, trainer, quests, trade). The list below is the
+original build order, kept for the status of each item; build in this order — each item both depends
 on perception and is a dependency for the next:
 
 1. **`face` / `set_target`** — almost free once perception has nearby-object

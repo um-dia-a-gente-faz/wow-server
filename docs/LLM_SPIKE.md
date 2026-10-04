@@ -133,7 +133,7 @@ already competes with the 8 GB budget before compute does).
 2. **Tool catalog** — `scripts/llm_bench/tools_catalog.py`: a stand-in for
    UM-36/UM-44's real action registry (not built yet), shaped after the
    action catalog in `docs/AI-AGENT-SPEC.md` so the same JSON-schema
-   validation UM-44's `loop.py` will need (exactly one tool call, known
+   validation UM-44's think loop (`agent/think.py`) will need (exactly one tool call, known
    name, required args present) gets exercised here.
 3. **Harness** — `scripts/llm_bench/benchmark.py`: stdlib-only
    (`urllib`, per `CONTRIBUTING.md`), OpenAI-compatible
@@ -170,7 +170,7 @@ python3 scripts/llm_bench/benchmark.py --config scripts/llm_bench/candidates.jso
 python3 scripts/llm_bench/benchmark.py --config scripts/llm_bench/candidates.json --concurrency 25  # raid-size load
 ```
 
-`candidates.json` is gitignored-by-convention the same way `.env` is (don't
+`candidates.json` is a local, untracked file (only the `.example` is in the repo), gitignored-by-convention the same way `.env` is (don't
 commit real endpoints/keys beyond the `.example` file). Add
 `--json-out results.json` to keep the raw per-call data for the
 sensible/acceptable/wrong rubric pass.
