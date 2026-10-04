@@ -190,6 +190,15 @@ so D7 is an edit to that document, not something this ADR overrides.
 ## Related tickets
 
 - #202 — this ADR.
+- Follow-ups, one per decision item (all on milestone *M3 - Jev decision brain*):
+  - #212 — D3: make `AGENT_THINK_INTERVAL_S` a runtime knob in the generator.
+  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`.
+  - #214 — D5: stop recording `jev_status: success` for a cycle Jev was never asked.
+  - #215 — D6: sleep to a deadline instead of the interval being additive.
+  - #216 — F6: verify the native TypeSafe per-token price and correct ADR 0001's
+    spend estimate.
+  - #217 — D7: restate `AGENT-DIRECTION.md` §3's pacing on the measured basis.
+  - #218 — D2: set the interval to 3 s. Blocked by #212 and #213; never stacked.
 - #201 — the loop guard wedging the agent when the candidate set collapses to
   idle. F4 is the same failure seen from the audit side, and D5 is the
   observability half of it.
