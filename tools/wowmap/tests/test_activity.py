@@ -250,5 +250,33 @@ class ApiTests(unittest.TestCase):
         self.assertIn("Recent activity", app.PAGE)
 
 
+class FeedUiTests(unittest.TestCase):
+    """#173: timestamps, search and scrolling in the drawer's Recent activity."""
+    js, css = app.ACTIVITY_JS, app.ACTIVITY_CSS
+
+    def test_absolute_and_relative_time(self):
+        self.assertIn("const clock = ", self.js)
+        self.assertIn("${clock(e.t)} · ${ago(e.t)}", self.js)
+
+    def test_timer_only_while_tab_visible(self):
+        self.assertIn("if (!document.hidden) refresh()", self.js)
+        self.assertIn("visibilitychange", self.js)
+
+    def test_search_box_is_its_own_and_filters_client_side(self):
+        self.assertIn("'act-search'", self.js)
+        self.assertIn(".activity .act-search", self.css)
+        self.assertIn("search.oninput = render", self.js)
+        self.assertIn("no matches", self.js)
+        self.assertIn("el('mark', null", self.js)
+
+    def test_list_scrolls_and_says_how_far_back(self):
+        self.assertRegex(self.css, r"\.activity \.act-list \{[^}]*overflow-y:auto")
+        self.assertIn("back to", self.js)
+
+    def test_untrusted_text_never_goes_through_innerhtml(self):
+        self.assertNotIn("innerHTML", self.js)
+        self.assertNotIn("insertAdjacentHTML", self.js)
+
+
 if __name__ == "__main__":
     unittest.main()

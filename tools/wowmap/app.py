@@ -1765,8 +1765,12 @@ const AgentMind = (() => {
 # ---------------------------------------------------------------- page: activity feed
 # UM-76: "Recent activity" section of the inspect drawer, fed by
 # GET /api/character/<name>/activity (see activity.py). Inspect.renderBody appends
-# this module's persistent node; the module polls on its own every 5 s. Event text
-# comes from chat and the database, so it is rendered with textContent only.
+# this module's persistent node; the module polls on its own every 5 s while the
+# browser tab is visible. #173: each entry shows a clock time and a relative age,
+# the list scrolls inside the drawer under its own search box (client-side filter
+# over the fetched window, match highlighted), and the footer says how far back the
+# window goes. Event text comes from chat and the database, so it is rendered with
+# textContent only (the highlight is built from text nodes and <mark>).
 ACTIVITY_CSS = r"""
   .activity .act { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #20263a;
                    font-size:12.5px; line-height:1.35; }
@@ -1777,6 +1781,11 @@ ACTIVITY_CSS = r"""
   .activity .inferred { font-size:10px; border:1px solid #6b5a2f; color:#f3b84b; border-radius:999px;
                         padding:0 6px; margin-left:6px; white-space:nowrap; }
   .activity .note { color:var(--dim); font-size:11px; padding:3px 0; }
+  .activity .act-search { width:100%; box-sizing:border-box; margin:0 0 6px; padding:4px 8px;
+                          background:#0b0e16; color:var(--fg); border:1px solid #46557a;
+                          border-radius:4px; font:inherit; font-size:12px; }
+  .activity .act-list { max-height:45vh; overflow-y:auto; overscroll-behavior:contain; }
+  .activity mark { background:#6b5a2f; color:inherit; border-radius:2px; }
   .activity .ic.k-combat { color:#ff6b6b; } .activity .ic.k-loot, .activity .ic.k-item { color:#7ddf8a; }
   .activity .ic.k-sell, .activity .ic.k-buy, .activity .ic.k-money { color:#f3b84b; }
   .activity .ic.k-chat, .activity .ic.k-whisper { color:#5fd0d8; }
@@ -1797,9 +1806,31 @@ window.ActivityFeed = (() => {
     return e;
   }
   const box = el('div', 'activity');
-  const list = el('div');
-  box.append(el('h3', null, 'Recent activity'), list);
+  const search = el('input', 'act-search');
+  search.type = 'search';
+  search.placeholder = 'Search activity (kind, text, zone, who)';
+  search.setAttribute('aria-label', 'Search recent activity');
+  const list = el('div', 'act-list');
+  box.append(el('h3', null, 'Recent activity'), search, list);
   let shownFor = null, seq = 0, data = null;
+  const LIMIT = 50;
+
+  const clock = (t) => new Date(t * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+  // Everything the search box can match for one event: kind, text, source, and the
+  // detail values (trade partner, channel, zone ids...).
+  const hay = (e) => [e.kind, e.text, SOURCES[e.source] || e.source,
+                      ...Object.values(e.detail || {})].join(' ').toLowerCase();
+  // Append `text` to `parent` with every occurrence of `q` wrapped in <mark>.
+  function hl(parent, text, q) {
+    const s = String(text ?? '');
+    if (!q) { parent.append(s); return; }
+    let i = 0, j;
+    while ((j = s.toLowerCase().indexOf(q, i)) !== -1) {
+      parent.append(s.slice(i, j), el('mark', null, s.slice(j, j + q.length)));
+      i = j + q.length;
+    }
+    parent.append(s.slice(i));
+  }
 
   function ago(t) {
     const s = Math.max(0, Math.round(Date.now() / 1000 - t));
@@ -1818,33 +1849,45 @@ window.ActivityFeed = (() => {
       for (const [key, label] of [['db', 'database'], ['chat', 'chat feed']]) {
         if (src[key] && !src[key].ok) f.append(el('div', 'note', `${label} unreachable, events may be missing`));
       }
+      const q = search.value.trim().toLowerCase();
+      const shown = q ? data.events.filter((e) => hay(e).includes(q)) : data.events;
       if (!data.events.length) f.append(el('div', 'none', 'no activity recorded yet'));
-      for (const e of data.events) {
+      else if (!shown.length) f.append(el('div', 'none', `no matches for "${search.value.trim()}"`));
+      for (const e of shown) {
         const failed = e.detail && e.detail.ok === false;
         const r = el('div', 'act' + (failed ? ' failed' : ''));
         r.append(el('span', 'ic k-' + e.kind, ICONS[e.kind] || '•'));
-        const tx = el('div', 'tx', e.text);
+        const tx = el('div', 'tx');
+        hl(tx, e.text, q);
         if (e.inferred) {
           const b = el('span', 'inferred', 'inferred');
           b.title = 'Not recorded by the server: deduced from database changes';
           tx.append(b);
         }
-        const meta = el('div', 'meta', `${ago(e.t)} · ${SOURCES[e.source] || e.source}`);
+        const meta = el('div', 'meta', `${clock(e.t)} · ${ago(e.t)} · ${SOURCES[e.source] || e.source}`);
         meta.title = new Date(e.t * 1000).toLocaleString();
         tx.append(meta);
         r.append(tx);
         f.append(r);
       }
+      // The window is bounded, so say where it ends instead of looking endless.
+      const ev = data.events, last = ev[ev.length - 1];
+      if (last) f.append(el('div', 'note', (q ? `${shown.length} match${shown.length === 1 ? '' : 'es'} in ` : '') +
+        (ev.length < LIMIT ? `all ${ev.length} recorded events` : `the newest ${ev.length} events`) +
+        `, back to ${new Date(last.t * 1000).toLocaleString()} (${ago(last.t)})`));
     }
+    const top = list.scrollTop;
     list.replaceChildren(f);
+    list.scrollTop = top;
   }
+  search.oninput = render;
 
   async function refresh() {
     const who = Inspect.current();
     if (!who || who !== shownFor) return;
     const mine = ++seq;
     try {
-      const r = await fetch(`/api/character/${encodeURIComponent(who)}/activity?limit=50`);
+      const r = await fetch(`/api/character/${encodeURIComponent(who)}/activity?limit=${LIMIT}`);
       const j = await r.json().catch(() => ({}));
       if (mine !== seq || who !== shownFor) return;
       data = r.ok ? j : {error: j.error || 'error ' + r.status};
@@ -1855,19 +1898,31 @@ window.ActivityFeed = (() => {
     render();
   }
 
-  // Called by Inspect.renderBody on every re-render; the node is reused.
+  // Called by Inspect.renderBody on every re-render; the node is reused. Re-attaching
+  // it blurs the search box and resets the list's scroll, so put both back once the
+  // drawer body has been replaced.
   function section(name) {
     if (name !== shownFor) {
       shownFor = name;
       data = null;
       seq++;
+      search.value = '';
       render();
       refresh();
     }
+    const typing = document.activeElement === search, top = list.scrollTop;
+    const [a, b] = [search.selectionStart, search.selectionEnd];
+    queueMicrotask(() => {
+      list.scrollTop = top;
+      if (typing) { search.focus({preventScroll: true}); search.setSelectionRange(a, b); }
+    });
     return box;
   }
 
-  setInterval(refresh, 5000);
+  // Each poll also re-renders, which keeps the relative ages current. No timer work
+  // while the browser tab is hidden; catch up as soon as it is shown again.
+  setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   return {section, refresh};
 })();
 </script>
