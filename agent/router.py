@@ -59,3 +59,5 @@ class PacketRouter:
 
 
 ROUTER = PacketRouter()
+import os
+x: int = "a"
