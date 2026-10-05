@@ -5,8 +5,8 @@ description: Work on tools/wowmap, the internal observability site (live map, ch
 
 # Working on the observability site
 
-`tools/wowmap` is a single-file stdlib `http.server` app (`app.py`, ~1000 lines) with the
-HTML/CSS/JS embedded as strings — no build step, no framework. Keep it that way.
+`tools/wowmap` is a stdlib `http.server` app: `app.py` is wiring only, `routes.py` is the
+route table, SQL lives in `repo/`, and the HTML/CSS/JS is embedded as strings in `pages.py` — no build step, no framework. Keep it that way.
 The map stage is Leaflet (`L.CRS.Simple`, map units = zone-art pixels), vendored in
 `tools/wowmap/static/` and served under `/static/`; never load it from a CDN.
 `tools/wowmap/README.md` documents the endpoints and the bag/slot convention;

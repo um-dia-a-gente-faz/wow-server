@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import players  # noqa: E402
 
 
 def js_fn(name, end):
@@ -104,7 +105,7 @@ class PlayerRowTests(unittest.TestCase):
         self.assertEqual(world["selected"], ["Kaelthasidus", "Kaelthasidus"])  # Enter and Space, not 'a'
 
     def test_badge_numeral_contrast_is_at_least_4_5_for_every_class(self):
-        colours = list(app.CLASS_COLORS.values()) + ["#888888"]  # #888888: unknown-class fallback
+        colours = list(players.CLASS_COLORS.values()) + ["#888888"]  # #888888: unknown-class fallback
         rows = self.rows([dict(PLAYERS[0], class_color=c) for c in colours])
         for colour, row in zip(colours, rows):
             ink = row["cells"][0].get("ink") or "#10131a"  # unset inline: the CSS var(--bg)

@@ -17,6 +17,8 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import assets  # noqa: E402
+import state  # noqa: E402
 import item_icons  # noqa: E402
 
 try:
@@ -60,7 +62,7 @@ class ParseTests(unittest.TestCase):
                          "inv_misc_rune_01.png")
         self.assertEqual(item_icons.icon_file("../../etc/passwd"), "passwd.png")
         self.assertEqual(item_icons.icon_file("Ability Seal"), "ability_seal.png")
-        self.assertRegex(item_icons.icon_file("INV_Sword_04"), app.ICON_FILE_RE)
+        self.assertRegex(item_icons.icon_file("INV_Sword_04"), assets.ICON_FILE_RE)
 
     def test_mpq_path(self):
         self.assertEqual(item_icons.mpq_path("INV_Sword_04"), "Interface\\Icons\\INV_Sword_04.blp")
@@ -72,33 +74,33 @@ class IconUrlTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         with open(os.path.join(self.tmp.name, "inv_sword_06.png"), "wb") as f:
             f.write(b"\x89PNG fake")
-        for p in (mock.patch.object(app, "ICONS_DIR", self.tmp.name),
-                  mock.patch.object(app, "_display_icons",
+        for p in (mock.patch.object(state, "ICONS_DIR", self.tmp.name),
+                  mock.patch.object(state, "_display_icons",
                                     {2380: "INV_Sword_06", 6418: "INV_Misc_Rune_01"})):
             p.start()
             self.addCleanup(p.stop)
 
     def test_url_when_the_png_was_extracted(self):
-        self.assertEqual(app.icon_url(2380), "/icons/inv_sword_06.png")
+        self.assertEqual(state.icon_url(2380), "/icons/inv_sword_06.png")
 
     def test_none_when_png_missing_or_display_unknown(self):
-        self.assertIsNone(app.icon_url(6418))   # in the DBC, not extracted
-        self.assertIsNone(app.icon_url(99999))  # not in the DBC
-        self.assertIsNone(app.icon_url(None))
-        self.assertIsNone(app.icon_url(0))
+        self.assertIsNone(state.icon_url(6418))   # in the DBC, not extracted
+        self.assertIsNone(state.icon_url(99999))  # not in the DBC
+        self.assertIsNone(state.icon_url(None))
+        self.assertIsNone(state.icon_url(0))
 
     def test_missing_dbc_disables_icons_without_failing(self):
-        with mock.patch.object(app, "_display_icons", None), \
-                mock.patch.object(app, "DBC_DIR", self.tmp.name):
-            self.assertEqual(app.display_icons(), {})
-            self.assertIsNone(app.icon_url(2380))
+        with mock.patch.object(state, "_display_icons", None), \
+                mock.patch.object(state, "DBC_DIR", self.tmp.name):
+            self.assertEqual(state.display_icons(), {})
+            self.assertIsNone(state.icon_url(2380))
 
     def test_loads_the_dbc_from_dbc_dir(self):
         with open(os.path.join(self.tmp.name, "ItemDisplayInfo.dbc"), "wb") as f:
             f.write(make_item_display_dbc({2380: "INV_Sword_06"}))
-        with mock.patch.object(app, "_display_icons", None), \
-                mock.patch.object(app, "DBC_DIR", self.tmp.name):
-            self.assertEqual(app.icon_url(2380), "/icons/inv_sword_06.png")
+        with mock.patch.object(state, "_display_icons", None), \
+                mock.patch.object(state, "DBC_DIR", self.tmp.name):
+            self.assertEqual(state.icon_url(2380), "/icons/inv_sword_06.png")
 
 
 class IconRouteTests(unittest.TestCase):
@@ -109,7 +111,7 @@ class IconRouteTests(unittest.TestCase):
             f.write(b"\x89PNG fake")
         with open(os.path.join(self.tmp.name, "secret.txt"), "wb") as f:
             f.write(b"no")
-        p = mock.patch.object(app, "ICONS_DIR", self.tmp.name)
+        p = mock.patch.object(state, "ICONS_DIR", self.tmp.name)
         p.start()
         self.addCleanup(p.stop)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)

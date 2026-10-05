@@ -12,6 +12,7 @@ from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import assets  # noqa: E402
 
 # Leaflet 1.9.4 as published on npm (dist/leaflet.js, dist/leaflet.css), unmodified.
 LEAFLET_SHA256 = {
@@ -44,7 +45,7 @@ class StaticRouteTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(body).hexdigest(), LEAFLET_SHA256[name], name)
 
     def test_only_listed_files_are_reachable(self):
-        self.assertTrue(os.path.isfile(os.path.join(app.STATIC_DIR, "leaflet-LICENSE")))
+        self.assertTrue(os.path.isfile(os.path.join(assets.STATIC_DIR, "leaflet-LICENSE")))
         for path in ("/static/leaflet-LICENSE", "/static/", "/static/../app.py",
                      "/static/..%2Fapp.py", "/static/%2e%2e/calibration.json",
                      "/static/leaflet.js/x"):
