@@ -149,6 +149,7 @@ class JevClient:
         self.last_choice: str | None = None
         self.last_confidence: float | None = None
         self.last_probabilities: dict = {}
+        self.skipped_single_candidate = False
 
     def _reset_last(self):
         self.last_usage = {}
@@ -156,6 +157,7 @@ class JevClient:
         self.last_choice = None
         self.last_confidence = None
         self.last_probabilities = {}
+        self.skipped_single_candidate = False
 
     @property
     def url(self) -> str:
@@ -198,7 +200,8 @@ class JevClient:
         by_key = build_criteria(candidates)
         if len(by_key) == 1:
             (key, only), = by_key.items()
-            self.last_choice, self.last_confidence = key, 1.0
+            self.skipped_single_candidate = True
+            self.last_choice = key
             self.last_probabilities = {key: 1.0}
             return only["action"], dict(only.get("params") or {})
 

@@ -197,7 +197,7 @@ so D7 is an edit to that document, not something this ADR overrides.
 - #202 — this ADR.
 - Follow-ups, one per decision item (all on milestone *M3 - Jev decision brain*):
   - #212 — D3: make `AGENT_THINK_INTERVAL_S` a runtime knob in the generator.
-  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`.
+  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`. Wired: per agent, rolling hour, input+output, breach fails the cycle (`jev_status: budget_exhausted`).
   - #214 — D5: stop recording `jev_status: success` for a cycle Jev was never asked.
   - #215 — D6: sleep to a deadline instead of the interval being additive.
   - #216 — F6: verify the native TypeSafe per-token price and correct ADR 0001's

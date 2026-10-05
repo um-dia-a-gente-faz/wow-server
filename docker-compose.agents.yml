@@ -23,7 +23,7 @@ x-agent: &agent-defaults
     WOW_HOST: 192.168.1.64
     WOW_AUTH_PORT: 3724
     WOW_PASSWORD: ${AGENT_PASSWORD:?set AGENT_PASSWORD in .env (see .env.example)}
-    AGENT_THINK_INTERVAL_S: 5
+    AGENT_THINK_INTERVAL_S: ${AGENT_THINK_INTERVAL_S:-5}
     LOG_LEVEL: INFO
     # UM-44 think loop — optional (agent/__main__.py idles gracefully without
     # them, per its own "LLM_BASE_URL/LLM_MODEL not set" warning), but the
