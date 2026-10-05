@@ -59,12 +59,9 @@ deferred, not the party mechanics Milestone 3 already needs.
 explicit fallback and future roleplay layer, not deleted —
 `docs/AGENT-DIRECTION.md` §3 already anticipated "paid models may be added;
 keep the provider behind an interface." This decision overrides that
-section's "free only" for Jev specifically: cost is input-token-only
-(`$0.042`/M tokens at the time of writing), output tokens are free, and
-every response reports its own cost via `usage.cost`. Expected spend at
-current agent counts (1-5 agents, 10-30s think interval) is well under
-$5/month; revisit the ceiling explicitly before scaling toward the
-25-agent raid roster (UM-63/UM-102).
+section's "free only" for Jev specifically. The 2026-10-04 correction below
+records the verified native TypeSafe price and replaces the unsupported spend
+estimate.
 
 Development against real Jev is blocked on provisioning `OPENROUTER_API_KEY`
 into the agent containers. A local mock (`tools/jev-mock/`, UM-96) stands in
@@ -147,3 +144,26 @@ framing above (`docs/AGENT-DIRECTION.md` still overrides this ADR):
 
 If the agent-host ADR (0002 is taken; its in-review successor) merges first and
 this update is split out, it becomes ADR 0003 and says so.
+
+## Update 2026-10-04: native TypeSafe price and spend correction (#216)
+
+The earlier paragraph's "well under $5/month" estimate was unsupported and
+misleading. It assumed a much smaller prompt than production sends. The
+production native TypeSafe endpoint returns input/output token usage but no
+`usage.cost`; the OpenRouter response behavior described above does not apply
+to native calls.
+
+TypeSafe's [official model reference](https://docs.typesafe.ai/models) lists
+Jev 1.13 (`jev-1.13.0`, the version behind `jev-latest`) at **$0.042 per
+million input tokens**, with output tokens free. This is the provider's
+published native price, not a price inferred from an API response. Checked
+2026-10-04. The model reference is the source for the unit price; the following
+monthly amounts are estimates from measured production prompt usage, not
+account-meter totals.
+
+ADR 0004 F6 supplies the production token measurements and recomputes the
+spend. Its M3 roster ceiling is approximately **$3,234 per 30-day month for 25
+agents**, using the measured p50 prompt size of 3,565 input tokens and the
+conservative assumption that every agent makes one billed Jev call every 3
+seconds. This ceiling is a planning bound at the published rate, not a spending
+cap enforced by the software. Revisit before scaling (UM-63/UM-102).

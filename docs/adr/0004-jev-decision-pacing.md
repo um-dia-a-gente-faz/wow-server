@@ -133,14 +133,21 @@ Even ADR 0001's own assumption — 1 agent, 30 s interval, 84% call rate — com
 agents. The prompt simply carries more tokens (p50 3565) than that estimate
 assumed.
 
-At the 25-agent target (UM-63/UM-102) a 3 s beat is ~$2.4k–2.9k/month, which is
-the number worth having in writing before the roster scales.
+At the 25-agent target (UM-63/UM-102), a 3 s beat at the measured 3,565-token
+production p50 prompt size, with every cycle billed, gives a planning ceiling
+of **~$3,234 per 30-day month**: 25 agents × 1,200 calls/hour × 24 × 30 ×
+3,565 input tokens × $0.042/M. It assumes one billed decision on every cycle;
+single-candidate cycles currently skip the network call, so this is deliberately
+conservative. This is an estimate, not an enforced spend cap.
 
-Caveat: the native provider's response returns `usage.input_tokens` and
-`usage.output_tokens` but **no `usage.cost`** — unlike the OpenRouter path ADR
-0001 describes. So the per-token price used above is ADR 0001's OpenRouter figure
-applied to a native call. The arithmetic is right; the unit price is inherited,
-not verified. That is worth closing before anyone commits to a budget.
+**Price verified:** TypeSafe's [official model reference](https://docs.typesafe.ai/models)
+lists Jev 1.13 (`jev-1.13.0`, the version behind `jev-latest`) at $0.042 per
+million input tokens, with output tokens free. Checked 2026-10-04. The endpoint
+response still has no `usage.cost`, so the published provider price is the
+source; monthly totals are arithmetic using that price and the measured usage,
+not account-meter totals. The F6 table's per-call arithmetic is confirmed at
+that price. See ADR 0001's dated correction for the replacement of its earlier
+"well under $5/month" estimate and the same M3 roster ceiling.
 
 ## Decision
 
