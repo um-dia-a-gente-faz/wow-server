@@ -252,6 +252,12 @@ class ApiTests(unittest.TestCase):
         self.assertIn("window.ActivityFeed", pagesrc.PAGE)
         self.assertIn("Recent activity", pagesrc.PAGE)
 
+    def test_activity_has_its_own_drawer_tab(self):
+        # #210: the feed lives in its own tab pane, not stacked in the character body.
+        self.assertIn("'Activity'", pagesrc.PAGE)
+        self.assertIn("act-pane", pagesrc.PAGE)
+        self.assertNotIn("ActivityFeed.section(c.name)", pagesrc.PAGE)
+
 
 # Minimal DOM stand-in: enough for ActivityFeed to render, then dump every row's
 # text with each <mark> shown as [..].

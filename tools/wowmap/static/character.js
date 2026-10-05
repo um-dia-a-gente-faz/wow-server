@@ -311,7 +311,6 @@ const Inspect = (() => {
     f.append(kv('Map coords', mapCoordsText(c) || '—'));
     f.append(kv('World X, Y, Z', worldText(c.position_x, c.position_y, c.position_z)));
     f.append(kv('Facing', `${c.orientation.toFixed(2)} rad`));
-    if (window.ActivityFeed) f.append(window.ActivityFeed.section(c.name));
 
     const inv = groupInventory(c.inventory || []);
     f.append(el('h3', null, 'Equipped'));
