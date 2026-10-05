@@ -92,6 +92,8 @@ MAX_FOLLOW = 2
 MAX_GOSSIP_OPTIONS = 4
 MAX_ABANDON = 2
 MAX_SPELLS = 3
+# Healing spells (agent.spells.SPELL_TABLE: Holy Light, Lesser Heal), self-cast when hurt.
+HEAL_SPELL_IDS = frozenset({635, 2050})
 MAX_TRAIN = 3
 MAX_EQUIP = 3
 MAX_USE_ITEMS = 2
@@ -296,9 +298,9 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     threats_snapshot = [u for u in snapshot.get("nearby_units") or []
                         if _alive(u) and u.get("in_combat") and my_guid is not None
                         and _guid_value(u, "target_guid", handles) == my_guid]
-    # The spell metadata table contains heals, buffs and utility actions too.
-    # Keep this candidate path to the known damaging spells; prefer the
-    # highest known rank for a spell family.
+    # Damaging spells are offered against threats below; prefer the highest
+    # known rank for a spell family. Heals are offered separately (self-cast,
+    # when health is low); buffs and utility spells are still not offered.
     offensive_ids = {20271: "judgement", 2812: "holy_wrath", 2973: "raptor",
                      1978: "serpent_sting", 1752: "sinister_strike", 2098: "eviscerate",
                      585: "smite", 589: "shadow_word_pain", 133: "fireball",
@@ -322,6 +324,15 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     health_pct = _resource_pct(me, "health")
     mana_pct = _resource_pct(me, "mana")
     needs_health, needs_mana = health_pct is not None and health_pct < 0.7, mana_pct is not None and mana_pct < 0.5
+    # Heals are offered as a self-cast (no target) when health is low, so a
+    # character whose only known spell is a heal (level-1 Paladin: Holy Light)
+    # can still cast and save itself.
+    if needs_health:
+        known_heals = [s for s in snapshot.get("spells") or [] if s.get("id") in HEAL_SPELL_IDS]
+        for spell in known_heals[:MAX_SPELLS]:
+            out.insert(0, candidate("cast_spell", {"spell_id": spell["id"]},
+                                    f"cast {spell.get('name') or spell['id']} on yourself"))
+
     use_count = 0
     for item in sorted((snapshot.get("inventory") or []),
                        key=lambda it: (-it.get("template", {}).get("quality", 0), it.get("slot", 999))):

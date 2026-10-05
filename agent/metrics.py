@@ -39,7 +39,7 @@ class AgentMetrics:
     last_xp: int | None = None
     first_xp: int | None = None
     jev_calls_total: int = 0
-    jev_errors: dict = field(default_factory=lambda: {s: 0 for s in ("http_4xx", "http_5xx", "error")})
+    jev_errors: dict = field(default_factory=lambda: {s: 0 for s in ("http_4xx", "http_5xx", "error", "budget_exhausted")})
     jev_fallback_total: int = 0
     jev_prompt_tokens_total: int = 0
     jev_completion_tokens_total: int = 0

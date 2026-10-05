@@ -111,6 +111,11 @@ round trip and the action. At the measured 252 ms p50 this is a ~5% error at
 `interval=5` and a ~9% error at `interval=3` — small, but it means "set it to 3"
 does not produce a 3 s beat, and the error grows as the interval shrinks.
 
+*Update (#215):* the loop now sleeps `max(0, interval - elapsed)` from the cycle's
+start, so the period is the interval and a cycle that overruns it starts the next
+one immediately (no negative sleep, no early start). The measured before/after gap
+from a paced live run is still to be recorded here.
+
 **F6 — The cost picture in ADR 0001 does not reproduce.**
 
 At 3167 input tokens per decision and ADR 0001's `$0.042`/M input (output free),
@@ -199,7 +204,7 @@ so D7 is an edit to that document, not something this ADR overrides.
 - #202 — this ADR.
 - Follow-ups, one per decision item (all on milestone *M3 - Jev decision brain*):
   - #212 — D3: make `AGENT_THINK_INTERVAL_S` a runtime knob in the generator.
-  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`.
+  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`. Wired: per agent, rolling hour, input+output, breach fails the cycle (`jev_status: budget_exhausted`).
   - #214 — D5: stop recording `jev_status: success` for a cycle Jev was never asked.
   - #215 — D6: sleep to a deadline instead of the interval being additive.
   - #216 — F6: verify the native TypeSafe per-token price and correct ADR 0001's
