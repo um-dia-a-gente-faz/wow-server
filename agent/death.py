@@ -32,6 +32,7 @@ from .perception import PLAYER_FLAGS_GHOST, UNIT_NPC_FLAG_SPIRITHEALER
 CMSG_REPOP_REQUEST          = 0x15A
 CMSG_RECLAIM_CORPSE         = 0x1D2
 CMSG_SPIRIT_HEALER_ACTIVATE = 0x21C
+MSG_CORPSE_QUERY            = 0x216  # empty client->server request
 
 CORPSE_RECLAIM_RADIUS_YD = 39.0  # Player.h CORPSE_RECLAIM_RADIUS
 CORPSE_OBJECT_MATCH_RADIUS_YD = 5.0  # how close a "corpse" object must be to
@@ -55,6 +56,17 @@ RESURRECT_CONFIRM_POLL_S = 0.2
 def _is_ghost(world) -> bool:
     me = world.get_my_object()
     return bool(me is not None and me.is_ghost())
+
+
+def _query_corpse(session) -> bool:
+    """Ask the server where our corpse is (nothing else ever sends
+    MSG_CORPSE_QUERY, so session.corpse_position stays None otherwise — gh-208)
+    and wait briefly for the response. True once a position is known."""
+    if session.corpse_position is not None:
+        return True
+    session._send_packet(MSG_CORPSE_QUERY, b'')
+    return actions._wait_for(lambda: session.corpse_position is not None,
+                             timeout=RESURRECT_CONFIRM_TIMEOUT_S, interval=RESURRECT_CONFIRM_POLL_S)
 
 
 def _rotate(dx: float, dy: float, angle_rad: float) -> tuple:
@@ -188,6 +200,7 @@ class ReleaseSpiritAction(actions.Action):
                                        timeout=RESURRECT_CONFIRM_TIMEOUT_S, interval=RESURRECT_CONFIRM_POLL_S)
         if not confirmed:
             return actions.ActionResult(ok=False, error="no ghost state confirmed after release")
+        session._send_packet(MSG_CORPSE_QUERY, b'')  # populate corpse_position for the corpse run (gh-208)
         return actions.ActionResult(ok=True, detail={"position": session.player_position})
 
 
@@ -196,7 +209,8 @@ class ReclaimCorpseAction(actions.Action):
     name = "reclaim_corpse"
     description = ("Walk to your corpse and resurrect there. Falls back to the nearest "
                     "spirit healer if the corpse can't be reached (obstacle, out of range, "
-                    "or no corpse perceived). Requires release_spirit first.")
+                    "or no corpse perceived). Asks the server for the corpse position if unknown. "
+                    "Requires release_spirit first.")
     params = {}
     required = ()
 
@@ -204,15 +218,16 @@ class ReclaimCorpseAction(actions.Action):
         me = world.get_my_object()
         if me is None or not me.is_ghost():
             return "not a ghost — call release_spirit first"
-        if session.corpse_position is None:
-            return "corpse position unknown yet — wait for the server's MSG_CORPSE_QUERY response"
         ready_at = session.corpse_reclaim_ready_at
         if ready_at is not None and time.monotonic() < ready_at:
             return f"corpse reclaim still on cooldown ({ready_at - time.monotonic():.0f}s left)"
         return None
 
     def execute(self, session, world, **_) -> actions.ActionResult:
-        run_result = _corpse_run(session, world, session.corpse_position)
+        if not _query_corpse(session):
+            run_result = {"ok": False, "error": "corpse position unknown (no MSG_CORPSE_QUERY response)"}
+        else:
+            run_result = _corpse_run(session, world, session.corpse_position)
         if run_result.get("ok"):
             corpse = _find_my_corpse(world, session.corpse_position)
             if corpse is not None:

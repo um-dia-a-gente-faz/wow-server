@@ -136,8 +136,6 @@ NOT_OFFERED = {
     "destroy_item": "destructive inventory action is intentionally excluded",
     "compare_items": "comparison is used internally to offer equip upgrades",
     "rest": "reflex-controlled survival action, not an explicit candidate",
-    "release_spirit": "death reflex controls release timing",
-    "reclaim_corpse": "death reflex controls corpse reclaim timing",
     "invite_to_group": "social grouping is out of scope",
     "open_trade": "trade family is out of scope",
     "accept_trade_request": "trade family is out of scope",
@@ -283,12 +281,18 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     idle = candidate("idle", {}, "do nothing this cycle")
     out = []
 
-    # Dead: the death reflex releases/reclaims; the only useful move is the corpse run.
+    # Dead: release, then reclaim. No reflex does either (gh-208), and
+    # corpse_position may be unknown, so reclaim_corpse is always offered to a
+    # ghost; it queries the server for the corpse itself.
     if snapshot.get("is_dead") or snapshot.get("is_ghost"):
-        corpse = snapshot.get("corpse_position")
-        if snapshot.get("is_ghost") and isinstance(corpse, dict):
-            out.append(candidate("move_to", {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
-                                 "run back to your corpse"))
+        if snapshot.get("is_ghost"):
+            out.append(candidate("reclaim_corpse", {}, "run back to your corpse and resurrect"))
+            corpse = snapshot.get("corpse_position")
+            if isinstance(corpse, dict):
+                out.append(candidate("move_to", {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
+                                     "run back to your corpse"))
+        else:
+            out.append(candidate("release_spirit", {}, "release your spirit to become a ghost"))
         return _finish(out, idle, limit)
 
     out.extend(_window_candidates(snapshot))
