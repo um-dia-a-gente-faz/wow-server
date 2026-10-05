@@ -106,6 +106,8 @@ def main():
     audit_logger = AuditLogger(cfg.agent_name, base_dir=cfg.audit_dir,
                                 retention_days=cfg.audit_retention_days)
     log.info("audit log: %s (retention %d days)", audit_logger.agent_dir, audit_logger.retention_days)
+    if brain is not None:
+        brain.restore_jev_spend(cfg.audit_dir, cfg.agent_name)  # #213: budget survives restarts
 
     observer, http_server = _start_observer(cfg, audit_logger, log, brain=brain)
 

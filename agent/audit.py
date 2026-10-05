@@ -35,7 +35,8 @@ Record shape (one JSON object per line):
                       cycle, or the last one tried when none did
     confidence       float or None: Jev's confidence in its choice (Jev only)
     fallback         str or None: why Jev did not decide (call failed or
-                      cooling down), whether the cycle was then skipped or
+                      cooling down, or its AGENT_MAX_TOKENS_PER_HOUR
+                      budget spent: jev_status "budget_exhausted"), whether the cycle was then skipped or
                       (AGENT_BRAIN_FALLBACK=llm) handed to the LLM
     substituted      bool: true only when the LLM decided in Jev's place
                       (explicit AGENT_BRAIN_FALLBACK=llm); brain is "llm"

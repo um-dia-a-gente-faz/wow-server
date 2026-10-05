@@ -95,6 +95,9 @@ class Config:
     # Confidence policy (GH-165, agent/brain.py): below this Jev's choice is
     # replaced by the safe candidate (idle). 0.0 = rule off until measured.
     jev_min_confidence: float = field(default_factory=lambda: _env_float("JEV_MIN_CONFIDENCE", 0.0))
+    # Spend cap (#213, agent/brain.py): input+output tokens this agent may spend
+    # on Jev in any rolling 60 minutes; 0 = unlimited. Per agent, not fleet-wide.
+    max_tokens_per_hour: int = field(default_factory=lambda: _env_int("AGENT_MAX_TOKENS_PER_HOUR", 0))
     jev_enabled: bool = field(default_factory=lambda: bool(
         _env_str("JEV_BASE_URL") or (
             _env_str("JEV_PROVIDER").lower() == "openrouter"

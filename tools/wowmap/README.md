@@ -270,6 +270,12 @@ health and power at runtime and never saves them, so there are no bars (see
 
 `GET /api/character/<name>/activity?limit=50` (max 500) returns the newest events
 for one character, and the inspect drawer shows them under **Recent activity**.
+In the drawer (#173) each entry shows its clock time and relative age (refreshed
+with the 5 s poll, which pauses while the browser tab is hidden); the list scrolls
+on its own under a search box that filters the fetched 50 events client-side (kind,
+text, source: the fields a row shows, each match highlighted; no extra query
+parameter), and its last line says how
+far back that window goes.
 `activity.py` fills a SQLite store (`ACTIVITY_DB`, the newest 500 events per
 character, so history survives a restart) from three background sources:
 
@@ -389,6 +395,14 @@ Point wowmap at them with `AGENT_API_URLS`, e.g.
   Inspecting one shows a **Character / Agent mind** tab strip; the Agent mind
   tab polls brain + perception every 3 s while it is visible (goal, model,
   tokens, reflexes, last 5 decisions, nearby units/players/objects).
+- `GET /api/character/<name>/kind` (#174) says whether a character is an agent
+  (its account matches `AGENT<nn>`, as in `agents/roster.json`) or a human, read
+  from `auth.account`; 404 for an unknown character. Agents also get `account`,
+  `agent_api` (in `AGENT_API_URLS`) and `fleet_configured`; a human's login name
+  is never returned. The tab strip shows for every character, and the Agent mind
+  tab always says which state it is in: human player, fleet not configured on
+  this page, no brain API for this agent, brain API unreachable (with the last
+  successful poll time), or the live mind.
 
 ## Character inspect endpoint
 
