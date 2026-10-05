@@ -6,6 +6,7 @@ Serves:
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
+    GET /api/character/<name>/kind  agent or human, from the character's account (#174)
     GET /api/areas?map=<id>   zone tiles: rect, name, whether art is available, subzones
                               and `continents`: the continent maps and their zones' boxes
     POST /api/calibrate       save a per-zone pixel offset
@@ -178,6 +179,32 @@ def fetch_agent_view(name, view, n=None):
     except (OSError, ValueError) as e:
         log.info("agent API %s unreachable: %s", entry[0], e)
         return 502, json.dumps({"error": "agent API unreachable"}).encode()
+
+
+# #174: agent characters live on accounts AGENT01..AGENT25 (agents/roster.json).
+AGENT_ACCOUNT_RE = re.compile(r"AGENT(?:0[1-9]|1[0-9]|2[0-5])", re.IGNORECASE)
+
+
+def is_agent_account(username):
+    return bool(username) and AGENT_ACCOUNT_RE.fullmatch(username) is not None
+
+
+def character_kind(name):
+    """GET /api/character/<name>/kind: agent or human, from the character's account.
+    None for an unknown character. A human's login name is never returned."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT c.name, a.username FROM characters.characters c
+                       LEFT JOIN auth.account a ON a.id = c.account
+                       WHERE c.name = %s LIMIT 1""", (name,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    char_name, username = row
+    if not is_agent_account(username):
+        return {"name": char_name, "kind": "human"}
+    return {"name": char_name, "kind": "agent", "account": username,
+            "agent_api": char_name.lower() in AGENT_APIS,
+            "fleet_configured": bool(AGENT_APIS)}
 
 # Standard WoW class/race ids — stable for 3.3.5a.
 CLASSES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
@@ -747,6 +774,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "character not found"})
                 return self._send(200, explored, cache="no-store")
 
+            if path.startswith("/api/character/") and path.endswith("/kind"):
+                kind = character_kind(unquote(path[len("/api/character/"):-len("/kind")]))
+                if kind is None:
+                    return self._send(404, {"error": "character not found"})
+                return self._send(200, kind, cache="no-store")
+
             if path.startswith("/api/character/"):
                 name = unquote(path[len("/api/character/"):])
                 if not name:
@@ -1004,6 +1037,8 @@ INSPECT_CSS = r"""
   .drawer .meter-bar .fill { position:absolute; inset:0 auto 0 0; }
   .drawer .meter-bar .txt { position:relative; display:block; text-align:center; font-size:11px;
                       line-height:16px; text-shadow:0 0 2px #000, 0 0 2px #000; }
+  .drawer .kv .k .si { width:13px; height:13px; vertical-align:-2px; margin-right:5px; fill:currentColor; }
+  .si.health { color:#3fbf5a; } .si.mana { color:#4f7fe8; } .si.gold { color:#f3b84b; }
   .drawer details { margin-top:10px; border:1px solid var(--line); border-radius:7px; padding:0 10px; }
   .drawer details[open] { padding-bottom:8px; }
   /* UM-80: paper doll, bag bar and bag grids (38 px squares, game layout). */
@@ -1035,11 +1070,14 @@ INSPECT_CSS = r"""
   .item-tip .tl { display:flex; gap:18px; justify-content:space-between; }
   .item-tip .tl:first-child { font-size:14px; }
   .item-tip .r { white-space:nowrap; }
-  .item-tip .coin { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:2px;
-                    vertical-align:-1px; }
-  .item-tip .coin.g { background:#e8c447; }
-  .item-tip .coin.s { background:#c7c7cf; }
-  .item-tip .coin.c { background:#c06a35; }
+  /* #177: Coins.render(), the one money renderer (tooltip, drawer, activity feed). */
+  .coins { white-space:nowrap; }
+  .coins .coin { display:inline-block; width:9px; height:9px; border-radius:50%; margin:0 5px 0 2px;
+                 vertical-align:-1px; }
+  .coins .coin:last-child { margin-right:0; }
+  .coins .coin.g { background:#e8c447; }
+  .coins .coin.s { background:#c7c7cf; }
+  .coins .coin.c { background:#c06a35; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
                     text-transform:uppercase; letter-spacing:.6px; }
   /* Reputation window: nested headers, one bar per faction (name | rank bar | numbers). */
@@ -1066,6 +1104,14 @@ INSPECT_CSS = r"""
 """
 
 INSPECT_HTML = r"""
+<!-- #176: stat icons, inline so the page fetches nothing for them. -->
+<svg id="stat-icons" width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-health" viewBox="0 0 16 16"><path d="M8 14.5 1.8 8.4A3.8 3.8 0 0 1 8 3.6a3.8 3.8 0 0 1 6.2 4.8z"/></symbol>
+  <symbol id="i-mana" viewBox="0 0 16 16"><path d="M8 1.5C6 5 3.5 7.6 3.5 10.3a4.5 4.5 0 0 0 9 0C12.5 7.6 10 5 8 1.5z"/></symbol>
+  <symbol id="i-gold" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="4" fill="#0000" stroke="#0006" stroke-width="1.2"/></symbol>
+  <symbol id="i-played" viewBox="0 0 16 16"><path d="M3 1.5h10v1.5h-1v1.8L9.2 8l2.8 3.2V13h1v1.5H3V13h1v-1.8L6.8 8 4 4.8V3H3zm2.5 1.5v1.2L8 7l2.5-2.8V3z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 16 16"><path d="M2 2h7v2H4v8h5v2H2zm8 2.5L13.5 8 10 11.5V9H6V7h4z"/></symbol>
+</svg>
 <section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspect character">
   <div class="drawer-head">
     <div class="dh-main" id="inspect-head"></div>
@@ -1087,9 +1133,56 @@ function placeText(p) {
 function mapCoordsText(p) {
   return p.map_coords ? `${p.map_coords.x.toFixed(1)}, ${p.map_coords.y.toFixed(1)}` : '';
 }
+// Hover text for a marker and a list row: the class, race, level and coordinates
+// the row itself leaves out (#175).
+function playerTip(p) {
+  return `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
+    + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
+}
 function worldText(x, y, z) {
   return `${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`;
 }
+// Relative age ("2h ago"), shared by the drawer stats and the activity feed (#176).
+function ago(t) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - t));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// Money as the game's coins (#177). The one place copper is split and drawn: the item
+// tooltip, the drawer and the activity feed all call Coins.render. Zero denominations are
+// dropped, a zero purse shows `0` copper, the title keeps the raw copper for the DB.
+const Coins = (() => {
+  const NAMES = {g: 'gold', s: 'silver', c: 'copper'};
+  const whole = (copper) => Math.max(0, Math.floor(Number(copper) || 0));
+  // 12345 -> [1, 23, 45] (gold, silver, copper)
+  function split(copper) {
+    const c = whole(copper);
+    return [Math.floor(c / 10000), Math.floor(c / 100) % 100, c % 100];
+  }
+  function render(copper) {
+    const c = whole(copper);
+    const out = document.createElement('span');
+    out.className = 'coins';
+    out.title = `${c.toLocaleString('en-US')} copper`;
+    const parts = split(c).map((n, i) => [n, 'gsc'[i]]).filter(([n]) => n);
+    if (!parts.length) parts.push([0, 'c']);
+    out.setAttribute('role', 'img');  // a bare span can't carry a name; img does, and hides the digits
+    out.setAttribute('aria-label', parts.map(([n, d]) => `${n} ${NAMES[d]}`).join(' '));
+    for (const [n, d] of parts) {
+      const num = document.createElement('span');
+      num.textContent = d === 'g' ? n.toLocaleString('en-US') : String(n);
+      const coin = document.createElement('span');
+      coin.className = 'coin ' + d;
+      coin.setAttribute('aria-hidden', 'true');
+      out.append(num, coin);
+    }
+    return out;
+  }
+  return {split, render};
+})();
 
 // In-game style item tooltip (UM-80). The API sends ready-made lines
 // (item_tooltip.py); this only draws them, with textContent, and keeps the box on screen.
@@ -1110,13 +1203,6 @@ const ItemTip = (() => {
     e.textContent = String(text);
     return e;
   }
-  // Copper as the game's coins: only the non-zero denominations.
-  function coins(copper) {
-    const out = document.createElement('span');
-    const parts = [[Math.floor(copper / 10000), 'g'], [Math.floor(copper / 100) % 100, 's'], [copper % 100, 'c']];
-    for (const [n, c] of parts) if (n) out.append(span(null, n), span('coin ' + c, ''), ' ');
-    return out;
-  }
   function render(it) {
     const lines = it.tooltip && it.tooltip.length ? it.tooltip : [{left: it.item_name, color: 'quality'}];
     tip.replaceChildren();
@@ -1125,7 +1211,7 @@ const ItemTip = (() => {
       row.className = 'tl';
       row.style.color = l.color === 'quality' ? (QUALITY[it.quality] || '#fff') : (TIP_COLORS[l.color] || '#fff');
       const left = span('l', l.left);
-      if (l.money !== undefined) left.append(' ', coins(Number(l.money) || 0));
+      if (l.money !== undefined) left.append(' ', Coins.render(l.money));
       row.append(left);
       if (l.right) row.append(span('r', l.right));
       tip.append(row);
@@ -1199,7 +1285,9 @@ const Inspect = (() => {
   }
   function kv(label, value, cls = 'kv') {
     const r = el('div', cls);
-    r.append(el('span', 'k', label), el('span', 'v', value));
+    const v = el('span', 'v');
+    if (value != null) v.append(value);
+    r.append(el('span', 'k', label), v);
     return r;
   }
   // A bar when the max is known (character_stats row), otherwise the plain number.
@@ -1218,9 +1306,20 @@ const Inspect = (() => {
     r.append(v);
     return r;
   }
-  function money(copper) {
-    const c = Number(copper) || 0;
-    return `${nf.format(Math.floor(c / 10000))}g ${Math.floor(c / 100) % 100}s ${c % 100}c`;
+  // #176: icon in front of a kv/meter row's label, exact value on hover.
+  function stat(name, label, row, title) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', `si ${name}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', label);
+    const t = document.createElementNS(svg.namespaceURI, 'title');
+    t.textContent = label;
+    const use = document.createElementNS(svg.namespaceURI, 'use');
+    use.setAttribute('href', `#i-${name}`);
+    svg.append(t, use);
+    row.querySelector('.k').prepend(svg);
+    if (title) row.title = title;
+    return row;
   }
   function duration(sec) {
     const s = Number(sec) || 0;
@@ -1447,17 +1546,21 @@ const Inspect = (() => {
     const f = document.createDocumentFragment();
 
     f.append(el('h3', null, 'Status'));
-    f.append(meter('Health', c.health, c.max_health, BAR_COLORS.health));
+    f.append(stat('health', 'Health', meter('Health', c.health, c.max_health, BAR_COLORS.health),
+                  `health ${c.health} / ${c.max_health ?? '?'}`));
     const power = c.power || {}, maxPower = c.max_power || {};
     for (const key of CLASS_POWERS[c.class] || Object.keys(POWER_LABELS)) {
       if (!(key in power)) continue;
       const scale = POWER_SCALE[key] || 1;
-      f.append(meter(POWER_LABELS[key], Math.floor(power[key] / scale),
-                     Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]));
+      const row = meter(POWER_LABELS[key], Math.floor(power[key] / scale),
+                        Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]);
+      f.append(key === 'mana' ? stat('mana', 'Mana', row, `mana ${power.mana} / ${maxPower.mana ?? '?'}`) : row);
     }
-    f.append(kv('Gold', money(c.money)));
-    f.append(kv('Played time', duration(c.totaltime)));
-    f.append(kv('Last logout', when(c.logout_time)));
+    f.append(stat('gold', 'Gold', kv('Gold', Coins.render(c.money)), `${nf.format(c.money)} copper`));
+    f.append(stat('played', 'Played time', kv('Played time', c.totaltime ? duration(c.totaltime) : '—'),
+                  `played ${c.totaltime}s`));
+    f.append(stat('logout', 'Last logout', kv('Last logout', c.logout_time ? ago(c.logout_time) : '—'),
+                  `last logout ${when(c.logout_time)}`));
 
     f.append(el('h3', null, 'Position'));
     f.append(kv('Location', placeText(c)));
@@ -1609,6 +1712,10 @@ const AgentMind = (() => {
   const status = document.getElementById('inspect-status');
   const agents = new Map();  // lowercased name -> name
   let tab = 'character', shownFor = null, seq = 0;
+  // #174: /api/character/<n>/kind for shownFor (agent or human, decided server-side),
+  // and the last time each agent's brain answered.
+  let kind = null;
+  const lastOk = new Map();
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -1645,14 +1752,31 @@ const AgentMind = (() => {
 
   function sync() {
     const n = Inspect.current();
-    tabs.hidden = !isAgent(n);
-    if (!isAgent(n) && tab === 'mind') setTab('character');
+    tabs.hidden = !n;
     if (n !== shownFor) {
       shownFor = n;
+      kind = null;
       seq++;
       pane.replaceChildren(el('div', 'none', 'loading…'));
-      if (tab === 'mind' && isAgent(n)) refresh();
+      if (n) loadKind(n);
     }
+  }
+
+  async function loadKind(n) {
+    try {
+      const r = await fetch(`/api/character/${encodeURIComponent(n)}/kind`);
+      const j = await r.json().catch(() => ({}));
+      if (n !== shownFor) return;
+      kind = r.ok ? j : {kind: 'error', error: r.status === 404 ? 'character not found' : j.error || 'error ' + r.status};
+    } catch (e) {
+      if (n !== shownFor) return;
+      kind = {kind: 'error', error: e.message};
+    }
+    refresh();
+  }
+
+  function say(...lines) {
+    pane.replaceChildren(...lines.map((t, i) => el('div', i ? 'none' : null, t)));
   }
 
   function args(a) {
@@ -1724,15 +1848,28 @@ const AgentMind = (() => {
 
   async function refresh() {
     const who = Inspect.current();
-    if (!isAgent(who) || tab !== 'mind') return;
+    if (!who || who !== shownFor || tab !== 'mind' || !kind) return;
+    if (kind.kind === 'error') return say(`Could not tell whether ${who} is an agent`, kind.error);
+    if (kind.kind === 'human') return say('Human player — no agent brain attached', `Character: ${kind.name}`);
+    if (!kind.fleet_configured) {
+      return say(`Agent ${kind.name} (${kind.account}) — the agent fleet is not configured on this page`,
+                 'AGENT_API_URLS is empty, so wowmap has no brain API to ask.');
+    }
+    if (!kind.agent_api) {
+      return say(`Agent ${kind.name} (${kind.account}) — no brain API for this agent is configured on this page`);
+    }
     const mine = ++seq;
     try {
       const [brain, perc] = await Promise.all([getJson(who, 'brain'), getJson(who, 'perception')]);
       if (mine !== seq) return;
+      lastOk.set(who, new Date());
       render(brain, perc);
       status.textContent = 'agent updated ' + new Date().toLocaleTimeString();
     } catch (e) {
-      if (mine === seq) pane.replaceChildren(el('div', 'none', 'agent API: ' + e.message));
+      if (mine !== seq) return;
+      const last = lastOk.get(who);
+      say(`Agent ${kind.name} — brain API unreachable`,
+          'last successful poll: ' + (last ? last.toLocaleTimeString() : 'never this session'), e.message);
     }
   }
 
@@ -1746,7 +1883,9 @@ const AgentMind = (() => {
       for (const n of j.agents || []) agents.set(n.toLowerCase(), n);
       tag(document);
       sync();
-    } catch (e) { /* no agents configured or wowmap restarting */ }
+    } catch (e) {
+      status.textContent = 'agent list unavailable: ' + e.message;
+    }
   }
   // The player list is rebuilt on every tick; tag the new nodes. Map markers live in
   // Leaflet's marker pane, so the page calls AgentMind.tag() when it places them.
@@ -1765,8 +1904,12 @@ const AgentMind = (() => {
 # ---------------------------------------------------------------- page: activity feed
 # UM-76: "Recent activity" section of the inspect drawer, fed by
 # GET /api/character/<name>/activity (see activity.py). Inspect.renderBody appends
-# this module's persistent node; the module polls on its own every 5 s. Event text
-# comes from chat and the database, so it is rendered with textContent only.
+# this module's persistent node; the module polls on its own every 5 s while the
+# browser tab is visible. #173: each entry shows a clock time and a relative age,
+# the list scrolls inside the drawer under its own search box (client-side filter
+# over the fetched window, match highlighted), and the footer says how far back the
+# window goes. Event text comes from chat and the database, so it is rendered with
+# textContent only (the highlight is built from text nodes and <mark>).
 ACTIVITY_CSS = r"""
   .activity .act { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #20263a;
                    font-size:12.5px; line-height:1.35; }
@@ -1777,6 +1920,11 @@ ACTIVITY_CSS = r"""
   .activity .inferred { font-size:10px; border:1px solid #6b5a2f; color:#f3b84b; border-radius:999px;
                         padding:0 6px; margin-left:6px; white-space:nowrap; }
   .activity .note { color:var(--dim); font-size:11px; padding:3px 0; }
+  .activity .act-search { width:100%; box-sizing:border-box; margin:0 0 6px; padding:4px 8px;
+                          background:#0b0e16; color:var(--fg); border:1px solid #46557a;
+                          border-radius:4px; font:inherit; font-size:12px; }
+  .activity .act-list { max-height:45vh; overflow-y:auto; overscroll-behavior:contain; }
+  .activity mark { background:#6b5a2f; color:inherit; border-radius:2px; }
   .activity .ic.k-combat { color:#ff6b6b; } .activity .ic.k-loot, .activity .ic.k-item { color:#7ddf8a; }
   .activity .ic.k-sell, .activity .ic.k-buy, .activity .ic.k-money { color:#f3b84b; }
   .activity .ic.k-chat, .activity .ic.k-whisper { color:#5fd0d8; }
@@ -1797,16 +1945,29 @@ window.ActivityFeed = (() => {
     return e;
   }
   const box = el('div', 'activity');
-  const list = el('div');
-  box.append(el('h3', null, 'Recent activity'), list);
+  const search = el('input', 'act-search');
+  search.type = 'search';
+  search.placeholder = 'Search activity (kind, text, zone, who)';
+  search.setAttribute('aria-label', 'Search recent activity');
+  const list = el('div', 'act-list');
+  box.append(el('h3', null, 'Recent activity'), search, list);
   let shownFor = null, seq = 0, data = null;
+  const LIMIT = 50;
 
-  function ago(t) {
-    const s = Math.max(0, Math.round(Date.now() / 1000 - t));
-    if (s < 60) return `${s}s ago`;
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-    return `${Math.floor(s / 86400)}d ago`;
+  const clock = (t) => new Date(t * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+  // What the search box matches: only what a row shows (text names the partner,
+  // channel and zone), so every match can be highlighted.
+  const hay = (e) => [e.text, e.kind, SOURCES[e.source] || e.source].join(' ').toLowerCase();
+  // Append `text` to `parent` with every occurrence of `q` wrapped in <mark>.
+  function hl(parent, text, q) {
+    const s = String(text ?? '');
+    if (!q) { parent.append(s); return; }
+    let i = 0, j;
+    while ((j = s.toLowerCase().indexOf(q, i)) !== -1) {
+      parent.append(s.slice(i, j), el('mark', null, s.slice(j, j + q.length)));
+      i = j + q.length;
+    }
+    parent.append(s.slice(i));
   }
 
   function render() {
@@ -1818,33 +1979,52 @@ window.ActivityFeed = (() => {
       for (const [key, label] of [['db', 'database'], ['chat', 'chat feed']]) {
         if (src[key] && !src[key].ok) f.append(el('div', 'note', `${label} unreachable, events may be missing`));
       }
+      const q = search.value.trim().toLowerCase();
+      const shown = q ? data.events.filter((e) => hay(e).includes(q)) : data.events;
       if (!data.events.length) f.append(el('div', 'none', 'no activity recorded yet'));
-      for (const e of data.events) {
+      else if (!shown.length) f.append(el('div', 'none', `no matches for "${search.value.trim()}"`));
+      for (const e of shown) {
         const failed = e.detail && e.detail.ok === false;
         const r = el('div', 'act' + (failed ? ' failed' : ''));
         r.append(el('span', 'ic k-' + e.kind, ICONS[e.kind] || '•'));
-        const tx = el('div', 'tx', e.text);
+        const tx = el('div', 'tx');
+        if (e.kind === 'money' && e.detail && Number.isFinite(e.detail.delta)) {
+          // Same renderer as the drawer and the tooltip; the label still highlights.
+          hl(tx, 'Money ' + (e.detail.delta > 0 ? '+' : '−'), q);
+          tx.append(Coins.render(Math.abs(e.detail.delta)));
+        } else hl(tx, e.text, q);
         if (e.inferred) {
           const b = el('span', 'inferred', 'inferred');
           b.title = 'Not recorded by the server: deduced from database changes';
           tx.append(b);
         }
-        const meta = el('div', 'meta', `${ago(e.t)} · ${SOURCES[e.source] || e.source}`);
+        const meta = el('div', 'meta', `${clock(e.t)} · ${ago(e.t)} · `);
+        hl(meta, e.kind, q);
+        meta.append(' · ');
+        hl(meta, SOURCES[e.source] || e.source, q);
         meta.title = new Date(e.t * 1000).toLocaleString();
         tx.append(meta);
         r.append(tx);
         f.append(r);
       }
+      // The window is bounded, so say where it ends instead of looking endless.
+      const ev = data.events, last = ev[ev.length - 1];
+      if (last) f.append(el('div', 'note', (q ? `${shown.length} match${shown.length === 1 ? '' : 'es'} in ` : '') +
+        (ev.length < LIMIT ? `all ${ev.length} recorded events` : `the newest ${ev.length} events`) +
+        `, back to ${new Date(last.t * 1000).toLocaleString()} (${ago(last.t)})`));
     }
+    const top = list.scrollTop;
     list.replaceChildren(f);
+    list.scrollTop = top;
   }
+  search.oninput = render;
 
   async function refresh() {
     const who = Inspect.current();
     if (!who || who !== shownFor) return;
     const mine = ++seq;
     try {
-      const r = await fetch(`/api/character/${encodeURIComponent(who)}/activity?limit=50`);
+      const r = await fetch(`/api/character/${encodeURIComponent(who)}/activity?limit=${LIMIT}`);
       const j = await r.json().catch(() => ({}));
       if (mine !== seq || who !== shownFor) return;
       data = r.ok ? j : {error: j.error || 'error ' + r.status};
@@ -1855,19 +2035,31 @@ window.ActivityFeed = (() => {
     render();
   }
 
-  // Called by Inspect.renderBody on every re-render; the node is reused.
+  // Called by Inspect.renderBody on every re-render; the node is reused. Re-attaching
+  // it blurs the search box and resets the list's scroll, so put both back once the
+  // drawer body has been replaced.
   function section(name) {
     if (name !== shownFor) {
       shownFor = name;
       data = null;
       seq++;
+      search.value = '';
       render();
       refresh();
     }
+    const typing = document.activeElement === search, top = list.scrollTop;
+    const [a, b] = [search.selectionStart, search.selectionEnd];
+    queueMicrotask(() => {
+      list.scrollTop = top;
+      if (typing) { search.focus({preventScroll: true}); search.setSelectionRange(a, b); }
+    });
     return box;
   }
 
-  setInterval(refresh, 5000);
+  // Each poll also re-renders, which keeps the relative ages current. No timer work
+  // while the browser tab is hidden; catch up as soon as it is shown again.
+  setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   return {section, refresh};
 })();
 </script>
@@ -1899,11 +2091,15 @@ PAGE = r"""<!doctype html>
   .stat b { display:block; font-size:20px; line-height:1.1; }
   .stat span { color:var(--dim); font-size:11px; }
   .list { flex:1; overflow:auto; padding:0 8px 12px; }
-  .pl { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:7px;
-        cursor:pointer; }
+  /* #175: class badge with the level inside on the left, name over zone so each gets
+     the full width of a narrow sidebar; class, race and coords are in the title. */
+  .pl { display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center;
+        column-gap:8px; padding:7px 8px; border-radius:7px; cursor:pointer; }
   .pl:hover { background:#212836; }
   .dot { width:9px; height:9px; border-radius:50%; flex:0 0 9px; box-shadow:0 0 6px currentColor; }
-  .pl .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pl .dot { width:20px; height:20px; grid-row:span 2; font-size:10px;
+             font-weight:700; line-height:20px; text-align:center; font-variant-numeric:tabular-nums; }
+  .pl .nm, .pl .meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pl .meta { color:var(--dim); font-size:12px; }
   .empty { color:var(--dim); padding:16px; text-align:center; font-size:13px; }
   main { flex:1; position:relative; display:flex; flex-direction:column; min-width:0; }
@@ -2291,8 +2487,7 @@ function fillMarker(e, p) {
     e.replaceChildren(ring, lbl);
   }
   e.classList.toggle('sel', p.name === selected);
-  e.title = `${p.name} — ${p.class_name} ${p.race_name} lvl ${p.level}\n${placeText(p)}`
-    + (p.map_coords ? `\n${mapCoordsText(p)}` : '');
+  e.title = playerTip(p);
 }
 
 function place() {
@@ -2434,16 +2629,25 @@ function renderList() {
     const e = document.createElement('div');
     e.className = 'pl' + (p.name === Inspect.current() ? ' sel' : '');
     e.dataset.name = p.name;
+    e.title = playerTip(p);
+    // #175: class, race and coords left the visible row; the label keeps them for screen readers.
+    e.setAttribute('role', 'button');
+    e.setAttribute('aria-label', e.title.replace(/\n/g, ', '));
+    e.tabIndex = 0;
+    e.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectCharacter(p.name); } };
     const dot = document.createElement('span');
     dot.className = 'dot';
-    dot.style.background = dot.style.color = p.class_color;
+    dot.style.background = p.class_color;
+    dot.style.boxShadow = `0 0 6px ${p.class_color}`;
+    // #175: >= 4.5:1 numeral; only DK red and Shaman blue are too dark for black.
+    dot.style.color = ['#C41F3B', '#0070DE'].includes(p.class_color) ? '#ffffff' : '#000000';
+    dot.textContent = p.level;
     const nm = document.createElement('span');
     nm.className = 'nm';
     nm.textContent = p.name;
     const meta = document.createElement('span');
     meta.className = 'meta';
-    const where = p.map_coords ? `${p.zone_name} ${mapCoordsText(p)}` : p.zone_name;
-    meta.textContent = `${p.level} ${p.class_name} · ${p.in_world ? where : p.continent_name + ' (instance)'}`;
+    meta.textContent = p.in_world ? p.zone_name : p.continent_name + ' (instance)';
     e.append(dot, nm, meta);
     e.onclick = () => selectCharacter(p.name);
     l.appendChild(e);

@@ -197,17 +197,22 @@ class IdleScenarioTest(CandidateShapeMixin, unittest.TestCase):
 
 
 class DeadScenarioTest(CandidateShapeMixin, unittest.TestCase):
+    def test_ghost_without_corpse_position_can_reclaim(self):
+        snap = load("combat")
+        snap.update(is_dead=False, is_ghost=True, corpse_position=None)
+        self.assertEqual(ids(cand.generate(snap, my_guid=MY_GUID)), ["reclaim_corpse", "idle"])
+
     def test_ghost_runs_to_corpse_only(self):
         snap = load("combat")
         snap.update(is_dead=False, is_ghost=True, corpse_position={"map": 530, "x": 10300.5, "y": -6350.0, "z": 20.0})
         cands = cand.generate(snap, my_guid=MY_GUID)
         self.assert_well_formed(snap, cands)
-        self.assertEqual(ids(cands), ["move_to:x=10300.5,y=-6350.0,z=20.0", "idle"])
+        self.assertEqual(ids(cands), ["reclaim_corpse", "move_to:x=10300.5,y=-6350.0,z=20.0", "idle"])
 
-    def test_dead_before_release_is_idle(self):
+    def test_dead_before_release_offers_release_spirit(self):
         snap = load("combat")
         snap["is_dead"] = True
-        self.assertEqual(ids(cand.generate(snap, my_guid=MY_GUID)), ["idle"])
+        self.assertEqual(ids(cand.generate(snap, my_guid=MY_GUID)), ["release_spirit", "idle"])
 
 
 class BoundsTest(CandidateShapeMixin, unittest.TestCase):
@@ -380,6 +385,7 @@ class RegistryCoverageTest(unittest.TestCase):
         offered.update(c["action"] for c in cand.generate(trainer))
         reward = {"window": {"kind": "quest_offer_reward", "npc_guid": 8, "quest_id": 9}}
         offered.update(c["action"] for c in cand.generate(reward))
+        offered.update(c["action"] for c in cand.generate({"is_dead": True}))
         offered.update(c["action"] for c in cand.generate({"is_ghost": True,
                                                             "corpse_position": {"x": 1, "y": 2, "z": 3}}))
         offered.update(c["action"] for c in cand.generate({
@@ -406,6 +412,19 @@ class RegistryCoverageTest(unittest.TestCase):
         offered.update(c["action"] for c in cand.generate(vendor))
         self.assertEqual(set(ac.REGISTRY) - offered - set(cand.NOT_OFFERED), set())
         self.assertTrue(all(isinstance(reason, str) and reason for reason in cand.NOT_OFFERED.values()))
+
+    def test_low_health_offers_self_heal_without_offensive_spell(self):
+        snap = {"me": {"health": "5/58", "mana": "40/40"}, "spells": [{"id": 635, "name": "Holy Light"}],
+                "nearby_units": [], "inventory": [], "equipment": {}, "window": None}
+        cands = cand.generate(snap, my_guid=1)
+        heal = [c for c in cands if c["action"] == "cast_spell"]
+        self.assertEqual([c["params"] for c in heal], [{"spell_id": 635}])
+        healthy = dict(snap, me={"health": "58/58", "mana": "40/40"})
+        self.assertNotIn("cast_spell", [c["action"] for c in cand.generate(healthy, my_guid=1)])
+        # #206 in combat: a Holy-Light-only Paladin under attack still gets the cast, ahead of auto_attack.
+        threat = {"guid": 2, "target_guid": 1, "in_combat": True, "distance": 3, "name": "rat", "health_pct": 1}
+        actions = [c["action"] for c in cand.generate(dict(snap, nearby_units=[threat]), my_guid=1)]
+        self.assertLess(actions.index("cast_spell"), actions.index("auto_attack"))
 
     def test_new_candidates_require_their_snapshot_preconditions(self):
         threat = {"guid": 2, "target_guid": 1, "in_combat": True, "distance": 3,

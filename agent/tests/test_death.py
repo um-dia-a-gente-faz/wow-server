@@ -6,6 +6,7 @@ so no real threads or sleeping are involved. No network."""
 import struct
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from agent import actions as ac
 from agent import death as dt
@@ -113,7 +114,7 @@ class ReleaseSpiritActionTest(unittest.TestCase):
             dt.actions._wait_for = orig_wait_for
 
         self.assertTrue(result.ok)
-        self.assertEqual(sess._sent, [(dt.CMSG_REPOP_REQUEST, struct.pack('<B', 0))])
+        self.assertEqual(sess._sent, [(dt.CMSG_REPOP_REQUEST, struct.pack('<B', 0)), (dt.MSG_CORPSE_QUERY, b'')])
 
 
 class CorpseRunTest(unittest.TestCase):
@@ -164,11 +165,21 @@ class ReclaimCorpseActionTest(unittest.TestCase):
         action = ac.REGISTRY["reclaim_corpse"]
         self.assertEqual(action.check(sess, world), "not a ghost — call release_spirit first")
 
-    def test_check_requires_corpse_position(self):
+    def test_unknown_corpse_position_is_queried(self):
         sess, world, _ = fast_session()
         create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
         action = ac.REGISTRY["reclaim_corpse"]
-        self.assertIn("corpse position unknown", action.check(sess, world))
+        self.assertIsNone(action.check(sess, world))
+        sent = []
+
+        def answer(opcode, payload=b''):
+            sent.append(opcode)
+            if opcode == dt.MSG_CORPSE_QUERY:
+                sess.corpse_position = (0, 5.0, 0.0, 0.0)
+
+        sess._send_packet = answer
+        self.assertTrue(dt._query_corpse(sess))
+        self.assertEqual(sent, [dt.MSG_CORPSE_QUERY])
 
     def test_check_respects_reclaim_cooldown(self):
         sess, world, clock = fast_session()
@@ -225,6 +236,47 @@ class ReclaimCorpseActionTest(unittest.TestCase):
         self.assertEqual(result.detail["guid"], 0xEA10)
         self.assertEqual(sess.events[-1]["kind"], "resurrect")
         self.assertEqual(sess.events[-1]["method"], "spirit_healer")
+
+    def test_execute_queries_unknown_corpse_then_runs_and_reclaims(self):
+        sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
+        create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
+        create_corpse(world, 0xC001, 5.0, 0.0, 0.0)
+        targets = []
+        orig_run = dt._corpse_run
+
+        def answer(opcode, payload=b''):
+            sess._sent.append((opcode, payload))
+            if opcode == dt.MSG_CORPSE_QUERY:
+                sess.corpse_position = (0, 5.0, 0.0, 0.0)
+            if opcode == dt.CMSG_RECLAIM_CORPSE:
+                set_player_flags(world, sess.player_guid, 0)
+
+        sess._send_packet = answer
+        with mock.patch.object(dt, "_corpse_run",
+                               lambda s, w, target, **k: targets.append(target) or orig_run(s, w, target, **k)):
+            result = ac.REGISTRY["reclaim_corpse"].execute(sess, world)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.detail["method"], "corpse")
+        self.assertEqual(sess._sent[0], (dt.MSG_CORPSE_QUERY, b''))
+        self.assertEqual(targets, [(0, 5.0, 0.0, 0.0)])
+
+    def test_execute_falls_back_to_spirit_healer_when_corpse_query_times_out(self):
+        sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
+        create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
+        create_spirit_healer(world, 0xEA10, 1.0, 0.0, 0.0)
+
+        def answer(opcode, payload=b''):  # never answers MSG_CORPSE_QUERY
+            sess._sent.append((opcode, payload))
+            if opcode == dt.CMSG_SPIRIT_HEALER_ACTIVATE:
+                set_player_flags(world, sess.player_guid, 0)
+
+        sess._send_packet = answer
+        with mock.patch.object(dt, "RESURRECT_CONFIRM_TIMEOUT_S", 0.01), \
+                mock.patch.object(dt, "_corpse_run", side_effect=AssertionError("no corpse run")):
+            result = ac.REGISTRY["reclaim_corpse"].execute(sess, world)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.detail["method"], "spirit_healer")
+        self.assertEqual(sess._sent[0], (dt.MSG_CORPSE_QUERY, b''))
 
     def test_execute_fails_when_stuck_and_no_spirit_healer_either(self):
         sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))

@@ -141,7 +141,8 @@ class ChooseActionTest(unittest.TestCase):
             result = self.client.choose_action({}, [{"action": "stop", "params": {}}])
         urlopen.assert_not_called()
         self.assertEqual(result, ("stop", {}))
-        self.assertEqual(self.client.last_confidence, 1.0)
+        self.assertIsNone(self.client.last_confidence)
+        self.assertTrue(self.client.skipped_single_candidate)
 
     def test_choice_not_offered_raises(self):
         with fake_urlopen(decisions_response("cast_spell(spell_id=133)")):
