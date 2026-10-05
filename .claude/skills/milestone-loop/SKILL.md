@@ -1,150 +1,117 @@
 ---
 name: milestone-loop
-description: Work GitHub milestones end to end as a senior dev, in a loop — pick an unblocked issue, branch from main, build it, open the PR, wait for another agent's review, apply its fixes, merge your own PR, repeat until the milestone is done, then move on to the next milestone. Use when asked to "work the milestone", "loop the issues of M3", or run `/milestone-loop <milestone>`.
+description: Work one GitHub milestone with several agents at once. A coordinator reads the implementable issues on the board, dispatches N author agents (one worktree each), sends every PR to a separate reviewer agent that runs /code-review, applies the review fixes, and merges one PR at a time. Use for `/milestone-loop <milestone> <n> agents`, "work milestone 5 with 3 agents", or "loop the issues of M5".
 ---
 
 # Milestone loop
 
-One invocation is one **tick**. A tick does the single most useful next step, then
-re-arms itself with `ScheduleWakeup` (300 s). Everything is derived from GitHub, so a
-tick can be killed and restarted at any point. Read `CLAUDE.md` and `pr-workflow`
-first; this skill only adds the loop and the merge rules.
+You are the **coordinator**. You do not write feature code. You pick issues, dispatch
+agents, route PRs to review, and merge. Read `CLAUDE.md` (working model, *Never*) and
+`pr-workflow` first; every agent you dispatch follows them.
 
-Arguments: `[<start milestone title>] [idle=<n>]`. Default start `M3 - Jev decision brain`.
-`idle` is the count of consecutive idle ticks; the loop carries it in its own re-arm prompt.
+Invocation: `/milestone-loop <milestone> [<n> agents]`. `<milestone>` is a number (`5`),
+a title (`M5 - Console v1: …`) or `Later - …`. Default `n` is 2, the cap is 4. Resolve it
+with `gh api 'repos/um-dia-a-gente-faz/wow-server/milestones?state=open'`: the match is the
+title starting `M<n> -`. Work that milestone only; when it is done, report and stop.
 
-**Milestone order.** Sort milestones by their `M<n>` number ascending, `Later - …` last
-(`gh api repos/um-dia-a-gente-faz/wow-server/milestones?state=open`). The **current
-milestone** is the first one at or after the start milestone that still has open issues. When
-it is finished the loop moves to the next one by itself; it never goes back before the start.
-Finishing a milestone is never a reason to stop: the next milestone in order becomes the
-current one and the same tick continues there (see *Idle, advancing, stop*).
+Repo `um-dia-a-gente-faz/wow-server`, board = org project 7.
 
-Repo `um-dia-a-gente-faz/wow-server`, board = org project 7. Use
-`gh` (auth: `gh auth status`). Never run anything on the VM.
+## Roles
 
-## Skills you use
+| Role | Who | Does | Never |
+|---|---|---|---|
+| Coordinator | this session | picks issues, dispatches, routes, merges, reports | writes feature code, reviews |
+| Author | one `Agent` per issue, `isolation: "worktree"`, background | implements one issue, opens the PR, applies review fixes | reviews or merges |
+| Reviewer | a fresh `Agent` per review round, never the author | runs `/code-review`, posts the review | pushes, edits, merges |
 
-| Step | Skill |
-|---|---|
-| Understand the issue | `superpowers:brainstorming`, bounded path. The issue text and acceptance criteria are the agreed design; do not wait for a human. If the issue is architectural or ambiguous, do not guess: comment your questions on the issue, skip it, tell the owner in the tick summary. |
-| Build | `superpowers:test-driven-development` + `ponytail` (the least code that solves it: reuse, stdlib, no new abstraction) |
-| Before claiming done | `superpowers:verification-before-completion` |
-| Review fixes | `superpowers:receiving-code-review` |
-| Commit messages, loop comments | `caveman-commit`, and terse caveman style in tick comments. PR body and issue text stay normal prose. |
+Authors and reviewers are separate agents so the author never reviews its own PR.
+Reviewer agents cannot always spawn sub-agents; if `/code-review` cannot, the reviewer runs
+its two axes (Standards, Spec) one after the other in its own session.
 
-## A tick, in order — stop at the first step that acts
+## The loop
 
-### 1. My open PRs first
+Agents report back on their own, so react to each completion; there is no polling.
+Call `ScheduleWakeup` (1800 s) only as a fallback in case a completion is lost.
 
-My PRs are the ones whose body contains `<!-- milestone-loop -->`:
+### 1. Fill the slots
 
-```bash
-gh pr list -R um-dia-a-gente-faz/wow-server --state open --json number,body,headRefName,mergeable,statusCheckRollup,comments,commits \
-  --jq '.[] | select(.body|contains("<!-- milestone-loop -->"))'
-```
+Slots free = `n` minus authors currently running. For each free slot take the next eligible
+issue (lowest number first). Eligible means all of:
 
-For each, read its comments. A review is a comment starting `## Review by <agent>` with a
-`**Verdict:** approve | request-changes | comment` line (shape: `.github/REVIEW_TEMPLATE.md`).
-Only a review posted **after my latest push** counts, and I never write one myself.
+- open, in the milestone, board status *Todo*, no assignee, no open PR closing it
+- **no open blocker**: the native *blocked by* relationship first
+  (`gh api graphql` on `blockedBy`, see `CLAUDE.md`), then any `## Blocked by` line
+- a single PR can finish it; an umbrella or ambiguous issue is reported to the owner, with
+  your questions as an issue comment, and skipped
+- does not overlap the files of an author already running (two agents editing the same module
+  is how interface drift happened; hold the later issue back)
 
-- **No review yet** → nothing to do for this PR.
-- **Verdict `request-changes`** → check out its branch in its worktree
-  (`../wowwork-gh-<n>`), implement every item under *Required fixes* (or push back with a
-  reason), commit, push, then reply with one comment answering each numbered point.
-  Wait for CI green. Then continue to the merge check below in the same tick only if
-  no newer review has arrived; otherwise stop the tick here.
-- **Verdict `approve`, or `comment` with no required fixes** → merge check.
+Move the issue to *In progress* on the board and assign nobody else to it.
 
-**Merge check — merge only if ALL hold, otherwise do not merge:**
-1. The review is from another agent, newer than my last push.
-2. CI is green: `gh pr checks <n>`.
-3. `mergeable` is `MERGEABLE`. Merge `origin/main` into the branch, rerun the tests
-   (`python3 -m unittest discover -s agent/tests`, plus `tools/chat-feed/tests` and
-   `tools/wowmap/tests` if touched) and push if that changed anything; wait for CI again.
-4. No unaddressed change request, and no comment saying "shelving" or "hold".
-5. Template followed, `Closes #<n>` present.
+### 2. Dispatch an author
 
-Then: `gh pr merge <n> --squash --delete-branch`. **One merge per tick** — every merge is a
-deploy that disconnects players. After merging: confirm the issue is closed and *Done* on the
-board, remove the worktree (`git worktree remove ../wowwork-gh-<n>`), `git fetch origin`.
-End the tick.
+Brief for each author (give it the issue number, not a summary):
 
-### 2. Pick an issue
+- Read the issue in full with its comments, then `docs/AGENT-DIRECTION.md` for the area.
+- Branch `feature/gh-<n>-<slug>` or `bugfix/gh-<n>-<slug>` from `origin/main`, never stacked.
+- Build test-first with the least code (`tdd`, `ponytail`); use `trinity-protocol` for any
+  packet and `wowmap-dev` for `tools/wowmap`.
+- Run `scripts/check.sh` before opening the PR.
+- Open the PR from `.github/PULL_REQUEST_TEMPLATE.md`: title `gh-<n>: <summary>`,
+  `Issue: gh-<n>`, `Closes #<n>`, and the marker `<!-- milestone-loop -->`. Watch CI to green,
+  set the board to *In Review*.
+- Anything it cannot verify (live VM, the owner in game) stays unticked under *How to test*.
+- Return the PR number and a list of what is unverified. Do not review or merge.
 
-Only if I have no open PR waiting on me. Eligible = all of:
-- open, in the current milestone: `gh issue list -R … --milestone "<m>" --state open --json number,title,labels,assignees,body`
-- board status *Todo* (`gh project item-list 7 --owner um-dia-a-gente-faz --limit 200 --format json`)
-- no assignee, and no open PR already closing it
-- **no open blocker**: parse the `## Blocked by` section of the body for `#<n>` and check each
-  is closed; also check the native field:
-  `gh api graphql -f query='query{repository(owner:"um-dia-a-gente-faz",name:"wow-server"){issue(number:N){blockedBy(first:20){nodes{number state}}}}}'`
-- not an umbrella/staged issue you cannot finish in one PR (e.g. a multi-stage roster plan):
-  report it instead of starting it
+### 3. Review
 
-Take the lowest-numbered eligible one. None eligible in the current milestone → check
-*Milestone done* below before anything else: if every issue in it is closed and none of my
-PRs is open, the milestone is finished, so advance to the next milestone **in this same tick**
-and continue from step 2 on it. Fall through to *Idle* only when a later milestone also has
-nothing eligible.
+When an author returns a PR, dispatch a reviewer agent on it:
 
-### 3. Develop it
+- Check out the PR branch in a worktree and run `/code-review main` (fixed point `main`).
+- Post one comment in the `.github/REVIEW_TEMPLATE.md` shape (`## Review by <agent>`,
+  `**Verdict:**`, Findings, Required fixes) with `gh pr comment`.
+- Report the verdict back. No pushes, no edits, no merge.
 
-1. Board → *In progress*:
-   ```bash
-   P=$(gh project view 7 --owner um-dia-a-gente-faz --format json --jq .id)
-   gh project field-list 7 --owner um-dia-a-gente-faz --format json   # Status field id + option ids
-   gh project item-edit --project-id $P --id <item id> --field-id <status field id> --single-select-option-id <In progress id>
-   ```
-2. `git fetch origin && git worktree add ../wowwork-gh-<n> -b feature/gh-<n>-<slug> origin/main`
-   (`bugfix/` for a bug). Base is always `main`; never stack.
-3. Brainstorm (bounded), write the failing test, make it pass with the least code, run the
-   suites above, `verification-before-completion`. Anything you cannot verify (live VM, the
-   owner in game) stays unticked under *How to test* as a human step.
-4. Commit with `caveman-commit` (Conventional Commits), push.
-5. Open the PR to `main` from `.github/PULL_REQUEST_TEMPLATE.md`: title `#<n>: <summary>`,
-   `Issue: #<n>`, `Closes #<n>`, and the marker line `<!-- milestone-loop -->` in the body.
-   `gh pr checks <n> --watch`; when green, board → *In Review*.
-6. End the tick. The review comes from another agent; do not review it yourself.
+### 4. Route the verdict
 
-### 4. Re-arm
+- `request-changes` → send the author (SendMessage to it, or a fresh author on the same
+  branch) every item under *Required fixes*; it fixes, pushes, answers each point in a
+  comment. Then dispatch a new reviewer. After **two** rounds without `approve`, stop and
+  tell the owner.
+- `approve`, or `comment` with no required fixes → merge queue.
 
-Call `ScheduleWakeup` with `delaySeconds: 300`, prompt `/milestone-loop <current milestone> idle=<n>`,
-`noop: true` when this tick changed nothing (still waiting), `false` otherwise. Never pass
-`stop: true` while any later milestone still has open issues — the loop ends only on
-*All done* or an explicit owner stop. Write a two-line summary in the reply: what you did,
-what you are waiting for.
+### 5. Merge queue — one at a time
 
-## Idle, advancing, stop
+Merge only when all hold, otherwise leave the PR and say why:
 
-- Nothing eligible but my PRs or other agents' PRs are open → wait (`noop: true`, `idle`+1).
-  Any tick that acts resets `idle` to 0.
-- **Milestone done** = every issue in it is closed (merged) and none of my PRs is open. Then
-  the current milestone becomes the next one in order, and the same tick continues from
-  step 2 on it. Say so in the tick summary: milestone name, issues merged.
-- **Advancing is mandatory, not a judgement call.** Moving on when a milestone is finished is
-  not optional and not something to defer to the owner. The current milestone becomes the next
-  one in order and work continues in the same tick: M2 → M3 → M4 → M5 → M6 → M7 → Later. A
-  milestone counts as finished as soon as its issues are closed, whether or not it was the
-  milestone the loop was started at.
-- **Milestone stuck** = `idle` reaches 12 (about an hour) with open issues left that I cannot
-  act on (blocked by something outside my PRs, skipped as ambiguous or too big, or owned by
-  another agent). Do not wait forever: record them as *left over* for the final report,
-  treat the milestone as passed, move to the next one and reset `idle`.
-- **All done** = no later milestone has open issues, and none of my PRs is open →
-  `ScheduleWakeup` with `stop: true`, then report per milestone: issues merged, left over and
-  why, human steps still open.
-- Left-over issues are revisited only if the owner restarts the loop at that milestone.
+1. A review from another agent, newer than the last push, with verdict `approve`.
+2. CI green (`gh pr checks <n>`) and `mergeable` = `MERGEABLE`. If main moved, merge
+   `origin/main` into the branch, rerun `scripts/check.sh`, wait for CI again.
+3. No open change request and no "shelving" or "hold" comment.
+4. **Acceptance criteria met**: every criterion in the issue is satisfied, or the remainder
+   is split into its own issue first. `Closes` never covers work that was not delivered.
+5. **No deploy path**: the diff does not touch `docker-compose.yml`, `scripts/`, worldserver
+   config or the deploy workflow. A merge there recreates the worldserver and disconnects
+   players, so ask the owner and wait for the go-ahead.
+6. **Spacing**: `origin/main` has no commit from the last 10 minutes (another merge may
+   be deploying). Otherwise wait.
+
+Then `gh pr merge <n> --squash --delete-branch`. Confirm the issue closed and is *Done*,
+remove the worktree, `git fetch origin`. One merge, then back to step 1 to refill the slot.
+
+### 6. Finish
+
+The milestone is done when every issue is closed, or the rest are skipped or blocked. Report
+per issue: merged PR, left over and why, human steps still open, deploy-path PRs waiting for
+the owner. Then stop; moving to another milestone is the owner's call.
 
 ## Never
 
-- Never merge a PR that is not mine, has no review from another agent, has red CI, a
-  conflict, or an open change request.
-- Never touch PRs the loop did not open (they belong to other agents), even if they
-  look ready.
+- Never merge a PR the loop did not open, or one without another agent's `approve`.
+- Never run more than `n` authors, or more than one merge at a time.
 - Never push to `main`, force-push a shared branch, restart the worldserver, run
   `scripts/deploy.sh`, or use GM commands on agent characters.
 - Never print or commit credentials.
 - Never widen a PR: a new problem found on the way becomes its own issue in the right
   milestone.
-- If anything is ambiguous, risky or outside this list, stop the loop and ask the owner.
+- If anything is ambiguous or risky, stop and ask the owner.
