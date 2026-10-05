@@ -58,6 +58,10 @@
                        gap:2px; border:1px solid #20263a; border-radius:6px; font-size:12px;
                        color:var(--dim); text-align:center; min-width:0;
                        background:radial-gradient(ellipse at center, #1a2033 0%, #0d111b 75%); }
+  .drawer .doll .mid .model { position:relative; width:100%; height:220px; margin-top:4px; }
+  .drawer .doll .mid .model .charview { position:absolute; inset:0; }
+  .drawer .doll .mid .model canvas { width:100%; height:100%; display:block; cursor:grab; touch-action:none; }
+  .drawer .doll .mid .model .none { padding:90px 6px 0; font-size:11px; }
   .drawer .doll .mid .nm { font-size:14px; font-weight:600; overflow-wrap:anywhere; }
   .drawer .doll .bottom { grid-column:1 / -1; display:flex; justify-content:center; gap:4px; }
   .drawer .bag-bar { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }

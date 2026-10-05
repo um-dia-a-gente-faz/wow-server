@@ -36,6 +36,7 @@ handler plus one line in `ROUTES`.
 | `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names, and for item tooltips `SpellDuration.dbc`, `SpellRadius.dbc`, `ItemSet.dbc`, `ItemRandomProperties.dbc`, `ItemRandomSuffix.dbc`, `SpellItemEnchantment.dbc`, `GemProperties.dbc`, `SkillLine.dbc`, `RandPropPoints.dbc`; a missing file is logged and only its tooltip lines are left out) |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art (and `<area_id>_base.png`) |
 | `ICONS_DIR` | `/icons` | directory containing extracted item icon PNGs (see *Item icons*); `ItemDisplayInfo.dbc` is read from `DBC_DIR` |
+| `MODELS_DIR` | `/models` | directory containing extracted character meshes and skins `<race>_<gender>.bin|.png` (see *Character model*); empty means the drawer shows a placeholder |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
@@ -567,3 +568,24 @@ one global scope, so the order in `index.html` matters. `assets.static` serves a
 A new file must be added to the `Dockerfile` only if it is outside `static/`.
 
 JS tests: `node --test tools/wowmap/tests/js/*.test.js` (pure functions in `format.js` and `map.js`).
+
+## Character model
+
+The inspect drawer shows the character's body as a 3D model (drag to rotate, wheel to
+zoom) when `MODELS_DIR` holds that race and gender. Equipment is not drawn yet. The
+spike, sizes and limits are in `docs/CHARACTER-MODEL-SPIKE.md`.
+
+Like the icons, the art comes from the user-supplied client, so it is extracted on the
+VM and never committed. Run once, with `mpyq` and `Pillow` available:
+
+```bash
+cd /opt/wow-server/tools/wowmap
+python3 extract_models.py --client /opt/wow-server/client \
+    --dbc /opt/wowmap-data/dbc --out /opt/wowmap-data/models
+```
+
+It writes the 20 playable race/gender models (5.6 MB). `monitoring/docker-compose.yml`
+mounts `/opt/wowmap-data/models` read-only at `/models`; `GET /models/<race>_<gender>.bin|.png`
+serves them and `GET /api/character/<name>` gives `model` (`"/models/1_0"`, or `null`).
+The renderer is three.js r159 vendored in `static/` (no CDN, no build) and is fetched only
+when a model is shown.

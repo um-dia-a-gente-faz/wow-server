@@ -120,6 +120,7 @@ ROUTES = [
     ("GET", r"/maps/(?P<rest>.*)", lambda req, m: assets.maps(req, m.group("rest"))),
     ("GET", r"/static/(?P<rest>.*)", lambda req, m: assets.static(req, m.group("rest"))),
     ("GET", r"/icons/(?P<rest>.*)", lambda req, m: assets.icons(req, m.group("rest"))),
+    ("GET", r"/models/(?P<rest>.*)", lambda req, m: assets.models_file(req, m.group("rest"))),
     ("GET", r"/|/index\.html", page),
     ("POST", r"/api/fleet/agents/(?P<rest>.*)", fleet_action),
     ("POST", r"/api/calibrate", calibrate),

@@ -60,6 +60,7 @@ def fetch_character(name):
         "class_name": CLASSES.get(cls, str(cls)),
         "class_color": CLASS_COLORS.get(cls, "#888888"),
         "gender": gender,
+        "model": state.model_url(race, gender),
         "zone": zone,
         "zone_name": t.zone_name(zone) if zone else "Unknown",
         "map": cmap,

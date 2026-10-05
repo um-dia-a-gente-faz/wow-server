@@ -41,10 +41,11 @@ class PageSmokeTests(unittest.TestCase):
             self.assertTrue(ctype.startswith(want), (ref, ctype))
 
     def test_no_orphan_page_assets(self):
-        """Every page css/js in static/ is loaded by index.html (Leaflet is checked above)."""
+        """Every page css/js in static/ is loaded by index.html (Leaflet is checked above).
+        three.min.js is the exception: charview.js fetches it only when a model is shown (#171)."""
         body = get("/")[1]
         for f in STATIC.iterdir():
-            if f.suffix in (".css", ".js"):
+            if f.suffix in (".css", ".js") and f.name != "three.min.js":
                 self.assertIn(f'/static/{f.name}"', body, f"{f.name} is never loaded")
 
     def test_templates_and_licences_are_not_served(self):

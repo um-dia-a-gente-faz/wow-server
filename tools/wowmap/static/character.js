@@ -160,6 +160,16 @@ const Inspect = (() => {
     if (label) { e.title = label; e.append(el('span', 'lbl', label)); }
     return e;
   }
+  // #171: the 3D body. Without an extracted model (or WebGL) the box says so; nothing else moves.
+  function characterModel(c) {
+    const box = el('div', 'model');
+    const none = (why) => box.replaceChildren(el('div', 'none', why));
+    if (!c.model) { none('No 3D model extracted'); return box; }
+    if (!window.CharView) { none('3D viewer unavailable'); return box; }
+    box.title = 'Drag to rotate, scroll to zoom';
+    window.CharView.mount(box, c.model).catch(() => none('3D model unavailable'));
+    return box;
+  }
   function paperDoll(equipped, c) {
     const by = new Map(equipped.map((it) => [it.slot, it]));
     const sq = (s) => by.has(s) ? itemIcon(by.get(s)) : emptySlot(EQUIP_SLOTS[s]);
@@ -172,6 +182,7 @@ const Inspect = (() => {
     mid.append(el('div', 'nm', c.name), el('div', null, `Level ${c.level} ${c.race_name}`),
                el('div', null, c.class_name));
     mid.firstChild.style.color = c.class_color;
+    mid.append(characterModel(c));
     doll.append(left, mid, right, bottom);
     return doll;
   }

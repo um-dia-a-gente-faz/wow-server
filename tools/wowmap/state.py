@@ -11,6 +11,7 @@ import time
 import pymysql
 
 import item_icons
+import models
 from overlays import load_overlays
 from transform import DbcTables, GridAreas
 
@@ -32,6 +33,7 @@ MYSQL: dict = dict(
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
 ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
+MODELS_DIR = os.environ.get("MODELS_DIR", "/models")
 GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS in pages.py);
@@ -92,6 +94,14 @@ def icon_url(display_id):
     fn = item_icons.icon_file(name) if name else ""
     if fn and os.path.isfile(os.path.join(ICONS_DIR, fn)):
         return "/icons/" + fn
+    return None
+
+
+def model_url(race, gender):
+    """`/models/<race>_<gender>` when extract_models.py has written that model, else None."""
+    key = models.model_key(race, gender)
+    if key and all(os.path.isfile(os.path.join(MODELS_DIR, key + e)) for e in (".bin", ".png")):
+        return "/models/" + key
     return None
 
 
