@@ -39,15 +39,15 @@ class CoinsTests(unittest.TestCase):
     def test_render_omits_zero_denominations_and_names_a_zero_purse(self):
         out = run_js("""const f = (c) => { const n = Coins.render(c);
           return [n.text, n.kids.filter((k) => k.className.startsWith('coin')).map((k) => k.className),
-                  n.title, n.attrs['aria-label']]; };
+                  n.title, n.attrs['aria-label'], n.attrs.role]; };
           console.log(JSON.stringify([f(12345), f(1200), f(10000), f(0), f(1234567890)]));""")
         self.assertEqual(out, [
-            ["12345", ["coin g", "coin s", "coin c"], "12,345 copper", "1 gold 23 silver 45 copper"],
-            ["12", ["coin s"], "1,200 copper", "12 silver"],
-            ["1", ["coin g"], "10,000 copper", "1 gold"],
-            ["0", ["coin c"], "0 copper", "0 copper"],
+            ["12345", ["coin g", "coin s", "coin c"], "12,345 copper", "1 gold 23 silver 45 copper", "img"],
+            ["12", ["coin s"], "1,200 copper", "12 silver", "img"],
+            ["1", ["coin g"], "10,000 copper", "1 gold", "img"],
+            ["0", ["coin c"], "0 copper", "0 copper", "img"],
             ["123,4567890", ["coin g", "coin s", "coin c"], "1,234,567,890 copper",
-             "123456 gold 78 silver 90 copper"],
+             "123456 gold 78 silver 90 copper", "img"],
         ])
 
     def test_every_call_site_uses_the_shared_renderer(self):

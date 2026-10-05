@@ -1163,6 +1163,7 @@ const Coins = (() => {
     out.title = `${c.toLocaleString('en-US')} copper`;
     const parts = split(c).map((n, i) => [n, 'gsc'[i]]).filter(([n]) => n);
     if (!parts.length) parts.push([0, 'c']);
+    out.setAttribute('role', 'img');  // a bare span can't carry a name; img does, and hides the digits
     out.setAttribute('aria-label', parts.map(([n, d]) => `${n} ${NAMES[d]}`).join(' '));
     for (const [n, d] of parts) {
       const num = document.createElement('span');
