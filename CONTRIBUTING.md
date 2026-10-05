@@ -87,6 +87,9 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 
+Milestone and board naming (`M<n> - <subject>`, label and view rules, *blocked by*) is
+in `CLAUDE.md`, *Milestones and board naming*.
+
 ## Branches
 
 - `main` — the single source of truth. Always deployable.
