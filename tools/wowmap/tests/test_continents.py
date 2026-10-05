@@ -8,6 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import areas  # noqa: E402
 import players  # noqa: E402
 import state  # noqa: E402
@@ -129,7 +130,7 @@ class AppTests(ContinentCase):
     def test_page_has_the_navigation(self):
         for needle in ('id="toContinent"', "function zoneAt", "function showArea",
                        "map.on('contextmenu', zoomOut)"):
-            self.assertIn(needle, app.PAGE)
+            self.assertIn(needle, pagesrc.PAGE)
 
 
 @unittest.skipIf(extract_maps is None, "Pillow not installed")

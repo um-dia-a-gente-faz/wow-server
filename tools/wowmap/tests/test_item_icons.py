@@ -17,6 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import assets  # noqa: E402
 import state  # noqa: E402
 import item_icons  # noqa: E402
@@ -162,17 +163,17 @@ class DecodeTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_drawer_renders_icons_from_the_api_field(self):
-        self.assertIn("function itemIcon(it)", app.PAGE)
-        self.assertIn("it.icon", app.PAGE)
+        self.assertIn("function itemIcon(it)", pagesrc.PAGE)
+        self.assertIn("it.icon", pagesrc.PAGE)
 
     def test_empty_slot_is_the_same_box_as_a_real_icon(self):
         # No size on .empty beyond the shared .ico box, so no reflow between states.
-        body = re.search(r"\.drawer \.ico\.empty\s*\{([^}]*)\}", app.PAGE).group(1)
+        body = re.search(r"\.drawer \.ico\.empty\s*\{([^}]*)\}", pagesrc.PAGE).group(1)
         self.assertNotRegex(body, r"(?<![-\w])(width|height|flex)\s*:")
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_item_icon_states_in_a_stub_dom(self):
-        src = app.PAGE[app.PAGE.index("const Q_COLORS"):app.PAGE.index("function itemRows")]
+        src = pagesrc.PAGE[pagesrc.PAGE.index("const Q_COLORS"):pagesrc.PAGE.index("function itemRows")]
         js = """
         class N { constructor(){ this.classList = new Set(); this.kids = []; this.style = {}; this.l = {};
           this.attrs = {}; }

@@ -74,6 +74,13 @@ jobs:
           pip install -r tools/wowmap/requirements.txt Pillow
           python -m unittest discover -s tools/wowmap/tests -v
 
+      # #262: pure front-end functions (tools/wowmap/static/*.js) under node's built-in runner.
+      # Node is preinstalled on ubuntu-latest; the shell expands the glob so any node >= 18 works.
+      - name: wowmap JS unit tests
+        run: |
+          node --version
+          node --test tools/wowmap/tests/js/*.test.js
+
       - name: agent unit tests
         run: |
           if [ -d agent/tests ]; then

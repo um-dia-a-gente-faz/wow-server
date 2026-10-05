@@ -9,13 +9,14 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import players  # noqa: E402
 
 
 def js_fn(name, end):
     """Source of a page function, from its `function <name>` up to the `end` marker."""
-    start = app.PAGE.index(f"function {name}(")
-    return app.PAGE[start:app.PAGE.index(end, start)]
+    start = pagesrc.PAGE.index(f"function {name}(")
+    return pagesrc.PAGE[start:pagesrc.PAGE.index(end, start)]
 
 
 # A tiny DOM, enough for renderList to build its rows.
@@ -113,12 +114,12 @@ class PlayerRowTests(unittest.TestCase):
                 self.assertGreaterEqual(contrast(colour, ink), 4.5)
 
     def test_marker_tooltip_uses_the_same_text(self):
-        self.assertTrue("e.title = playerTip(p);" in app.PAGE)
+        self.assertTrue("e.title = playerTip(p);" in pagesrc.PAGE)
 
 
 class BadgeCssTests(unittest.TestCase):
     def test_row_badge_has_a_fixed_size_for_two_digits(self):
-        self.assertTrue(".pl .dot { width:20px; height:20px;" in app.PAGE)
+        self.assertTrue(".pl .dot { width:20px; height:20px;" in pagesrc.PAGE)
 
 
 if __name__ == "__main__":

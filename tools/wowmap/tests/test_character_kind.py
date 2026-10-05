@@ -11,6 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import agents  # noqa: E402
 import character  # noqa: E402
 import state  # noqa: E402
@@ -121,10 +122,10 @@ class MindTabPageTests(unittest.TestCase):
     def test_states_are_spelled_out(self):
         for text in ("Human player — no agent brain attached", "brain API unreachable",
                      "not configured on this page", "/kind"):
-            self.assertIn(text, app.AGENT_JS)
+            self.assertIn(text, pagesrc.AGENT_JS)
 
     def test_no_silent_catch(self):
-        self.assertNotIn("catch (e) { /*", app.AGENT_JS)
+        self.assertNotIn("catch (e) { /*", pagesrc.AGENT_JS)
 
 
 if __name__ == "__main__":

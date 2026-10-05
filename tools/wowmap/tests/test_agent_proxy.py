@@ -11,6 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import agents  # noqa: E402
 
 
@@ -104,9 +105,9 @@ class ProxyTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_agent_mind_is_spliced_in(self):
-        self.assertNotIn("@agent-", app.PAGE)
-        self.assertIn("const AgentMind", app.PAGE)
-        self.assertIn("Agent mind", app.PAGE)
+        self.assertNotIn("@agent-", pagesrc.PAGE)
+        self.assertIn("const AgentMind", pagesrc.PAGE)
+        self.assertIn("Agent mind", pagesrc.PAGE)
 
 
 if __name__ == "__main__":

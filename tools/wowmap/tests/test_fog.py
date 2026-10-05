@@ -14,6 +14,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import areas  # noqa: E402
 import fogview  # noqa: E402
 import state  # noqa: E402
@@ -308,9 +309,9 @@ class RouteTests(ArtCase):
 
 class PageTests(unittest.TestCase):
     def test_page_has_the_fog_toggle_and_art_switch(self):
-        self.assertIn('id="tglFog"', app.PAGE)
-        self.assertIn("function artUrl(a)", app.PAGE)
-        self.assertIn("/explored`", app.PAGE)
+        self.assertIn('id="tglFog"', pagesrc.PAGE)
+        self.assertIn("function artUrl(a)", pagesrc.PAGE)
+        self.assertIn("/explored`", pagesrc.PAGE)
 
 
 if __name__ == "__main__":
