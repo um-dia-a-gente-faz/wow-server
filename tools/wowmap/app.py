@@ -1070,11 +1070,14 @@ INSPECT_CSS = r"""
   .item-tip .tl { display:flex; gap:18px; justify-content:space-between; }
   .item-tip .tl:first-child { font-size:14px; }
   .item-tip .r { white-space:nowrap; }
-  .item-tip .coin { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:2px;
-                    vertical-align:-1px; }
-  .item-tip .coin.g { background:#e8c447; }
-  .item-tip .coin.s { background:#c7c7cf; }
-  .item-tip .coin.c { background:#c06a35; }
+  /* #177: Coins.render(), the one money renderer (tooltip, drawer, activity feed). */
+  .coins { white-space:nowrap; }
+  .coins .coin { display:inline-block; width:9px; height:9px; border-radius:50%; margin:0 5px 0 2px;
+                 vertical-align:-1px; }
+  .coins .coin:last-child { margin-right:0; }
+  .coins .coin.g { background:#e8c447; }
+  .coins .coin.s { background:#c7c7cf; }
+  .coins .coin.c { background:#c06a35; }
   .drawer summary { cursor:pointer; padding:7px 0; color:var(--dim); font-size:12px;
                     text-transform:uppercase; letter-spacing:.6px; }
   /* Reputation window: nested headers, one bar per faction (name | rank bar | numbers). */
@@ -1142,6 +1145,38 @@ function ago(t) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// Money as the game's coins (#177). The one place copper is split and drawn: the item
+// tooltip, the drawer and the activity feed all call Coins.render. Zero denominations are
+// dropped, a zero purse shows `0` copper, the title keeps the raw copper for the DB.
+const Coins = (() => {
+  const NAMES = {g: 'gold', s: 'silver', c: 'copper'};
+  const whole = (copper) => Math.max(0, Math.floor(Number(copper) || 0));
+  // 12345 -> [1, 23, 45] (gold, silver, copper)
+  function split(copper) {
+    const c = whole(copper);
+    return [Math.floor(c / 10000), Math.floor(c / 100) % 100, c % 100];
+  }
+  function render(copper) {
+    const c = whole(copper);
+    const out = document.createElement('span');
+    out.className = 'coins';
+    out.title = `${c.toLocaleString('en-US')} copper`;
+    const parts = split(c).map((n, i) => [n, 'gsc'[i]]).filter(([n]) => n);
+    if (!parts.length) parts.push([0, 'c']);
+    out.setAttribute('aria-label', parts.map(([n, d]) => `${n} ${NAMES[d]}`).join(' '));
+    for (const [n, d] of parts) {
+      const num = document.createElement('span');
+      num.textContent = d === 'g' ? n.toLocaleString('en-US') : String(n);
+      const coin = document.createElement('span');
+      coin.className = 'coin ' + d;
+      coin.setAttribute('aria-hidden', 'true');
+      out.append(num, coin);
+    }
+    return out;
+  }
+  return {split, render};
+})();
+
 // In-game style item tooltip (UM-80). The API sends ready-made lines
 // (item_tooltip.py); this only draws them, with textContent, and keeps the box on screen.
 const ItemTip = (() => {
@@ -1161,13 +1196,6 @@ const ItemTip = (() => {
     e.textContent = String(text);
     return e;
   }
-  // Copper as the game's coins: only the non-zero denominations.
-  function coins(copper) {
-    const out = document.createElement('span');
-    const parts = [[Math.floor(copper / 10000), 'g'], [Math.floor(copper / 100) % 100, 's'], [copper % 100, 'c']];
-    for (const [n, c] of parts) if (n) out.append(span(null, n), span('coin ' + c, ''), ' ');
-    return out;
-  }
   function render(it) {
     const lines = it.tooltip && it.tooltip.length ? it.tooltip : [{left: it.item_name, color: 'quality'}];
     tip.replaceChildren();
@@ -1176,7 +1204,7 @@ const ItemTip = (() => {
       row.className = 'tl';
       row.style.color = l.color === 'quality' ? (QUALITY[it.quality] || '#fff') : (TIP_COLORS[l.color] || '#fff');
       const left = span('l', l.left);
-      if (l.money !== undefined) left.append(' ', coins(Number(l.money) || 0));
+      if (l.money !== undefined) left.append(' ', Coins.render(l.money));
       row.append(left);
       if (l.right) row.append(span('r', l.right));
       tip.append(row);
@@ -1250,7 +1278,9 @@ const Inspect = (() => {
   }
   function kv(label, value, cls = 'kv') {
     const r = el('div', cls);
-    r.append(el('span', 'k', label), el('span', 'v', value));
+    const v = el('span', 'v');
+    if (value != null) v.append(value);
+    r.append(el('span', 'k', label), v);
     return r;
   }
   // A bar when the max is known (character_stats row), otherwise the plain number.
@@ -1283,10 +1313,6 @@ const Inspect = (() => {
     row.querySelector('.k').prepend(svg);
     if (title) row.title = title;
     return row;
-  }
-  function money(copper) {
-    const c = Number(copper) || 0;
-    return `${nf.format(Math.floor(c / 10000))}g ${Math.floor(c / 100) % 100}s ${c % 100}c`;
   }
   function duration(sec) {
     const s = Number(sec) || 0;
@@ -1523,7 +1549,7 @@ const Inspect = (() => {
                         Math.floor((maxPower[key] || 0) / scale), BAR_COLORS[key]);
       f.append(key === 'mana' ? stat('mana', 'Mana', row, `mana ${power.mana} / ${maxPower.mana ?? '?'}`) : row);
     }
-    f.append(stat('gold', 'Gold', kv('Gold', money(c.money)), `${nf.format(c.money)} copper`));
+    f.append(stat('gold', 'Gold', kv('Gold', Coins.render(c.money)), `${nf.format(c.money)} copper`));
     f.append(stat('played', 'Played time', kv('Played time', c.totaltime ? duration(c.totaltime) : '—'),
                   `played ${c.totaltime}s`));
     f.append(stat('logout', 'Last logout', kv('Last logout', c.logout_time ? ago(c.logout_time) : '—'),
@@ -1955,7 +1981,11 @@ window.ActivityFeed = (() => {
         const r = el('div', 'act' + (failed ? ' failed' : ''));
         r.append(el('span', 'ic k-' + e.kind, ICONS[e.kind] || '•'));
         const tx = el('div', 'tx');
-        hl(tx, e.text, q);
+        if (e.kind === 'money' && e.detail && Number.isFinite(e.detail.delta)) {
+          // Same renderer as the drawer and the tooltip; the label still highlights.
+          hl(tx, 'Money ' + (e.detail.delta > 0 ? '+' : '−'), q);
+          tx.append(Coins.render(Math.abs(e.detail.delta)));
+        } else hl(tx, e.text, q);
         if (e.inferred) {
           const b = el('span', 'inferred', 'inferred');
           b.title = 'Not recorded by the server: deduced from database changes';
