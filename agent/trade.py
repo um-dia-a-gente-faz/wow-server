@@ -44,18 +44,20 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-CMSG_INITIATE_TRADE       = 0x116
-CMSG_BEGIN_TRADE          = 0x117
-CMSG_BUSY_TRADE           = 0x118
-CMSG_IGNORE_TRADE         = 0x119
-CMSG_ACCEPT_TRADE         = 0x11A
-CMSG_UNACCEPT_TRADE       = 0x11B
-CMSG_CANCEL_TRADE         = 0x11C
-CMSG_SET_TRADE_ITEM       = 0x11D
-CMSG_CLEAR_TRADE_ITEM     = 0x11E
-CMSG_SET_TRADE_GOLD       = 0x11F
-SMSG_TRADE_STATUS         = 0x120
-SMSG_TRADE_STATUS_EXTENDED = 0x121
+from .opcodes import (
+    CMSG_INITIATE_TRADE,
+    CMSG_BEGIN_TRADE,
+    CMSG_BUSY_TRADE,
+    CMSG_IGNORE_TRADE,
+    CMSG_ACCEPT_TRADE,
+    CMSG_UNACCEPT_TRADE,
+    CMSG_CANCEL_TRADE,
+    CMSG_SET_TRADE_ITEM,
+    CMSG_CLEAR_TRADE_ITEM,
+    CMSG_SET_TRADE_GOLD,
+    SMSG_TRADE_STATUS,
+    SMSG_TRADE_STATUS_EXTENDED,
+)
 
 # TradeData.h: TradeSlots
 TRADE_SLOT_COUNT = 7          # slots 0-6 total, one packet entry each

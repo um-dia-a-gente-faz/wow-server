@@ -29,10 +29,12 @@ from . import actions
 from . import movement
 from .perception import PLAYER_FLAGS_GHOST, UNIT_NPC_FLAG_SPIRITHEALER
 
-CMSG_REPOP_REQUEST          = 0x15A
-CMSG_RECLAIM_CORPSE         = 0x1D2
-CMSG_SPIRIT_HEALER_ACTIVATE = 0x21C
-MSG_CORPSE_QUERY            = 0x216  # empty client->server request
+from .opcodes import (
+    CMSG_REPOP_REQUEST,
+    CMSG_RECLAIM_CORPSE,
+    MSG_CORPSE_QUERY,
+    CMSG_SPIRIT_HEALER_ACTIVATE,
+)
 
 CORPSE_RECLAIM_RADIUS_YD = 39.0  # Player.h CORPSE_RECLAIM_RADIUS
 CORPSE_OBJECT_MATCH_RADIUS_YD = 5.0  # how close a "corpse" object must be to

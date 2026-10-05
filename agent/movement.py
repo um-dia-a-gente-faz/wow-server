@@ -42,10 +42,12 @@ from .update_object import (
     MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING,
 )
 
-MSG_MOVE_SET_FACING = 0x0DA
-MSG_MOVE_START_FORWARD = 0x0B5
-MSG_MOVE_STOP = 0x0B7
-MSG_MOVE_HEARTBEAT = 0x0EE
+from .opcodes import (
+    MSG_MOVE_START_FORWARD,
+    MSG_MOVE_STOP,
+    MSG_MOVE_SET_FACING,
+    MSG_MOVE_HEARTBEAT,
+)
 
 
 def client_time_ms() -> int:

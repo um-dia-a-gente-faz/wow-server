@@ -39,16 +39,17 @@ from . import mail as mailmod
 from . import trade as tr
 from . import update_fields as uf
 
-CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
-CMSG_TEXT_EMOTE         = 0x104
-CMSG_GROUP_INVITE       = 0x06E
-CMSG_GROUP_ACCEPT       = 0x072
-CMSG_GROUP_DISBAND      = 0x07B
-CMSG_SET_SELECTION      = 0x13D  # target a GUID
-CMSG_STAND_STATE_CHANGE = 0x101
-CMSG_ATTACKSWING        = 0x141
-CMSG_ATTACKSTOP         = 0x142
-CMSG_CAST_SPELL         = 0x12E
+from .opcodes import (
+    CMSG_GROUP_INVITE,
+    CMSG_GROUP_ACCEPT,
+    CMSG_GROUP_DISBAND,
+    CMSG_MESSAGECHAT,
+    CMSG_TEXT_EMOTE,
+    CMSG_CAST_SPELL,
+    CMSG_SET_SELECTION,
+    CMSG_ATTACKSWING,
+    CMSG_ATTACKSTOP,
+)
 
 MELEE_RANGE_YD = 5.0  # ~ melee weapon range + average combat reach
 

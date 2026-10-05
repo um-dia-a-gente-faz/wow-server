@@ -4,20 +4,22 @@ from .. import spells as sp
 from ..router import ROUTER
 
 # Combat / spells (UM-39)
-SMSG_INITIAL_SPELLS         = 0x12A
-SMSG_LEARNED_SPELL          = 0x12B
-CMSG_CAST_SPELL             = 0x12E
-SMSG_CAST_FAILED            = 0x130
-SMSG_SPELL_START            = 0x131
-SMSG_SPELL_GO                = 0x132
-SMSG_ATTACK_START           = 0x143
-SMSG_ATTACK_STOP            = 0x144
-SMSG_ATTACKERSTATEUPDATE    = 0x14A
-SMSG_LOG_XPGAIN             = 0x1D0
-SMSG_LEVELUP_INFO           = 0x1D4
-SMSG_PARTYKILLLOG           = 0x1F5
-SMSG_REMOVED_SPELL          = 0x203
-SMSG_SPELLNONMELEEDAMAGELOG = 0x250
+from ..opcodes import (
+    SMSG_INITIAL_SPELLS,
+    SMSG_LEARNED_SPELL,
+    CMSG_CAST_SPELL,
+    SMSG_CAST_FAILED,
+    SMSG_SPELL_START,
+    SMSG_SPELL_GO,
+    SMSG_ATTACK_START,
+    SMSG_ATTACK_STOP,
+    SMSG_ATTACKERSTATEUPDATE,
+    SMSG_LOG_XPGAIN,
+    SMSG_LEVELUP_INFO,
+    SMSG_PARTYKILLLOG,
+    SMSG_REMOVED_SPELL,
+    SMSG_SPELLNONMELEEDAMAGELOG,
+)
 
 
 def handle_initial_spells(ctx, payload: bytes):
