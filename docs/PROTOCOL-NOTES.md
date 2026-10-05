@@ -865,3 +865,23 @@ notice), so `channel_say` checks the snapshot's `channels` first.
 `SMSG_MESSAGECHAT` (shape in the section above: plain cstring channel name) to
 every member, **including the sender**. That echo is how `channel_say` confirms
 delivery. A refusal (`NOT_MEMBER`, `MUTED`, …) arrives as a notify.
+
+## Party / group (GH-71)
+
+Verified against TrinityCore 3.3.5 `Group.cpp` (`SendUpdateToPlayer`, `RemoveMember`,
+`Disband`) and `GroupHandler.cpp`. Parser: `agent/group.py`.
+
+- **SMSG_GROUP_LIST (0x07D)**: `u8 type, u8 subgroup, u8 member_flags, u8 roles,
+  [u8 state, u32 dungeon if type & 0x08], u64 group_guid (raw), u32 counter,
+  u32 member_count (excluding the receiver), member_count x {cstring name,
+  u64 guid, u8 online, u8 subgroup, u8 flags, u8 roles}, u64 leader_guid,
+  and only if member_count > 0: u8 loot_method, u64 master_looter, u8 threshold,
+  u8 dungeon_diff, u8 raid_diff, u8 heroic`. Leaving a group sends
+  `0x10,0,0,0, guid, counter, u32 0, u64 0` — a zero leader means "not grouped".
+- **SMSG_GROUP_UNINVITE (0x077)** (kick) and **SMSG_GROUP_DESTROYED (0x07C)** are empty.
+- **SMSG_GROUP_DECLINE (0x074)**: cstring, the name of the invitee who declined (sent to the leader).
+- **CMSG_GROUP_DECLINE (0x073)**: no payload read. **CMSG_GROUP_SET_LEADER (0x078)**:
+  raw u64 guid; the server silently ignores it unless we lead and the target is a member.
+- Not implemented yet: `CMSG_PUSHQUESTTOPARTY (0x19D, u32 quest_id)` and accepting a shared
+  quest (`CMSG_QUESTGIVER_ACCEPT_QUEST` / `CMSG_QUEST_CONFIRM_ACCEPT 0x19B`, `MSG_QUEST_PUSH_RESULT 0x276`);
+  failures come back only as `MSG_QUEST_PUSH_RESULT`, which nothing parses yet.

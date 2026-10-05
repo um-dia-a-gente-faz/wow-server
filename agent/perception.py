@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from . import group as group_mod
 from . import handles as hd
 from . import items as it
 from . import names as nm
@@ -961,7 +962,8 @@ class WorldState:
             return equipment, inventory
 
     def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40,
-                 corpse_position=None, pending_invite=None, chat_inbox=None) -> dict:
+                 corpse_position=None, pending_invite=None, chat_inbox=None,
+                 group=None) -> dict:
         """A JSON-serialisable view shaped like docs/AI-AGENT-SPEC.md's
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
         nearby_objects, sorted by distance and capped at `limit` each.
@@ -984,6 +986,11 @@ class WorldState:
         (session.chat_inbox, UM-68) are likewise session-scoped state this
         class doesn't own — passed through so the LLM has something to
         react to with the accept_group/say/whisper actions (agent/actions.py).
+
+        `group` (GH-71, session.group from agent.group.parse_group_list) is
+        exposed as `group` (leader, loot method, members; None when
+        ungrouped), and marks each nearby player `in_group` when they are
+        in *our* group.
         """
         with self._lock:
             objects = list(self.objects.values())
@@ -1011,6 +1018,7 @@ class WorldState:
             "equipment": equipment,
             "inventory": inventory,
             "pending_invite": pending_invite,
+            "group": group_mod.snapshot_view(group, self.my_guid),
             "chat_inbox": list(chat_inbox) if chat_inbox is not None else [],
             "channels": channels,  # UM-93: joined chat channels, for channel_say
             "quest_log": self.build_quest_log(),
@@ -1018,6 +1026,7 @@ class WorldState:
         if pos is None:
             return self.handles.encode(out)
 
+        group_guids = {m["guid"] for m in (group or {}).get("members", ())}
         scored = []
         for obj in objects:
             if obj.guid == self.my_guid:
@@ -1031,6 +1040,7 @@ class WorldState:
         for dist, obj in scored:
             entry = _object_dict(obj, dist)
             if obj.object_type == "player":
+                entry["in_group"] = obj.guid in group_guids
                 bucket = out["nearby_players"]
             elif obj.object_type == "unit":
                 bucket = out["nearby_units"]

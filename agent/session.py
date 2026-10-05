@@ -14,6 +14,7 @@ import zlib
 from . import packets as pk
 from . import channels as ch_mod
 from . import crypt as cr
+from . import group as grp
 from . import loot as lo
 from . import mail as mail_mod
 from . import names as nm
@@ -117,6 +118,10 @@ MSG_MOVE_OPCODES = frozenset((
 ))
 
 SMSG_GROUP_INVITE       = 0x06F
+SMSG_GROUP_DECLINE      = 0x074  # GroupHandler.cpp: cstring name of the invitee who declined
+SMSG_GROUP_UNINVITE     = 0x077  # empty; Group::RemoveMember sends it on a kick
+SMSG_GROUP_DESTROYED    = 0x07C  # empty; Group::Disband
+SMSG_GROUP_LIST         = 0x07D  # see agent/group.py
 SMSG_MESSAGECHAT        = 0x096
 SMSG_GM_MESSAGECHAT     = 0x3B3
 
@@ -514,6 +519,7 @@ class WoWSession:
         # (agent/__main__.py) — mirrors heard chat to tools/chat-feed.
         self.chat_relay = None
         self.pending_invite = None  # {"inviter_name": str} or None
+        self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
         self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}
@@ -1366,6 +1372,28 @@ class WoWSession:
         self.pending_invite = {"inviter_name": inviter_name}
         log.info("group invite from %s", inviter_name)
 
+    def _handle_group_list(self, payload: bytes):
+        try:
+            group = grp.parse_group_list(payload)
+        except (struct.error, ValueError, IndexError):
+            log.warning("unparseable SMSG_GROUP_LIST (%d bytes)", len(payload))
+            return
+        self.group = group
+        if group is not None:
+            self.pending_invite = None  # we are in a group, so any invite was accepted
+            self._record_event("group_updated", members=len(group["members"]))
+        else:
+            self._record_event("group_left")
+
+    def _handle_group_gone(self, payload: bytes):
+        # SMSG_GROUP_UNINVITE / SMSG_GROUP_DESTROYED: empty payloads.
+        self.group = None
+        self._record_event("group_left")
+
+    def _handle_group_decline(self, payload: bytes):
+        name, _ = pk.cstring(payload, 0)
+        self._record_event("group_invite_declined", target_name=name)
+
     def _handle_chat_player_not_found(self, payload: bytes):
         """SMSG_CHAT_PLAYER_NOT_FOUND (0x2A9): WorldSession::
         SendPlayerNotFoundNotice (ChatHandler.cpp) — a single cstring, the
@@ -1524,6 +1552,12 @@ class WoWSession:
             self._handle_messagechat(opcode, payload)
         elif opcode == SMSG_GROUP_INVITE:
             self._handle_group_invite(payload)
+        elif opcode == SMSG_GROUP_LIST:
+            self._handle_group_list(payload)
+        elif opcode in (SMSG_GROUP_UNINVITE, SMSG_GROUP_DESTROYED):
+            self._handle_group_gone(payload)
+        elif opcode == SMSG_GROUP_DECLINE:
+            self._handle_group_decline(payload)
         elif opcode == SMSG_CHAT_PLAYER_NOT_FOUND:
             self._handle_chat_player_not_found(payload)
         elif opcode == ch_mod.SMSG_CHANNEL_NOTIFY:

@@ -43,6 +43,8 @@ CMSG_MESSAGECHAT        = 0x095   # chat say/yell/whisper/emote
 CMSG_TEXT_EMOTE         = 0x104
 CMSG_GROUP_INVITE       = 0x06E
 CMSG_GROUP_ACCEPT       = 0x072
+CMSG_GROUP_DECLINE      = 0x073
+CMSG_GROUP_SET_LEADER   = 0x078
 CMSG_GROUP_DISBAND      = 0x07B
 CMSG_SET_SELECTION      = 0x13D  # target a GUID
 CMSG_STAND_STATE_CHANGE = 0x101
@@ -275,6 +277,18 @@ def accept_group(session):
     # HandleGroupAcceptOpcode (GroupHandler.cpp) only read_skip<uint32>()s the payload.
     session._send_packet(CMSG_GROUP_ACCEPT, struct.pack("<I", 0))
     session.pending_invite = None
+
+
+def decline_group(session):
+    # HandleGroupDeclineOpcode (GroupHandler.cpp) ignores the payload.
+    session._send_packet(CMSG_GROUP_DECLINE)
+    session.pending_invite = None
+
+
+def promote_leader(session, guid: int):
+    # HandleGroupSetLeaderOpcode (GroupHandler.cpp): `recvData >> guid` — a raw
+    # 8-byte ObjectGuid; silently ignored unless we lead and guid is a member.
+    session._send_packet(CMSG_GROUP_SET_LEADER, struct.pack("<Q", guid))
 
 
 def leave_group(session):
@@ -1092,6 +1106,91 @@ class AcceptGroupAction(Action):
         invite = session.pending_invite
         accept_group(session)
         return ActionResult(ok=True, detail={"inviter_name": (invite or {}).get("inviter_name")})
+
+
+@register
+class DeclineGroupAction(Action):
+    name = "decline_group"
+    description = "Decline the currently pending party invite (see the snapshot's pending_invite)."
+    params = {}
+    required = ()
+
+    def check(self, session, world, **_) -> str | None:
+        if not getattr(session, "pending_invite", None):
+            return "no pending group invite to decline"
+        return None
+
+    def execute(self, session, world, **_) -> ActionResult:
+        invite = session.pending_invite
+        decline_group(session)
+        return ActionResult(ok=True, detail={"inviter_name": (invite or {}).get("inviter_name")})
+
+
+@register
+class LeaveGroupAction(Action):
+    name = "leave_group"
+    description = "Leave the party you are in (see the snapshot's group)."
+    params = {}
+    required = ()
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    def check(self, session, world, **_) -> str | None:
+        if not getattr(session, "group", None):
+            return "not in a group"
+        return None
+
+    def execute(self, session, world, **_) -> ActionResult:
+        leave_group(session)
+        # The server answers with SMSG_GROUP_LIST (leave form) or SMSG_GROUP_DESTROYED,
+        # both of which clear session.group. Wait for that instead of assuming.
+        left = _wait_for(lambda: getattr(session, "group", None) is None,
+                         timeout=self.confirm_timeout, interval=self.confirm_interval)
+        if not left:
+            return ActionResult(ok=False, error="server did not confirm leaving the group")
+        return ActionResult(ok=True)
+
+
+@register
+class PromoteLeaderAction(Action):
+    name = "promote_leader"
+    description = "Hand party leadership to a member of your group (you must be the leader)."
+    params = {
+        "name": {"type": "string", "description": "Exact name of the group member to make leader."},
+    }
+    required = ("name",)
+    confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
+    confirm_interval = DEFAULT_CONFIRM_POLL_S
+
+    @staticmethod
+    def _member(session, name: str):
+        group = getattr(session, "group", None) or {}
+        return next((m for m in group.get("members", ()) if m["name"].lower() == name.lower()), None)
+
+    def check(self, session, world, name: str, **_) -> str | None:
+        err = player_name_error(name)
+        if err:
+            return err
+        group = getattr(session, "group", None)
+        if not group:
+            return "not in a group"
+        if group["leader_guid"] != session.player_guid:
+            return "only the group leader can promote someone"
+        if self._member(session, name) is None:
+            return f"{name} is not in your group"
+        return None
+
+    def execute(self, session, world, name: str, **_) -> ActionResult:
+        member = self._member(session, name)
+        promote_leader(session, member["guid"])
+        # The server ignores a bad request silently; success is the next
+        # SMSG_GROUP_LIST naming the new leader.
+        changed = _wait_for(lambda: (getattr(session, "group", None) or {}).get("leader_guid") == member["guid"],
+                            timeout=self.confirm_timeout, interval=self.confirm_interval)
+        if not changed:
+            return ActionResult(ok=False, error="server did not confirm the leader change",
+                                detail={"name": member["name"]})
+        return ActionResult(ok=True, detail={"name": member["name"]})
 
 
 @register

@@ -184,6 +184,7 @@ class AgentObserver:
             my_position=getattr(sess, "player_position", None),
             corpse_position=getattr(sess, "corpse_position", None),
             pending_invite=getattr(sess, "pending_invite", None),
+            group=getattr(sess, "group", None),
             chat_inbox=chat)
         return _jsonable({"agent": self.agent_name, "connected": True, **snap})
 
