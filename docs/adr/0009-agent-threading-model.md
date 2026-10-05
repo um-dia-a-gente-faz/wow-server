@@ -32,9 +32,9 @@ and tears the old one down.
   `GameState` and `WorldState` through the `Context`.
 - It is not the only writer of `GameState`. `movement.py` assigns
   `session.player_position` from the mover thread while a walk runs;
-  `actions.py` also assigns `player_position`, `pending_invite` and
+  `agent/actions/` also assigns `player_position`, `pending_invite` and
   `channel_say_history`; `record_event` is called from `death.py` and
-  `actions.py`. Those run on the think thread, a reflex thread or the control path,
+  `agent/actions/`. Those run on the think thread, a reflex thread or the control path,
   depending on the caller.
 - Reflexes read `world_state` and send packets through `_send_packet` and
   `actions.send_*`; the follow reflex also calls actions that move the character.
@@ -62,7 +62,7 @@ and tears the old one down.
 `pending_invite`, ...) and the `events` / `chat_inbox` deques have no lock. They
 are plain attribute assignments and deque appends; the code relies on that being
 safe enough under CPython's GIL and on readers tolerating a slightly stale value.
-`actions.py` waits for confirmation by scanning `events` for entries newer than a
+`agent/actions/` waits for confirmation by scanning `events` for entries newer than a
 `time.monotonic()` stamp (`record_event` stamps `t` for that reason).
 
 ## Consequences
