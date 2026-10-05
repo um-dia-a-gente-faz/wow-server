@@ -29,7 +29,7 @@ def main(argv=None) -> int:
     for gen in GENERATORS:
         if gen == ["scripts/gen_agent_api_urls.py"] and not check:
             continue  # prints one line and needs --host; nothing to write
-        if subprocess.run([sys.executable, *gen, *(["--check"] if check else [])], cwd=REPO).returncode:
+        if subprocess.run([sys.executable, *gen, *(["--check"] if check else ["--write"] if gen[0] == "-m" else [])], cwd=REPO).returncode:
             failed.append(" ".join(gen))
     if failed:
         print("generated files out of date, run python3 scripts/generate.py. Failed: " + "; ".join(failed),

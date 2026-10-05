@@ -24,6 +24,19 @@ class GenerateTest(unittest.TestCase):
         self.assertIn("scripts/generate.py", err.getvalue())
         self.assertIn("scripts/gen-x.py", err.getvalue())
 
+    def test_write_run_repairs_drift(self):
+        doc = ROOT / "docs/AGENT-API.md"
+        good = doc.read_text()
+        try:
+            doc.write_text(good + "hand edit\n")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(generate.main(["--check"]), 1)
+            generate.main([])
+            self.assertEqual(doc.read_text(), good)
+            self.assertEqual(generate.main(["--check"]), 0)
+        finally:
+            doc.write_text(good)
+
 
 if __name__ == "__main__":
     unittest.main()

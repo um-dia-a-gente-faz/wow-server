@@ -52,10 +52,11 @@ def main(argv=None) -> int:
                    help="host the agent containers run on (or set AGENT_HOST); required, no default")
     args = p.parse_args(argv)
     if args.check:
-        compose = gen.COMPOSE_PATH.read_text()
+        services = gen.COMPOSE_PATH.read_text().split("\n  agent-")  # one block per service
         for pair in render(gen.load_roster(), "check.invalid").split(","):
             name, url = pair.split("=")
-            if f"WOW_CHARACTER: {name}\n" not in compose or f"AGENT_HTTP_PORT: {url.rsplit(':', 1)[1]}\n" not in compose:
+            port = url.rsplit(":", 1)[1]
+            if not any(f"WOW_CHARACTER: {name}\n" in s and f"AGENT_HTTP_PORT: {port}\n" in s for s in services):
                 print(f"{pair} disagrees with docker-compose.agents.yml: it is generated; "
                       "run python3 scripts/generate.py", file=sys.stderr)
                 return 1

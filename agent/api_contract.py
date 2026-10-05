@@ -92,9 +92,12 @@ def render_markdown(contract: dict | None = None) -> str:
 
 
 if __name__ == "__main__":
+    doc = SCHEMA_PATH.parents[1] / "docs/AGENT-API.md"
     if "--check" in sys.argv:  # scripts/generate.py --check
-        if SCHEMA_PATH.parents[1].joinpath("docs/AGENT-API.md").read_text() != render_markdown():
+        if doc.read_text() != render_markdown():
             sys.exit("docs/AGENT-API.md is out of date: it is generated, do not edit it; "
-                     "run python3 scripts/generate.py (generator: python -m agent.api_contract)")
+                     "run python3 scripts/generate.py (generator: python -m agent.api_contract --write)")
+    elif "--write" in sys.argv:  # scripts/generate.py
+        doc.write_text(render_markdown())
     else:
         print(render_markdown(), end="")
