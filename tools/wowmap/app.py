@@ -19,6 +19,7 @@ Serves:
                               (healthz, state, perception, brain)
     GET /maps/<file>          extracted zone map images (static)
     GET /icons/<file>         extracted item icons (static, see item_icons.py)
+    GET /models/<race>_<gender>.bin|.png  extracted character body mesh + skin (see models.py)
     GET /healthz              liveness
 
 Coordinates come from `characters.characters`; the world->normalised transform comes
@@ -32,6 +33,7 @@ Env:
                                      from Spell, Talent, TalentTab, Faction, Achievement)
     MAPS_DIR    default /maps       (extracted PNGs)
     ICONS_DIR   default /icons      (item icon PNGs from extract_icons.py)
+    MODELS_DIR  default /models     (character meshes + skins from extract_models.py)
     GRID_MAPS_DIR default /server-maps (the worldserver's maps/*.map, for subzones)
     LISTEN_PORT default 9400
     CHAT_FEED_URL default ""        (derived from the page's own hostname at :9500)
@@ -63,6 +65,7 @@ import pymysql
 
 import activity as activity_feed
 import item_icons
+import models
 import fleet
 import fog
 import walk
@@ -88,12 +91,15 @@ MYSQL: dict = dict(
 DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
 MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
 ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
+MODELS_DIR = os.environ.get("MODELS_DIR", "/models")
 GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
 # Vendored front-end files (Leaflet), served under /static/. An explicit list, so
 # nothing else in the directory is ever reachable.
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 STATIC_FILES = {"leaflet.js": "text/javascript; charset=utf-8",
-                "leaflet.css": "text/css; charset=utf-8"}
+                "leaflet.css": "text/css; charset=utf-8",
+                "three.min.js": "text/javascript; charset=utf-8",   # #171, loaded on first use
+                "charview.js": "text/javascript; charset=utf-8"}
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
 CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
@@ -219,6 +225,15 @@ RACES = {1: "Human", 2: "Orc", 3: "Dwarf", 4: "Night Elf", 5: "Undead", 6: "Taur
 POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
 # What item_icons.icon_file() produces; anything else under /icons/ is a 404.
 ICON_FILE_RE = re.compile(r"[a-z0-9_\-]+\.png")
+MODEL_FILE_RE = re.compile(r"\d+_\d\.(bin|png)")   # models.model_key + extension
+
+
+def model_url(race, gender):
+    """`/models/<race>_<gender>` when extract_models.py has written that model, else None."""
+    key = models.model_key(race, gender)
+    if key and all(os.path.isfile(os.path.join(MODELS_DIR, key + e)) for e in (".bin", ".png")):
+        return "/models/" + key
+    return None
 
 _tables = None
 _overlays = None
@@ -609,6 +624,7 @@ def fetch_character(name):
         "class_name": CLASSES.get(cls, str(cls)),
         "class_color": CLASS_COLORS.get(cls, "#888888"),
         "gender": gender,
+        "model": model_url(race, gender),
         "zone": zone,
         "zone_name": t.zone_name(zone) if zone else "Unknown",
         "map": cmap,
@@ -841,6 +857,16 @@ class Handler(BaseHTTPRequestHandler):
                                           cache="public, max-age=86400")
                 return self._send(404, {"error": "not found"})
 
+            if path.startswith("/models/"):
+                fn = path[len("/models/"):]
+                fp = os.path.join(MODELS_DIR, fn)
+                if MODEL_FILE_RE.fullmatch(fn) and os.path.isfile(fp):
+                    with open(fp, "rb") as f:
+                        return self._send(200, f.read(), "image/png" if fn.endswith(".png")
+                                          else "application/octet-stream",
+                                          cache="public, max-age=86400")
+                return self._send(404, {"error": "not found"})
+
             if path.startswith("/icons/"):
                 fn = path[len("/icons/"):]
                 fp = os.path.join(ICONS_DIR, fn)
@@ -1053,6 +1079,10 @@ INSPECT_CSS = r"""
                        gap:2px; border:1px solid #20263a; border-radius:6px; font-size:12px;
                        color:var(--dim); text-align:center; min-width:0;
                        background:radial-gradient(ellipse at center, #1a2033 0%, #0d111b 75%); }
+  .drawer .doll .mid .model { position:relative; width:100%; height:220px; margin-top:4px; }
+  .drawer .doll .mid .model .charview { position:absolute; inset:0; }
+  .drawer .doll .mid .model canvas { width:100%; height:100%; display:block; cursor:grab; touch-action:none; }
+  .drawer .doll .mid .model .none { padding:90px 6px 0; font-size:11px; }
   .drawer .doll .mid .nm { font-size:14px; font-weight:600; overflow-wrap:anywhere; }
   .drawer .doll .bottom { grid-column:1 / -1; display:flex; justify-content:center; gap:4px; }
   .drawer .bag-bar { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
@@ -1416,6 +1446,16 @@ const Inspect = (() => {
     if (label) { e.title = label; e.append(el('span', 'lbl', label)); }
     return e;
   }
+  // #171: the 3D body. Without an extracted model (or WebGL) the box says so; nothing else moves.
+  function characterModel(c) {
+    const box = el('div', 'model');
+    const none = (why) => box.replaceChildren(el('div', 'none', why));
+    if (!c.model) { none('No 3D model extracted'); return box; }
+    if (!window.CharView) { none('3D viewer unavailable'); return box; }
+    box.title = 'Drag to rotate, scroll to zoom';
+    window.CharView.mount(box, c.model).catch(() => none('3D model unavailable'));
+    return box;
+  }
   function paperDoll(equipped, c) {
     const by = new Map(equipped.map((it) => [it.slot, it]));
     const sq = (s) => by.has(s) ? itemIcon(by.get(s)) : emptySlot(EQUIP_SLOTS[s]);
@@ -1428,6 +1468,7 @@ const Inspect = (() => {
     mid.append(el('div', 'nm', c.name), el('div', null, `Level ${c.level} ${c.race_name}`),
                el('div', null, c.class_name));
     mid.firstChild.style.color = c.class_color;
+    mid.append(characterModel(c));
     doll.append(left, mid, right, bottom);
     return doll;
   }
@@ -2071,6 +2112,7 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="/static/leaflet.css">
 <script src="/static/leaflet.js"></script>
+<script src="/static/charview.js"></script>
 <style>
   :root { --bg:#10131a; --panel:#1a1f2b; --line:#2a3244; --fg:#e6e9f0; --dim:#8b93a7; }
   * { box-sizing:border-box; }

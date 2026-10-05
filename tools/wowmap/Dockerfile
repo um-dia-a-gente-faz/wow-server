@@ -7,8 +7,8 @@ COPY wowmap/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dbc/__init__.py dbc/wdbc.py dbc/names.py dbc/spelltext.py ./dbc/
-COPY wowmap/transform.py wowmap/overlays.py wowmap/item_icons.py wowmap/item_tooltip.py wowmap/activity.py wowmap/fog.py wowmap/fleet.py wowmap/walk.py wowmap/app.py wowmap/calibration.json ./
-# Vendored Leaflet, served by app.py under /static/.
+COPY wowmap/transform.py wowmap/overlays.py wowmap/item_icons.py wowmap/models.py wowmap/item_tooltip.py wowmap/activity.py wowmap/fog.py wowmap/fleet.py wowmap/walk.py wowmap/app.py wowmap/calibration.json ./
+# Vendored Leaflet and three.js (#171) plus the viewer, served by app.py under /static/.
 COPY wowmap/static ./static
 
 EXPOSE 9400
