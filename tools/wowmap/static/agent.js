@@ -28,23 +28,38 @@ const AgentMind = (() => {
   const isAgent = (n) => !!n && agents.has(n.toLowerCase());
 
   const tabs = el('div', 'mind-tabs');
-  const bChar = el('button', 'on', 'Character'), bMind = el('button', null, 'Agent mind');
-  tabs.append(bChar, bMind);
+  const bChar = el('button', 'on', 'Character'), bAct = el('button', null, 'Activity'),
+        bMind = el('button', null, 'Agent mind');
+  tabs.append(bChar, bAct, bMind);
   tabs.hidden = true;
   const pane = el('div', 'drawer-body mind');
   pane.hidden = true;
+  // #210: recent activity has its own tab; the list scrolls inside a fixed-height pane.
+  const actPane = el('div', 'drawer-body act-pane');
+  actPane.hidden = true;
   drawer.insertBefore(tabs, charBody);
+  drawer.insertBefore(actPane, status);
   drawer.insertBefore(pane, status);
+
+  // ActivityFeed.section() restarts the feed when the character changes; the node is reused.
+  function mountActivity() {
+    const n = Inspect.current();
+    if (n && window.ActivityFeed) actPane.replaceChildren(window.ActivityFeed.section(n));
+  }
 
   function setTab(t) {
     tab = t;
     bChar.classList.toggle('on', t === 'character');
+    bAct.classList.toggle('on', t === 'activity');
     bMind.classList.toggle('on', t === 'mind');
-    charBody.hidden = t === 'mind';
+    charBody.hidden = t !== 'character';
+    actPane.hidden = t !== 'activity';
     pane.hidden = t !== 'mind';
+    if (t === 'activity') mountActivity();
     if (t === 'mind') refresh();
   }
   bChar.onclick = () => setTab('character');
+  bAct.onclick = () => setTab('activity');
   bMind.onclick = () => setTab('mind');
 
   function sync() {
@@ -56,6 +71,7 @@ const AgentMind = (() => {
       seq++;
       pane.replaceChildren(el('div', 'none', 'loading…'));
       if (n) loadKind(n);
+      if (tab === 'activity') mountActivity();
     }
   }
 
