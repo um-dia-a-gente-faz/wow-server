@@ -122,6 +122,24 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Prometheus: exporter metrics use a custom `Collector`, not module-level `Gauge`. This keeps series from going stale when a label value disappears.
 - Grafana dashboards: raw JSON (no `{dashboard:..., overwrite:...}` wrapper), file-provisioned. Validate every panel expression against Prometheus before committing.
 
+## Lint and types
+
+CI job `lint + types` runs `ruff` and `mypy`. They are dev tools only (`agent/` stays
+stdlib-only at runtime). Locally:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/ruff check .   # rules + baseline in ruff.toml
+.venv/bin/mypy           # typed allowlist in mypy.ini
+```
+
+- **Ratchet, never loosen.** `ruff.toml` `per-file-ignores` lists files that already
+  violated a rule when the gate landed; fix a file's violations and delete its line.
+  New code must be clean.
+- **Typing allowlist:** add a file to `files =` in `mypy.ini` (one line) once it
+  type-checks. mypy was chosen over pyright because it is pip-only (no Node download in
+  CI) and its gradual mode matches the allowlist model.
+
 ## Secrets
 
 - Never commit credentials, API keys, or tokens.
