@@ -10,11 +10,14 @@
 # (docker-compose.yml) and the monitoring stack (monitoring/docker-compose.yml)
 # live in this same checkout but run as separate compose projects.
 #
-# Path-aware: only the stacks whose files changed between HEAD and origin/main
+# Path-aware: each stack is compared from the commit it was last deployed at
+# (refs/deployed/<stack>) to origin/main, and only stacks whose files changed
 # are touched (game: docker-compose.yml, Dockerfile, tdb/, tools/chat-feed;
 # monitoring: monitoring/, exporters/, tools/wowmap, tools/dbc). A docs, agent
-# or test merge touches neither. Before the game stack, the script defers (exit 0,
-# checkout untouched, so the next poll retries) while any character is online.
+# or test merge touches neither. Before the game stack, the script defers it
+# while any character is online (agent characters included) or the count cannot
+# be read: the game stack stays pending (refs/deployed/game does not move) and
+# the other stacks still deploy. Exit status 75 means "game stack deferred".
 #
 # Env: FORCE=1 deploy despite players online · ALL=1 deploy both stacks
 #      regardless of the diff · DRY_RUN=1 print the plan, change nothing ·
@@ -26,10 +29,10 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# stacks_for: stdin = changed paths, stdout = "game" and/or "monitoring".
+# stacks_for: stdin = NUL-delimited changed paths, stdout = "game" and/or "monitoring".
 stacks_for() {
   local f game=0 mon=0
-  while IFS= read -r f || [ -n "$f" ]; do
+  while IFS= read -r -d '' f; do
     case "$f" in
       docker-compose.yml|Dockerfile|tdb/*|tools/chat-feed/*) game=1 ;;
       monitoring/*|exporters/*|tools/wowmap/*|tools/dbc/*) mon=1 ;;
@@ -47,27 +50,41 @@ if [ ! -f .env ] && [ "${DRY_RUN:-0}" != 1 ]; then
 fi
 
 git fetch -q origin
-FROM=$(git rev-parse HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
 TO=$(git rev-parse origin/main)
+# Last commit each stack was deployed at; unset means "as of HEAD".
+since() { git rev-parse -q --verify "refs/deployed/$1" || echo "$HEAD_SHA"; }
+changed() {  # --no-renames: a rename out of tdb/ shows as a delete there; -z: no path quoting
+  git diff --name-only --no-renames -z "$(since "$1")" "$TO" | stacks_for
+}
 if [ "${ALL:-0}" = 1 ]; then
   STACKS="game monitoring"
 else
-  STACKS=$(git diff --name-only "$FROM" "$TO" | stacks_for | tr '\n' ' ')
+  STACKS=$({ changed game; changed monitoring; } | sort -u | tr '\n' ' ')
 fi
 STACKS=${STACKS% }
-echo "== ${FROM:0:7} -> ${TO:0:7}, stacks: ${STACKS:-none} =="
+echo "== ${HEAD_SHA:0:7} -> ${TO:0:7}, stacks: ${STACKS:-none} =="
 
+M=${METRICS_DIR:-/opt/wow-server-metrics}
+log() { { mkdir -p "$M" && echo "$(date -Is) $*" >> "$M/deploy.log"; } || true; }
+
+DEFERRED=0
 case " $STACKS " in *" game "*)
   # Same DB the exporter reads (wow_players_online). A failed query is "unknown": defer.
   ONLINE=$(docker exec trinitycore-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SELECT COUNT(*) FROM characters.characters WHERE online = 1"' 2>/dev/null) || ONLINE=unknown
   if [ "$ONLINE" != 0 ] && [ "${FORCE:-0}" != 1 ]; then
-    echo "$(date -Is) DEFERRED: game stack deploy waits, players online: $ONLINE (FORCE=1 to override)"
-    exit 0
+    DEFERRED=1
+    STACKS=${STACKS//game/}; STACKS=$(echo $STACKS)
+    echo "$(date -Is) DEFERRED: game stack pending at ${TO:0:7}, players online: $ONLINE (FORCE=1 to override)"
+    [ "${DRY_RUN:-0}" = 1 ] || log "DEFERRED game ${TO:0:7}, players online: $ONLINE"
   fi ;;
 esac
 
 if [ "${DRY_RUN:-0}" = 1 ]; then echo "dry run: nothing changed"; exit 0; fi
 
+for s in game monitoring; do  # first run: both stacks count as deployed at the old HEAD
+  git rev-parse -q --verify "refs/deployed/$s" >/dev/null || git update-ref "refs/deployed/$s" "$HEAD_SHA"
+done
 git reset --hard "$TO"
 
 case " $STACKS " in *" game "*)
@@ -79,9 +96,11 @@ case " $STACKS " in *" monitoring "*)
   docker compose --env-file .env -f monitoring/docker-compose.yml up -d --build ;;
 esac
 
-M=${METRICS_DIR:-/opt/wow-server-metrics}
-{ mkdir -p "$M" && echo "$(date -Is) deployed ${TO:0:7}, stacks: ${STACKS:-none}" >> "$M/deploy.log"; } || true
+git update-ref refs/deployed/monitoring "$TO"
+[ "$DEFERRED" = 1 ] || git update-ref refs/deployed/game "$TO"
+[ -n "$STACKS" ] && log "deployed ${TO:0:7}, stacks: $STACKS"
 
 echo "== status =="
 docker compose ps
 docker compose --env-file .env -f monitoring/docker-compose.yml ps
+[ "$DEFERRED" = 0 ] || exit 75

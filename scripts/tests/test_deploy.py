@@ -19,9 +19,9 @@ exit 0
 
 
 def git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
-                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+                          env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}).stdout.strip()
 
 
 class DeployTest(unittest.TestCase):
@@ -60,8 +60,12 @@ class DeployTest(unittest.TestCase):
     def calls(self):
         return self.log.read_text() if self.log.exists() else ""
 
+    def deploy_log(self):
+        f = self.tmp / "metrics" / "deploy.log"
+        return f.read_text() if f.exists() else ""
+
     def stacks_for(self, *paths):
-        r = subprocess.run(["bash", str(DEPLOY), "--stacks-for"], input="\n".join(paths),
+        r = subprocess.run(["bash", str(DEPLOY), "--stacks-for"], input="\0".join(paths) + "\0",
                            capture_output=True, text=True, check=True)
         return r.stdout.split()
 
@@ -70,6 +74,7 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.stacks_for("docker-compose.yml"), ["game"])
         self.assertEqual(self.stacks_for("tdb/a.sql", "monitoring/docker-compose.yml"), ["game", "monitoring"])
         self.assertEqual(self.stacks_for("docs/X.md", "scripts/check.sh", "agent/tests/t.py"), [])
+        self.assertEqual(self.stacks_for("tdb/ação.sql"), ["game"])
 
     def test_docs_only_merge_touches_no_stack(self):
         self.merge("docs/NOTE.md")
@@ -83,38 +88,87 @@ class DeployTest(unittest.TestCase):
         self.merge("tools/wowmap/app.py")
         r = self.run_deploy(FAKE_ONLINE="5")  # players online must not matter
         self.assertEqual(r.returncode, 0, r.stderr)
-        calls = self.calls()
-        self.assertIn("monitoring/docker-compose.yml up -d --build", calls)
-        self.assertNotIn("docker compose up", calls)
+        self.assertIn("monitoring/docker-compose.yml up -d --build", self.calls())
+        self.assertNotIn("docker compose up", self.calls())
 
     def test_game_deploy_defers_while_players_online(self):
+        base = git(self.work, "rev-parse", "HEAD")
         self.merge("docker-compose.yml")
-        before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.work, capture_output=True, text=True).stdout
         r = self.run_deploy(FAKE_ONLINE="3")
-        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.returncode, 75)
         self.assertIn("DEFERRED", r.stdout)
         self.assertNotIn("up -d", self.calls())
-        after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.work, capture_output=True, text=True).stdout
-        self.assertEqual(before, after, "checkout must stay put so the next poll retries")
+        self.assertIn("DEFERRED game", self.deploy_log())
+        self.assertNotIn("deployed", self.deploy_log())
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), base)
 
     def test_failed_players_query_defers(self):
         self.merge("docker-compose.yml")
-        self.assertIn("DEFERRED", self.run_deploy(FAKE_ONLINE="fail").stdout)
+        r = self.run_deploy(FAKE_ONLINE="fail")
+        self.assertEqual(r.returncode, 75)
+        self.assertIn("DEFERRED", r.stdout)
 
-    def test_game_deploy_runs_when_empty_or_forced(self):
+    def test_deferred_game_still_deploys_monitoring_and_stays_pending(self):
+        self.merge("docker-compose.yml")
+        self.merge("tools/wowmap/app.py")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertIn("monitoring/docker-compose.yml up -d --build", self.calls())
+        self.assertNotIn("docker compose up", self.calls())
+        self.assertIn("deployed", self.deploy_log())
+        self.merge("docs/NOTE.md")  # a later merge must not lose the pending game change
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        r = self.run_deploy(FAKE_ONLINE="0")  # players gone: the game stack finally deploys
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("docker compose up -d --build", self.calls())
+        self.assertIn("stacks: none", self.run_deploy().stdout)  # nothing pending any more
+
+    def test_game_deploy_runs_when_empty(self):
         self.merge("docker-compose.yml")
         r = self.run_deploy(FAKE_ONLINE="0")
         self.assertIn("docker compose up -d --build", self.calls(), r.stdout)
-        self.assertTrue((self.tmp / "metrics" / "deploy.log").read_text().endswith("stacks: game\n"))
+        self.assertTrue(self.deploy_log().endswith("stacks: game\n"))
 
     def test_force_overrides_guard(self):
         self.merge("tdb/a.sql")
-        self.run_deploy(FAKE_ONLINE="3", FORCE="1")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3", FORCE="1").returncode, 0)
         self.assertIn("docker compose up -d --build", self.calls())
+
+    def test_rename_out_of_game_path_counts_as_game(self):
+        self.merge("tdb/a.sql")
+        self.run_deploy()
+        (self.origin / "docs").mkdir()
+        git(self.origin, "mv", "tdb/a.sql", "docs/a.sql")
+        git(self.origin, "commit", "-qm", "rename")
+        self.assertIn("stacks: game", self.run_deploy(DRY_RUN="1").stdout)
+
+    def test_deleted_game_file_counts_as_game(self):
+        self.merge("tdb/a.sql")
+        self.run_deploy()
+        git(self.origin, "rm", "-q", "tdb/a.sql")
+        git(self.origin, "commit", "-qm", "delete")
+        self.assertIn("stacks: game", self.run_deploy(DRY_RUN="1").stdout)
+
+    def test_non_ascii_game_path(self):
+        self.merge("tdb/ação.sql")
+        self.assertIn("stacks: game", self.run_deploy(DRY_RUN="1").stdout)
+
+    def test_all_deploys_both_stacks_without_a_diff(self):
+        r = self.run_deploy(ALL="1")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("docker compose up -d --build", self.calls())
+        self.assertIn("monitoring/docker-compose.yml up -d --build", self.calls())
+
+    def test_combined_game_and_monitoring_deferral(self):
+        self.merge("docker-compose.yml")
+        self.merge("monitoring/docker-compose.yml")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="2").returncode, 75)
+        self.assertIn("monitoring/docker-compose.yml up -d --build", self.calls())
+        self.assertNotIn("docker compose up", self.calls())
+        self.assertIn("stacks: monitoring", self.deploy_log())
 
     def test_dry_run_changes_nothing(self):
         self.merge("docker-compose.yml")
-        r = self.run_deploy(DRY_RUN="1")
+        r = self.run_deploy(DRY_RUN="1", FAKE_ONLINE="3")
         self.assertIn("stacks: game", r.stdout)
         self.assertNotIn("up -d", self.calls())
         self.assertFalse((self.tmp / "metrics").exists())
