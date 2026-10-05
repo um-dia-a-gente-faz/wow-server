@@ -165,6 +165,7 @@ agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config sc
 | `tools/chat-feed` | SSE chat feed, :9500, fed by agent relay and a log tailer | wow-server VM, game project |
 | `tools/agent-runner` | fleet control plane, :9700: status, start/stop, character creation; owns the Docker socket (ADR 0002) | `wow-agents` VM |
 | `tools/jev-mock` | local stand-in for the Jev Decisions API | dev / tests |
+| `tools/world-mock` | scripted fake auth + world server for end-to-end tests of the agent client (#253) | CI / tests |
 | `tools/dbc` | WDBC reader and name/spell-text helpers shared by wowmap | library |
 
 ### Other top-level directories

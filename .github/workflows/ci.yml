@@ -48,6 +48,11 @@ jobs:
           for f in scripts/wow-agents/*.sh; do bash -n "$f"; done
           python -m unittest discover -s scripts/wow-agents/tests -v
 
+      # #253: the agent's real auth + world client against tools/world-mock over
+      # localhost sockets: SRP6 login, update objects, quest turn-in, confirmation.
+      - name: world-mock end-to-end (login + quest turn-in)
+        run: python -m unittest discover -s tools/world-mock/tests -v
+
       - name: jev-mock unit tests
         run: python -m unittest discover -s tools/jev-mock/tests -v
 
@@ -88,6 +93,32 @@ jobs:
           else
             echo "agent/tests not present yet, skipping"
           fi
+
+  # #253: informational only (continue-on-error), never gates a merge. `coverage`
+  # is installed here on the runner and is not a dependency of agent/ (stdlib only).
+  coverage:
+    name: coverage report (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run agent + world-mock tests under coverage
+        run: |
+          pip install coverage
+          coverage run --source=agent -m unittest discover -s agent/tests
+          coverage run -a --source=agent -m unittest discover -s tools/world-mock/tests
+      - name: Report (modules with the least coverage first)
+        run: |
+          {
+            echo '### Coverage of agent/ (informational)'
+            echo '```'
+            coverage report --skip-empty --sort=cover
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   compose:
     name: compose config
