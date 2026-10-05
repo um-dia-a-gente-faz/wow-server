@@ -251,8 +251,8 @@ audit log (`agent.tools.replay`) for the whole run should also show:
 
 One row per failed run. `Cycle range` is the audit log's cycle numbers
 (`agent.tools.replay --from <cycle>` to jump straight there). `Fix card` is
-the Linear issue filed once the root cause is understood — file it in the
-Wow Server project, label `agent`, milestone M3, with the audit-log evidence
+the GitHub issue filed once the root cause is understood — file it with label
+`agent` in milestone M3, with the audit-log evidence
 attached.
 
 | Symptom | Cycle range | Root cause | Fix card |
@@ -282,8 +282,8 @@ Expected categories (fill in as they occur, don't force a fit):
 ## Prompt version comparison
 
 Each iteration of the system prompt gets its own file under
-`agent/brain/prompts/` (`v1.md`, `v2.md`, …; that directory doesn't exist
-yet — create it with the first version tried). Compare versions here, not
+a prompts directory (`v1.md`, `v2.md`, …; none exists yet, so create one
+with the first version tried). Compare versions here, not
 just the latest:
 
 | Version | XP/hour | Intervention-free duration | Notes |

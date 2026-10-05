@@ -6,7 +6,7 @@ the client MPQs (`extract_models.py`), land in MODELS_DIR as `<race>_<gender>.bi
 
 Formats, checked against the real 3.3.5a (build 12340) files for Human male
 (`Character\\Human\\Male\\HumanMale.M2`, version 264, and `HumanMale00.skin`) and
-documented in docs/CHARACTER-MODEL-SPIKE.md:
+documented in docs/spikes/CHARACTER-MODEL-SPIKE.md:
 
 M2 header (little endian, offsets from file start; M2Array = u32 count + u32 offset)
     0 'MD20'   4 version (264)   60 vertices M2Array   68 u32 number of skin profiles

@@ -1,8 +1,8 @@
 # Roadmap
 
-> **Linear is the tracker of record.** Issues live in the Linear team *Um Dia a Gente
-> Faz* (`UM-*`), project *Wow Server*. This file holds background and design notes.
-> When scope or status changes, update Linear first, so the two don't drift.
+> **GitHub issues and the org project *wow-server* (project 7) are the tracker of
+> record.** `UM-*` refs are the historical Linear mirror. This file holds background
+> and design notes; scope and status live on the issues, not here.
 >
 > **Agent direction** (goal, milestones, model and chat rules) is in
 > `docs/AGENT-DIRECTION.md` and overrides the agent plan below where they differ.
@@ -19,7 +19,7 @@ deployed to the live VM as of 2026-09-14:
 | Agent behaviour dashboard | #3 | Grafana: online pop, playtime, zone, level |
 | Character inspect API | #4 | `GET /api/character/<name>` on wowmap |
 | Movement trails + density heatmap | #5 | Grafana dashboard + `wow_player_position_bucket` |
-| Quest completion + chat feed spike | #6 | `wow_character_quests_completed_total`; `docs/CHAT_FEED_SPIKE.md` |
+| Quest completion + chat feed spike | #6 | `wow_character_quests_completed_total`; `docs/spikes/CHAT_FEED_SPIKE.md` |
 | Live map calibration mode | #7 | Per-zone pixel offset, persisted, operator UI |
 | Chat feed SSE sidecar | #8 | `tools/chat-feed`, port 9500, bounded replay |
 | Deploy tooling | — | `/opt/wow-server` is now a real git checkout; `scripts/deploy.sh` |
@@ -186,7 +186,7 @@ deploy and keep in sync.
   worldserver at runtime from level + class + gear. Stock TrinityCore *can*
   persist them to `characters.character_stats`, but that is disabled by
   default and the table is empty on this realm. See Phase B and
-  `docs/HP_POWER_SPIKE.md`.
+  `docs/spikes/HP_POWER_SPIKE.md`.
 
 ### Phase A — wire up character inspect (no backend gaps)
 
@@ -221,7 +221,7 @@ of effort:
    `scripts/wow_console.py` for something like `.pinfo`/`.character info` —
    check whether any built-in command actually reports max health/power for
    an arbitrary *online* character, not just your own. Unknown until tried;
-   spike it the same way `docs/CHAT_FEED_SPIKE.md` de-risked the chat feed
+   spike it the same way `docs/spikes/CHAT_FEED_SPIKE.md` de-risked the chat feed
    before building #8, and write up the findings the same way.
 3. **Approximate from formulas** (base health/mana by class+level, WotLK
    tables) — doable but ignores gear entirely, so it'll be visibly wrong for
@@ -235,7 +235,7 @@ of effort:
 **Recommendation:** ship option 1 with Phase A, spike option 2 as a short,
 separate task before committing to a bar UI.
 
-**Spike result (UM-46, `docs/HP_POWER_SPIKE.md`):** option 2 is a no-go,
+**Spike result (UM-46, `docs/spikes/HP_POWER_SPIKE.md`):** option 2 is a no-go,
 because no console-usable GM command prints a player's max health/power. A
 fifth, config-only option works instead: set
 `PlayerSave.Stats.MinLevel=1` and `PlayerSave.Stats.SaveOnlyOnLogout=0` so

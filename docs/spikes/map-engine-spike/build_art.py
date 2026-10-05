@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Throwaway art builder for the UM-77 map-engine spike (see docs/MAP_ENGINE_SPIKE.md).
+"""Throwaway art builder for the UM-77 map-engine spike (see docs/spikes/MAP_ENGINE_SPIKE.md).
 
 Reads the user-supplied 3.3.5a client (read-only) and writes, under --out:
 

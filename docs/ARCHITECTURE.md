@@ -93,7 +93,7 @@ connect over the compose network as `trinitycore-db:3306`.
 TrinityCore's `Server.log` from the `server_logs` volume (mounted read-only),
 normalises ChatLogScript lines and serves public chat as Server-Sent Events on
 port 9500, with a bounded replay buffer. It's a prototype: see
-`tools/chat-feed/README.md` and `docs/CHAT_FEED_SPIKE.md`.
+`tools/chat-feed/README.md` and `docs/spikes/CHAT_FEED_SPIKE.md`.
 
 ### Monitoring stack (`monitoring/docker-compose.yml`)
 
@@ -115,8 +115,8 @@ defined in this repo. Dashboard JSONs in `monitoring/` are shipped there with
 
 ### AI agents (`agent/`, `docker-compose.agents.yml`)
 
-`agent/` is a pure-stdlib Python 3.3.5a client: SRP6 auth, world login, keepalive,
-chat and target actions. The root `Dockerfile` packages it, and
+`agent/` is a stdlib-only Python 3.12 client for the 3.3.5a protocol that logs in as one
+character and plays it with an LLM (module map below). The root `Dockerfile` packages it, and
 `docker-compose.agents.yml` runs one container per agent character. The roster
 is `agents/roster.json` (UM-63): 25 agents, AGENT01..AGENT05 being Luaprata,
 Farstrider, Shadowblade, Sunspeaker and Spellweaver and AGENT06..AGENT25 random
@@ -133,8 +133,30 @@ coding-CLI dev host that happens to be called `agents`), see
 | Agent containers | `wow-agents` | 9601..9625 | one per character; read-only observability API |
 | `tools/agent-runner` | `wow-agents` | 9700 | control plane: fleet status, start/stop, character creation; shared-token HTTP, LAN only, owns the Docker socket (#136) |
 | `tools/wowmap` fleet panel | wow-server VM | 9400 | UI only; calls the runner over the LAN, never holds the Docker socket |
-Perception (parsing update-object packets) is in progress. See `docs/ROADMAP.md`
-and `docs/PROTOCOL-NOTES.md`.
+Data flow inside one agent process (details in the module map and ADRs 0005, 0006):
+
+```
+ :8085 world server
+        | packets (transport.py: RC4 framing)
+        v
+ session.py  WoWSession(Transport, GameState)
+        | recv loop
+        v
+ router.py --> handlers/*  --> state.py / perception.py (what the agent knows)
+                                      |
+        +-----------------------------+--------------------+
+        v                                                  v
+ reflexes/ (follow, rest)                       think.py (one decision per cycle)
+        |  fast, own threads                               |
+        |                                    brain.py --> candidates.py, jev.py / llm.py
+        |                                                  |
+        +-----------------> actions/ (validated) <---------+
+                                   |
+                                   v
+                         packets out via actions.base.send
+```
+
+Wire formats are in `docs/PROTOCOL-NOTES.md`.
 
 ## Module map
 

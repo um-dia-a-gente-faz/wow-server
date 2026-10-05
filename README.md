@@ -85,6 +85,7 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 
 | Doc | Contents |
 |---|---|
+| `docs/README.md` | Index of every doc: reference, decisions, runbooks, archived spikes |
 | `docs/REPRODUCE-PROMPT.md` | Self-contained prompt to rebuild the whole environment from scratch on Proxmox (agent-ready) |
 | `docs/DEPLOYMENT.md` | Actual deployment, redeploying via `scripts/deploy.sh`, gotchas, debugging, troubleshooting table |
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
@@ -97,11 +98,9 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/AGENT-DIRECTION.md` | Owner decisions for the agents (autonomy, free models, in-game-only chat, milestones); overrides the spec where they differ |
 | `docs/adr/` | Architecture decision records (Jev, agent host, session split, router, config schema, wowmap split, threading model) |
 | `docs/PROTOCOL-NOTES.md` | 3.3.5a wire-format notes (update-object layout, field indices), each checked against TrinityCore source |
-| `docs/CHAT_FEED_SPIKE.md` | Why the chat feed tails `Server.log` instead of polling the DB |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |
 | `grafana/` | Dashboard provisioning config — the file-based loading that replaced API auth |
 | `tdb/README.md` | Which TDB version to use and why |
-| `SESSION.md` | Hermes session id for this build-out, and what it covered |
 | `tools/wowmap/README.md` | Live map service (:9400): map page, character inspect API, calibration |
 | `tools/chat-feed/README.md` | Chat feed SSE sidecar (:9500): API, config, prototype limitations |
 | `CONTRIBUTING.md` | Conventional commits, PR template, code style, testing on the live VMs |
