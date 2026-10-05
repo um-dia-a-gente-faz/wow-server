@@ -55,7 +55,7 @@ it relied on are in `docs/PROTOCOL-NOTES.md`, the code in `agent/update_object.p
 
 ### Phase 2 — basic actions
 
-Perception is in place and `agent/actions.py` now registers the basic
+Perception is in place and `agent/actions/` now registers the basic
 catalog (chat, party, face/target, auto-attack, cast, move-to, interact,
 loot, vendor buy/sell, trainer, quests, trade). The list below is the
 original build order, kept for the status of each item; build in this order — each item both depends
@@ -68,7 +68,7 @@ on perception and is a dependency for the next:
    movement needed if already in range; a good next milestone because it
    proves the perceive→act loop closes without needing pathfinding yet.
 3. **Combat basics — SHIPPED (UM-39).** `auto_attack`/`stop_attack`/
-   `cast_spell` in `agent/actions.py`, spellbook from `SMSG_INITIAL_SPELLS`
+   `cast_spell` in `agent/actions/combat.py`, spellbook from `SMSG_INITIAL_SPELLS`
    in `agent/spells.py`, combat events (`attack_start`, `spell_go`,
    `cast_failed`, `attacker_state_update`, ...) recorded on
    `session.events` for actions to confirm against — see
@@ -88,7 +88,7 @@ on perception and is a dependency for the next:
    parses TrinityCore's binary `.mmap`/`.mmtile` navmesh format — that's
    effectively embedding a Recast/Detour navmesh query, a substantial
    standalone effort. v1 doesn't block on it:
-   - **v1 (`agent/movement.py`, `agent/actions.py`'s `move_to`/
+   - **v1 (`agent/movement.py`, `agent/actions/movement.py`'s `move_to`/
      `move_towards`/`stop_movement`):** client-authoritative straight-line
      walking — the agent simulates its own position at a fixed tick rate and
      reports it via `MSG_MOVE_START_FORWARD`/`HEARTBEAT`/`STOP`/

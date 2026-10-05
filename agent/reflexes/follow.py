@@ -207,6 +207,10 @@ def pause_for_llm_override(session, world, reason: str = "llm_override"):
         reflex.stop(session, world, reason=reason)
 
 
+if pause_for_llm_override not in actions.base.MOVE_OVERRIDE_HOOKS:
+    actions.base.MOVE_OVERRIDE_HOOKS.append(pause_for_llm_override)
+
+
 def _find_player_by_name(world, name: str):
     """Best-effort: scan perceived players for a case-insensitive name
     match. Player names are resolved by UM-35 (not merged as of this

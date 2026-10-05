@@ -23,7 +23,7 @@ Facts about the current code the design rests on:
 - Candidate ids embed GUIDs/handles (`auto_attack:guid=u3`), so two cycles
   facing two different wyrms never share raw ids. Handles are per-session
   (`agent/handles.py`).
-- Every `Action.check()` runs before `execute()` (`agent/actions.py`), so a
+- Every `Action.check()` runs before `execute()` (`agent/actions/base.py`), so a
   stale choice already fails safely; what is missing is *counting* it.
 - The audit record has `candidates` (a count) and `confidence`, but not the
   option set or a situation key, and carries the full snapshot only every
