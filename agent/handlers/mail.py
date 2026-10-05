@@ -10,7 +10,7 @@ from ..router import ROUTER
 def handle_send_mail_result(ctx, payload: bytes):
     """Answers send_mail, and both halves of take_mail (money then
     each item) and delete_mail — `data['command']` (MailResponseType)
-    says which. Recorded as a raw 'mail_result' event; actions.py
+    says which. Recorded as a raw 'mail_result' event; agent/actions/mail.py
     correlates by mail_id/command and, for send_mail specifically,
     additionally records the ticket-named mail_sent/mail_error event
     once it knows the recipient (not present in this payload)."""

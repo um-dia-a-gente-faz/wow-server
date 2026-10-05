@@ -14,7 +14,7 @@ def handle_trade_status(ctx, payload: bytes):
     except (IndexError, struct.error) as e:
         raise per.PerceptionParseError(f"malformed SMSG_TRADE_STATUS ({len(payload)} B): {e}") from e
     # Recorded unconditionally (not just when apply_trade_status returns
-    # a named event) — actions.py's offer_item/offer_gold/open_trade/
+    # a named event) — agent/actions/trade.py's offer_item/offer_gold/open_trade/
     # accept_trade_request/cancel_trade wait on this raw status_name
     # directly (e.g. "back_to_trade" confirms our own SET_TRADE_ITEM,
     # which never gets its own named event — see agent/trade.py).
