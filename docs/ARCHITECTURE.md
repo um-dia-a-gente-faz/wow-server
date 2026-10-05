@@ -136,6 +136,55 @@ coding-CLI dev host that happens to be called `agents`), see
 Perception (parsing update-object packets) is in progress. See `docs/ROADMAP.md`
 and `docs/PROTOCOL-NOTES.md`.
 
+## Module map
+
+Who owns what in the tree. Every path below exists on `main`; decisions behind the
+agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config schema,
+0008 wowmap split, 0009 threading model as it is today).
+
+### `agent/` (stdlib-only Python 3.12, one process per character)
+
+| Area | Modules | Owns |
+|---|---|---|
+| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). |
+| Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `transport.py`, `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
+| State | `state.py` (`GameState`), `perception.py` (`WorldState`, snapshots), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
+| Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |
+| Domain builders and parsers | `npc.py`, `quests.py`, `loot.py`, `mail.py`, `trade.py`, `spells.py`, `channels.py`, `names.py`, `items.py`, `item_compare.py`, `death.py`, `movement.py` | pure request builders and response parsers (and `death.py`/`movement.py` flows) used by handlers and actions. |
+| Acting | `actions.py`, `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
+| Deciding | `think.py`, `brain.py`, `jev.py`, `llm.py` | one brain decision per think cycle: Jev over candidates or the LLM (ADRs 0001, 0003, 0004). |
+| Observing | `http_api.py`, `audit.py`, `metrics.py`, `chat_relay.py` | read-only HTTP API (:9601..9625), decision audit log, Prometheus-style counters, relay of heard chat to `tools/chat-feed`. |
+| Dev tools | `tools/` (`ab.py`, `cache_probe.py`, `dump_update.py`, `probe.py`, `replay.py`) | not run by the agent itself. |
+| Tests | `tests/` | `python3 -m unittest discover -s agent/tests`. |
+
+### `tools/` (may use `pymysql`/`Pillow`)
+
+| Directory | Owns | Runs on |
+|---|---|---|
+| `tools/wowmap` | observability site, :9400: live map, character inspect, activity feed, calibration, fleet panel (ADR 0008; `README.md`) | wow-server VM, `monitoring` project |
+| `tools/chat-feed` | SSE chat feed, :9500, fed by agent relay and a log tailer | wow-server VM, game project |
+| `tools/agent-runner` | fleet control plane, :9700: status, start/stop, character creation; owns the Docker socket (ADR 0002) | `wow-agents` VM |
+| `tools/jev-mock` | local stand-in for the Jev Decisions API | dev / tests |
+| `tools/dbc` | WDBC reader and name/spell-text helpers shared by wowmap | library |
+
+### Other top-level directories
+
+| Path | Owns |
+|---|---|
+| `agents/` | the agent roster (`roster.json`); `scripts/gen_agents_compose.py` generates `docker-compose.agents.yml` from it |
+| `exporters/wow-exporter` | game metrics from MySQL, :9300 |
+| `monitoring/`, `grafana/` | monitoring compose project, dashboards, provisioning |
+| `scripts/` | deploy, compose generation, probes, the worldserver console client |
+| `tdb/` | TDB world dump notes |
+| `docs/` | this documentation; start with `AGENT-DIRECTION.md` |
+
+Run one agent locally against the live realm (credentials from `.env` on the VM,
+never from this repo): `WOW_ACCOUNT=... WOW_PASSWORD=... WOW_CHARACTER=... python3 -m agent --dry-run`.
+The old Node.js runtime (`agent-runtime/`) was removed and lives only in git history.
+
+In flight and not yet reflected above: PR #247 (centralise opcodes) and PR #248
+(split `actions.py`).
+
 ### Volumes
 
 | Volume | Purpose | Persists |

@@ -6,7 +6,7 @@ description: Get WoW 3.3.5a (build 12340) wire formats right when writing or rev
 # 3.3.5a protocol work
 
 `docs/PROTOCOL-NOTES.md` holds the layouts already verified for this project. Add to it
-rather than re-deriving. **`docs/NEXT-AGENT-HANDOFF.md`'s old layout table is wrong.**
+rather than re-deriving. **The removed handoff document's old layout table was wrong; do not resurrect it from git history.**
 
 ## Verify, never remember
 

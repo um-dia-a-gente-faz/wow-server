@@ -7,8 +7,8 @@ No I/O, no WorldState — agent/session.py wires the result into WorldState
 mapping that to named, typed unit/object fields is agent/update_fields.py.
 
 Every constant below is copied from TrinityCore branch `3.3.5` and cited by
-file. Verify against that source, not against docs/NEXT-AGENT-HANDOFF.md
-(known wrong per UM-32's card) if the two disagree.
+file. Verify against that source, not against the old handoff doc
+(removed; its layout table was wrong per UM-32's card).
 """
 
 import struct
