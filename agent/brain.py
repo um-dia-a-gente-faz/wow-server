@@ -209,7 +209,9 @@ class Brain:
                                                                 history=history)
                     self._fill_jev(d)
                     self._record_jev_spend(d)
-                    d.jev_status = "success"
+                    d.jev_status = ("skipped_single_candidate"
+                                    if getattr(self.jev, "skipped_single_candidate", False)
+                                    else "success")
                     self._apply_confidence_policy(d, options)
                     return d
                 except JevError as e:

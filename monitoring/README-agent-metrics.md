@@ -74,7 +74,12 @@ lifetime. When rotation drops old rows the value decreases, which Prometheus
 treats as a counter reset, so `rate()`/`increase()` can spike once at that
 moment; read the cost panels as approximate across a rotation. The spend gauge
 `wow_agent_jev_cost_usd_24h` is unaffected. Failed Jev calls that fall back to
-the LLM keep their `jev_status` and billed usage in the audit record. Agents with audit cycles but no
+the LLM keep their `jev_status` and billed usage in the audit record. Cycles
+with `jev_status=skipped_single_candidate` are excluded from the successful
+call count: the exporter counts only `success`, and the dashboard uses that
+metric. This makes successful audit rows the actual Jev request count, so the
+call rate can be calculated from the audit without treating the
+single-candidate short-circuit as a request. Agents with audit cycles but no
 Jev calls are highlighted on the dashboard.
 The live Prometheus instance currently has no Jev samples; panel expressions
 parse, and these panels need a real Jev-backed cycle after deployment to show
