@@ -66,6 +66,40 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
   the PR is open with CI green; *Done* is set by whoever merges, which closes the
   issue through `Closes #<n>`.
 
+### Milestones and board naming
+
+**Milestones are named `M<n> - <subject>`.** Worked example (the plan as of 2026-10-05):
+
+| # | Title | Track |
+|---|---|---|
+| 1 | `M2 - Human-like player` | agent |
+| 2 | `M3 - Jev decision brain` | agent |
+| 7 | `M4 - CI & live-test pipeline` | agent/infra |
+| 3 | `M5 - Console v1: map + character panel` | console |
+| 4 | `M6 - Console v2: map + inventory` | console |
+| 5 | `M7 - Console v3: agent control` | console |
+| — | `M8 - Architecture & maintainability` | engineering |
+| 6 | `Later - Autonomy + multi-agent` | unscheduled bucket |
+
+1. `<n>` is the milestone's place in the plan, not its creation order. A new milestone
+   takes the next free `M`-number; never reuse one.
+2. The console track keeps `Console vN` **inside the subject**, so older references
+   (`milestone:console-vN-…` labels, "Console vN" in issue bodies) stay meaningful.
+3. The unscheduled bucket is `Later - <subject>`, deliberately without a number: a number
+   would imply a position in the plan it does not have.
+4. **The GitHub milestone is the scope of record.** The `milestone:*` labels are a legacy
+   mirror, kept because older board views still filter on them. Renaming a milestone does
+   not rename its label and the label slug stays as it is; do not delete or rename those
+   labels.
+5. **Renaming a milestone breaks every board view that filters on its title.** Renaming
+   `M3 — Jev decision brain` to `M3 - Jev decision brain` silently emptied view 8, which
+   filtered on `milestone:"M3 — Jev decision brain"`. Pair every milestone rename with an
+   update to the views that reference it, and check the views afterwards.
+6. **Dependencies go in GitHub's issue relationships**, not prose: set *blocked by* /
+   *blocking* on the issue (GraphQL `addBlockedBy`), so the relationship is machine-readable
+   and the `milestone-loop` skill can check it. Keep a `## Blocked by` line in the body only
+   as the explanation.
+
 ## Where things are
 
 | Thing | Where |
