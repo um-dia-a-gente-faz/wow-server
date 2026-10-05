@@ -1,0 +1,23 @@
+  .side-tabs { display:flex; gap:6px; padding:0 16px 10px; }
+  .side-tabs button { flex:1; background:#141824; color:var(--dim); border:1px solid var(--line);
+                      border-radius:7px; padding:6px 4px; font:inherit; cursor:pointer; }
+  .side-tabs button.on { background:#2b3550; border-color:#46557a; color:var(--fg); }
+  .search-wrap { padding:0 16px 10px; }
+  .search-wrap input { width:100%; background:#141824; color:var(--fg); border:1px solid var(--line);
+                       border-radius:7px; padding:6px 9px; font:inherit; }
+  .chat { flex:1; overflow:auto; padding:0 12px 12px; display:flex; flex-direction:column; gap:4px; }
+  .chat-msg { font-size:12.5px; line-height:1.35; overflow-wrap:anywhere; }
+  .chat-msg .sender { cursor:pointer; font-weight:600; }
+  .chat-msg .sender:hover { text-decoration:underline; }
+  .chat-msg .kind-say .sender { color:#e6e9f0; }
+  .chat-msg .kind-yell .sender { color:#ff6b6b; }
+  .chat-msg .kind-channel .sender { color:#5fd0d8; }
+  .chat-msg .kind-guild .sender, .chat-msg .kind-party .sender,
+  .chat-msg .kind-raid .sender, .chat-msg .kind-officer .sender,
+  .chat-msg .kind-battleground .sender { color:#7ddf8a; }
+  .chat-msg .kind-whisper .sender { color:#d68cf5; }
+  .chat-msg .chan { color:var(--dim); font-size:11px; }
+  .chat-status { padding:6px 16px; color:var(--dim); font-size:11px; }
+  #resize-handle { position:absolute; top:0; right:-3px; width:6px; height:100%; cursor:col-resize; z-index:5; }
+  aside { position:relative; }
+  body.aside-collapsed aside { display:none; }

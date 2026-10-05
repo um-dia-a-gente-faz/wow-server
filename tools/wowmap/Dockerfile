@@ -11,7 +11,7 @@ COPY wowmap/transform.py wowmap/overlays.py wowmap/item_icons.py wowmap/item_too
      wowmap/players.py wowmap/character.py wowmap/inventory.py wowmap/areas.py wowmap/fogview.py \
      wowmap/agents.py wowmap/calibration.py wowmap/assets.py wowmap/calibration.json ./
 COPY wowmap/repo ./repo
-# Vendored Leaflet, served by app.py under /static/.
+# index.html (the page template), the page's css/js and vendored Leaflet, served under /static/.
 COPY wowmap/static ./static
 
 EXPOSE 9400

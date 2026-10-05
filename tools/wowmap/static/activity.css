@@ -1,0 +1,18 @@
+  .activity .act { display:flex; gap:8px; padding:4px 0; border-bottom:1px solid #20263a;
+                   font-size:12.5px; line-height:1.35; }
+  .activity .act .ic { flex:0 0 18px; text-align:center; color:var(--dim); }
+  .activity .act .tx { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .activity .act .meta { color:var(--dim); font-size:11px; }
+  .activity .act.failed .tx { color:#ff8b8b; }
+  .activity .inferred { font-size:10px; border:1px solid #6b5a2f; color:#f3b84b; border-radius:999px;
+                        padding:0 6px; margin-left:6px; white-space:nowrap; }
+  .activity .note { color:var(--dim); font-size:11px; padding:3px 0; }
+  .activity .act-search { width:100%; box-sizing:border-box; margin:0 0 6px; padding:4px 8px;
+                          background:#0b0e16; color:var(--fg); border:1px solid #46557a;
+                          border-radius:4px; font:inherit; font-size:12px; }
+  .activity .act-list { max-height:45vh; overflow-y:auto; overscroll-behavior:contain; }
+  .activity mark { background:#6b5a2f; color:inherit; border-radius:2px; }
+  .activity .ic.k-combat { color:#ff6b6b; } .activity .ic.k-loot, .activity .ic.k-item { color:#7ddf8a; }
+  .activity .ic.k-sell, .activity .ic.k-buy, .activity .ic.k-money { color:#f3b84b; }
+  .activity .ic.k-chat, .activity .ic.k-whisper { color:#5fd0d8; }
+  .activity .ic.k-level, .activity .ic.k-quest { color:#d68cf5; }

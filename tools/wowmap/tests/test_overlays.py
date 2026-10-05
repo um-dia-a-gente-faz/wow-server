@@ -8,6 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import areas  # noqa: E402
 import state  # noqa: E402
 import overlays  # noqa: E402
@@ -139,8 +140,8 @@ class FetchAreasTests(unittest.TestCase):
         self.assertEqual(len(names), 5)
 
     def test_page_has_label_toggle_and_hover(self):
-        self.assertIn('id="tglLabels"', app.PAGE)
-        self.assertIn("function subzoneAt", app.PAGE)
+        self.assertIn('id="tglLabels"', pagesrc.PAGE)
+        self.assertIn("function subzoneAt", pagesrc.PAGE)
 
 
 try:

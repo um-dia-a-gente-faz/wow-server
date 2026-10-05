@@ -12,6 +12,7 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import activity  # noqa: E402
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import routes  # noqa: E402
 from webio import Request  # noqa: E402
 import state as wowmap_state  # noqa: E402
@@ -247,9 +248,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["events"][0]["text"], 'Said "hi"')
         with mock.patch.object(wowmap_state, "activity", None):
             self.assertEqual(get("/api/character/Rubens/activity")[0], 503)
-        self.assertNotIn("@activity-", app.PAGE)
-        self.assertIn("window.ActivityFeed", app.PAGE)
-        self.assertIn("Recent activity", app.PAGE)
+        self.assertNotIn("@activity-", pagesrc.PAGE)
+        self.assertIn("window.ActivityFeed", pagesrc.PAGE)
+        self.assertIn("Recent activity", pagesrc.PAGE)
 
 
 # Minimal DOM stand-in: enough for ActivityFeed to render, then dump every row's
@@ -282,7 +283,7 @@ const txt = (n) => typeof n === 'string' ? n
 
 def feed_rows(events, query):
     js = (FEED_HARNESS.replace("EVENTS", json.dumps(events)).replace("QUERY", json.dumps(query))
-          .replace("//SCRIPT//", app.ACTIVITY_JS.replace("<script>", "").replace("</script>", "")))
+          .replace("//SCRIPT//", pagesrc.ACTIVITY_JS.replace("<script>", "").replace("</script>", "")))
     r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -290,7 +291,7 @@ def feed_rows(events, query):
 
 class FeedUiTests(unittest.TestCase):
     """#173: timestamps, search and scrolling in the drawer's Recent activity."""
-    js, css = app.ACTIVITY_JS, app.ACTIVITY_CSS
+    js, css = pagesrc.ACTIVITY_JS, pagesrc.ACTIVITY_CSS
 
     def test_absolute_and_relative_time(self):
         self.assertIn("const clock = ", self.js)

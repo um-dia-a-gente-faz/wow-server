@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import character  # noqa: E402
 import inventory  # noqa: E402
 import players  # noqa: E402
@@ -276,35 +277,35 @@ class CharacterStatsTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_inspect_panel_is_spliced_in(self):
-        self.assertNotIn("@inspect-", app.PAGE)
-        self.assertIn('id="inspect"', app.PAGE)
-        self.assertIn("const Inspect", app.PAGE)
+        self.assertNotIn("@inspect-", pagesrc.PAGE)
+        self.assertIn('id="inspect"', pagesrc.PAGE)
+        self.assertIn("const Inspect", pagesrc.PAGE)
 
     def test_drawer_draws_bars_from_max_values(self):
-        self.assertIn("function meter(", app.PAGE)
-        self.assertIn("c.max_health", app.PAGE)
-        self.assertIn("c.max_power", app.PAGE)
+        self.assertIn("function meter(", pagesrc.PAGE)
+        self.assertIn("c.max_health", pagesrc.PAGE)
+        self.assertIn("c.max_power", pagesrc.PAGE)
 
     def test_reputation_section_draws_the_panel_with_game_colours(self):
-        self.assertIn("reputationSection(c.reputation_panel", app.PAGE)
+        self.assertIn("reputationSection(c.reputation_panel", pagesrc.PAGE)
         # FACTION_BAR_COLORS (FrameXML ReputationFrame.lua): Neutral 0.9/0.7/0,
         # Friendly..Exalted 0/0.6/0.1, Hated/Hostile 0.8/0.3/0.22, Unfriendly 0.75/0.27/0.
         for colour in ("4: '#e6b300'", "5: '#00991a'", "1: '#cc4d38'", "3: '#bf4500'"):
-            self.assertIn(colour, app.PAGE)
-        self.assertNotIn("`faction ${", app.PAGE)  # no raw faction ids in the UI
+            self.assertIn(colour, pagesrc.PAGE)
+        self.assertNotIn("`faction ${", pagesrc.PAGE)  # no raw faction ids in the UI
 
     def test_position_text_helpers_are_shared_with_the_page(self):
         for name in ("function placeText", "function mapCoordsText", "function worldText"):
-            self.assertIn(name, app.PAGE)
-        self.assertIn("placeText(p)", app.PAGE)   # marker tooltip
-        self.assertIn("mapCoordsText(p)", app.PAGE)   # player list
+            self.assertIn(name, pagesrc.PAGE)
+        self.assertIn("placeText(p)", pagesrc.PAGE)   # marker tooltip
+        self.assertIn("mapCoordsText(p)", pagesrc.PAGE)   # player list
 
     def test_page_is_english(self):
-        self.assertIn('<html lang="en">', app.PAGE)
-        self.assertNotIn("pt-BR", app.PAGE)
-        self.assertIn("Intl.NumberFormat('en-US')", app.PAGE)
+        self.assertIn('<html lang="en">', pagesrc.PAGE)
+        self.assertNotIn("pt-BR", pagesrc.PAGE)
+        self.assertIn("Intl.NumberFormat('en-US')", pagesrc.PAGE)
         for label in ("Health", "Position", "Reputation", "Zone", "Calibrate: off"):
-            self.assertIn(label, app.PAGE)
+            self.assertIn(label, pagesrc.PAGE)
 
 
 class ItemTooltipWiringTests(unittest.TestCase):
@@ -372,23 +373,23 @@ class StatRowTests(unittest.TestCase):
 
     def test_stat_rows_have_icons_and_exact_titles(self):
         for n in ("health", "mana", "gold", "played", "logout"):
-            self.assertIn(f"stat('{n}'", app.PAGE, n)
-        self.assertIn("`played ${c.totaltime}s`", app.PAGE)
-        self.assertIn("`last logout ${when(c.logout_time)}`", app.PAGE)
-        self.assertIn("`${nf.format(c.money)} copper`", app.PAGE)
+            self.assertIn(f"stat('{n}'", pagesrc.PAGE, n)
+        self.assertIn("`played ${c.totaltime}s`", pagesrc.PAGE)
+        self.assertIn("`last logout ${when(c.logout_time)}`", pagesrc.PAGE)
+        self.assertIn("`${nf.format(c.money)} copper`", pagesrc.PAGE)
 
     def test_never_seen_character_shows_dashes(self):
-        self.assertIn("c.totaltime ? duration(c.totaltime) : '—'", app.PAGE)
-        self.assertIn("c.logout_time ? ago(c.logout_time) : '—'", app.PAGE)
+        self.assertIn("c.totaltime ? duration(c.totaltime) : '—'", pagesrc.PAGE)
+        self.assertIn("c.logout_time ? ago(c.logout_time) : '—'", pagesrc.PAGE)
 
     def test_relative_age_is_one_helper_shared_with_the_activity_feed(self):
-        self.assertEqual(app.PAGE.count("function ago("), 1)
-        self.assertIn("function ago(", app.INSPECT_JS)
-        self.assertIn("ago(e.t)", app.ACTIVITY_JS)
+        self.assertEqual(pagesrc.PAGE.count("function ago("), 1)
+        self.assertIn("function ago(", pagesrc.INSPECT_JS)
+        self.assertIn("ago(e.t)", pagesrc.ACTIVITY_JS)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_ago_formats_relative_age(self):
-        fn = re.search(r"^function ago\(t\) \{.*?^\}", app.INSPECT_JS, re.S | re.M).group(0)
+        fn = re.search(r"^function ago\(t\) \{.*?^\}", pagesrc.INSPECT_JS, re.S | re.M).group(0)
         js = (fn + "\nDate.now = () => 1000000 * 1000;\n"
               "console.log(JSON.stringify([5, 120, 7200, 86400 * 4 + 3600].map(d => ago(1000000 - d))));")
         r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
@@ -398,7 +399,7 @@ class StatRowTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_scripts_parse(self):
         for name in ("INSPECT_JS", "ACTIVITY_JS"):
-            js = getattr(app, name).replace("<script>", "").replace("</script>", "")
+            js = getattr(pagesrc, name).replace("<script>", "").replace("</script>", "")
             r = subprocess.run(["node", "--check", "-"], input=js, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, name + r.stderr)
 

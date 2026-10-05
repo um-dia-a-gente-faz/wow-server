@@ -26,7 +26,8 @@ run without a socket (`webio.Request`). All SQL lives in `repo/` (`players`,
 `characters`); `players.py`, `character.py`, `inventory.py`, `areas.py` turn rows into
 JSON, `calibration.py`, `fogview.py`, `agents.py` (fleet/agent proxy glue) and
 `assets.py` own those concerns, `state.py` holds env config and the lazy DBC/name
-caches, and `pages.py` holds the embedded HTML/CSS/JS. (`activity.py` keeps its own
+caches, and `pages.py` fills in `static/index.html`. The front end is plain files in
+`static/` (see "Front end" below). (`activity.py` keeps its own
 SQL: its poller and sqlite store are a separate subsystem.) A new endpoint is one
 handler plus one line in `ROUTES`.
 
@@ -270,8 +271,8 @@ directly. At widths of 600 px or less the drawer takes the full width.
 
 Every value from the database (character, item, and zone names) is rendered
 with `textContent`, never `innerHTML`. The drawer's CSS, HTML, and JS live in
-`INSPECT_CSS` / `INSPECT_HTML` / `INSPECT_JS` in `pages.py`. They are spliced into
-`PAGE` at `@inspect-*` markers, so other panels can be added the same way.
+`static/character.css`, `static/character.js` (`Inspect`) and `static/inventory.js`
+(`Coins`, `ItemTip`); its markup is in `static/index.html`.
 
 Health is current only, and so is power. The worldserver computes maximum
 health and power at runtime and never saves them, so there are no bars (see
@@ -320,7 +321,7 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
   used by the list and map markers.
 - **Unified selection**: clicking a character in the list, on a map marker, or
   as a chat sender highlights them everywhere and pans the map to their zone
-  (`selectCharacter()` in `pages.py`'s main script). It only *toggles* CSS
+  (`selectCharacter()` in `static/map.js`). It only *toggles* CSS
   classes on existing DOM nodes rather than rebuilding `#list`/`#markers` —
   rebuilding while the click event that triggered it is still bubbling detaches
   the clicked element, which makes the drawer's click-away handler misfire and
@@ -553,3 +554,16 @@ container. Own-slot ranges from TrinityCore 3.3.5 `Player.h`:
 | 67-73 | bank bags |
 | 86-117 | keyring |
 | 118-149 | currency tokens |
+
+## Front end
+
+No build step. `static/index.html` is the page (`pages.py` fills in the chat feed URL with
+`string.Template`); every panel has its own files, loaded in this order by `index.html`:
+`map.css`/`map.js` (map, player list, trails, calibration; `map.js` runs last),
+`format.js` (pure text helpers), `inventory.js`, `character.css`/`character.js` (drawer),
+`activity.*`, `chat.*`, `agent.*`, `fleet.*`, `walk.*`. They are classic scripts sharing
+one global scope, so the order in `index.html` matters. `assets.static` serves any
+`*.css`/`*.js` in `static/` under `/static/` (`no-cache`, so a deploy shows at once).
+A new file must be added to the `Dockerfile` only if it is outside `static/`.
+
+JS tests: `node --test tools/wowmap/tests/js/*.test.js` (pure functions in `format.js` and `map.js`).
