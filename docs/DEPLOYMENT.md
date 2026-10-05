@@ -209,6 +209,32 @@ on the *separate* docker-stack VM (192.168.1.60), not this one:
 ./scripts/deploy-dashboards.sh   # run from a machine with SSH to 192.168.1.60
 ```
 
+### Path-aware deploys and the players-online guard
+
+`deploy.sh` compares the checkout's `HEAD` with `origin/main` and only touches the stacks
+whose files changed:
+
+| Changed path | Stack redeployed |
+|---|---|
+| `docker-compose.yml`, `Dockerfile`, `tdb/`, `tools/chat-feed/` | game |
+| `monitoring/`, `exporters/`, `tools/wowmap/`, `tools/dbc/` | monitoring |
+| anything else (docs, `agent/`, `scripts/`, tests) | none, the checkout just advances |
+
+Before the game stack, it counts online characters (`characters.characters WHERE online = 1`,
+the same source as `wow_players_online`). If anyone is online, or the query fails, it logs
+`DEFERRED` and exits 0 **without moving the checkout**, so the next cron poll retries.
+Each real deploy appends `<time> deployed <sha>, stacks: <list>` to
+`/opt/wow-server-metrics/deploy.log` (`METRICS_DIR` overrides).
+
+| Env | Effect |
+|---|---|
+| `FORCE=1` | deploy the game stack even with players online |
+| `ALL=1` | deploy both stacks regardless of the diff (the old behaviour) |
+| `DRY_RUN=1` | print the plan and the guard result, change nothing |
+
+To check a merge left the worldserver alone, compare
+`docker inspect -f '{{.State.StartedAt}}' trinitycore-wowserver` before and after.
+
 ### Required: `/opt/wow-server/.env`
 
 Secrets are **not** tracked. The compose files interpolate them from a
