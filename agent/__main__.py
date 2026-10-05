@@ -19,7 +19,7 @@ import time
 
 from .channels import parse_channel_spec
 from .chat_relay import ChatRelay
-from .config import load_config
+from .config import ConfigError, load_config
 from .auth import auth_logon
 from .session import WoWSession
 from .brain import Brain
@@ -46,7 +46,11 @@ def main():
     p.add_argument("--perception-dump", action="store_true", help="print snapshot() as JSON once per think cycle")
     args = p.parse_args()
 
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except ConfigError as e:
+        print(f"CONFIG ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
     problems = cfg.validate(require_character=not args.list_chars)
     if problems:
         for pr in problems:
