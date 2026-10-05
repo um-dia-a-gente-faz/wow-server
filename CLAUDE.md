@@ -95,7 +95,7 @@ after another agent's review) · `wowmap-dev` (the observability site).
 
 ### Issue tracker
 
-GitHub Issues on `Cividati/wow-server` (`gh` CLI); `UM-*` issues are Linear mirrors. See `docs/agents/issue-tracker.md`.
+GitHub Issues on `um-dia-a-gente-faz/wow-server` (`gh` CLI); `UM-*` issues are Linear mirrors. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
