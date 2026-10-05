@@ -49,18 +49,19 @@ LAYERS = {
     "spells": {"packets"},
     "channels": {"opcodes", "packets"},
     "names": {"packets"},
+    "group": {"packets"},
     "items": set(),
     "item_compare": set(),
     "update_object": {"packets"},
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
-    "perception": {"handles", "items", "names", "npc", "quests", "trade", "update_fields",
+    "perception": {"group", "handles", "items", "names", "npc", "quests", "trade", "update_fields",
                    "update_object"},
     "state": {"perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
     "router": set(),
-    "handlers": {"channels", "loot", "mail", "names", "npc", "opcodes", "packets", "perception",
+    "handlers": {"channels", "group", "loot", "mail", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
     "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "quests",
@@ -199,7 +200,7 @@ class AgentArchitectureTests(unittest.TestCase):
         # "parsers are pure": they may use the wire helpers and each other's data, never
         # session state, actions or the router.
         pure = {"npc", "quests", "loot", "mail", "trade", "spells", "channels", "names",
-                "items", "item_compare", "update_object", "update_fields"}
+                "group", "items", "item_compare", "update_object", "update_fields"}
         forbidden = {"perception", "state", "actions", "handlers", "router", "session", "reflexes"}
         bad = [f"{u} -> {t}" for u in pure for t in self.graph.get(u, {}) if t in forbidden]
         self.assertEqual(bad, [])
