@@ -1343,6 +1343,7 @@ class EquipItemActionTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(sess._sent[0], (ac.lootmod.CMSG_AUTOEQUIP_ITEM,
                                           ac.lootmod.build_autoequip_item(255, 23)))
+        self.assertEqual(sess._sent[0][0], 0x10A)
         self.assertEqual(result.detail["item_guid"], guid)
 
     def test_execute_fails_on_inventory_change_failure(self):
