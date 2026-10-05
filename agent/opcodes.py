@@ -37,7 +37,7 @@ SMSG_MESSAGECHAT                 = 0x096
 CMSG_JOIN_CHANNEL                = 0x097
 CMSG_LEAVE_CHANNEL               = 0x098
 SMSG_CHANNEL_NOTIFY              = 0x099
-CMSG_AUTOEQUIP_ITEM              = 0x0A8  # MISMATCH: Opcodes.h has CMSG_AUTOEQUIP_ITEM = 0x10A; kept the value the repo already sends (see #247)
+CMSG_AUTOEQUIP_ITEM              = 0x10A
 SMSG_UPDATE_OBJECT               = 0x0A9
 SMSG_DESTROY_OBJECT              = 0x0AA
 CMSG_USE_ITEM                    = 0x0AB

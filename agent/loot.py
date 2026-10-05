@@ -261,16 +261,14 @@ def build_destroy_item(bag: int, slot: int, count: int) -> bytes:
 
 
 def build_autoequip_item(bag: int, slot: int) -> bytes:
-    """CMSG_AUTOEQUIP_ITEM (0x0A8, UM-69): WorldSession::
+    """CMSG_AUTOEQUIP_ITEM (0x10A, UM-69): WorldSession::
     HandleAutoEquipItemOpcode (ItemHandler.cpp) — uint8 srcbag, uint8
     srcslot. No destination is sent: the server picks the equip slot from
     the item's own InventoryType and reports failure via
     SMSG_INVENTORY_CHANGE_FAILURE (same as any other equip/move) if the
     item can't go there (wrong armor type, class-restricted, item already
-    in that slot, etc). This opcode value is taken from the standard,
-    well-documented TrinityCore 3.3.5a (build 12340) Opcodes.h; it has not
-    been independently confirmed against a live server in this
-    environment (no network access) — flag for live verification."""
+    in that slot, etc). Opcode and layout verified against TrinityCore 3.3.5 Opcodes.h and
+    ItemPackets.cpp (AutoEquipItem::Read); not yet confirmed live (#260)."""
     return struct.pack('<BB', bag, slot)
 
 
