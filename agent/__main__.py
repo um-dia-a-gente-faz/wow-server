@@ -366,6 +366,11 @@ def _reflex_state(sess) -> dict:
     return state
 
 
+def _remaining_sleep(cycle_start: float, interval: float, now: float) -> float:
+    """Seconds left until the cycle's deadline; 0 (never negative) when it overran."""
+    return max(0.0, interval - (now - cycle_start))
+
+
 def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
                      brain=None, audit_logger=None, observer=None) -> bool:
     """Returns True if the loop ended because of an unexpected disconnect
@@ -377,6 +382,7 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
     if observer is not None:
         observer.attach(sess, think_state, _reflex_state)  # UM-50: read-only HTTP view
     while duration is None or time.monotonic() - start < duration:
+        cycle_start = time.monotonic()
         if sess.unexpected_disconnect:
             log.warning("world connection dropped unexpectedly — ending this session attempt")
             return True
@@ -417,7 +423,8 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
             if not result.ok:
                 log.info("think cycle: no action taken (%s)", result.error)
 
-        time.sleep(cfg.think_interval)
+        # #215: sleep to a deadline so the period is the interval, not interval + cycle time.
+        time.sleep(_remaining_sleep(cycle_start, cfg.think_interval, time.monotonic()))
 
     return False
 

@@ -111,6 +111,11 @@ round trip and the action. At the measured 252 ms p50 this is a ~5% error at
 `interval=5` and a ~9% error at `interval=3` — small, but it means "set it to 3"
 does not produce a 3 s beat, and the error grows as the interval shrinks.
 
+*Update (#215):* the loop now sleeps `max(0, interval - elapsed)` from the cycle's
+start, so the period is the interval and a cycle that overruns it starts the next
+one immediately (no negative sleep, no early start). The measured before/after gap
+from a paced live run is still to be recorded here.
+
 **F6 — The cost picture in ADR 0001 does not reproduce.**
 
 At 3167 input tokens per decision and ADR 0001's `$0.042`/M input (output free),
