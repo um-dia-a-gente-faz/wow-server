@@ -11,6 +11,10 @@ from webio import not_found
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 STATIC_FILES = {"leaflet.js": "text/javascript; charset=utf-8",
                 "leaflet.css": "text/css; charset=utf-8"}
+# The page's own css/js (#262). Served by pattern: any *.css / *.js that exists in STATIC_DIR.
+# Revalidated on every load, since a deploy changes them (Leaflet never does).
+PAGE_ASSET_RE = re.compile(r"[a-z0-9_\-]+\.(css|js)")
+PAGE_ASSET_TYPES = {"css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8"}
 # What item_icons.icon_file() produces; anything else under /icons/ is a 404.
 ICON_FILE_RE = re.compile(r"[a-z0-9_\-]+\.png")
 
@@ -37,6 +41,9 @@ def maps(req, rest):
 def static(req, fn):
     if fn in STATIC_FILES:
         return 200, _read(os.path.join(STATIC_DIR, fn)), STATIC_FILES[fn], "public, max-age=86400"
+    m = PAGE_ASSET_RE.fullmatch(fn)
+    if m and os.path.isfile(os.path.join(STATIC_DIR, fn)):
+        return 200, _read(os.path.join(STATIC_DIR, fn)), PAGE_ASSET_TYPES[m.group(1)], "no-cache"
     return not_found()
 
 

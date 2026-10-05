@@ -1,0 +1,10 @@
+  .marker.agent .ring { outline:2px dashed #5fd0d8; outline-offset:2px; }
+  .pl.agent .nm::after { content:" · agent"; color:#5fd0d8; font-size:11px; }
+  .mind-tabs { display:flex; gap:6px; padding:8px 16px 0; }
+  .mind-tabs button { flex:1; background:#141824; color:var(--dim); border:1px solid var(--line);
+                      border-radius:7px; padding:5px 4px; font:inherit; cursor:pointer; }
+  .mind-tabs button.on { background:#2b3550; border-color:#46557a; color:var(--fg); }
+  .mind .dec { padding:4px 0; border-bottom:1px solid #20263a; font-size:12.5px; overflow-wrap:anywhere; }
+  .mind .dec .when { color:var(--dim); font-size:11px; }
+  .mind .dec.fail .act { color:#ff8b8b; }
+  .mind .dec .err { color:var(--dim); }

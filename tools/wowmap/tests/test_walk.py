@@ -15,6 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 import state  # noqa: E402
 import agents  # noqa: E402
 import fleet  # noqa: E402
@@ -260,15 +261,15 @@ def fleet_state(**agent):
 
 class PageTests(unittest.TestCase):
     def test_page_has_the_walk_block_and_hooks(self):
-        self.assertNotIn("@walk-", app.PAGE)
-        self.assertIn("const Walk = ", app.PAGE)
-        self.assertIn("Walk.pickPoint(e)", app.PAGE)
-        self.assertIn("Walk.pickPlayer(name)", app.PAGE)
-        self.assertNotIn("innerHTML", walk.WALK_JS)
+        self.assertNotIn("@walk-", pagesrc.PAGE)
+        self.assertIn("const Walk = ", pagesrc.PAGE)
+        self.assertIn("Walk.pickPoint(e)", pagesrc.PAGE)
+        self.assertIn("Walk.pickPlayer(name)", pagesrc.PAGE)
+        self.assertNotIn("innerHTML", pagesrc.WALK_JS)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_walk_script_parses(self):
-        script = walk.WALK_JS.replace("<script>", "").replace("</script>", "")
+        script = pagesrc.WALK_JS.replace("<script>", "").replace("</script>", "")
         with tempfile.TemporaryDirectory() as d:
             f = pathlib.Path(d) / "walk.js"
             f.write_text(script)
@@ -277,7 +278,7 @@ class PageTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_disabled_with_a_reason_unless_the_agent_can_walk(self):
-        script = walk.WALK_JS.replace("<script>", "").replace("</script>", "")
+        script = pagesrc.WALK_JS.replace("<script>", "").replace("</script>", "")
         start = script.index("function walkWhyNot")
         fn = script[start:script.index("\nconst Walk = ")]
         here = {"in_world": True}

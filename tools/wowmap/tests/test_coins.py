@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
 
 NODE = unittest.skipUnless(shutil.which("node"), "node is not installed")
 
@@ -21,7 +22,7 @@ const document = { createElement: () => new N() };
 
 
 def run_js(body):
-    src = app.PAGE[app.PAGE.index("const Coins = "):app.PAGE.index("// In-game style item tooltip")]
+    src = pagesrc.PAGE[pagesrc.PAGE.index("const Coins = "):pagesrc.PAGE.index("// In-game style item tooltip")]
     r = subprocess.run(["node", "-e", HARNESS + src + body], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -54,9 +55,9 @@ class CoinsTests(unittest.TestCase):
         for call in ("left.append(' ', Coins.render(l.money))",      # item tooltip
                      "kv('Gold', Coins.render(c.money))",             # drawer
                      "tx.append(Coins.render(Math.abs(e.detail.delta)))"):  # activity feed
-            self.assertIn(call, app.PAGE)
+            self.assertIn(call, pagesrc.PAGE)
         for old in ("function money(", "function coins(", "coins(Number("):
-            self.assertNotIn(old, app.PAGE)
+            self.assertNotIn(old, pagesrc.PAGE)
 
 
 if __name__ == "__main__":

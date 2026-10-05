@@ -2,7 +2,7 @@
 """wowmap — live map of online players for a TrinityCore 3.3.5a server.
 
 Serves:
-    GET /                     the map page (single file, no build step)
+    GET /                     the map page (static/index.html; css/js under /static/, no build step)
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
     GET /api/character/<name>/activity?limit=50  recent activity feed (UM-76, activity.py)
@@ -54,9 +54,6 @@ from urllib.parse import parse_qs, urlparse
 import activity as activity_feed
 import routes
 import state
-from pages import (  # noqa: F401 - the page assets are re-exported for the tests
-    ACTIVITY_CSS, ACTIVITY_JS, AGENT_CSS, AGENT_JS, CHAT_CSS, CHAT_HTML, CHAT_JS,
-    INSPECT_CSS, INSPECT_HTML, INSPECT_JS, PAGE)
 from webio import Request
 
 log = logging.getLogger("wowmap")

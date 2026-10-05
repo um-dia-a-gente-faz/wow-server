@@ -34,5 +34,8 @@ No URL or JSON shape changed.
 - New SQL belongs in `repo/`, not in a service.
 - `tools/wowmap/Dockerfile` lists the files it copies, so a new module has to be
   added there too (the split commit changed it for that reason).
+- Follow-up (#262): `pages.py` no longer holds the front end. `static/index.html` is the page
+  (`pages.py` fills in one value with `string.Template`); each panel has its own `static/*.css`
+  and `static/*.js`, served by `assets.static`, with `node --test` tests in `tests/js/`.
 - `activity.py` (the activity feed store and its sources) was not part of the
   split and is still its own large module.
