@@ -27,6 +27,7 @@ lint()      { ruff check .; }
 types()     { mypy; }
 generated() {
   local rc=0 f
+  python3 scripts/generate.py --check || rc=1   # every generated file, #297
   for f in monitoring/grafana-dashboard-*.json; do
     python3 -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f" >&2; rc=1; }
   done

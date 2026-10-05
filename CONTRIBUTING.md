@@ -125,6 +125,16 @@ in `CLAUDE.md`, *Milestones and board naming*.
 - Prometheus: exporter metrics use a custom `Collector`, not module-level `Gauge`. This keeps series from going stale when a label value disappears.
 - Grafana dashboards: raw JSON (no `{dashboard:..., overwrite:...}` wrapper), file-provisioned. Validate every panel expression against Prometheus before committing.
 
+## Generated files
+
+Committed files built from a source of truth (`docker-compose.agents.yml`, the
+`monitoring/grafana-dashboard-*` the `scripts/gen-*` scripts produce, `docs/AGENT-API.md`)
+are listed in `GENERATORS` in `scripts/generate.py`. Never hand-edit one: change the
+generator or its source, then `python3 scripts/generate.py`. CI runs
+`scripts/generate.py --check` (inside `scripts/check.sh generated`) and fails naming the
+generator to run. A new generator is one line in `GENERATORS`; it must rewrite its outputs
+and, given `--check`, exit non-zero on drift (`scripts/genlib.py` has the helper).
+
 ## Lint and types
 
 CI job `lint + types` runs `ruff` and `mypy`. They are dev tools only (`agent/` stays

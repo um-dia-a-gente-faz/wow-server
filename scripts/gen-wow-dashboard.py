@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate the Grafana dashboard JSON for the wow-server VM (host + containers)."""
-import json
+import sys
+
+from genlib import dashboard_text, sync
 
 DS = {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
 HOST = 'host="wow-server"'
@@ -114,6 +116,5 @@ dash = {
     "panels": panels,
 }
 
-with open("/root/wow-dashboard.json", "w") as f:
-    json.dump({"dashboard": dash, "overwrite": True, "message": "wow-server host dashboard"}, f)
-print("panels:", len([p for p in panels if p["type"] != "row"]))
+sys.exit(sync("monitoring/grafana-dashboard-wow-server-host.json", dashboard_text(dash),
+              "--check" in sys.argv, "scripts/gen-wow-dashboard.py"))
