@@ -272,7 +272,7 @@ class WorldState:
 
     def get_ui_state(self) -> dict | None:
         """Thread-safe read of the currently open gossip/vendor/trainer
-        window (UM-40), for actions.py to check against without racing the
+        window (UM-40), for the agent/actions/ package to check against without racing the
         recv thread's apply_gossip_message/apply_list_inventory/etc."""
         with self._lock:
             return self.ui_state
@@ -658,7 +658,7 @@ class WorldState:
 
     def get_trade(self) -> dict | None:
         """Thread-safe read of the currently open/pending trade (UM-59),
-        for actions.py to check against without racing the recv thread's
+        for agent/actions/trade.py to check against without racing the recv thread's
         apply_trade_status/apply_trade_status_extended."""
         with self._lock:
             return self.trade
@@ -804,7 +804,7 @@ class WorldState:
 
     def apply_mail_list_result(self, data: dict):
         """SMSG_MAIL_LIST_RESULT (agent.mail.parse_mail_list_result): fills
-        in the mailbox window opened by open_mailbox_request — actions.py's
+        in the mailbox window opened by open_mailbox_request — agent/actions/mail.py's
         take_mail/delete_mail read `mails`/`mailbox_guid` from here. Ignored
         if nothing is pending (a stale/unexpected reply). Clears
         has_new_mail the same way a real client's mail icon clears once you
@@ -909,7 +909,7 @@ class WorldState:
         # WotLK hunters have no personal focus/energy pool). Once the unit's
         # own power_type (UNIT_FIELD_BYTES_0) is known, drop every entry
         # that isn't that one real power, so downstream consumers (the LLM
-        # prompt snapshot, actions.py's cast_spell precondition) never see
+        # prompt snapshot, agent/actions/combat.py's cast_spell precondition) never see
         # resources the unit can't actually spend. Left alone until
         # power_type is known, since fields worth 0 aren't sent at all —
         # absent isn't the same as "not a real power".
@@ -985,7 +985,7 @@ class WorldState:
         `pending_invite` (session.pending_invite) and `chat_inbox`
         (session.chat_inbox, UM-68) are likewise session-scoped state this
         class doesn't own — passed through so the LLM has something to
-        react to with the accept_group/say/whisper actions (agent/actions.py).
+        react to with the accept_group/say/whisper actions (agent/actions/chat.py).
 
         `group` (GH-71, session.group from agent.group.parse_group_list) is
         exposed as `group` (leader, loot method, members; None when

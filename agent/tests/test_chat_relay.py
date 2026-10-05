@@ -17,15 +17,10 @@ from types import SimpleNamespace
 
 from agent import chat_relay as cr
 from agent import session as se
+from agent.handlers import chat as hchat
+from agent.tests.builders import make_session
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "chat"
-
-
-def make_session() -> se.WoWSession:
-    sess = se.WoWSession("127.0.0.1", 8085, "TEST", b"\x00" * 40, 1)
-    sess.world_state.names.cache_path = os.path.join(
-        tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
-    return sess
 
 
 def len_string(s: str) -> bytes:
@@ -255,8 +250,8 @@ class SessionHookTests(unittest.TestCase):
 
     def test_say_reaches_the_relay_with_a_resolved_speaker(self):
         sess, relay, opener = self.make_wired_session()
-        sess._dispatch(se.SMSG_MESSAGECHAT,
-                       messagechat_payload(se.CHAT_MSG_SAY, "hello there", sender_guid=7))
+        sess._dispatch(hchat.SMSG_MESSAGECHAT,
+                       messagechat_payload(hchat.CHAT_MSG_SAY, "hello there", sender_guid=7))
         publish_all(relay)
 
         event = opener.events()[0]
@@ -266,8 +261,8 @@ class SessionHookTests(unittest.TestCase):
 
     def test_non_ascii_say_survives_the_whole_path(self):
         sess, relay, opener = self.make_wired_session()
-        sess._dispatch(se.SMSG_MESSAGECHAT,
-                       messagechat_payload(se.CHAT_MSG_SAY, "Olá! Precisa de ajuda, irmão?",
+        sess._dispatch(hchat.SMSG_MESSAGECHAT,
+                       messagechat_payload(hchat.CHAT_MSG_SAY, "Olá! Precisa de ajuda, irmão?",
                                             sender_guid=7))
         publish_all(relay)
 
@@ -277,8 +272,8 @@ class SessionHookTests(unittest.TestCase):
 
     def test_npc_yell_carries_the_name_from_the_packet(self):
         sess, relay, opener = self.make_wired_session()
-        sess._dispatch(se.SMSG_MESSAGECHAT,
-                       monster_chat_payload(se.CHAT_MSG_MONSTER_YELL, "Intruders!",
+        sess._dispatch(hchat.SMSG_MESSAGECHAT,
+                       monster_chat_payload(hchat.CHAT_MSG_MONSTER_YELL, "Intruders!",
                                              "Mana Wyrm", sender_guid=0xF13000000000002A))
         publish_all(relay)
         event = opener.events()[0]
@@ -287,8 +282,8 @@ class SessionHookTests(unittest.TestCase):
     def test_a_broken_relay_never_breaks_chat(self):
         sess = make_session()
         sess.chat_relay = SimpleNamespace(submit=lambda *a, **k: 1 / 0)
-        sess._dispatch(se.SMSG_MESSAGECHAT,
-                       messagechat_payload(se.CHAT_MSG_SAY, "still heard", sender_guid=7))
+        sess._dispatch(hchat.SMSG_MESSAGECHAT,
+                       messagechat_payload(hchat.CHAT_MSG_SAY, "still heard", sender_guid=7))
         self.assertEqual(sess.chat_inbox[-1]["text"], "still heard")
 
 
@@ -309,7 +304,7 @@ class LiveCaptureTests(unittest.TestCase):
         relay, opener = make_relay()
         sess.chat_relay = relay
         sess.world_state.names.players.update(names or {})
-        sess._dispatch(se.SMSG_MESSAGECHAT, self.load(name))
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, self.load(name))
         publish_all(relay)
         return sess.chat_inbox[-1], (opener.events() or [None])[0]
 
@@ -374,7 +369,7 @@ class LiveCaptureTests(unittest.TestCase):
                 # Locate it on the wire and prove it duplicates sender_guid.
                 sender_guid = struct.unpack_from("<Q", payload, 5)[0]
                 off = 17 + (payload.index(b"\x00", 17) + 1 - 17
-                            if payload[0] == se.CHAT_MSG_CHANNEL else 0)
+                            if payload[0] == hchat.CHAT_MSG_CHANNEL else 0)
                 self.assertEqual(struct.unpack_from("<Q", payload, off)[0], sender_guid)
 
 

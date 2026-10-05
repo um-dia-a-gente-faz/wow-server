@@ -1,6 +1,7 @@
 """#137: the fleet panel's proxy to the agent runner, against a fake runner (#136 contract)."""
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,8 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import agents  # noqa: E402
 import fleet  # noqa: E402
 
 TOKEN = "test-token-1234"
@@ -100,10 +103,10 @@ class FleetBase(unittest.TestCase):
         self.addCleanup(self.runner.server_close)
         self.addCleanup(self.runner.shutdown)
         self.runner_url = f"http://127.0.0.1:{self.runner.server_address[1]}"
-        p = mock.patch.object(app, "RUNNER", fleet.Runner(self.runner_url, self.token))
+        p = mock.patch.object(agents, "RUNNER", fleet.Runner(self.runner_url, self.token))
         p.start()
         self.addCleanup(p.stop)
-        p = mock.patch.object(app, "AGENT_APIS", {})
+        p = mock.patch.object(agents, "AGENT_APIS", {})
         p.start()
         self.addCleanup(p.stop)
         self.wowmap = _serve(app.Handler)
@@ -149,10 +152,10 @@ class StatusTests(FleetBase):
             self.assertNotIn(self.runner_url, body)
             self.assertNotIn("127.0.0.1:" + str(self.runner.server_address[1]), body)
         # not in the page source either, even though the token env var is named in README only
-        self.assertNotIn("AGENT_RUNNER_TOKEN", app.PAGE)
+        self.assertNotIn("AGENT_RUNNER_TOKEN", pagesrc.PAGE)
 
     def test_unreachable_runner_is_unknown_not_healthy(self):
-        with mock.patch.object(app, "RUNNER", fleet.Runner("http://127.0.0.1:1", TOKEN)):
+        with mock.patch.object(agents, "RUNNER", fleet.Runner("http://127.0.0.1:1", TOKEN)):
             status, body = self.call("/api/fleet")
         j = json.loads(body)
         self.assertEqual(status, 200)
@@ -161,7 +164,7 @@ class StatusTests(FleetBase):
         self.assertNotIn("127.0.0.1:1", body)
 
     def test_a_dead_runner_still_names_the_agents_it_last_listed(self):
-        runner = app.RUNNER
+        runner = agents.RUNNER
         runner.status()
         self.runner.shutdown()
         self.runner.server_close()
@@ -172,13 +175,13 @@ class StatusTests(FleetBase):
         self.assertEqual(set(j["agents"][0]), {"name", "account"})
 
     def test_wrong_token_is_reported_as_unauthorized(self):
-        with mock.patch.object(app, "RUNNER", fleet.Runner(self.runner_url, "wrong-token-0000")):
+        with mock.patch.object(agents, "RUNNER", fleet.Runner(self.runner_url, "wrong-token-0000")):
             j = json.loads(self.call("/api/fleet")[1])
         self.assertEqual((j["runner"], j["agents"]), ("unauthorized", []))
         self.assertIn("token", j["error"])
 
     def test_missing_token_is_reported_as_unauthorized(self):
-        with mock.patch.object(app, "RUNNER", fleet.Runner(self.runner_url, "")):
+        with mock.patch.object(agents, "RUNNER", fleet.Runner(self.runner_url, "")):
             j = json.loads(self.call("/api/fleet")[1])
         self.assertEqual(j["runner"], "unauthorized")
 
@@ -216,13 +219,13 @@ class ActionTests(FleetBase):
         self.assertEqual((status, json.loads(body)["error"]), (404, "no such agent: Nobody"))
 
     def test_runner_rejecting_the_token_is_a_wowmap_problem_not_a_401(self):
-        with mock.patch.object(app, "RUNNER", fleet.Runner(self.runner_url, "wrong-token-0000")):
+        with mock.patch.object(agents, "RUNNER", fleet.Runner(self.runner_url, "wrong-token-0000")):
             status, body = self.post("/api/fleet/agents/Luaprata/stop")
         self.assertEqual(status, 502)
         self.assertIn("token", json.loads(body)["error"])
 
     def test_unreachable_runner_says_the_action_may_have_run(self):
-        with mock.patch.object(app, "RUNNER", fleet.Runner("http://127.0.0.1:1", TOKEN)):
+        with mock.patch.object(agents, "RUNNER", fleet.Runner("http://127.0.0.1:1", TOKEN)):
             status, body = self.post("/api/fleet/agents/Luaprata/stop")
         self.assertEqual(status, 502)
         self.assertIn("may or may not", json.loads(body)["error"])
@@ -244,7 +247,7 @@ class ActionTests(FleetBase):
 class NoRunnerTests(FleetBase):
     def setUp(self):
         super().setUp()
-        p = mock.patch.object(app, "RUNNER", fleet.Runner("", ""))
+        p = mock.patch.object(agents, "RUNNER", fleet.Runner("", ""))
         p.start()
         self.addCleanup(p.stop)
 
@@ -276,7 +279,7 @@ class NoRunnerTests(FleetBase):
         self.addCleanup(up.shutdown)
         apis = {"luaprata": ("Luaprata", f"http://127.0.0.1:{up.server_address[1]}"),
                 "gone": ("Gone", "http://127.0.0.1:1")}
-        with mock.patch.object(app, "AGENT_APIS", apis):
+        with mock.patch.object(agents, "AGENT_APIS", apis):
             j = json.loads(self.call("/api/fleet")[1])
         self.assertEqual(j["runner"], "disabled")
         by = {a["name"]: a for a in j["agents"]}
@@ -287,15 +290,16 @@ class NoRunnerTests(FleetBase):
 
 class PageTests(unittest.TestCase):
     def test_page_has_the_panel_and_no_innerhtml_for_runner_text(self):
-        self.assertIn('id="fleet"', app.PAGE)
-        self.assertIn('id="tglFleet"', app.PAGE)
-        self.assertNotIn("@fleet-", app.PAGE)
-        self.assertNotIn("innerHTML", fleet.FLEET_JS)
-        self.assertNotIn("innerHTML", fleet.FLEET_HTML)
+        self.assertIn('id="fleet"', pagesrc.PAGE)
+        self.assertIn('id="tglFleet"', pagesrc.PAGE)
+        self.assertNotIn("@fleet-", pagesrc.PAGE)
+        self.assertNotIn("innerHTML", pagesrc.FLEET_JS)
+        markup = re.search(r'<section id="fleet".*?</section>', pagesrc.PAGE, re.S).group(0)
+        self.assertNotIn("innerHTML", markup)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_fleet_script_parses(self):
-        script = fleet.FLEET_JS.replace("<script>", "").replace("</script>", "")
+        script = pagesrc.FLEET_JS.replace("<script>", "").replace("</script>", "")
         with tempfile.TemporaryDirectory() as d:
             f = pathlib.Path(d) / "fleet.js"
             f.write_text(script)

@@ -8,8 +8,9 @@ from types import SimpleNamespace
 from agent import actions as ac
 from agent import group as grp
 from agent import perception as per
-from agent import session as sess_mod
-from agent.tests.test_actions import fake_session, object_at
+from agent.handlers import group as group_handlers
+from agent.router import Context
+from agent.tests.actions_helpers import fake_session, object_at
 
 
 def member(name, guid, online=1, subgroup=0, flags=0, roles=0):
@@ -66,9 +67,11 @@ class ParseGroupListTest(unittest.TestCase):
 class SessionStateTest(unittest.TestCase):
     def make(self):
         s = SimpleNamespace(group=None, pending_invite={"inviter_name": "Alice"}, events=[])
-        s._record_event = lambda kind, **f: s.events.append({"kind": kind, **f})
-        for n in ("_handle_group_list", "_handle_group_gone", "_handle_group_decline"):
-            setattr(s, n, getattr(sess_mod.WoWSession, n).__get__(s))
+        s.record_event = lambda kind, **f: s.events.append({"kind": kind, **f})
+        ctx = Context(s, None)
+        s._handle_group_list = lambda payload: group_handlers.handle_group_list(ctx, payload)
+        s._handle_group_gone = lambda payload: group_handlers.handle_group_gone(ctx, payload)
+        s._handle_group_decline = lambda payload: group_handlers.handle_group_decline(ctx, payload)
         return s
 
     def test_list_sets_group_and_clears_invite(self):

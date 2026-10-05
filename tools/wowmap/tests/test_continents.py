@@ -8,6 +8,10 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import areas  # noqa: E402
+import players  # noqa: E402
+import state  # noqa: E402
 from test_position import f32, write_dbc  # noqa: E402
 from transform import DbcTables  # noqa: E402
 
@@ -94,14 +98,14 @@ class AppTests(ContinentCase):
         maps = tempfile.TemporaryDirectory()
         self.addCleanup(maps.cleanup)
         (pathlib.Path(maps.name) / "continent_1.png").write_bytes(b"png")
-        for p in (mock.patch.object(app, "tables", return_value=self.t),
-                  mock.patch.object(app, "overlays", return_value={}),
-                  mock.patch.object(app, "MAPS_DIR", maps.name)):
+        for p in (mock.patch.object(state, "tables", return_value=self.t),
+                  mock.patch.object(state, "overlays", return_value={}),
+                  mock.patch.object(state, "MAPS_DIR", maps.name)):
             p.start()
             self.addCleanup(p.stop)
 
     def test_continents_list_their_zones(self):
-        by_id = {c["area_id"]: c for c in app.fetch_continents()}
+        by_id = {c["area_id"]: c for c in areas.fetch_continents()}
         self.assertEqual(sorted(by_id), ["c0", "c1", "c571"])
         kalimdor = by_id["c1"]
         self.assertTrue(kalimdor["continent_view"])
@@ -114,19 +118,19 @@ class AppTests(ContinentCase):
                          [{"area_id": 3430, "name": "Eversong Woods", "box": None}])
 
     def test_zone_list_leaves_the_continent_rows_out(self):
-        self.assertEqual(sorted(a["area_id"] for a in app.fetch_areas()), [14, 3430, 4742])
+        self.assertEqual(sorted(a["area_id"] for a in areas.fetch_areas()), [14, 3430, 4742])
 
     def test_continent_position(self):
-        self.assertEqual(app.continent_position(self.t, 1, 14, 300.0, -4700.0)[0], 1)
+        self.assertEqual(players.continent_position(self.t, 1, 14, 300.0, -4700.0)[0], 1)
         # Eversong (display map), an instance map and a point off the frame have none.
-        self.assertIsNone(app.continent_position(self.t, 530, 3430, 10337.1, -6359.9))
-        self.assertIsNone(app.continent_position(self.t, 36, 1581, 0.0, 0.0))
-        self.assertIsNone(app.continent_position(self.t, 1, 14, 99999.0, 0.0))
+        self.assertIsNone(players.continent_position(self.t, 530, 3430, 10337.1, -6359.9))
+        self.assertIsNone(players.continent_position(self.t, 36, 1581, 0.0, 0.0))
+        self.assertIsNone(players.continent_position(self.t, 1, 14, 99999.0, 0.0))
 
     def test_page_has_the_navigation(self):
         for needle in ('id="toContinent"', "function zoneAt", "function showArea",
                        "map.on('contextmenu', zoomOut)"):
-            self.assertIn(needle, app.PAGE)
+            self.assertIn(needle, pagesrc.PAGE)
 
 
 @unittest.skipIf(extract_maps is None, "Pillow not installed")

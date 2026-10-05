@@ -12,6 +12,8 @@ from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import assets  # noqa: E402
 
 # Leaflet 1.9.4 as published on npm (dist/leaflet.js, dist/leaflet.css), unmodified.
 LEAFLET_SHA256 = {
@@ -44,7 +46,7 @@ class StaticRouteTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(body).hexdigest(), LEAFLET_SHA256[name], name)
 
     def test_only_listed_files_are_reachable(self):
-        self.assertTrue(os.path.isfile(os.path.join(app.STATIC_DIR, "leaflet-LICENSE")))
+        self.assertTrue(os.path.isfile(os.path.join(assets.STATIC_DIR, "leaflet-LICENSE")))
         for path in ("/static/leaflet-LICENSE", "/static/", "/static/../app.py",
                      "/static/..%2Fapp.py", "/static/%2e%2e/calibration.json",
                      "/static/leaflet.js/x"):
@@ -53,17 +55,17 @@ class StaticRouteTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_page_loads_leaflet_from_this_server(self):
-        self.assertIn('<link rel="stylesheet" href="/static/leaflet.css">', app.PAGE)
-        self.assertIn('<script src="/static/leaflet.js"></script>', app.PAGE)
-        self.assertNotIn("unpkg.com", app.PAGE)
-        self.assertNotIn("cdnjs", app.PAGE)
+        self.assertIn('<link rel="stylesheet" href="/static/leaflet.css">', pagesrc.PAGE)
+        self.assertIn('<script src="/static/leaflet.js"></script>', pagesrc.PAGE)
+        self.assertNotIn("unpkg.com", pagesrc.PAGE)
+        self.assertNotIn("cdnjs", pagesrc.PAGE)
 
     def test_stage_is_a_simple_crs_leaflet_map(self):
-        self.assertIn('<div id="map"></div>', app.PAGE)
-        self.assertIn("crs: L.CRS.Simple", app.PAGE)
-        self.assertIn("function fitZone()", app.PAGE)
+        self.assertIn('<div id="map"></div>', pagesrc.PAGE)
+        self.assertIn("crs: L.CRS.Simple", pagesrc.PAGE)
+        self.assertIn("function fitZone()", pagesrc.PAGE)
         for gone in ('id="mapimg"', 'id="wrap"', "stageScale"):
-            self.assertNotIn(gone, app.PAGE)
+            self.assertNotIn(gone, pagesrc.PAGE)
 
 
 class StatIconTests(unittest.TestCase):
@@ -71,7 +73,7 @@ class StatIconTests(unittest.TestCase):
     NAMES = ("health", "mana", "gold", "played", "logout")
 
     def sprite(self):
-        m = re.search(r'<svg id="stat-icons".*?</svg>', app.PAGE, re.S)
+        m = re.search(r'<svg id="stat-icons".*?</svg>', pagesrc.PAGE, re.S)
         self.assertIsNotNone(m, "inline icon sprite missing")
         return m.group(0)
 
@@ -84,11 +86,11 @@ class StatIconTests(unittest.TestCase):
         sprite = self.sprite()
         for ref in ("http", "url(", "<image", "xlink:href", "@import"):
             self.assertNotIn(ref, sprite)
-        self.assertIn("`#i-${name}`", app.PAGE)  # icons only reference the inline sprite
+        self.assertIn("`#i-${name}`", pagesrc.PAGE)  # icons only reference the inline sprite
 
     def test_icons_are_labelled(self):
-        self.assertIn("setAttribute('aria-label', label)", app.PAGE)
-        self.assertIn("setAttribute('role', 'img')", app.PAGE)
+        self.assertIn("setAttribute('aria-label', label)", pagesrc.PAGE)
+        self.assertIn("setAttribute('role', 'img')", pagesrc.PAGE)
 
 
 if __name__ == "__main__":

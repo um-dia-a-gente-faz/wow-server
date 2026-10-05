@@ -12,6 +12,10 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import activity  # noqa: E402
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import routes  # noqa: E402
+from webio import Request  # noqa: E402
+import state as wowmap_state  # noqa: E402
 
 ITEMS = {2589: ("Linen Cloth", 13), 159: ("Refreshing Spring Water", 1), 6948: ("Hearthstone", 0)}
 
@@ -236,20 +240,17 @@ class ApiTests(unittest.TestCase):
         store = activity.ActivityStore(":memory:")
         store.add([activity.event("Rubens", 5, "chat", 'Said "hi"', "chat", "c1")])
         feed = activity.Activity(store)
-        handler = mock.Mock(spec=app.Handler)
-        handler.path = "/api/character/Rubens/activity?limit=10"
-        with mock.patch.object(app, "activity", feed):
-            app.Handler.do_GET(handler)
-        code, body = handler._send.call_args[0][:2]
+        def get(path):
+            return routes.dispatch(Request("GET", path, {"limit": ["10"]}, {}, None))
+        with mock.patch.object(wowmap_state, "activity", feed):
+            code, body = get("/api/character/Rubens/activity")[:2]
         self.assertEqual(code, 200)
         self.assertEqual(body["events"][0]["text"], 'Said "hi"')
-        handler.path = "/api/character/Rubens/activity"
-        with mock.patch.object(app, "activity", None):
-            app.Handler.do_GET(handler)
-        self.assertEqual(handler._send.call_args[0][0], 503)
-        self.assertNotIn("@activity-", app.PAGE)
-        self.assertIn("window.ActivityFeed", app.PAGE)
-        self.assertIn("Recent activity", app.PAGE)
+        with mock.patch.object(wowmap_state, "activity", None):
+            self.assertEqual(get("/api/character/Rubens/activity")[0], 503)
+        self.assertNotIn("@activity-", pagesrc.PAGE)
+        self.assertIn("window.ActivityFeed", pagesrc.PAGE)
+        self.assertIn("Recent activity", pagesrc.PAGE)
 
 
 # Minimal DOM stand-in: enough for ActivityFeed to render, then dump every row's
@@ -282,7 +283,7 @@ const txt = (n) => typeof n === 'string' ? n
 
 def feed_rows(events, query):
     js = (FEED_HARNESS.replace("EVENTS", json.dumps(events)).replace("QUERY", json.dumps(query))
-          .replace("//SCRIPT//", app.ACTIVITY_JS.replace("<script>", "").replace("</script>", "")))
+          .replace("//SCRIPT//", pagesrc.ACTIVITY_JS.replace("<script>", "").replace("</script>", "")))
     r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -290,7 +291,7 @@ def feed_rows(events, query):
 
 class FeedUiTests(unittest.TestCase):
     """#173: timestamps, search and scrolling in the drawer's Recent activity."""
-    js, css = app.ACTIVITY_JS, app.ACTIVITY_CSS
+    js, css = pagesrc.ACTIVITY_JS, pagesrc.ACTIVITY_CSS
 
     def test_absolute_and_relative_time(self):
         self.assertIn("const clock = ", self.js)

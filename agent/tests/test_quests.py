@@ -19,6 +19,7 @@ from agent import quests as qu
 from agent import session as se
 from agent import update_fields as uf
 from agent import update_object as uo
+from agent.tests.builders import make_session, reward_list
 
 
 def cstring(s: str) -> bytes:
@@ -176,10 +177,6 @@ class ParseQuestgiverStatusTest(unittest.TestCase):
         self.assertEqual(info["status_name"], "status_77")
 
 
-def reward_list(items) -> bytes:
-    return struct.pack('<I', len(items)) + b''.join(struct.pack('<III', e, c, d) for e, c, d in items)
-
-
 class ParseQuestgiverQuestListTest(unittest.TestCase):
     def test_two_quests(self):
         # PlayerMenu::SendQuestGiverQuestList: per quest id, icon, level,
@@ -303,14 +300,8 @@ class QuestEventDispatchTest(unittest.TestCase):
     first live ADD_KILL was dropped with "_record_event() got multiple
     values for argument 'kind'" (UM-91)."""
 
-    def make_session(self):
-        sess = se.WoWSession('127.0.0.1', 8085, 'TEST', b'\x00' * 40, 1)
-        sess.world_state.names.cache_path = os.path.join(
-            tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
-        return sess
-
     def test_add_kill_is_recorded(self):
-        sess = self.make_session()
+        sess = make_session()
         sess._dispatch(qu.SMSG_QUESTUPDATE_ADD_KILL, fixture("questupdate_add_kill_8325.bin"))
         event = sess.events[-1]
         self.assertEqual(event["kind"], "quest_progress")
@@ -319,13 +310,13 @@ class QuestEventDispatchTest(unittest.TestCase):
         self.assertEqual((event["count"], event["required"]), (1, 8))
 
     def test_add_item_is_recorded(self):
-        sess = self.make_session()
+        sess = make_session()
         sess._dispatch(qu.SMSG_QUESTUPDATE_ADD_ITEM, b'')
         self.assertEqual(sess.events[-1]["kind"], "quest_progress")
         self.assertEqual(sess.events[-1]["objective"], "item")
 
     def test_complete_turned_in_and_failed_are_recorded(self):
-        sess = self.make_session()
+        sess = make_session()
         sess._dispatch(qu.SMSG_QUESTUPDATE_COMPLETE, struct.pack('<I', 8325))
         sess._dispatch(qu.SMSG_QUESTGIVER_QUEST_COMPLETE, struct.pack('<6I', 8325, 45, 30, 0, 0, 0))
         sess._dispatch(qu.SMSG_QUESTGIVER_QUEST_FAILED, struct.pack('<II', 8325, 4))
@@ -333,7 +324,7 @@ class QuestEventDispatchTest(unittest.TestCase):
                          ["quest_complete", "quest_turned_in", "quest_failed"])
 
     def test_quest_query_response_reaches_the_cache(self):
-        sess = self.make_session()
+        sess = make_session()
         sess._dispatch(qu.SMSG_QUEST_QUERY_RESPONSE, fixture("quest_query_response_8325.bin"))
         self.assertEqual(sess.world_state.quest_texts.quests[8325]["title"], "Reclaiming Sunstrider Isle")
 

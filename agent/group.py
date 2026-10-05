@@ -26,7 +26,7 @@ which parses to a zero leader — that is how "not in a group" is recognised.
 
 import struct
 
-from agent import packets as pk
+from . import packets as pk
 
 GROUPTYPE_RAID = 0x02
 GROUPTYPE_LFG = 0x08

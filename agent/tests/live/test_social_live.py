@@ -1,6 +1,6 @@
 """Opt-in live test against the real server — absorbs the old root-level
 test_social.py (login -> whisper -> party invite), fixed to use the real
-chat wire format (agent/actions.py) instead of that script's placeholder
+chat wire format (agent/actions/chat.py) instead of that script's placeholder
 whisper target and CHAT_MSG_PARTY(2)-as-whisper bug.
 
 Skipped unless WOW_LIVE_TESTS=1. Needs WOW_ACCOUNT/WOW_PASSWORD/WOW_CHARACTER

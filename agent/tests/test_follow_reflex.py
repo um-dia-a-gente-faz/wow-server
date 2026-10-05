@@ -1,6 +1,6 @@
 """Unit tests for agent.reflexes.follow: the follow-leader/assist reflex
 (UM-58). All movement is driven through a FakeClock-backed Mover (same
-pattern as test_actions.py's fast_session) so tick() calls resolve
+pattern as test_actions_movement.py's fast_session) so tick() calls resolve
 instantly, deterministically, and without real threads or sleeping."""
 
 import unittest
@@ -39,7 +39,7 @@ def object_at(guid, x, y, z, object_type="unit"):
 
 
 def fast_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
-    """Mirrors test_actions.py's fast_session: a fake session pre-wired with
+    """Mirrors test_actions_movement.py's fast_session: a fake session pre-wired with
     a Mover on a FakeClock, so move_towards resolves instantly in tests."""
     sent = []
     sess = SimpleNamespace(player_guid=guid, player_position=position, events=[])

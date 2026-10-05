@@ -27,7 +27,9 @@ from ..perception import POWER_MANA
 
 log = logging.getLogger("agent.reflexes.rest")
 
-CMSG_STANDSTATECHANGE = 0x101
+from ..opcodes import (
+    CMSG_STANDSTATECHANGE,
+)
 UNIT_STAND_STATE_STAND = 0
 UNIT_STAND_STATE_SIT = 1
 

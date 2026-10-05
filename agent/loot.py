@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Loot request builders + response parsers (UM-42), pure functions, no I/O —
-see agent/session.py for the opcodes' dispatch and agent/actions.py for the
+see agent/session.py for the opcodes' dispatch and agent/actions/loot.py for the
 loot() action that drives the loot/loot_money/autostore/loot_release
 sequence.
 
@@ -24,22 +24,24 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-CMSG_USE_ITEM                   = 0x0AB
-CMSG_AUTOEQUIP_ITEM             = 0x0A8
-CMSG_DESTROYITEM                = 0x111
-SMSG_INVENTORY_CHANGE_FAILURE   = 0x112
-CMSG_AUTOSTORE_LOOT_ITEM        = 0x108
-CMSG_LOOT                       = 0x15D
-CMSG_LOOT_MONEY                 = 0x15E
-CMSG_LOOT_RELEASE                = 0x15F
-SMSG_LOOT_RESPONSE               = 0x160
-SMSG_LOOT_RELEASE_RESPONSE       = 0x161
-SMSG_LOOT_REMOVED                = 0x162
-SMSG_LOOT_MONEY_NOTIFY           = 0x163
-SMSG_LOOT_CLEAR_MONEY            = 0x165
-SMSG_ITEM_PUSH_RESULT            = 0x166
-CMSG_ITEM_QUERY_SINGLE           = 0x056
-SMSG_ITEM_QUERY_SINGLE_RESPONSE  = 0x058
+from .opcodes import (
+    CMSG_ITEM_QUERY_SINGLE,
+    SMSG_ITEM_QUERY_SINGLE_RESPONSE,
+    CMSG_AUTOEQUIP_ITEM,
+    CMSG_USE_ITEM,
+    CMSG_AUTOSTORE_LOOT_ITEM,
+    CMSG_DESTROYITEM,
+    SMSG_INVENTORY_CHANGE_FAILURE,
+    CMSG_LOOT,
+    CMSG_LOOT_MONEY,
+    CMSG_LOOT_RELEASE,
+    SMSG_LOOT_RESPONSE,
+    SMSG_LOOT_RELEASE_RESPONSE,
+    SMSG_LOOT_REMOVED,
+    SMSG_LOOT_MONEY_NOTIFY,
+    SMSG_LOOT_CLEAR_MONEY,
+    SMSG_ITEM_PUSH_RESULT,
+)
 
 # LootType (Loot.h) — the "AcquireReason" byte in SMSG_LOOT_RESPONSE. 0
 # (LOOT_NONE) never appears on a successful response (Player::SendLoot always
@@ -64,7 +66,7 @@ LOOT_ERROR_NAMES = {
 }
 
 # EquipError / InventoryResult (ItemDefines.h) — only the couple of values
-# callers (agent/actions.py) need to recognize by name; everything else stays
+# callers (agent/actions/loot.py) need to recognize by name; everything else stays
 # reachable as the raw int.
 EQUIP_ERR_OK = 0
 EQUIP_ERR_INV_FULL = 50
@@ -259,16 +261,14 @@ def build_destroy_item(bag: int, slot: int, count: int) -> bytes:
 
 
 def build_autoequip_item(bag: int, slot: int) -> bytes:
-    """CMSG_AUTOEQUIP_ITEM (0x0A8, UM-69): WorldSession::
+    """CMSG_AUTOEQUIP_ITEM (0x10A, UM-69): WorldSession::
     HandleAutoEquipItemOpcode (ItemHandler.cpp) — uint8 srcbag, uint8
     srcslot. No destination is sent: the server picks the equip slot from
     the item's own InventoryType and reports failure via
     SMSG_INVENTORY_CHANGE_FAILURE (same as any other equip/move) if the
     item can't go there (wrong armor type, class-restricted, item already
-    in that slot, etc). This opcode value is taken from the standard,
-    well-documented TrinityCore 3.3.5a (build 12340) Opcodes.h; it has not
-    been independently confirmed against a live server in this
-    environment (no network access) — flag for live verification."""
+    in that slot, etc). Opcode and layout verified against TrinityCore 3.3.5 Opcodes.h and
+    ItemPackets.cpp (AutoEquipItem::Read); not yet confirmed live (#260)."""
     return struct.pack('<BB', bag, slot)
 
 

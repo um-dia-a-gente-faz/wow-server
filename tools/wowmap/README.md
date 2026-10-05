@@ -18,11 +18,25 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 `MYSQL_PASSWORD` (plus the optional paths and port described below and in
 `app.py`).
 
+### Code layout (#249)
+
+`app.py` only wires the `http.server` handler to `routes.py`, whose table maps
+`(method, path pattern)` to handlers returning `(status, body[, ctype, cache])` so they
+run without a socket (`webio.Request`). All SQL lives in `repo/` (`players`,
+`characters`); `players.py`, `character.py`, `inventory.py`, `areas.py` turn rows into
+JSON, `calibration.py`, `fogview.py`, `agents.py` (fleet/agent proxy glue) and
+`assets.py` own those concerns, `state.py` holds env config and the lazy DBC/name
+caches, and `pages.py` fills in `static/index.html`. The front end is plain files in
+`static/` (see "Front end" below). (`activity.py` keeps its own
+SQL: its poller and sqlite store are a separate subsystem.) A new endpoint is one
+handler plus one line in `ROUTES`.
+
 | Env | Default | Meaning |
 |---|---|---|
 | `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names, and for item tooltips `SpellDuration.dbc`, `SpellRadius.dbc`, `ItemSet.dbc`, `ItemRandomProperties.dbc`, `ItemRandomSuffix.dbc`, `SpellItemEnchantment.dbc`, `GemProperties.dbc`, `SkillLine.dbc`, `RandPropPoints.dbc`; a missing file is logged and only its tooltip lines are left out) |
 | `MAPS_DIR` | `/maps` | directory containing extracted `<area_id>.png` map art (and `<area_id>_base.png`) |
 | `ICONS_DIR` | `/icons` | directory containing extracted item icon PNGs (see *Item icons*); `ItemDisplayInfo.dbc` is read from `DBC_DIR` |
+| `MODELS_DIR` | `/models` | directory containing extracted character meshes and skins `<race>_<gender>.bin|.png` (see *Character model*); empty means the drawer shows a placeholder |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
 | `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
@@ -258,8 +272,8 @@ directly. At widths of 600 px or less the drawer takes the full width.
 
 Every value from the database (character, item, and zone names) is rendered
 with `textContent`, never `innerHTML`. The drawer's CSS, HTML, and JS live in
-`INSPECT_CSS` / `INSPECT_HTML` / `INSPECT_JS` in `app.py`. They are spliced into
-`PAGE` at `@inspect-*` markers, so other panels can be added the same way.
+`static/character.css`, `static/character.js` (`Inspect`) and `static/inventory.js`
+(`Coins`, `ItemTip`); its markup is in `static/index.html`.
 
 Health is current only, and so is power. The worldserver computes maximum
 health and power at runtime and never saves them, so there are no bars (see
@@ -308,7 +322,7 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
   used by the list and map markers.
 - **Unified selection**: clicking a character in the list, on a map marker, or
   as a chat sender highlights them everywhere and pans the map to their zone
-  (`selectCharacter()` in `app.py`'s main script). It only *toggles* CSS
+  (`selectCharacter()` in `static/map.js`). It only *toggles* CSS
   classes on existing DOM nodes rather than rebuilding `#list`/`#markers` —
   rebuilding while the click event that triggered it is still bubbling detaches
   the clicked element, which makes the drawer's click-away handler misfire and
@@ -541,3 +555,37 @@ container. Own-slot ranges from TrinityCore 3.3.5 `Player.h`:
 | 67-73 | bank bags |
 | 86-117 | keyring |
 | 118-149 | currency tokens |
+
+## Front end
+
+No build step. `static/index.html` is the page (`pages.py` fills in the chat feed URL with
+`string.Template`); every panel has its own files, loaded in this order by `index.html`:
+`map.css`/`map.js` (map, player list, trails, calibration; `map.js` runs last),
+`format.js` (pure text helpers), `inventory.js`, `character.css`/`character.js` (drawer),
+`activity.*`, `chat.*`, `agent.*`, `fleet.*`, `walk.*`. They are classic scripts sharing
+one global scope, so the order in `index.html` matters. `assets.static` serves any
+`*.css`/`*.js` in `static/` under `/static/` (`no-cache`, so a deploy shows at once).
+A new file must be added to the `Dockerfile` only if it is outside `static/`.
+
+JS tests: `node --test tools/wowmap/tests/js/*.test.js` (pure functions in `format.js` and `map.js`).
+
+## Character model
+
+The inspect drawer shows the character's body as a 3D model (drag to rotate, wheel to
+zoom) when `MODELS_DIR` holds that race and gender. Equipment is not drawn yet. The
+spike, sizes and limits are in `docs/CHARACTER-MODEL-SPIKE.md`.
+
+Like the icons, the art comes from the user-supplied client, so it is extracted on the
+VM and never committed. Run once, with `mpyq` and `Pillow` available:
+
+```bash
+cd /opt/wow-server/tools/wowmap
+python3 extract_models.py --client /opt/wow-server/client \
+    --dbc /opt/wowmap-data/dbc --out /opt/wowmap-data/models
+```
+
+It writes the 20 playable race/gender models (5.6 MB). `monitoring/docker-compose.yml`
+mounts `/opt/wowmap-data/models` read-only at `/models`; `GET /models/<race>_<gender>.bin|.png`
+serves them and `GET /api/character/<name>` gives `model` (`"/models/1_0"`, or `null`).
+The renderer is three.js r159 vendored in `static/` (no CDN, no build) and is fetched only
+when a model is shown.
