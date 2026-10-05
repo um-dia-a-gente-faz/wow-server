@@ -48,7 +48,6 @@ from .. import actions as ac
 from .. import rules
 from .. import known_targets as kt
 from .. import lines
-from .. import npc
 from ..reflexes import follow as _follow  # noqa: F401 -- importing registers follow/assist
 from ..reflexes import rest as restmod
 
