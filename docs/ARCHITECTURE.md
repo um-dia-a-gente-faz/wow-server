@@ -158,6 +158,13 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 | Dev tools | `tools/` (`ab.py`, `cache_probe.py`, `dump_update.py`, `probe.py`, `replay.py`) | not run by the agent itself. |
 | Tests | `tests/` | `python3 -m unittest discover -s agent/tests`. |
 
+The import rules for `agent/` are enforced by `agent/tests/test_architecture.py`: its `LAYERS`
+table lists, for every module, the modules it may import (stdlib-only, parsers pure, handlers do
+not act, `actions` never import `reflexes`, no cycles, nothing imports `__main__`). A new
+module or edge is a deliberate edit to that table. The same file checks that only
+`tools/agent-runner` imports `docker`/`subprocess` and that `tools/` uses only `pymysql`, `Pillow`
+and `mpyq`.
+
 ### `tools/` (may use `pymysql`/`Pillow`)
 
 | Directory | Owns | Runs on |
