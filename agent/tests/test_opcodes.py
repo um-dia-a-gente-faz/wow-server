@@ -30,6 +30,10 @@ class OpcodeTableTest(unittest.TestCase):
             by_value[v].append(n)
         self.assertEqual({hex(v): n for v, n in by_value.items() if len(n) > 1}, {})
 
+    def test_autoequip_item_matches_trinitycore(self):
+        # Opcodes.h (3.3.5): CMSG_AUTOEQUIP_ITEM = 0x10A; 0x0A8 is CMSG_CHANNEL_MODERATE (#260)
+        self.assertEqual(opcodes.CMSG_AUTOEQUIP_ITEM, 0x10A)
+
     def test_every_routed_opcode_is_defined(self):
         known = set(_table().values())
         self.assertEqual(sorted(hex(o) for o in ROUTER._handlers if o not in known), [])
