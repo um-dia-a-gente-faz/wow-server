@@ -147,7 +147,7 @@ agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config sc
 | Area | Modules | Owns |
 |---|---|---|
 | Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). |
-| Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `transport.py`, `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
+| Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `transport.py`, `opcodes.py` (all opcode constants), `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
 | State | `state.py` (`GameState`), `perception.py` (`WorldState`, snapshots), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |
 | Domain builders and parsers | `npc.py`, `quests.py`, `loot.py`, `mail.py`, `trade.py`, `spells.py`, `channels.py`, `names.py`, `items.py`, `item_compare.py`, `death.py`, `movement.py` | pure request builders and response parsers (and `death.py`/`movement.py` flows) used by handlers and actions. |
@@ -182,8 +182,8 @@ Run one agent locally against the live realm (credentials from `.env` on the VM,
 never from this repo): `WOW_ACCOUNT=... WOW_PASSWORD=... WOW_CHARACTER=... python3 -m agent --dry-run`.
 The old Node.js runtime (`agent-runtime/`) was removed and lives only in git history.
 
-In flight and not yet reflected above: PR #247 (centralise opcodes) and PR #248
-(split `actions.py`).
+Not yet reflected above: issue #248 (split `actions.py`). Opcode constants are
+centralised in `agent/opcodes.py` (PR #258, issue #247).
 
 ### Volumes
 

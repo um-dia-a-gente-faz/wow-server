@@ -42,5 +42,5 @@ increments `dropped_packets`, logs at most once per opcode per 30 s
 - A raised handler error is swallowed after logging, so a bug shows up as a
   rising `dropped_packets` and a rate-limited warning rather than a disconnect.
 - Tests cover the router in `agent/tests/test_router.py`.
-- PR #247 (centralise opcodes) is in flight; the registration keys are plain
-  opcode integers until it lands.
+- The registration keys are plain opcode integers, now defined once in
+  `agent/opcodes.py` (PR #258, issue #247).

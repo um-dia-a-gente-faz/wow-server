@@ -40,6 +40,5 @@ were not moved; they stay pure functions and the handlers call them.
 - Importing `agent.session` is what registers the handlers (it imports every
   handler module). A module that builds a router context without importing it gets
   an empty table.
-- `session.py` still defines the login-time opcode constants itself. PR #247
-  (centralise opcodes) is in flight and is expected to change that; this ADR does
-  not describe it as done.
+- Opcode constants no longer live in `session.py`: PR #258 (issue #247)
+  centralised them in `agent/opcodes.py`.
