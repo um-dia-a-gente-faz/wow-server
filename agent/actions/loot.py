@@ -184,8 +184,7 @@ class DestroyItemAction(Action):
 # Wire layout for CMSG_AUTOEQUIP_ITEM verified against TrinityCore branch
 # `3.3.5` (src/server/game/Handlers/ItemHandler.cpp,
 # HandleAutoEquipItemOpcode) — see agent/loot.py's build_autoequip_item for
-# the byte-level detail and its opcode-value caveat (not independently
-# confirmed against a live server in this sandbox, no network access here).
+# the byte-level detail (opcode 0x10A fixed in #260; not yet confirmed live).
 # Scoring/usability heuristics live in agent/item_compare.py (v1: primary
 # stat for class + item level tiebreak, no talent/spec awareness).
 
