@@ -5,7 +5,7 @@ import unittest
 
 from agent import session as se
 from agent.router import Context, PacketRouter, ROUTER
-from agent.tests.test_session import make_session
+from agent.tests.builders import make_session
 
 
 class PacketRouterTest(unittest.TestCase):

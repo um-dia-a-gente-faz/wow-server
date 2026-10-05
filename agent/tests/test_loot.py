@@ -7,6 +7,7 @@ import unittest
 
 from agent import loot as lo
 from agent import packets as pk
+from agent.tests.builders import cstr
 
 
 class BuildRequestsTest(unittest.TestCase):
@@ -137,10 +138,6 @@ class ParseInventoryChangeFailureTest(unittest.TestCase):
         self.assertEqual(info["item_guids"], [])
 
 
-def _cstring(s: str) -> bytes:
-    return s.encode('utf-8') + b'\x00'
-
-
 class ParseItemQueryResponseTest(unittest.TestCase):
     def _build(self, entry=159, name="Tough Jerky", stackable=20, max_durability=0,
                item_level=1, allowable_class=-1, item_class=0, subclass=5,
@@ -148,7 +145,7 @@ class ParseItemQueryResponseTest(unittest.TestCase):
                spells=((3222, lo.ITEM_SPELLTRIGGER_ON_USE),)) -> bytes:
         p = struct.pack('<I', entry)
         p += struct.pack('<III', item_class, subclass, 0)  # class, subclass, sound_override
-        p += _cstring(name) + bytes([0, 0, 0])
+        p += cstr(name) + bytes([0, 0, 0])
         p += struct.pack('<II', 100, 1)  # display_info_id, quality
         p += struct.pack('<II', 0, 0)  # Flags[2]
         p += struct.pack('<iI', 500, 500)  # buy_price(i32), sell_price
@@ -181,7 +178,7 @@ class ParseItemQueryResponseTest(unittest.TestCase):
             else:
                 p += struct.pack('<IIIIII', 0, 0, 0, 0xFFFFFFFF, 0, 0xFFFFFFFF)
         p += struct.pack('<I', 1)  # bonding
-        p += _cstring("")  # description
+        p += cstr("")  # description
         p += struct.pack('<IIIII', 0, 0, 0, 0, 0)  # page_text, language_id, page_material, start_quest, lock_id
         p += struct.pack('<i', -1)  # material
         p += struct.pack('<I', 0)  # sheath

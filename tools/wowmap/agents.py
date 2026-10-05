@@ -30,6 +30,18 @@ AGENT_APIS = parse_agent_urls(os.environ.get("AGENT_API_URLS", ""))
 AGENT_VIEWS = ("healthz", "state", "perception", "brain")
 AGENT_PROXY_TIMEOUT_S = 3
 MAX_AGENT_RESPONSE_BYTES = 4 * 1024 * 1024
+# #264: agent API versions this page can render (agent/api_schema.json; a test pins it to the
+# schema). A response with no api_version is an older agent whose shape is version 1.
+SUPPORTED_API_VERSIONS = (1,)
+
+
+def unsupported_api_version(body):
+    """The api_version of an agent response wowmap cannot render, else None."""
+    try:
+        v = json.loads(body).get("api_version")
+    except (ValueError, AttributeError):
+        return None
+    return v if v is not None and v not in SUPPORTED_API_VERSIONS else None
 
 # #137: the agent runner behind the fleet panel. URL and token are read here once and
 # only ever used by fleet.Runner; no handler echoes either.
@@ -73,7 +85,13 @@ def fetch_agent_view(name, view, n=None):
         url += f"?n={int(n)}"
     try:
         with urllib.request.urlopen(url, timeout=AGENT_PROXY_TIMEOUT_S) as r:
-            return r.status, r.read(MAX_AGENT_RESPONSE_BYTES)
+            status, body = r.status, r.read(MAX_AGENT_RESPONSE_BYTES)
+        v = unsupported_api_version(body)
+        if v is not None:
+            supported = ", ".join(map(str, SUPPORTED_API_VERSIONS))
+            return 502, json.dumps({"error": f"agent API version {v} not supported (this page supports {supported})",
+                                    "code": "api_version", "api_version": v}).encode()
+        return status, body
     except urllib.error.HTTPError as e:
         e.close()
         return 502, json.dumps({"error": f"agent API returned {e.code}"}).encode()
