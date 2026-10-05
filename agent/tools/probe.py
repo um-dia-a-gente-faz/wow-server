@@ -755,7 +755,7 @@ def main(argv=None, *, connect=None) -> int:
     chat = None
     if "chat" not in skipped:
         chat = ChatFeedWatcher(args.chat_feed or f"http://{cfg.wow_host}:9500",
-                               token=os.environ.get("CHAT_FEED_TOKEN", "").strip())
+                               token=cfg.chat_feed_token)
 
     report = run_probe(connect, character=cfg.character or f"guid:{cfg.char_guid}", host=cfg.wow_host,
                        skip_steps=skipped, chat=chat, line_id=args.line, settle_s=args.settle)
