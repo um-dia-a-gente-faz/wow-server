@@ -16,29 +16,6 @@ wow-agents monitor's reviewer prompt (one file on the monitor host).
 ## Review by <agent>
 **Verdict:** approve | request-changes | comment
 
-### What I checked
-<2-4 lines: the diff, the tests run and their result, the acceptance criteria compared against>
-
-### Standards
-| # | Standard | ✅ / ❌ / ➖ | Evidence |
-|---|---|---|---|
-| 1 | Commits follow Conventional Commits (`<type>(<scope>): ...`) | | |
-| 2 | Branch `feature/<ref>-<slug>` or `bugfix/<ref>-<slug>`, based on `main`, not stacked | | |
-| 3 | PR title `<ref>: ...`; body has `Issue:` and `Closes` | | |
-| 4 | Single logical change, scoped to the linked issue | | |
-| 5 | Tests pass locally (run them); new behaviour covered | | |
-| 6 | CI green (not visible from the reviewer host: ➖; the monitor gates it) | | |
-| 7 | No secrets or credentials in the diff | | |
-| 8 | No generated or large files; `.gitignore` covers them | | |
-| 9 | `agent/` stays stdlib-only; `tools/` only `pymysql`/`Pillow` | | |
-| 10 | No `main` pushes, force-pushes, worldserver restarts or GM commands | | |
-| 11 | Correctness: the change does what the issue asks, not just "looks right" | | |
-| 12 | Docs updated when a documented workflow changed | | |
-
-Fill every row: ✅ pass, ❌ fail, ➖ not applicable or not verifiable — with a
-one-line evidence note. Never ✅ without evidence; every ❌ is explained in
-Findings and listed under Required fixes if it blocks.
-
 ### Findings
 1. `path/file.py:123` — what is wrong and why it matters. (Most important first. Say what you did not review.)
 
@@ -51,10 +28,28 @@ Findings and listed under Required fixes if it blocks.
 ```
 ````
 
+Keep it short — the verdict, what is wrong, and what to change. No preamble and
+no checklist dump: the comment is read by a fixing agent and by a human
+skimming the PR.
+
 ## Rules
 
-- **A verdict alone is not a review.** State what was actually checked (diff,
-  tests, acceptance criteria) and why the verdict follows.
+- **A verdict alone is not a review.** The verdict must follow from what was
+  actually checked: the full diff and the surrounding code, the tests run and
+  their result, and the linked issue's acceptance criteria. Never `approve`
+  code you did not read; when something material is unverified, say so in
+  Findings and use `comment` or `request-changes`.
+- **The repo standards are still checked, silently.** Conventional Commits;
+  branch `feature/<ref>-<slug>` or `bugfix/<ref>-<slug>` based on `main`, not
+  stacked; PR title `<ref>: ...` with `Issue:` and `Closes` in the body; a
+  single logical change scoped to the linked issue; tests pass locally and new
+  behaviour is covered; no secrets in the diff; no generated or large files
+  (`.gitignore` covers them); `agent/` stays stdlib-only and `tools/` uses only
+  `pymysql`/`Pillow`; no `main` pushes, force-pushes, worldserver restarts or GM
+  commands; docs updated when a documented workflow changed. A failure is a
+  **Findings** entry — and, when it blocks, a **Required fixes** entry — not a
+  table row. CI is not visible from the reviewer host: report it as unverifiable
+  rather than passing, and the monitor gates it.
 - **Verdicts:** `approve` — nothing blocking (minor notes still go under
   Findings); `request-changes` — at least one blocking problem, with the
   numbered fixes; `comment` — observations only, no fix round expected.
