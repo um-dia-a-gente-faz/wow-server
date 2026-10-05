@@ -90,3 +90,17 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
 `live-agent-test` (test on the live server) · `trinity-protocol` (wire formats) ·
 `pr-workflow` (ship a change) · `milestone-loop` (work a milestone end to end, merge
 after another agent's review) · `wowmap-dev` (the observability site).
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `Cividati/wow-server` (`gh` CLI); `UM-*` issues are Linear mirrors. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
