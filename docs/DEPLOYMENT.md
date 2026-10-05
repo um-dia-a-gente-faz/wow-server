@@ -37,7 +37,7 @@ mkdir -p /opt/wow-server && cd /opt/wow-server
 
 # 1. Get the repo (piping avoids scp approval prompts)
 ssh-keyscan github.com >> ~/.ssh/known_hosts
-git clone git@github.com:Cividati/wow-server.git .
+git clone git@github.com:um-dia-a-gente-faz/wow-server.git .
 
 # 2. Client files — 17 GB, BEFORE starting (map extraction needs them)
 #    From a machine that has them:

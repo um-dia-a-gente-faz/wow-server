@@ -80,7 +80,7 @@ o nome de arquivo citado:
 
 ### 4. Deploy do stack
 
-Copie o docker-compose.yml do repo Cividati/wow-server para /opt/wow-server/ (ele já
+Copie o docker-compose.yml do repo um-dia-a-gente-faz/wow-server para /opt/wow-server/ (ele já
 contém a montagem do TDB e os limites de memória corretos), ajuste
 PUBLIC_IP_ADDRESS se o IP for outro, e:
 
@@ -241,7 +241,7 @@ e abre Wow.exe DIRETO (nunca o launcher — ele tenta patch e quebra a compatibi
 
 ## Referências
 
-- Repo: https://github.com/Cividati/wow-server
+- Repo: https://github.com/um-dia-a-gente-faz/wow-server
 - Imagem: `danielsilvestre37/trinitycore-docker:3.3.5` (fonte: https://github.com/valcriss/trinitycore-docker)
 - TDB releases: https://github.com/TrinityCore/TrinityCore/releases
 - Docs TrinityCore 3.3.5: https://335.trinitycore.net/
