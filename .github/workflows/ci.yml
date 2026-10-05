@@ -16,8 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
-    name: python (compile + unit tests)
+  # agent/ is stdlib-only: this job installs nothing, so a third-party import fails here.
+  agent:
+    name: agent (compile + stdlib-only tests)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -25,40 +26,21 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - run: scripts/check.sh compile test-stdlib
 
-      - name: py_compile
-        run: |
-          find agent tools exporters scripts -name '*.py' -print0 \
-            | xargs -0 python -m py_compile
-
-      # tools/chat-feed is stdlib-only (its requirements.txt is intentionally
-      # empty). If a tool's tests ever need deps, install that tool's
-      # requirements.txt here, never for agent/ (stdlib only).
-      - name: chat-feed unit tests
-        run: python -m unittest discover -s tools/chat-feed/tests -v
-
-      # tools/dbc (the shared WDBC reader) is stdlib-only.
-      - name: dbc unit tests
-        run: python -m unittest discover -s tools/dbc/tests -v
-
-      # Offline: pull-audit.sh / audit-pull-status.sh against temp dirs with a fake
-      # rsync (#135). Plain bash + coreutils, no network.
-      - name: wow-agents audit pull tests
-        run: |
-          for f in scripts/wow-agents/*.sh; do bash -n "$f"; done
-          python -m unittest discover -s scripts/wow-agents/tests -v
-
-      # #253: the agent's real auth + world client against tools/world-mock over
-      # localhost sockets: SRP6 login, update objects, quest turn-in, confirmation.
-      - name: world-mock end-to-end (login + quest turn-in)
-        run: python -m unittest discover -s tools/world-mock/tests -v
-
-      - name: jev-mock unit tests
-        run: python -m unittest discover -s tools/jev-mock/tests -v
-
-      # tools/agent-runner is stdlib-only; its tests use a fake `docker` on PATH.
-      - name: agent-runner unit tests
-        run: python -m unittest discover -s tools/agent-runner/tests -v
+  # Every other suite, registered in scripts/check.sh (#298). wowmap needs PyMySQL +
+  # cryptography (its requirements.txt) and Pillow; node is preinstalled on ubuntu-latest.
+  tools:
+    name: tools (unit tests, generated files)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r tools/wowmap/requirements.txt Pillow
+      - run: scripts/check.sh generated test
 
       # UM-100: the real JevClient against jev-mock as a separate process, over
       # real HTTP. Real Jev (paid, needs a key) never runs in CI.
@@ -71,28 +53,6 @@ jobs:
           done
           JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha \
             python -m unittest -v tools/jev-mock/tests/test_external.py
-
-      # wowmap needs PyMySQL + cryptography (see its requirements.txt), and Pillow
-      # for the extract_maps.py / extract_icons.py tests (offline tools, not in the image).
-      - name: wowmap unit tests
-        run: |
-          pip install -r tools/wowmap/requirements.txt Pillow
-          python -m unittest discover -s tools/wowmap/tests -v
-
-      # #262: pure front-end functions (tools/wowmap/static/*.js) under node's built-in runner.
-      # Node is preinstalled on ubuntu-latest; the shell expands the glob so any node >= 18 works.
-      - name: wowmap JS unit tests
-        run: |
-          node --version
-          node --test tools/wowmap/tests/js/*.test.js
-
-      - name: agent unit tests
-        run: |
-          if [ -d agent/tests ]; then
-            python -m unittest discover -s agent/tests -v
-          else
-            echo "agent/tests not present yet, skipping"
-          fi
 
   lint-typing:
     name: lint + types (ruff, mypy)
@@ -107,10 +67,10 @@ jobs:
       - run: pip install -r requirements-dev.txt
       # Config + baseline in ruff.toml; fails on any violation not in per-file-ignores.
       - name: ruff check
-        run: ruff check .
+        run: scripts/check.sh lint
       # Allowlist of typed files in mypy.ini (`files =`); everything else is unchecked.
       - name: mypy (allowlist)
-        run: mypy
+        run: scripts/check.sh types
 
   # #253: informational only (continue-on-error), never gates a merge. `coverage`
   # is installed here on the runner and is not a dependency of agent/ (stdlib only).
@@ -158,20 +118,6 @@ jobs:
             docker compose --project-directory . -f "$f" config -q
             echo "::endgroup::"
           done
-
-  dashboards:
-    name: grafana dashboards
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - name: Validate dashboard JSON
-        run: |
-          rc=0
-          for f in monitoring/grafana-dashboard-*.json; do
-            python3 -m json.tool "$f" > /dev/null || { echo "::error file=$f::invalid JSON"; rc=1; }
-          done
-          exit $rc
 
   secrets:
     name: gitleaks
