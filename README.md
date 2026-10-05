@@ -1,6 +1,6 @@
 # World of Warcraft — Wrath of the Lich King (3.3.5a) Private Server
 
-[![CI](https://github.com/Cividati/wow-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Cividati/wow-server/actions/workflows/ci.yml)
+[![CI](https://github.com/um-dia-a-gente-faz/wow-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/um-dia-a-gente-faz/wow-server/actions/workflows/ci.yml)
 
 TrinityCore-based WoW server, Dockerized, running on a dedicated Proxmox VM.
 
@@ -12,7 +12,7 @@ TrinityCore-based WoW server, Dockerized, running on a dedicated Proxmox VM.
 # On the wow-server VM (192.168.1.64)
 ssh root@192.168.1.64
 mkdir -p /opt/wow-server && cd /opt/wow-server
-git clone git@github.com:Cividati/wow-server.git .
+git clone git@github.com:um-dia-a-gente-faz/wow-server.git .
 
 # 1. Place your WoW 3.3.5a client in ./client/  (Data/*.MPQ, ~17 GB)
 # 2. Fetch the TDB world dump into ./tdb/        (see tdb/README.md)
