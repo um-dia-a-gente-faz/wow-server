@@ -191,6 +191,9 @@ class WalkTest(unittest.TestCase):
 
     def test_timeout_stops_the_character_and_reports_timeout(self):
         sess = make_session(real_sleep=lambda dt: time.sleep(0.02))
+        # This test uses real sleeping, so its movement clock must advance in
+        # real time too (the default fake clock only advances via fake sleep).
+        sess._mover._clock = time.monotonic
         started = time.monotonic()
         status, out = control.walk(make_observer(sess), {"x": 1000.0, "y": 20.0, "timeout_s": 1})
         self.assertLess(time.monotonic() - started, 5)
