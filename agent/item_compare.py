@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Item comparison + upgrade scoring (UM-69), pure functions, no I/O — see
-agent/actions.py for the compare_items/equip_item Action wrappers that use
+agent/actions/loot.py for the compare_items/equip_item Action wrappers that use
 this module, and agent/loot.py's parse_item_query_response() for the shape
 of the item dicts consumed here (cached by entry in agent.items.ItemCache,
 same pattern as agent.names.NameCache).

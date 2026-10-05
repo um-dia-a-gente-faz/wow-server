@@ -70,7 +70,7 @@ dropped/demoted option ({"id", "effect", "reason"}) for the audit log.
 
 Candidates only reference actions that are already registered: the follow
 reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
-`idle` (agent/actions.py). Each action's own `check()` still runs when the
+`idle` (agent/actions/combat.py). Each action's own `check()` still runs when the
 chosen candidate is executed, so a stale candidate fails safely.
 """
 

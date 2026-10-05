@@ -4,7 +4,7 @@ The agent's observability API is read-only (agent/http_api.py). This module is t
 single, opt-in exception: `POST /control/walk`, enabled only when AGENT_CONTROL_TOKEN
 is set and called by tools/agent-runner (never by a browser). It moves the character
 the only way a player can, with the character's own session: the same `move_to` /
-`move_towards` actions the think loop uses (agent/actions.py -> agent/movement.py),
+`move_towards` actions the think loop uses (agent/actions/movement.py -> agent/movement.py),
 which send MSG_MOVE_START_FORWARD / heartbeats / MSG_MOVE_STOP as the client would.
 There is no teleport, no GM command and no database write anywhere in this file.
 
