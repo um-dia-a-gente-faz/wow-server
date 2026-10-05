@@ -11,6 +11,10 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import agents  # noqa: E402
+import character  # noqa: E402
+import state  # noqa: E402
 
 
 class FakeConnection:
@@ -35,20 +39,20 @@ class FakeConnection:
 
 
 def kind(row, apis=None):
-    with mock.patch.object(app, "db", return_value=FakeConnection(row)), \
-            mock.patch.object(app, "AGENT_APIS", apis or {}):
-        return app.character_kind("whoever")
+    with mock.patch.object(state, "db", return_value=FakeConnection(row)), \
+            mock.patch.object(agents, "AGENT_APIS", apis or {}):
+        return character.character_kind("whoever")
 
 
 class AgentAccountTests(unittest.TestCase):
     def test_agent_accounts(self):
         for name in ("AGENT01", "AGENT25", "agent07"):
-            self.assertTrue(app.is_agent_account(name), name)
+            self.assertTrue(character.is_agent_account(name), name)
 
     def test_other_accounts(self):
         for name in ("RUBENS", "AGENT", "AGENTX1", "MYAGENT01", "", None,
                      "AGENT00", "AGENT26", "AGENT99", "AGENT1", "AGENT001"):
-            self.assertFalse(app.is_agent_account(name), name)
+            self.assertFalse(character.is_agent_account(name), name)
 
 
 class CharacterKindTests(unittest.TestCase):
@@ -96,8 +100,8 @@ class KindRouteTests(unittest.TestCase):
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}/api/character/"
 
     def get(self, row, name):
-        with mock.patch.object(app, "db", return_value=FakeConnection(row)), \
-                mock.patch.object(app, "AGENT_APIS", {}):
+        with mock.patch.object(state, "db", return_value=FakeConnection(row)), \
+                mock.patch.object(agents, "AGENT_APIS", {}):
             try:
                 with urllib.request.urlopen(self.base + name + "/kind") as r:
                     return r.status, json.loads(r.read())
@@ -118,10 +122,10 @@ class MindTabPageTests(unittest.TestCase):
     def test_states_are_spelled_out(self):
         for text in ("Human player — no agent brain attached", "brain API unreachable",
                      "not configured on this page", "/kind"):
-            self.assertIn(text, app.AGENT_JS)
+            self.assertIn(text, pagesrc.AGENT_JS)
 
     def test_no_silent_catch(self):
-        self.assertNotIn("catch (e) { /*", app.AGENT_JS)
+        self.assertNotIn("catch (e) { /*", pagesrc.AGENT_JS)
 
 
 if __name__ == "__main__":

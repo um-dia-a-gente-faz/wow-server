@@ -48,6 +48,11 @@ jobs:
           for f in scripts/wow-agents/*.sh; do bash -n "$f"; done
           python -m unittest discover -s scripts/wow-agents/tests -v
 
+      # #253: the agent's real auth + world client against tools/world-mock over
+      # localhost sockets: SRP6 login, update objects, quest turn-in, confirmation.
+      - name: world-mock end-to-end (login + quest turn-in)
+        run: python -m unittest discover -s tools/world-mock/tests -v
+
       - name: jev-mock unit tests
         run: python -m unittest discover -s tools/jev-mock/tests -v
 
@@ -74,6 +79,13 @@ jobs:
           pip install -r tools/wowmap/requirements.txt Pillow
           python -m unittest discover -s tools/wowmap/tests -v
 
+      # #262: pure front-end functions (tools/wowmap/static/*.js) under node's built-in runner.
+      # Node is preinstalled on ubuntu-latest; the shell expands the glob so any node >= 18 works.
+      - name: wowmap JS unit tests
+        run: |
+          node --version
+          node --test tools/wowmap/tests/js/*.test.js
+
       - name: agent unit tests
         run: |
           if [ -d agent/tests ]; then
@@ -81,6 +93,50 @@ jobs:
           else
             echo "agent/tests not present yet, skipping"
           fi
+
+  lint-typing:
+    name: lint + types (ruff, mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Dev tools live only here; agent/ stays stdlib-only at runtime.
+      - run: pip install -r requirements-dev.txt
+      # Config + baseline in ruff.toml; fails on any violation not in per-file-ignores.
+      - name: ruff check
+        run: ruff check .
+      # Allowlist of typed files in mypy.ini (`files =`); everything else is unchecked.
+      - name: mypy (allowlist)
+        run: mypy
+
+  # #253: informational only (continue-on-error), never gates a merge. `coverage`
+  # is installed here on the runner and is not a dependency of agent/ (stdlib only).
+  coverage:
+    name: coverage report (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run agent + world-mock tests under coverage
+        run: |
+          pip install coverage
+          coverage run --source=agent -m unittest discover -s agent/tests
+          coverage run -a --source=agent -m unittest discover -s tools/world-mock/tests
+      - name: Report (modules with the least coverage first)
+        run: |
+          {
+            echo '### Coverage of agent/ (informational)'
+            echo '```'
+            coverage report --skip-empty --sort=cover
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   compose:
     name: compose config

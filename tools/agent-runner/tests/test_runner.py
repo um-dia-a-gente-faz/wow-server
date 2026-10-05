@@ -20,7 +20,11 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(REPO))
 import runner  # noqa: E402
+from agent import api_contract  # noqa: E402  (#264: fixtures come from the shared agent API schema)
+
+_EP = api_contract.load()["endpoints"]
 
 TOKEN = "t0ken-for-tests"
 PASSWORD = "hunter2-agent-password"
@@ -139,8 +143,9 @@ class RunnerCase(unittest.TestCase):
         self.addCleanup(patch_env.stop)
 
         self.agent_api = FakeHTTP({
-            "/healthz": {"ok": True, "agent": "Alpha", "connected": True},
-            "/state": {"self": {"level": 4, "position": {"map": 530, "x": 1.0, "y": 2.0, "z": 3.0}}}})
+            "/healthz": api_contract.sample(_EP["/healthz"]["responses"]["ok"], agent="Alpha"),
+            "/state": api_contract.sample(_EP["/state"]["responses"]["in game"], **{
+                "self": {"level": 4, "position": {"map": 530, "x": 1.0, "y": 2.0, "z": 3.0}}})})
         self.wowmap = FakeHTTP({
             "/api/character/Alpha": {"level": 4, "totaltime": 1984, "zone_name": "Sunstrider Isle"}})
         for s in (self.agent_api, self.wowmap):
@@ -234,6 +239,18 @@ class StatusTest(RunnerCase):
         self.assertEqual(a["character"]["playtime_seconds"], 1984)
         self.assertEqual(a["character"]["zone"], "Sunstrider Isle")
         self.assertIn("wowmap", a["character"]["source"])
+
+    def test_agent_api_version_skew(self):
+        self.assertIn(api_contract.load()["api_version"], runner.SUPPORTED_API_VERSIONS)
+        port = self.agent_api.port
+        future = dict(api_contract.sample(_EP["/healthz"]["responses"]["ok"]), api_version=99, new_field=1)
+        with mock.patch.object(runner.Fleet, "_get_json", return_value=future):
+            got = self.fleet.agent_api(port)
+        self.assertEqual(got["state"], "unsupported")
+        self.assertIn("version 99", got["error"])
+        legacy = {"ok": True, "agent": "Alpha", "connected": True}  # no api_version: older agent
+        with mock.patch.object(runner.Fleet, "_get_json", return_value=legacy):
+            self.assertEqual(self.fleet.agent_api(port)["state"], "ok")
 
     def test_audit_age_comes_from_the_newest_record_of_the_newest_day(self):
         a = self.agents()["Alpha"]

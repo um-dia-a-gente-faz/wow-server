@@ -1,7 +1,7 @@
 """Unit tests for agent.item_compare: the v1 scoring heuristic (primary
 stat for class + item level tiebreak) and the usability check, against a
 table of known item stat combos. No live server needed — see
-agent/tests/test_actions.py for the compare_items/equip_item Action tests."""
+agent/tests/test_actions_loot.py for the compare_items/equip_item Action tests."""
 
 import unittest
 

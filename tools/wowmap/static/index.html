@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><title>WoW — Live map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/leaflet.css">
+<script src="/static/leaflet.js"></script>
+<script src="/static/charview.js"></script>
+<link rel="stylesheet" href="/static/map.css">
+<link rel="stylesheet" href="/static/character.css">
+<link rel="stylesheet" href="/static/chat.css">
+<link rel="stylesheet" href="/static/activity.css">
+<link rel="stylesheet" href="/static/agent.css">
+<link rel="stylesheet" href="/static/fleet.css">
+<link rel="stylesheet" href="/static/walk.css">
+</head>
+<body>
+<aside id="aside">
+  <h1>Live map <button id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">«</button></h1>
+  <div class="sub" id="sub">loading…</div>
+  <div class="stats">
+    <div class="stat"><b id="s-online">–</b><span>online</span></div>
+    <div class="stat"><b id="s-world">–</b><span>in world</span></div>
+    <div class="stat"><b id="s-inst">–</b><span>in instance</span></div>
+  </div>
+  <div class="side-tabs">
+    <button id="tab-players" class="on">Players</button>
+    <button id="tab-chat">Chat</button>
+  </div>
+  <div class="search-wrap" id="search-wrap">
+    <input id="search" type="text" placeholder="Search characters (/)" autocomplete="off">
+  </div>
+  <div class="list" id="list"></div>
+  <div class="chat" id="chat" hidden></div>
+<div class="chat-status" id="chat-status" hidden></div>
+  <div id="resize-handle" title="Drag to resize"></div>
+</aside>
+<button id="expand" hidden title="Show sidebar" aria-label="Show sidebar">»</button>
+<main>
+  <div class="bar">
+    <label>Zone <select id="zone"></select></label>
+    <button id="toContinent" title="Zoom out to the continent map (or right-click the map)">Continent</button>
+    <button id="fit" title="Fit the whole zone in view">Fit zone</button>
+    <button id="tglLabels" title="Show every subzone name (from WorldMapOverlay.dbc)">Labels: off</button>
+    <button id="tglFog" class="on" title="With a character open, colour only the areas that character has explored, as its in-game map does">Fog of war: on</button>
+    <button id="tglTrail" title="Show the path each character took since this page was opened">Trail: off</button>
+    <button id="calibrate" title="Click a landmark and drag to line the markers up">Calibrate: off</button>
+    <button id="saveCalibration" hidden>Save calibration</button>
+    <div class="tabs">
+      <button id="tglFleet" title="Agent fleet: what every agent container is doing, start/stop (#137)">Fleet</button>
+      <button id="follow" title="Center on the selected character">Follow: off</button>
+    </div>
+  </div>
+  <div class="stage" id="stage">
+    <div id="map"></div>
+    <div id="subzone-hover" hidden></div>
+    <section id="fleet" hidden aria-label="Agent fleet">
+  <h2>Agent fleet <small id="fl-sub"></small></h2>
+  <div id="fl-banner"></div>
+  <div class="fl-totals" id="fl-totals"></div>
+  <div class="fl-bar">
+    <span class="meta">Show</span>
+    <button data-flt="all" class="on">All</button>
+    <button data-flt="attn">Needs attention</button>
+    <button data-flt="running">Running</button>
+    <button data-flt="stopped">Not running</button>
+    <span class="sp"></span>
+    <span class="meta" id="fl-updated"></span>
+  </div>
+  <table class="fl" id="fl-table"></table>
+  <div class="fl-log" id="fl-log" hidden><h3>Actions</h3><div id="fl-log-rows"></div></div>
+  <!-- #138 (blocked on the runner's character-creation endpoint) adds the create form here. -->
+  <div class="fl-note">Create agent: not available yet (tracked in #138).</div>
+</section>
+  </div>
+  <footer>
+    <span class="pill" id="f-refresh">–</span>
+    <span class="pill" id="f-src">source: characters.position_*</span>
+    <span class="pill" id="f-note"></span>
+  </footer>
+</main>
+<!-- #176: stat icons, inline so the page fetches nothing for them. -->
+<svg id="stat-icons" width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-health" viewBox="0 0 16 16"><path d="M8 14.5 1.8 8.4A3.8 3.8 0 0 1 8 3.6a3.8 3.8 0 0 1 6.2 4.8z"/></symbol>
+  <symbol id="i-mana" viewBox="0 0 16 16"><path d="M8 1.5C6 5 3.5 7.6 3.5 10.3a4.5 4.5 0 0 0 9 0C12.5 7.6 10 5 8 1.5z"/></symbol>
+  <symbol id="i-gold" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5"/><circle cx="8" cy="8" r="4" fill="#0000" stroke="#0006" stroke-width="1.2"/></symbol>
+  <symbol id="i-played" viewBox="0 0 16 16"><path d="M3 1.5h10v1.5h-1v1.8L9.2 8l2.8 3.2V13h1v1.5H3V13h1v-1.8L6.8 8 4 4.8V3H3zm2.5 1.5v1.2L8 7l2.5-2.8V3z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 16 16"><path d="M2 2h7v2H4v8h5v2H2zm8 2.5L13.5 8 10 11.5V9H6V7h4z"/></symbol>
+</svg>
+<section class="drawer" id="inspect" aria-hidden="true" aria-label="Inspect character">
+  <div class="drawer-head">
+    <div class="dh-main" id="inspect-head"></div>
+    <button id="inspect-close" title="Close (Esc)" aria-label="Close">✕</button>
+  </div>
+  <div class="drawer-body" id="inspect-body"></div>
+  <div class="drawer-foot" id="inspect-status"></div>
+</section>
+<script src="/static/format.js"></script>
+<script src="/static/inventory.js"></script>
+<script src="/static/character.js"></script>
+<script src="/static/activity.js"></script>
+<script>window.CHAT_FEED_URL = "$chat_feed_url";</script>
+<script src="/static/chat.js"></script>
+<script src="/static/agent.js"></script>
+<script src="/static/fleet.js"></script>
+<script src="/static/walk.js"></script>
+<script src="/static/map.js"></script>
+</body></html>

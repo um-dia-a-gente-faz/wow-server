@@ -7,12 +7,13 @@ No I/O, no WorldState — agent/session.py wires the result into WorldState
 mapping that to named, typed unit/object fields is agent/update_fields.py.
 
 Every constant below is copied from TrinityCore branch `3.3.5` and cited by
-file. Verify against that source, not against docs/NEXT-AGENT-HANDOFF.md
-(known wrong per UM-32's card) if the two disagree.
+file. Verify against that source, not against the old handoff doc
+(removed; its layout table was wrong per UM-32's card).
 """
 
 import struct
 from dataclasses import dataclass, field
+from typing import Any
 
 from . import packets as pk
 
@@ -178,7 +179,7 @@ def _parse_movement_update(data: bytes, off: int) -> tuple[dict, int]:
     TRANSPORT, VEHICLE, ROTATION.
     """
     update_flags = pk.u16(data, off); off += 2
-    info = {"update_flags": update_flags}
+    info: dict[str, Any] = {"update_flags": update_flags}
 
     if update_flags & UPDATEFLAG_LIVING:
         # Unit::BuildMovementPacket (Unit.cpp): MovementInfo, then 9 speeds,
@@ -246,7 +247,7 @@ def _parse_create_object_spline_block(data: bytes, off: int) -> tuple[dict, int]
     float x,y,z final destination (zero if the spline is cyclic).
     """
     spline_flags = pk.u32(data, off); off += 4
-    info = {"spline_flags": spline_flags}
+    info: dict[str, Any] = {"spline_flags": spline_flags}
 
     if spline_flags & SPLINEFLAG_FINAL_ANGLE:
         info["final_angle"] = pk.f32(data, off); off += 4
@@ -410,7 +411,7 @@ def parse_monster_move(payload: bytes) -> dict:
             info["jump_start_time"] = pk.u32(payload, off); off += 4
 
         point_count = pk.u32(payload, off); off += 4
-        points = []
+        points: list[tuple[float, ...]] = []
         if flags & SPLINEFLAG_MASK_CATMULLROM:
             for _ in range(point_count):
                 points.append((pk.f32(payload, off), pk.f32(payload, off + 4), pk.f32(payload, off + 8)))

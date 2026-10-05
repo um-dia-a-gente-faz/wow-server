@@ -75,7 +75,7 @@ UM-61 benchmarks the options and sizes the capacity. Estimates until then:
 > generate text, the decision brain when `AGENT_BRAIN=jev`. `say`, `yell`, `whisper`,
 > `emote` and `channel_say` are no longer registered in
 > `agent.actions.REGISTRY`, so the brain is never offered them. The send
-> functions and action classes stay in `agent/actions.py` for the LLM
+> functions and action classes stay in `agent/actions/chat.py` for the LLM
 > roleplay layer, and the rules below apply again when it is revisited.
 > Agents still join channels and still *hear* chat (`chat_inbox`, the chat
 > feed relay). Party mechanics (`invite_to_group`, `accept_group`, `follow`,

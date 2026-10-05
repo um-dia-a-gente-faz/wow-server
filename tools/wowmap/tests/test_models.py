@@ -13,7 +13,11 @@ from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import assets  # noqa: E402
 import models  # noqa: E402
+import pagesrc  # noqa: E402
+import pages  # noqa: E402
+import state  # noqa: E402
 
 # three.js r159 build/three.min.js as published on npm, unmodified.
 THREE_SHA256 = "7b1c5d75b28d9de15042e2b374f83566d8c7146697af8fdeb4558b0fb528a585"
@@ -117,9 +121,9 @@ class ModelRouteTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
-        old = app.MODELS_DIR
-        app.MODELS_DIR = self.dir.name
-        self.addCleanup(setattr, app, "MODELS_DIR", old)
+        old = state.MODELS_DIR
+        state.MODELS_DIR = self.dir.name
+        self.addCleanup(setattr, state, "MODELS_DIR", old)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -138,16 +142,16 @@ class ModelRouteTests(unittest.TestCase):
             f.write(data)
 
     def test_empty_models_dir_means_no_model(self):
-        self.assertIsNone(app.model_url(1, 0))
+        self.assertIsNone(state.model_url(1, 0))
         self.assertEqual(self.get("/models/1_0.bin")[0], 404)
 
     def test_model_needs_both_mesh_and_skin(self):
         self.put("1_0.bin")
-        self.assertIsNone(app.model_url(1, 0))
+        self.assertIsNone(state.model_url(1, 0))
         self.put("1_0.png")
-        self.assertEqual(app.model_url(1, 0), "/models/1_0")
-        self.assertIsNone(app.model_url(1, 1))
-        self.assertIsNone(app.model_url(9, 0))
+        self.assertEqual(state.model_url(1, 0), "/models/1_0")
+        self.assertIsNone(state.model_url(1, 1))
+        self.assertIsNone(state.model_url(9, 0))
 
     def test_serves_mesh_and_skin(self):
         self.put("1_0.bin", b"WMDL")
@@ -167,21 +171,21 @@ class ModelRouteTests(unittest.TestCase):
 
 class VendoredViewerTests(unittest.TestCase):
     def test_three_js_is_vendored_unmodified_and_licensed(self):
-        d = pathlib.Path(app.STATIC_DIR)
+        d = pathlib.Path(assets.STATIC_DIR)
         self.assertEqual(hashlib.sha256((d / "three.min.js").read_bytes()).hexdigest(), THREE_SHA256)
         self.assertIn("MIT License", (d / "three-LICENSE").read_text())
         self.assertLess((d / "three.min.js").stat().st_size, 1_000_000)
 
     def test_page_loads_nothing_remote_and_three_only_on_demand(self):
-        self.assertIn('<script src="/static/charview.js"></script>', app.PAGE)
-        self.assertNotIn("three.min.js", app.PAGE)          # lazy: fetched when a model is shown
-        text = (pathlib.Path(app.STATIC_DIR) / "charview.js").read_text()
+        self.assertIn('<script src="/static/charview.js"></script>', pages.PAGE)
+        self.assertNotIn("three.min.js", pages.PAGE)         # lazy: fetched when a model is shown
+        text = (pathlib.Path(assets.STATIC_DIR) / "charview.js").read_text()
         self.assertIn("/static/three.min.js", text)
         for remote in ("http://", "https://", "//cdn", "unpkg", "jsdelivr"):
             self.assertNotIn(remote, text, remote)
 
     def test_drawer_has_a_placeholder_for_a_missing_model(self):
-        self.assertIn("No 3D model extracted", app.PAGE)
+        self.assertIn("No 3D model extracted", pagesrc.PAGE)
 
     def test_static_routes_serve_the_viewer(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)

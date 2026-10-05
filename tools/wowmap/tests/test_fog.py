@@ -14,6 +14,10 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import areas  # noqa: E402
+import fogview  # noqa: E402
+import state  # noqa: E402
 import fog  # noqa: E402
 
 try:
@@ -97,7 +101,7 @@ class FakeTables:
 
 
 class FakeDb:
-    """Stands in for app.db(): one characters row, or none."""
+    """Stands in for state.db(): one characters row, or none."""
 
     def __init__(self, row):
         self.row = row
@@ -125,10 +129,10 @@ class FakeDb:
 class AppCase(unittest.TestCase):
     def patch_app(self, row=None, maps_dir="/nonexistent"):
         self.db = FakeDb(row)
-        for p in (mock.patch.object(app, "tables", return_value=FakeTables()),
-                  mock.patch.object(app, "overlays", return_value={462: OVERLAYS}),
-                  mock.patch.object(app, "db", self.db),
-                  mock.patch.object(app, "MAPS_DIR", maps_dir)):
+        for p in (mock.patch.object(state, "tables", return_value=FakeTables()),
+                  mock.patch.object(state, "overlays", return_value={462: OVERLAYS}),
+                  mock.patch.object(state, "db", self.db),
+                  mock.patch.object(state, "MAPS_DIR", maps_dir)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -136,7 +140,7 @@ class AppCase(unittest.TestCase):
 class FetchExploredTests(AppCase):
     def test_lists_revealed_overlays_per_zone_area_id(self):
         self.patch_app(("Rubens", explored_zones({AREA_BITS[3430], AREA_BITS[3431], AREA_BITS[3487]})))
-        self.assertEqual(app.fetch_explored("rubens"),
+        self.assertEqual(fogview.fetch_explored("rubens"),
                          {"name": "Rubens", "explored_bits": 3, "zones": {"3430": [1127, 1175]}})
         sql, args = self.db.executed[0]
         self.assertIn("%s", sql)
@@ -144,10 +148,10 @@ class FetchExploredTests(AppCase):
 
     def test_fresh_character_has_no_zones_and_unknown_is_none(self):
         self.patch_app(("Fresh", explored_zones(())))
-        self.assertEqual(app.fetch_explored("Fresh"),
+        self.assertEqual(fogview.fetch_explored("Fresh"),
                          {"name": "Fresh", "explored_bits": 0, "zones": {}})
         self.patch_app(None)
-        self.assertIsNone(app.fetch_explored("Nobody"))
+        self.assertIsNone(fogview.fetch_explored("Nobody"))
 
 
 class ArtCase(AppCase):
@@ -227,10 +231,10 @@ class ComposeTests(ArtCase):
 
     def test_areas_report_whether_fog_art_exists(self):
         Image.new("RGBA", (16, 12), self.BASE).save(os.path.join(self.maps, "3430.png"))
-        (eversong,) = app.fetch_areas(530)
+        (eversong,) = areas.fetch_areas(530)
         self.assertTrue(eversong["fog"])
         os.remove(fog.overlay_path(self.maps, 1175))
-        self.assertFalse(app.fetch_areas(530)[0]["fog"])
+        self.assertFalse(areas.fetch_areas(530)[0]["fog"])
 
     def test_extraction_writes_each_overlay_s_own_art(self):
         class Archive:
@@ -305,9 +309,9 @@ class RouteTests(ArtCase):
 
 class PageTests(unittest.TestCase):
     def test_page_has_the_fog_toggle_and_art_switch(self):
-        self.assertIn('id="tglFog"', app.PAGE)
-        self.assertIn("function artUrl(a)", app.PAGE)
-        self.assertIn("/explored`", app.PAGE)
+        self.assertIn('id="tglFog"', pagesrc.PAGE)
+        self.assertIn("function artUrl(a)", pagesrc.PAGE)
+        self.assertIn("/explored`", pagesrc.PAGE)
 
 
 if __name__ == "__main__":

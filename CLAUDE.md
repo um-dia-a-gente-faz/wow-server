@@ -80,9 +80,10 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
 
 - `docs/AGENT-DIRECTION.md` — the owner's decisions and why. **Overrides older docs.**
 - `CONTRIBUTING.md` — commits, branches, PRs, style, live-testing rules.
-- `docs/PROTOCOL-NOTES.md` — verified 3.3.5a wire formats. (`docs/NEXT-AGENT-HANDOFF.md`'s
-  old layout table is **wrong**; don't use it.)
-- `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md` — services, ports, how the VM is deployed.
+- `docs/PROTOCOL-NOTES.md` — verified 3.3.5a wire formats. (The old handoff
+  document, with its wrong layout table, was removed.)
+- `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md` — services, ports, module map, how the VM is deployed.
+- `docs/adr/` — decisions of record (session split, router, config schema, threading model).
 
 ## Skills (`.claude/skills/`)
 

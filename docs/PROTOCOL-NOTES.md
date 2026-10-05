@@ -263,7 +263,7 @@ Verified against the live `TrinityCore/TrinityCore` branch `3.3.5` (UM-66;
 `gh api repos/TrinityCore/TrinityCore/contents/... ?ref=3.3.5`).
 
 ```
-uint8  slashCmd            // ChatMsg (SharedDefines.h) — see agent/session.py::CHAT_KIND_NAMES for the full enum
+uint8  slashCmd            // ChatMsg (SharedDefines.h) — see agent/handlers/chat.py::CHAT_KIND_NAMES for the full enum
 int32  language
 uint64 senderGuid          // raw ObjectGuid, NOT packed (ByteBuffer operator<<(ObjectGuid))
 uint32 flags                // always 0 in 3.3.5
@@ -284,7 +284,7 @@ Then always: `uint32 len + chatText`, `uint8 chatTag`, and — only for
 
 All the length-prefixed strings (`senderName`, `targetName`, `chatText`) use
 the same shape: `uint32 byteLength` (includes the trailing null) followed by
-that many bytes, UTF-8, null-terminated — `agent/session.py::_read_len_string`.
+that many bytes, UTF-8, null-terminated — `agent/handlers/chat.py::_read_len_string`.
 The `channel` name is different: a plain null-terminated cstring with no
 length prefix (`agent/packets.py::cstring`).
 
@@ -317,7 +317,7 @@ void Player::Whisper(std::string_view text, Language language, Player* target, b
 So `targetGuid == senderGuid` for say/yell/emote/channel/whisper, and it
 never identifies who *heard* the message. Confirmed on the live realm: every
 capture in `agent/tests/fixtures/chat/` has the two fields equal.
-`agent/session.py::_handle_messagechat` therefore skips `targetGuid` rather
+`agent/handlers/chat.py::handle_messagechat` therefore skips `targetGuid` rather
 than exporting a field that reads like an addressee but isn't one.
 
 The whisper pair is the one case where `slashCmd` alone doesn't tell you who
@@ -384,9 +384,9 @@ Verified against TrinityCore branch `3.3.5`:
     `agent/spells.py::SPELL_CAST_RESULT_NAMES` maps all of them)
 
 `agent/spells.py` holds every pure parser/builder (no opcodes, no I/O — same
-split as `agent/names.py`); opcodes live in `agent/session.py`, dispatched
-through `_SPELL_DISPATCH` into thirteen thin handlers that call
-`WoWSession._record_event()`. `agent/actions.py` adds `auto_attack`,
+split as `agent/names.py`); opcodes and the thirteen thin handlers live in
+`agent/handlers/spells.py` (registered on `agent.router.ROUTER`), which call
+`GameState.record_event()`. `agent/actions/combat.py` adds `auto_attack`,
 `stop_attack`, `cast_spell` to the Action registry, all reading confirmation
 off `session.events` (a bounded deque) rather than blocking on a single
 expected reply — the same shape `set_target`/`face` established in UM-36.
@@ -415,14 +415,14 @@ spell whose cast time exceeds that (Holy Light is 2.5 s) timed out on
 hadn't arrived yet. Reproduced live: casting spell 635 on self while
 auto-attacking a training dummy always returned `"no cast confirmation seen
 (timed out)"`, while the event log showed a matching `spell_go` arriving
-~2.5 s later. Fixed in `agent/actions.py::CastSpellAction.execute` — the
+~2.5 s later. Fixed in `agent/actions/combat.py::CastSpellAction.execute` — the
 wait is now two-phase: phase one waits `confirm_timeout` for `spell_start`
 (near-instant) or a same-tick `cast_failed`/`spell_go`; phase two, only
 once `spell_start` is seen, extends the deadline to that event's own
 `cast_time` (ms) plus `confirm_timeout` as margin. Covered by
 `test_execute_extends_wait_by_reported_cast_time`/
 `test_execute_reports_cast_failed_after_cast_time_wait` in
-`agent/tests/test_actions.py`.
+`agent/tests/test_actions_combat.py`.
 
 `SMSG_CAST_FAILED`'s optional `failed_arg1`/`failed_arg2` fields carry no
 flag bits on the wire — presence is implied purely by total payload length
@@ -569,7 +569,7 @@ so the server drops the packet as too short. `accept_quest` still works because
 ACCEPT_QUEST doesn't depend on it; this was verified live when 8325 was accepted from a
 gossip window. The builder is left unchanged here because fixing it would make the
 server open a quest-details window in the middle of `accept_quest`. That change belongs
-in `agent/actions.py`.
+in `agent/actions/quest.py`.
 
 Quest events land in `session.events`: `quest_progress` (`objective: "kill"|"item"`),
 `quest_complete`, `quest_turned_in`, `quest_failed`. Before UM-91, `quest_progress`
@@ -607,7 +607,7 @@ them about *our* new offer. Nothing equivalent goes back to the player who
 just changed their own offer (a real client already updated its own window
 optimistically the moment it sent the packet). So `agent/perception.py`'s
 `world.trade["my_items"]`/`"my_gold"` are tracked client-side the moment
-`agent/actions.py` sends `CMSG_SET_TRADE_ITEM`/`CMSG_SET_TRADE_GOLD` — only
+`agent/actions/trade.py` sends `CMSG_SET_TRADE_ITEM`/`CMSG_SET_TRADE_GOLD` — only
 `their_items`/`their_gold` ever arrives from the server. What the sender
 *does* reliably get back is `SMSG_TRADE_STATUS`: `TRADE_STATUS_BACK_TO_TRADE`
 (7) on success — `TradeData::SetAccepted(false)` is unconditional, so *any*
@@ -615,7 +615,7 @@ offer change on *either* side un-accepts both sides and answers both
 players — or a rejection (`TRADE_STATUS_TRADE_CANCELED` for a bad
 bag/slot/already-offered item, `TRADE_STATUS_NOT_ON_TAPLIST` for a soulbound
 one, `TRADE_STATUS_CLOSE_WINDOW` for `CMSG_SET_TRADE_GOLD` with insufficient
-funds). `agent/actions.py`'s `offer_item`/`offer_gold` wait for one of
+funds). `agent/actions/trade.py`'s `offer_item`/`offer_gold` wait for one of
 those, keyed off a raw `"trade_status"` event `agent/session.py` records for
 every `SMSG_TRADE_STATUS` (not just the named `trade_requested`/
 `trade_completed`/`trade_cancelled`/`trade_offer_rejected` events
@@ -735,7 +735,7 @@ different client opcodes through one shared reply, disambiguated by its
 `MAIL_MONEY_TAKEN` (1) and `MAIL_ITEM_TAKEN` (2, both halves of
 `take_mail`), `MAIL_DELETED` (4, from `delete_mail`) — `agent/session.py`
 records one raw `"mail_result"` event per reply regardless of which,
-and `agent/actions.py`'s four mail actions each filter by
+and `agent/actions/mail.py`'s four mail actions each filter by
 `command`/`mail_id`/(for items) `attach_id` to find the reply that's
 theirs, the same "raw event + action-side filter" shape UM-59's
 `"trade_status"` event uses.
@@ -789,7 +789,7 @@ builder with hand-built bytes instead.
 
 Verified against TrinityCore branch `3.3.5` (commit `48128f325ac5`) and live on
 2026-09-24 (Shadowblade + Luaprata). Code: `agent/channels.py`,
-`ChannelSayAction` in `agent/actions.py`, `WoWSession.join_channels`.
+`ChannelSayAction` in `agent/actions/chat.py`, `WoWSession.join_channels`.
 
 Opcodes (`Opcodes.h`): `CMSG_JOIN_CHANNEL = 0x097`, `CMSG_LEAVE_CHANNEL = 0x098`,
 `SMSG_CHANNEL_NOTIFY = 0x099`. Chat into a channel reuses `CMSG_MESSAGECHAT = 0x095`.

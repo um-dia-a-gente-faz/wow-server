@@ -6,19 +6,7 @@ Run from the repo root: python3 -m unittest discover -s agent/tests
 import unittest
 
 from agent import packets as pk
-
-
-def tc_server_header(size: int, opcode: int) -> bytes:
-    """Port of TrinityCore 3.3.5 ServerPktHeader's constructor (size includes
-    the 2 opcode bytes)."""
-    out = bytearray()
-    if size > 0x7FFF:
-        out.append(0x80 | (0xFF & (size >> 16)))
-    out.append(0xFF & (size >> 8))
-    out.append(0xFF & size)
-    out.append(0xFF & opcode)
-    out.append(0xFF & (opcode >> 8))
-    return bytes(out)
+from agent.tests.builders import tc_server_header
 
 
 class PackedGuidTest(unittest.TestCase):

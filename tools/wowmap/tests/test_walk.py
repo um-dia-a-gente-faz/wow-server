@@ -15,6 +15,9 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import pagesrc  # noqa: E402
+import state  # noqa: E402
+import agents  # noqa: E402
 import fleet  # noqa: E402
 import walk  # noqa: E402
 from test_position import RUBENS, write_dbc, f32  # noqa: E402
@@ -151,8 +154,9 @@ class ProxyTests(unittest.TestCase):
         self.start_wowmap(fleet.Runner(f"http://127.0.0.1:{runner.server_address[1]}", self.token))
 
     def start_wowmap(self, rn):
-        for name, value in (("RUNNER", rn), ("AGENT_APIS", {}), ("tables", lambda: self.t)):
-            p = mock.patch.object(app, name, value)
+        for mod, name, value in ((agents, "RUNNER", rn), (agents, "AGENT_APIS", {}),
+                                 (state, "tables", lambda: self.t)):
+            p = mock.patch.object(mod, name, value)
             p.start()
             self.addCleanup(p.stop)
         srv = serve(app.Handler)
@@ -222,7 +226,7 @@ class ProxyTests(unittest.TestCase):
         self.assertIn("token", body["error"])
 
     def runner_port(self):
-        return int(app.RUNNER.url.rsplit(":", 1)[1])
+        return int(agents.RUNNER.url.rsplit(":", 1)[1])
 
     def test_unreachable_runner_says_the_walk_may_have_run(self):
         self.start_wowmap(fleet.Runner("http://127.0.0.1:1", TOKEN))
@@ -257,15 +261,15 @@ def fleet_state(**agent):
 
 class PageTests(unittest.TestCase):
     def test_page_has_the_walk_block_and_hooks(self):
-        self.assertNotIn("@walk-", app.PAGE)
-        self.assertIn("const Walk = ", app.PAGE)
-        self.assertIn("Walk.pickPoint(e)", app.PAGE)
-        self.assertIn("Walk.pickPlayer(name)", app.PAGE)
-        self.assertNotIn("innerHTML", walk.WALK_JS)
+        self.assertNotIn("@walk-", pagesrc.PAGE)
+        self.assertIn("const Walk = ", pagesrc.PAGE)
+        self.assertIn("Walk.pickPoint(e)", pagesrc.PAGE)
+        self.assertIn("Walk.pickPlayer(name)", pagesrc.PAGE)
+        self.assertNotIn("innerHTML", pagesrc.WALK_JS)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_walk_script_parses(self):
-        script = walk.WALK_JS.replace("<script>", "").replace("</script>", "")
+        script = pagesrc.WALK_JS.replace("<script>", "").replace("</script>", "")
         with tempfile.TemporaryDirectory() as d:
             f = pathlib.Path(d) / "walk.js"
             f.write_text(script)
@@ -274,7 +278,7 @@ class PageTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_disabled_with_a_reason_unless_the_agent_can_walk(self):
-        script = walk.WALK_JS.replace("<script>", "").replace("</script>", "")
+        script = pagesrc.WALK_JS.replace("<script>", "").replace("</script>", "")
         start = script.index("function walkWhyNot")
         fn = script[start:script.index("\nconst Walk = ")]
         here = {"in_world": True}

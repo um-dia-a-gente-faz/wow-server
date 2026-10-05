@@ -712,7 +712,7 @@ class MailboxStateTest(unittest.TestCase):
 class TradeStateTest(unittest.TestCase):
     """UM-59: world.trade's phase machine, driven by agent.trade.
     parse_trade_status/parse_trade_status_extended shaped dicts, and the
-    optimistic local mutators actions.py calls (the server never echoes our
+    optimistic local mutators agent/actions/trade.py calls (the server never echoes our
     own offer back — see agent/trade.py's docstring)."""
 
     def test_defaults_to_none(self):
