@@ -89,6 +89,24 @@ jobs:
             echo "agent/tests not present yet, skipping"
           fi
 
+  lint-typing:
+    name: lint + types (ruff, mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # Dev tools live only here; agent/ stays stdlib-only at runtime.
+      - run: pip install -r requirements-dev.txt
+      # Config + baseline in ruff.toml; fails on any violation not in per-file-ignores.
+      - name: ruff check
+        run: ruff check .
+      # Allowlist of typed files in mypy.ini (`files =`); everything else is unchecked.
+      - name: mypy (allowlist)
+        run: mypy
+
   compose:
     name: compose config
     runs-on: ubuntu-latest
