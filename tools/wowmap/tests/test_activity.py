@@ -12,6 +12,9 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import activity  # noqa: E402
 import app  # noqa: E402
+import routes  # noqa: E402
+from webio import Request  # noqa: E402
+import state as wowmap_state  # noqa: E402
 
 ITEMS = {2589: ("Linen Cloth", 13), 159: ("Refreshing Spring Water", 1), 6948: ("Hearthstone", 0)}
 
@@ -236,17 +239,14 @@ class ApiTests(unittest.TestCase):
         store = activity.ActivityStore(":memory:")
         store.add([activity.event("Rubens", 5, "chat", 'Said "hi"', "chat", "c1")])
         feed = activity.Activity(store)
-        handler = mock.Mock(spec=app.Handler)
-        handler.path = "/api/character/Rubens/activity?limit=10"
-        with mock.patch.object(app, "activity", feed):
-            app.Handler.do_GET(handler)
-        code, body = handler._send.call_args[0][:2]
+        def get(path):
+            return routes.dispatch(Request("GET", path, {"limit": ["10"]}, {}, None))
+        with mock.patch.object(wowmap_state, "activity", feed):
+            code, body = get("/api/character/Rubens/activity")[:2]
         self.assertEqual(code, 200)
         self.assertEqual(body["events"][0]["text"], 'Said "hi"')
-        handler.path = "/api/character/Rubens/activity"
-        with mock.patch.object(app, "activity", None):
-            app.Handler.do_GET(handler)
-        self.assertEqual(handler._send.call_args[0][0], 503)
+        with mock.patch.object(wowmap_state, "activity", None):
+            self.assertEqual(get("/api/character/Rubens/activity")[0], 503)
         self.assertNotIn("@activity-", app.PAGE)
         self.assertIn("window.ActivityFeed", app.PAGE)
         self.assertIn("Recent activity", app.PAGE)

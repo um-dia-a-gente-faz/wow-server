@@ -15,6 +15,8 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import state  # noqa: E402
+import agents  # noqa: E402
 import fleet  # noqa: E402
 import walk  # noqa: E402
 from test_position import RUBENS, write_dbc, f32  # noqa: E402
@@ -151,8 +153,9 @@ class ProxyTests(unittest.TestCase):
         self.start_wowmap(fleet.Runner(f"http://127.0.0.1:{runner.server_address[1]}", self.token))
 
     def start_wowmap(self, rn):
-        for name, value in (("RUNNER", rn), ("AGENT_APIS", {}), ("tables", lambda: self.t)):
-            p = mock.patch.object(app, name, value)
+        for mod, name, value in ((agents, "RUNNER", rn), (agents, "AGENT_APIS", {}),
+                                 (state, "tables", lambda: self.t)):
+            p = mock.patch.object(mod, name, value)
             p.start()
             self.addCleanup(p.stop)
         srv = serve(app.Handler)
@@ -222,7 +225,7 @@ class ProxyTests(unittest.TestCase):
         self.assertIn("token", body["error"])
 
     def runner_port(self):
-        return int(app.RUNNER.url.rsplit(":", 1)[1])
+        return int(agents.RUNNER.url.rsplit(":", 1)[1])
 
     def test_unreachable_runner_says_the_walk_may_have_run(self):
         self.start_wowmap(fleet.Runner("http://127.0.0.1:1", TOKEN))

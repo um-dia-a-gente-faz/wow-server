@@ -18,6 +18,18 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 `MYSQL_PASSWORD` (plus the optional paths and port described below and in
 `app.py`).
 
+### Code layout (#249)
+
+`app.py` only wires the `http.server` handler to `routes.py`, whose table maps
+`(method, path pattern)` to handlers returning `(status, body[, ctype, cache])` so they
+run without a socket (`webio.Request`). All SQL lives in `repo/` (`players`,
+`characters`); `players.py`, `character.py`, `inventory.py`, `areas.py` turn rows into
+JSON, `calibration.py`, `fogview.py`, `agents.py` (fleet/agent proxy glue) and
+`assets.py` own those concerns, `state.py` holds env config and the lazy DBC/name
+caches, and `pages.py` holds the embedded HTML/CSS/JS. (`activity.py` keeps its own
+SQL: its poller and sqlite store are a separate subsystem.) A new endpoint is one
+handler plus one line in `ROUTES`.
+
 | Env | Default | Meaning |
 |---|---|---|
 | `DBC_DIR` | `/dbc` | directory containing `WorldMapArea.dbc`, `AreaTable.dbc`, and `Map.dbc` (plus `WorldMapOverlay.dbc` for subzone names, `Spell.dbc`, `Talent.dbc`, `TalentTab.dbc`, `Faction.dbc`, `Achievement.dbc` for names, and for item tooltips `SpellDuration.dbc`, `SpellRadius.dbc`, `ItemSet.dbc`, `ItemRandomProperties.dbc`, `ItemRandomSuffix.dbc`, `SpellItemEnchantment.dbc`, `GemProperties.dbc`, `SkillLine.dbc`, `RandPropPoints.dbc`; a missing file is logged and only its tooltip lines are left out) |
@@ -258,7 +270,7 @@ directly. At widths of 600 px or less the drawer takes the full width.
 
 Every value from the database (character, item, and zone names) is rendered
 with `textContent`, never `innerHTML`. The drawer's CSS, HTML, and JS live in
-`INSPECT_CSS` / `INSPECT_HTML` / `INSPECT_JS` in `app.py`. They are spliced into
+`INSPECT_CSS` / `INSPECT_HTML` / `INSPECT_JS` in `pages.py`. They are spliced into
 `PAGE` at `@inspect-*` markers, so other panels can be added the same way.
 
 Health is current only, and so is power. The worldserver computes maximum
@@ -308,7 +320,7 @@ by the `c` key or the tab buttons), center live map, right-side inspect drawer.
   used by the list and map markers.
 - **Unified selection**: clicking a character in the list, on a map marker, or
   as a chat sender highlights them everywhere and pans the map to their zone
-  (`selectCharacter()` in `app.py`'s main script). It only *toggles* CSS
+  (`selectCharacter()` in `pages.py`'s main script). It only *toggles* CSS
   classes on existing DOM nodes rather than rebuilding `#list`/`#markers` —
   rebuilding while the click event that triggered it is still bubbling detaches
   the clicked element, which makes the drawer's click-away handler misfire and

@@ -9,6 +9,10 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import character  # noqa: E402
+import inventory  # noqa: E402
+import players  # noqa: E402
+import state  # noqa: E402
 import item_tooltip  # noqa: E402
 from dbc.names import GameNames  # noqa: E402
 
@@ -125,15 +129,15 @@ class FakeGridAreas:
 
 class FetchCharacterTests(unittest.TestCase):
     def setUp(self):
-        patches = [mock.patch.object(app, "db", return_value=FakeConnection()),
-                   mock.patch.object(app, "tables", return_value=FakeTables()),
-                   mock.patch.object(app, "names", return_value=fake_names()),
-                   mock.patch.object(app, "grid_areas", return_value=FakeGridAreas()),
-                   mock.patch.object(app, "icon_url", lambda d: f"/icons/{d}.png" if d else None)]
+        patches = [mock.patch.object(state, "db", return_value=FakeConnection()),
+                   mock.patch.object(state, "tables", return_value=FakeTables()),
+                   mock.patch.object(state, "names", return_value=fake_names()),
+                   mock.patch.object(state, "grid_areas", return_value=FakeGridAreas()),
+                   mock.patch.object(state, "icon_url", lambda d: f"/icons/{d}.png" if d else None)]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
-        self.character = app.fetch_character("Rubens")
+        self.character = character.fetch_character("Rubens")
 
     def test_power_columns_follow_trinitycore_powers_enum(self):
         self.assertEqual(self.character["health"], 4231)
@@ -145,7 +149,7 @@ class FetchCharacterTests(unittest.TestCase):
     def test_header_fields(self):
         c = self.character
         self.assertTrue(c["online"])
-        self.assertEqual(c["class_color"], app.CLASS_COLORS[2])
+        self.assertEqual(c["class_color"], players.CLASS_COLORS[2])
         self.assertEqual(c["map_name"], "Expansion01")
         self.assertEqual(c["money"], 30)
         self.assertAlmostEqual(c["money_gold"], 0.003)
@@ -161,9 +165,9 @@ class FetchCharacterTests(unittest.TestCase):
 
     def test_subzone_must_belong_to_the_saved_zone(self):
         t = FakeTables()
-        with mock.patch.object(app, "grid_areas", return_value=FakeGridAreas()):
-            self.assertIsNone(app.position_fields(t, 530, 3433, 1.0, 2.0)["subzone"])
-            self.assertIsNone(app.position_fields(t, 530, 3431, 1.0, 2.0)["subzone"])
+        with mock.patch.object(state, "grid_areas", return_value=FakeGridAreas()):
+            self.assertIsNone(players.position_fields(t, 530, 3433, 1.0, 2.0)["subzone"])
+            self.assertIsNone(players.position_fields(t, 530, 3431, 1.0, 2.0)["subzone"])
 
     def test_inventory_exposes_item_guid_to_resolve_bag_contents(self):
         inventory = self.character["inventory"]
@@ -234,10 +238,10 @@ class FetchCharacterTests(unittest.TestCase):
 
 class CharacterStatsTests(unittest.TestCase):
     def fetch(self, stats_rows):
-        with mock.patch.object(app, "db", return_value=FakeConnection()), \
-                mock.patch.object(app, "tables", return_value=FakeTables()), \
+        with mock.patch.object(state, "db", return_value=FakeConnection()), \
+                mock.patch.object(state, "tables", return_value=FakeTables()), \
                 mock.patch.object(FakeCursor, "stats_rows", stats_rows):
-            return app.fetch_character("Rubens")
+            return character.fetch_character("Rubens")
 
     def test_stats_row_gives_max_health_and_max_power_by_name(self):
         c = self.fetch([STATS_ROW])
@@ -261,10 +265,10 @@ class CharacterStatsTests(unittest.TestCase):
             def cursor(self):
                 return BrokenStatsCursor()
 
-        with mock.patch.object(app, "db", return_value=Conn()), \
-                mock.patch.object(app, "tables", return_value=FakeTables()), \
-                self.assertLogs(app.log, "WARNING"):
-            c = app.fetch_character("Rubens")
+        with mock.patch.object(state, "db", return_value=Conn()), \
+                mock.patch.object(state, "tables", return_value=FakeTables()), \
+                self.assertLogs(state.log, "WARNING"):
+            c = character.fetch_character("Rubens")
         self.assertIsNone(c["max_health"])
         self.assertIsNone(c["max_power"])
         self.assertEqual(len(c["inventory"]), len(INVENTORY_ROWS))
@@ -304,7 +308,7 @@ class PageTests(unittest.TestCase):
 
 
 class ItemTooltipWiringTests(unittest.TestCase):
-    """app.inventory_item / item_set_context pass the instance columns, the equipped
+    """inventory.inventory_item / item_set_context pass the instance columns, the equipped
     entries and the set piece names on to item_tooltip."""
 
     def names(self):
@@ -323,7 +327,7 @@ class ItemTooltipWiringTests(unittest.TestCase):
     def test_random_property_and_enchantments_columns_reach_the_tooltip(self):
         row = self.row(extras=(-7, "2564 0 0 " + "0 0 0 " * 11),
                        **{"class": 4, "InventoryType": 1, "ItemLevel": 60, "Quality": 2})
-        item = app.inventory_item(row, self.names())
+        item = inventory.inventory_item(row, self.names())
         left = [l["left"] for l in item["tooltip"]]
         self.assertEqual(left[0], "Gladiator Helm of the Bear")
         self.assertIn("+26 Stamina", left)
@@ -331,7 +335,7 @@ class ItemTooltipWiringTests(unittest.TestCase):
         self.assertEqual(item["item_name"], "Gladiator Helm")  # the grid keeps the plain name
 
     def test_rows_without_the_instance_columns_still_work(self):
-        item = app.inventory_item(self.row(**{"class": 4, "InventoryType": 1}), self.names())
+        item = inventory.inventory_item(self.row(**{"class": 4, "InventoryType": 1}), self.names())
         self.assertEqual(item["tooltip"][0]["left"], "Gladiator Helm")
 
     def test_item_set_context_collects_equipped_entries_and_piece_names(self):
@@ -340,8 +344,8 @@ class ItemTooltipWiringTests(unittest.TestCase):
                 self.row(502, 0, 19, **{"class": 1})]                # an equipped bag slot is not gear
         cur = mock.Mock()
         cur.fetchall.return_value = [(500, "Gladiator Helm"), (501, "Gladiator Chain")]
-        with mock.patch.object(app, "names", return_value=self.names()):
-            equipped, piece_names = app.item_set_context(cur, rows)
+        with mock.patch.object(state, "names", return_value=self.names()):
+            equipped, piece_names = inventory.item_set_context(cur, rows)
         self.assertEqual(equipped, {500})
         self.assertEqual(piece_names, {500: "Gladiator Helm", 501: "Gladiator Chain"})
         sql, args = cur.execute.call_args[0]
@@ -350,14 +354,14 @@ class ItemTooltipWiringTests(unittest.TestCase):
 
     def test_item_set_context_runs_no_query_without_sets(self):
         cur = mock.Mock()
-        with mock.patch.object(app, "names", return_value=self.names()):
-            equipped, piece_names = app.item_set_context(cur, [self.row(**{"class": 15})])
+        with mock.patch.object(state, "names", return_value=self.names()):
+            equipped, piece_names = inventory.item_set_context(cur, [self.row(**{"class": 15})])
         self.assertEqual((equipped, piece_names), ({500}, {}))
         cur.execute.assert_not_called()
 
     def test_set_block_uses_the_context(self):
         row = self.row(itemset=1, **{"class": 4, "InventoryType": 1})
-        item = app.inventory_item(row, self.names(), {500}, {500: "Gladiator Helm", 501: "Gladiator Chain"})
+        item = inventory.inventory_item(row, self.names(), {500}, {500: "Gladiator Helm", 501: "Gladiator Chain"})
         left = [l["left"] for l in item["tooltip"]]
         self.assertIn("The Gladiator (1/2)", left)
         self.assertIn("Gladiator Chain", left)

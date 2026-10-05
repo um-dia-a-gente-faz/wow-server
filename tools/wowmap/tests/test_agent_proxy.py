@@ -11,6 +11,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import agents  # noqa: E402
 
 
 class FakeAgent(BaseHTTPRequestHandler):
@@ -37,12 +38,12 @@ def _serve(handler):
 
 class ParseTests(unittest.TestCase):
     def test_parses_names_and_skips_garbage(self):
-        got = app.parse_agent_urls(" Luaprata=http://h:9601/ ,bad, x=ftp://h, =http://h ,Far=https://h:9602")
+        got = agents.parse_agent_urls(" Luaprata=http://h:9601/ ,bad, x=ftp://h, =http://h ,Far=https://h:9602")
         self.assertEqual(got, {"luaprata": ("Luaprata", "http://h:9601"),
                                "far": ("Far", "https://h:9602")})
 
     def test_empty(self):
-        self.assertEqual(app.parse_agent_urls(""), {})
+        self.assertEqual(agents.parse_agent_urls(""), {})
 
 
 class ProxyTests(unittest.TestCase):
@@ -53,7 +54,7 @@ class ProxyTests(unittest.TestCase):
         self.addCleanup(self.agent.shutdown)
         agent_url = f"http://127.0.0.1:{self.agent.server_address[1]}"
         self.agent_url = agent_url
-        p = mock.patch.object(app, "AGENT_APIS", {
+        p = mock.patch.object(agents, "AGENT_APIS", {
             "luaprata": ("Luaprata", agent_url),
             "gone": ("Gone", "http://127.0.0.1:1"),
         })
@@ -79,7 +80,7 @@ class ProxyTests(unittest.TestCase):
         self.assertNotIn("127.0.0.1", body)
 
     def test_proxies_known_views_case_insensitively(self):
-        for view in app.AGENT_VIEWS:
+        for view in agents.AGENT_VIEWS:
             status, body = self.get(f"/api/agent/luaprata/{view}")
             self.assertEqual(status, 200, view)
             self.assertEqual(json.loads(body)["path"], f"/{view}")

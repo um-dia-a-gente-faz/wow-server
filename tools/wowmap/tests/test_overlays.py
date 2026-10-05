@@ -8,6 +8,8 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import app  # noqa: E402
+import areas  # noqa: E402
+import state  # noqa: E402
 import overlays  # noqa: E402
 
 # Real WorldMapOverlay.dbc rows (3.3.5a build 12340) for Eversong Woods, WorldMapArea 462,
@@ -128,9 +130,9 @@ class FetchAreasTests(unittest.TestCase):
     def test_areas_carry_subzones_from_the_overlay_dbc(self):
         by_zone = overlays.parse_overlays(*overlays.read_dbc_bytes(build_dbc(ROWS)))
         grouped = {462: [o for o in by_zone if o["map_area_id"] == 462]}
-        with mock.patch.object(app, "tables", return_value=FakeTables()), \
-                mock.patch.object(app, "overlays", return_value=grouped):
-            (eversong,) = app.fetch_areas(530)
+        with mock.patch.object(state, "tables", return_value=FakeTables()), \
+                mock.patch.object(state, "overlays", return_value=grouped):
+            (eversong,) = areas.fetch_areas(530)
         self.assertEqual(eversong["area_id"], 3430)
         names = [s["name"] for s in eversong["subzones"]]
         self.assertIn("Sunstrider Isle", names)
