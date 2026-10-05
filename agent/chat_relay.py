@@ -85,7 +85,7 @@ def build_event(entry: dict, *, sender_name: str = "", target: str = "",
                 source: str = "", at: str | None = None) -> dict:
     """Normalize one `agent.session` chat entry into a feed event.
 
-    `entry` is what `WoWSession._handle_messagechat` appends to
+    `entry` is what `agent.handlers.chat.handle_messagechat` appends to
     `session.chat_inbox`: kind/sender_guid/sender_name/channel/text, plus
     `target_name` when the packet carried one (an NPC emote aimed at
     somebody). `sender_name` and `target` override the entry's own values

@@ -20,6 +20,11 @@ from agent import loot as lo
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
+from agent.handlers import npc as hnpc
+from agent.handlers import chat as hchat
+from agent.handlers import death as hdeath
+from agent.handlers import world as hworld
+from agent import state as state_mod
 from agent import trade as tr
 from agent import update_fields as uf
 from agent import update_object as uo
@@ -109,11 +114,11 @@ def values_block(guid: int, values: bytes = None) -> bytes:
     """A VALUES block body: packed guid, values."""
     if values is None:
         values = no_values()
-    return bytes([se.UPDATETYPE_VALUES]) + pk.pack_packed_guid(guid) + values
+    return bytes([uo.UPDATETYPE_VALUES]) + pk.pack_packed_guid(guid) + values
 
 
 def out_of_range_block(*guids: int) -> bytes:
-    return (bytes([se.UPDATETYPE_OUT_OF_RANGE_OBJECTS]) + struct.pack('<I', len(guids))
+    return (bytes([hworld.UPDATETYPE_OUT_OF_RANGE_OBJECTS]) + struct.pack('<I', len(guids))
             + b''.join(pk.pack_packed_guid(g) for g in guids))
 
 
@@ -145,11 +150,11 @@ class RecvPacketTest(unittest.TestCase):
 
     def test_large_packet_then_small(self):
         big = bytes(range(256)) * 200  # 51200 B, size > 0x7FFF
-        stream = (server_packet(se.SMSG_COMPRESSED_UPDATE_OBJECT, big)
+        stream = (server_packet(hworld.SMSG_COMPRESSED_UPDATE_OBJECT, big)
                   + server_packet(se.SMSG_PONG, b'\x05\x00\x00\x00'))
         sess = make_session(stream)
         sess.sock.chunk = 4096
-        self.assertEqual(sess._recv_packet(), (se.SMSG_COMPRESSED_UPDATE_OBJECT, big))
+        self.assertEqual(sess._recv_packet(), (hworld.SMSG_COMPRESSED_UPDATE_OBJECT, big))
         self.assertEqual(sess._recv_packet(), (se.SMSG_PONG, b'\x05\x00\x00\x00'))
 
     def test_timeout_before_packet_is_plain_timeout(self):
@@ -172,20 +177,20 @@ class RecvPacketTest(unittest.TestCase):
 class ParseUpdateObjectTest(unittest.TestCase):
     def test_guid_is_little_endian_int_key(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
         self.assertEqual(list(sess.world_state.get_objects()), [CREATURE])
 
     def test_out_of_range_block_only_removes_listed_guids(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, 2)))
-        sess._parse_update_object(update_object(
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, 2)))
+        hworld.parse_update_object(sess.ctx, update_object(
             out_of_range_block(0x10, 0xF130000000000099),
             values_block(2)))
         self.assertEqual(list(sess.world_state.get_objects()), [2])
 
     def test_values_for_unknown_guid_is_ignored_not_created(self):
         sess = make_session()
-        sess._parse_update_object(update_object(values_block(2)))
+        hworld.parse_update_object(sess.ctx, update_object(values_block(2)))
         self.assertEqual(list(sess.world_state.get_objects()), [])
         self.assertEqual(sess.world_state.unknown_field_updates, 1)
 
@@ -194,20 +199,20 @@ class ParseUpdateObjectTest(unittest.TestCase):
         for data in (b'\x01\x00', update_object(b'\x02\xFF\x01'), update_object(out_of_range_block(5))[:-1]):
             with self.subTest(data=data.hex()):
                 with self.assertRaises(per.PerceptionParseError):
-                    sess._parse_update_object(data)
+                    hworld.parse_update_object(sess.ctx, data)
 
     def test_unknown_update_type_raises_parse_error(self):
         sess = make_session()
         with self.assertRaises(per.PerceptionParseError):
-            sess._parse_update_object(update_object(object_block(9, 2)))
+            hworld.parse_update_object(sess.ctx, update_object(object_block(9, 2)))
 
     def test_compressed_inflates_and_dumps(self):
-        data = update_object(object_block(se.UPDATETYPE_CREATE_OBJECT, CREATURE))
+        data = update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT, CREATURE))
         with tempfile.TemporaryDirectory() as d:
             dump_dir = os.path.join(d, 'dumps')
             sess = make_session(dump_packets_dir=dump_dir)
-            sess._dispatch(se.SMSG_COMPRESSED_UPDATE_OBJECT, compressed(data))
-            sess._dispatch(se.SMSG_UPDATE_OBJECT, data)
+            sess._dispatch(hworld.SMSG_COMPRESSED_UPDATE_OBJECT, compressed(data))
+            sess._dispatch(hworld.SMSG_UPDATE_OBJECT, data)
             names = sorted(os.listdir(dump_dir))
             self.assertEqual(len(names), 2)
             self.assertTrue(any(n.endswith('_0x01f6.bin') for n in names))
@@ -244,8 +249,8 @@ class MovementBroadcastTest(unittest.TestCase):
 
     def test_monster_move_starts_spline_for_known_guid(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
-        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        sess._dispatch(hworld.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
         obj = sess.world_state.get_object(CREATURE)
         self.assertIsNotNone(obj.spline)
         self.assertEqual(obj.spline["destination"], (10.0, 2.0, 3.0))
@@ -253,27 +258,27 @@ class MovementBroadcastTest(unittest.TestCase):
 
     def test_monster_move_stop_clears_spline(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
-        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
-        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE, move_type=uo.MONSTER_MOVE_STOP))
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        sess._dispatch(hworld.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
+        sess._dispatch(hworld.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE, move_type=uo.MONSTER_MOVE_STOP))
         self.assertIsNone(sess.world_state.get_object(CREATURE).spline)
 
     def test_monster_move_for_unknown_guid_is_ignored_and_counted(self):
         sess = make_session()
-        sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(0xDEAD))
+        sess._dispatch(hworld.SMSG_MONSTER_MOVE, monster_move_payload(0xDEAD))
         self.assertIsNone(sess.world_state.get_object(0xDEAD))
         self.assertEqual(sess.world_state.unknown_field_updates, 1)
 
     def test_heartbeat_updates_known_object_position(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
-        sess._dispatch(se.MSG_MOVE_HEARTBEAT, heartbeat_payload(CREATURE))
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+        sess._dispatch(hworld.MSG_MOVE_HEARTBEAT, heartbeat_payload(CREATURE))
         obj = sess.world_state.get_object(CREATURE)
         self.assertEqual((obj.position[1], obj.position[2], obj.position[3]), (5.0, 6.0, 7.0))
 
     def test_move_broadcast_for_unknown_guid_is_ignored_and_counted(self):
         sess = make_session()
-        sess._dispatch(se.MSG_MOVE_HEARTBEAT, heartbeat_payload(0xDEAD))
+        sess._dispatch(hworld.MSG_MOVE_HEARTBEAT, heartbeat_payload(0xDEAD))
         self.assertIsNone(sess.world_state.get_object(0xDEAD))
         self.assertEqual(sess.world_state.unknown_field_updates, 1)
 
@@ -281,12 +286,12 @@ class MovementBroadcastTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             dump_dir = os.path.join(d, 'dumps')
             sess = make_session(dump_packets_dir=dump_dir)
-            sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
-            sess._dispatch(se.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
-            sess._dispatch(se.MSG_MOVE_HEARTBEAT, heartbeat_payload(CREATURE))
+            hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE)))
+            sess._dispatch(hworld.SMSG_MONSTER_MOVE, monster_move_payload(CREATURE))
+            sess._dispatch(hworld.MSG_MOVE_HEARTBEAT, heartbeat_payload(CREATURE))
             names = os.listdir(dump_dir)
-            self.assertTrue(any(n.endswith(f'_{se.SMSG_MONSTER_MOVE:#06x}.bin') for n in names))
-            self.assertTrue(any(n.endswith(f'_{se.MSG_MOVE_HEARTBEAT:#06x}.bin') for n in names))
+            self.assertTrue(any(n.endswith(f'_{hworld.SMSG_MONSTER_MOVE:#06x}.bin') for n in names))
+            self.assertTrue(any(n.endswith(f'_{hworld.MSG_MOVE_HEARTBEAT:#06x}.bin') for n in names))
 
 
 class WorldStateTest(unittest.TestCase):
@@ -295,7 +300,7 @@ class WorldStateTest(unittest.TestCase):
         ws.set_my_guid(2)
         self.assertEqual(ws.my_guid, 2)
         self.assertEqual(ws.get_objects(), {})
-        ws.record_guid(2, se.UPDATETYPE_CREATE_OBJECT2)
+        ws.record_guid(2, uo.UPDATETYPE_CREATE_OBJECT2)
         self.assertEqual(list(ws.get_objects()), [2])
 
 
@@ -332,39 +337,39 @@ class NameQueryTest(unittest.TestCase):
 
     def test_creature_query_response_dispatch(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE,
                                                                values=values_body({0x03: 17213}))))
-        sess._dispatch(se.SMSG_CREATURE_QUERY_RESPONSE, creature_query_response_payload(17213, "Broom"))
+        sess._dispatch(hworld.SMSG_CREATURE_QUERY_RESPONSE, creature_query_response_payload(17213, "Broom"))
         self.assertEqual(sess.world_state.get_object(CREATURE).name, "Broom")
 
     def test_gameobject_query_response_dispatch(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE,
                                                                object_type=uo.TYPEID_GAMEOBJECT,
                                                                values=values_body({0x03: 181646}))))
-        sess._dispatch(se.SMSG_GAMEOBJECT_QUERY_RESPONSE, gameobject_query_response_payload(181646, "Ship"))
+        sess._dispatch(hworld.SMSG_GAMEOBJECT_QUERY_RESPONSE, gameobject_query_response_payload(181646, "Ship"))
         self.assertEqual(sess.world_state.get_object(CREATURE).name, "Ship")
 
     def test_name_query_response_dispatch(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, 7,
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, 7,
                                                                object_type=uo.TYPEID_PLAYER,
                                                                values=values_body({0x03: 0}))))
-        sess._dispatch(se.SMSG_NAME_QUERY_RESPONSE, name_query_response_payload(7, "Rubens"))
+        sess._dispatch(hworld.SMSG_NAME_QUERY_RESPONSE, name_query_response_payload(7, "Rubens"))
         self.assertEqual(sess.world_state.get_object(7).name, "Rubens")
 
     def test_send_name_queries_drains_and_sends_creature_query(self):
         sess = make_session()
-        sess._parse_update_object(update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE,
                                                                values=values_body({0x03: 17213}))))
-        sess._send_name_queries()
+        hworld.send_name_queries(sess.ctx)
         # the sent bytes must contain the entry+guid payload somewhere in a CMSG_CREATURE_QUERY frame
         expected_payload = nm.build_creature_query(17213, CREATURE)
         self.assertIn(expected_payload, sess.sock.sent)
 
     def test_send_name_queries_is_empty_when_nothing_pending(self):
         sess = make_session()
-        sess._send_name_queries()
+        hworld.send_name_queries(sess.ctx)
         self.assertEqual(sess.sock.sent, b'')
 
 
@@ -375,7 +380,7 @@ class NpcInteractionDispatchTest(unittest.TestCase):
         sess = make_session()
         payload = (struct.pack('<Q', 5) + struct.pack('<i', 1) + struct.pack('<i', 999)
                    + struct.pack('<I', 0) + struct.pack('<I', 0))
-        sess._dispatch(se.SMSG_GOSSIP_MESSAGE, payload)
+        sess._dispatch(npc_mod.SMSG_GOSSIP_MESSAGE, payload)
         window = sess.world_state.get_ui_state()
         self.assertEqual(window["kind"], "gossip")
         self.assertEqual(window["npc_guid"], 5)
@@ -385,19 +390,19 @@ class NpcInteractionDispatchTest(unittest.TestCase):
     def test_gossip_complete_dispatch_closes_window(self):
         sess = make_session()
         sess.world_state.ui_state = {"kind": "gossip"}
-        sess._dispatch(se.SMSG_GOSSIP_COMPLETE, b'')
+        sess._dispatch(npc_mod.SMSG_GOSSIP_COMPLETE, b'')
         self.assertIsNone(sess.world_state.get_ui_state())
 
     def test_list_inventory_dispatch_opens_vendor_window(self):
         sess = make_session()
         payload = struct.pack('<Q', 5) + bytes([0])
-        sess._dispatch(se.SMSG_LIST_INVENTORY, payload)
+        sess._dispatch(npc_mod.SMSG_LIST_INVENTORY, payload)
         self.assertEqual(sess.world_state.get_ui_state()["kind"], "vendor")
 
     def test_trainer_list_dispatch_opens_trainer_window(self):
         sess = make_session()
         payload = struct.pack('<Q', 5) + struct.pack('<i', 0) + struct.pack('<i', 0) + b'\x00'
-        sess._dispatch(se.SMSG_TRAINER_LIST, payload)
+        sess._dispatch(npc_mod.SMSG_TRAINER_LIST, payload)
         self.assertEqual(sess.world_state.get_ui_state()["kind"], "trainer")
 
     def test_npc_text_update_dispatch_backfills_gossip_window(self):
@@ -407,14 +412,14 @@ class NpcInteractionDispatchTest(unittest.TestCase):
         option = (struct.pack('<f', 1.0) + b'Hi\x00' + b'\x00' + struct.pack('<i', 0)
                    + struct.pack('<6I', 0, 0, 0, 0, 0, 0))
         payload = struct.pack('<I', 999) + option * npc_mod.MAX_NPC_TEXT_OPTIONS
-        sess._dispatch(se.SMSG_NPC_TEXT_UPDATE, payload)
+        sess._dispatch(npc_mod.SMSG_NPC_TEXT_UPDATE, payload)
         self.assertEqual(sess.world_state.get_ui_state()["body_text"], "Hi")
 
     def test_send_npc_text_queries_drains_and_sends(self):
         sess = make_session()
         sess.world_state.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
                                                  "options": [], "quests": []})
-        sess._send_npc_text_queries()
+        hnpc.send_npc_text_queries(sess.ctx)
         self.assertIn(npc_mod.build_npc_text_query(999, 5), sess.sock.sent)
 
 
@@ -425,7 +430,7 @@ class MailDispatchTest(unittest.TestCase):
     def test_send_mail_result_records_raw_mail_result_event(self):
         sess = make_session()
         payload = struct.pack('<III', 5, mail_mod.MAIL_SEND, mail_mod.MAIL_OK)
-        sess._dispatch(se.SMSG_SEND_MAIL_RESULT, payload)
+        sess._dispatch(mail_mod.SMSG_SEND_MAIL_RESULT, payload)
         results = [e for e in sess.events if e["kind"] == "mail_result"]
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["mail_id"], 5)
@@ -435,7 +440,7 @@ class MailDispatchTest(unittest.TestCase):
         sess = make_session()
         sess.world_state.open_mailbox_request(0x1234)
         payload = struct.pack('<iB', 0, 0)
-        sess._dispatch(se.SMSG_MAIL_LIST_RESULT, payload)
+        sess._dispatch(mail_mod.SMSG_MAIL_LIST_RESULT, payload)
         mailbox = sess.world_state.get_mailbox()
         self.assertEqual(mailbox["mailbox_guid"], 0x1234)
         self.assertEqual(mailbox["total_records"], 0)
@@ -443,7 +448,7 @@ class MailDispatchTest(unittest.TestCase):
     def test_received_mail_dispatch_sets_flag_and_records_event(self):
         sess = make_session()
         payload = struct.pack('<f', 0.0)
-        sess._dispatch(se.SMSG_RECEIVED_MAIL, payload)
+        sess._dispatch(mail_mod.SMSG_RECEIVED_MAIL, payload)
         self.assertTrue(sess.world_state.snapshot()["has_new_mail"])
         received = [e for e in sess.events if e["kind"] == "mail_received"]
         self.assertEqual(len(received), 1)
@@ -457,7 +462,7 @@ class TradeDispatchTest(unittest.TestCase):
     def test_begin_trade_opens_request_and_records_events(self):
         sess = make_session()
         payload = struct.pack('<IQ', tr.TRADE_STATUS_BEGIN_TRADE, 0x555)
-        sess._dispatch(se.SMSG_TRADE_STATUS, payload)
+        sess._dispatch(tr.SMSG_TRADE_STATUS, payload)
         trade_state = sess.world_state.get_trade()
         self.assertEqual(trade_state["phase"], "requested")
         self.assertEqual(trade_state["partner_guid"], 0x555)
@@ -469,7 +474,7 @@ class TradeDispatchTest(unittest.TestCase):
         sess = make_session()
         sess.world_state.start_trade_request(0x555, initiated_by_me=True)
         payload = struct.pack('<II', tr.TRADE_STATUS_OPEN_WINDOW, 0)
-        sess._dispatch(se.SMSG_TRADE_STATUS, payload)
+        sess._dispatch(tr.SMSG_TRADE_STATUS, payload)
         self.assertEqual(sess.world_state.get_trade()["phase"], "open")
         self.assertEqual([e["kind"] for e in sess.events], ["trade_status"])
 
@@ -477,7 +482,7 @@ class TradeDispatchTest(unittest.TestCase):
         sess = make_session()
         sess.world_state.start_trade_request(0x555, initiated_by_me=True)
         payload = struct.pack('<I', tr.TRADE_STATUS_TRADE_COMPLETE)
-        sess._dispatch(se.SMSG_TRADE_STATUS, payload)
+        sess._dispatch(tr.SMSG_TRADE_STATUS, payload)
         self.assertIsNone(sess.world_state.get_trade())
         completed = [e for e in sess.events if e["kind"] == "trade_completed"]
         self.assertEqual(len(completed), 1)
@@ -488,7 +493,7 @@ class TradeDispatchTest(unittest.TestCase):
         sess.world_state.start_trade_request(0x555, initiated_by_me=True)
         payload = struct.pack('<BIIII', 1, 0, tr.TRADE_SLOT_COUNT, tr.TRADE_SLOT_COUNT, 1234) \
             + struct.pack('<I', 0) + b'\x00' * (tr.TRADE_SLOT_COUNT * (1 + 4 * 18))
-        sess._dispatch(se.SMSG_TRADE_STATUS_EXTENDED, payload)
+        sess._dispatch(tr.SMSG_TRADE_STATUS_EXTENDED, payload)
         self.assertEqual(sess.world_state.get_trade()["their_gold"], 1234)
         changed = [e for e in sess.events if e["kind"] == "trade_offer_changed"]
         self.assertEqual(len(changed), 1)
@@ -503,7 +508,7 @@ def len_string(s: str) -> bytes:
 def messagechat_payload(slash_cmd: int, text: str, sender_guid: int = 1,
                          sender_name: str | None = None, channel: str | None = None) -> bytes:
     """Builds a payload matching WorldPackets::Chat::Chat::Write's default
-    branch (ChatPackets.cpp) — see agent/session.py::_handle_messagechat."""
+    branch (ChatPackets.cpp) — see agent/handlers/chat.py::handle_messagechat."""
     payload = struct.pack('<Bi', slash_cmd, se.__dict__.get('LANG_ORCISH', 1))
     payload += struct.pack('<Q', sender_guid)
     payload += struct.pack('<I', 0)  # flags
@@ -540,7 +545,7 @@ def monster_chat_payload(slash_cmd: int, text: str, sender_name: str,
 
 def whisper_foreign_payload(text: str, sender_name: str, sender_guid: int = 1,
                              target_guid: int = 0) -> bytes:
-    payload = struct.pack('<Bi', se.CHAT_MSG_WHISPER_FOREIGN, 1)
+    payload = struct.pack('<Bi', hchat.CHAT_MSG_WHISPER_FOREIGN, 1)
     payload += struct.pack('<Q', sender_guid)
     payload += struct.pack('<I', 0)
     payload += len_string(sender_name)
@@ -552,7 +557,7 @@ def whisper_foreign_payload(text: str, sender_name: str, sender_guid: int = 1,
 
 def bg_system_payload(text: str, sender_guid: int = 1, target_guid: int = 0,
                        target_name: str | None = None) -> bytes:
-    payload = struct.pack('<Bi', se.CHAT_MSG_BG_SYSTEM_NEUTRAL, 1)
+    payload = struct.pack('<Bi', hchat.CHAT_MSG_BG_SYSTEM_NEUTRAL, 1)
     payload += struct.pack('<Q', sender_guid)
     payload += struct.pack('<I', 0)
     payload += struct.pack('<Q', target_guid)
@@ -567,7 +572,7 @@ class ChatParsingTest(unittest.TestCase):
     def test_gm_messagechat_say(self):
         sess = make_session()
         payload = messagechat_payload(0x01, "hello there", sender_guid=1, sender_name="Rubens")
-        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_GM_MESSAGECHAT, payload)
         self.assertEqual(len(sess.chat_inbox), 1)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry, {"kind": "say", "sender_guid": 1, "sender_name": "Rubens",
@@ -576,7 +581,7 @@ class ChatParsingTest(unittest.TestCase):
     def test_plain_messagechat_no_sender_name(self):
         sess = make_session()
         payload = messagechat_payload(0x07, "psst", sender_guid=2)
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry["kind"], "whisper")
         self.assertEqual(entry["sender_name"], "")
@@ -586,7 +591,7 @@ class ChatParsingTest(unittest.TestCase):
         sess = make_session()
         payload = messagechat_payload(0x11, "LFG dungeon", sender_guid=3,
                                        sender_name="Someone", channel="World")
-        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_GM_MESSAGECHAT, payload)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry["kind"], "channel")
         self.assertEqual(entry["channel"], "World")
@@ -594,23 +599,23 @@ class ChatParsingTest(unittest.TestCase):
     def test_utf8_accents_round_trip(self):
         sess = make_session()
         payload = messagechat_payload(0x01, "Olá, tudo bem?", sender_name="Rubens")
-        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_GM_MESSAGECHAT, payload)
         self.assertEqual(sess.chat_inbox[0]["text"], "Olá, tudo bem?")
 
     def test_inbox_is_bounded(self):
         sess = make_session()
-        for i in range(se.CHAT_INBOX_MAXLEN + 10):
+        for i in range(state_mod.CHAT_INBOX_MAXLEN + 10):
             payload = messagechat_payload(0x01, f"msg {i}", sender_name="X")
-            sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT, payload)
-        self.assertEqual(len(sess.chat_inbox), se.CHAT_INBOX_MAXLEN)
-        self.assertEqual(sess.chat_inbox[-1]["text"], f"msg {se.CHAT_INBOX_MAXLEN + 9}")
+            sess._dispatch(hchat.SMSG_GM_MESSAGECHAT, payload)
+        self.assertEqual(len(sess.chat_inbox), state_mod.CHAT_INBOX_MAXLEN)
+        self.assertEqual(sess.chat_inbox[-1]["text"], f"msg {state_mod.CHAT_INBOX_MAXLEN + 9}")
 
     def test_monster_say_no_target(self):
         sess = make_session()
-        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_SAY,
+        payload = monster_chat_payload(hchat.CHAT_MSG_MONSTER_SAY,
                                         "Remain strong. Lor'themar will lead you to power and glory!",
                                         sender_name="Silvermoon City Guardian")
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry["kind"], "monster_say")
         self.assertEqual(entry["sender_name"], "Silvermoon City Guardian")
@@ -619,37 +624,37 @@ class ChatParsingTest(unittest.TestCase):
 
     def test_monster_whisper_with_unit_target_reads_target_name(self):
         sess = make_session()
-        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_WHISPER, "Heel!", sender_name="Hound Master",
+        payload = monster_chat_payload(hchat.CHAT_MSG_MONSTER_WHISPER, "Heel!", sender_name="Hound Master",
                                         target_guid=UNIT_GUID, target_name="Wolf")
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry["kind"], "monster_whisper")
         self.assertEqual(entry["target_name"], "Wolf")
 
     def test_monster_chat_with_player_target_has_no_target_name(self):
         sess = make_session()
-        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_WHISPER, "hi", sender_name="Guard",
+        payload = monster_chat_payload(hchat.CHAT_MSG_MONSTER_WHISPER, "hi", sender_name="Guard",
                                         target_guid=PLAYER_GUID)
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         self.assertNotIn("target_name", sess.chat_inbox[0])
 
     def test_monster_chat_with_pet_target_has_no_target_name(self):
         sess = make_session()
-        payload = monster_chat_payload(se.CHAT_MSG_MONSTER_SAY, "grr", sender_name="Beast",
+        payload = monster_chat_payload(hchat.CHAT_MSG_MONSTER_SAY, "grr", sender_name="Beast",
                                         target_guid=PET_GUID)
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         self.assertNotIn("target_name", sess.chat_inbox[0])
 
     def test_raid_boss_emote(self):
         sess = make_session()
-        payload = monster_chat_payload(se.CHAT_MSG_RAID_BOSS_EMOTE, "roars!", sender_name="Boss")
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        payload = monster_chat_payload(hchat.CHAT_MSG_RAID_BOSS_EMOTE, "roars!", sender_name="Boss")
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         self.assertEqual(sess.chat_inbox[0]["kind"], "raid_boss_emote")
 
     def test_whisper_foreign(self):
         sess = make_session()
         payload = whisper_foreign_payload("psst", sender_name="SomeoneOnAnotherRealm")
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry["kind"], "whisper_foreign")
         self.assertEqual(entry["sender_name"], "SomeoneOnAnotherRealm")
@@ -657,7 +662,7 @@ class ChatParsingTest(unittest.TestCase):
     def test_bg_system_with_unit_target_reads_target_name(self):
         sess = make_session()
         payload = bg_system_payload("The flag has been captured!", target_guid=UNIT_GUID, target_name="Flag")
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         entry = sess.chat_inbox[0]
         self.assertEqual(entry["kind"], "bg_system_neutral")
         self.assertEqual(entry["target_name"], "Flag")
@@ -665,33 +670,33 @@ class ChatParsingTest(unittest.TestCase):
     def test_bg_system_with_player_target_has_no_target_name(self):
         sess = make_session()
         payload = bg_system_payload("Welcome!", target_guid=PLAYER_GUID)
-        sess._handle_messagechat(se.SMSG_MESSAGECHAT, payload)
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, payload)
         self.assertNotIn("target_name", sess.chat_inbox[0])
 
     def test_party_leader_and_raid_leader_kinds_are_named(self):
         sess = make_session()
-        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT,
-                                  messagechat_payload(se.CHAT_MSG_PARTY_LEADER, "let's go", sender_name="Rubens"))
+        sess._dispatch(hchat.SMSG_GM_MESSAGECHAT,
+                                  messagechat_payload(hchat.CHAT_MSG_PARTY_LEADER, "let's go", sender_name="Rubens"))
         self.assertEqual(sess.chat_inbox[0]["kind"], "party_leader")
-        sess._handle_messagechat(se.SMSG_GM_MESSAGECHAT,
-                                  messagechat_payload(se.CHAT_MSG_RAID_LEADER, "pull", sender_name="Rubens"))
+        sess._dispatch(hchat.SMSG_GM_MESSAGECHAT,
+                                  messagechat_payload(hchat.CHAT_MSG_RAID_LEADER, "pull", sender_name="Rubens"))
         self.assertEqual(sess.chat_inbox[1]["kind"], "raid_leader")
 
     def test_no_unnamed_kinds_left_in_chatmsg_enum(self):
         # Every ChatMsg value from 0x00 to 0x33 (SharedDefines.h) must have a
         # name — anything falling back to "type_<n>" here is a gap.
         for value in list(range(0x34)) + [0xFF]:
-            self.assertIn(value, se.CHAT_KIND_NAMES, f"unnamed ChatMsg {value:#04x}")
+            self.assertIn(value, hchat.CHAT_KIND_NAMES, f"unnamed ChatMsg {value:#04x}")
 
     def test_group_invite_sets_pending_invite(self):
         sess = make_session()
         payload = bytes([1]) + b'Rubens\x00'
-        sess._handle_group_invite(payload)
+        sess._dispatch(hchat.SMSG_GROUP_INVITE, payload)
         self.assertEqual(sess.pending_invite, {"inviter_name": "Rubens"})
 
     def test_chat_player_not_found_records_whisper_failed_event(self):
         sess = make_session()
-        sess._handle_chat_player_not_found(b'Nobody\x00')
+        sess._dispatch(hchat.SMSG_CHAT_PLAYER_NOT_FOUND, b'Nobody\x00')
         self.assertEqual(sess.events[-1]["kind"], "whisper_failed")
         self.assertEqual(sess.events[-1]["target_name"], "Nobody")
 
@@ -699,7 +704,7 @@ class ChatParsingTest(unittest.TestCase):
         sess = make_session()
         # uint32 operation (0=invite), cstring member, uint32 result (5=already_in_group), uint32 val
         payload = struct.pack('<I', 0) + b'Rubens\x00' + struct.pack('<II', 5, 0)
-        sess._handle_party_command_result(payload)
+        sess._dispatch(hchat.SMSG_PARTY_COMMAND_RESULT, payload)
         self.assertEqual(sess.events[-1]["kind"], "group_invite_failed")
         self.assertEqual(sess.events[-1]["target_name"], "Rubens")
         self.assertEqual(sess.events[-1]["result"], 5)
@@ -709,18 +714,18 @@ class ChatParsingTest(unittest.TestCase):
         sess = make_session()
         # result 0 == ERR_PARTY_RESULT_OK — no event should be recorded.
         payload = struct.pack('<I', 0) + b'Rubens\x00' + struct.pack('<II', 0, 0)
-        sess._handle_party_command_result(payload)
+        sess._dispatch(hchat.SMSG_PARTY_COMMAND_RESULT, payload)
         self.assertEqual(len(sess.events), 0)
 
     def test_chat_player_not_found_dispatch(self):
         sess = make_session()
-        self.assertTrue(sess._dispatch(se.SMSG_CHAT_PLAYER_NOT_FOUND, b'Nobody\x00'))
+        self.assertTrue(sess._dispatch(hchat.SMSG_CHAT_PLAYER_NOT_FOUND, b'Nobody\x00'))
         self.assertEqual(sess.events[-1]["kind"], "whisper_failed")
 
     def test_party_command_result_dispatch(self):
         sess = make_session()
         payload = struct.pack('<I', 0) + b'Rubens\x00' + struct.pack('<II', 1, 0)
-        self.assertTrue(sess._dispatch(se.SMSG_PARTY_COMMAND_RESULT, payload))
+        self.assertTrue(sess._dispatch(hchat.SMSG_PARTY_COMMAND_RESULT, payload))
         self.assertEqual(sess.events[-1]["kind"], "group_invite_failed")
         self.assertEqual(sess.events[-1]["result_name"], "bad_player_name")
 
@@ -783,11 +788,11 @@ class LoginTest(unittest.TestCase):
 
 class RecvLoopSafetyNetTest(unittest.TestCase):
     def test_bad_packets_are_dropped_and_loop_continues(self):
-        good = update_object(object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE))
-        stream = (server_packet(se.SMSG_COMPRESSED_UPDATE_OBJECT, b'\x10\x00\x00\x00garbage')
-                  + server_packet(se.SMSG_UPDATE_OBJECT, b'\x01\x00\x00\x00\x02')
-                  + server_packet(se.SMSG_UPDATE_OBJECT, b'\x01\x00\x00\x00\x02')
-                  + server_packet(se.SMSG_UPDATE_OBJECT, good))
+        good = update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE))
+        stream = (server_packet(hworld.SMSG_COMPRESSED_UPDATE_OBJECT, b'\x10\x00\x00\x00garbage')
+                  + server_packet(hworld.SMSG_UPDATE_OBJECT, b'\x01\x00\x00\x00\x02')
+                  + server_packet(hworld.SMSG_UPDATE_OBJECT, b'\x01\x00\x00\x00\x02')
+                  + server_packet(hworld.SMSG_UPDATE_OBJECT, good))
         sess = make_session(stream)
         sess._running = True
         with self.assertLogs('agent.session', level='WARNING') as logs:
@@ -830,13 +835,13 @@ class DeathAndCorpseHandlerTest(unittest.TestCase):
         sess = make_session()
         sess.player_guid = CREATURE
         sess.world_state.set_my_guid(CREATURE)
-        alive = object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
+        alive = object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
                               values=values_body({uf.UNIT_FIELD_HEALTH: 100}))
-        sess._parse_update_object(update_object(alive))
+        hworld.parse_update_object(sess.ctx, update_object(alive))
         self.assertEqual(len(sess.events), 0)
 
         dead = values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))
-        sess._parse_update_object(update_object(dead))
+        hworld.parse_update_object(sess.ctx, update_object(dead))
         self.assertEqual(sess.events[-1]["kind"], "death")
         self.assertIsNone(sess.events[-1]["killer_guid"])
 
@@ -844,10 +849,10 @@ class DeathAndCorpseHandlerTest(unittest.TestCase):
         sess = make_session()
         sess.player_guid = CREATURE
         sess.world_state.set_my_guid(CREATURE)
-        sess._parse_update_object(update_object(
-            object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
+        hworld.parse_update_object(sess.ctx, update_object(
+            object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
                          values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
-        sess._parse_update_object(update_object(
+        hworld.parse_update_object(sess.ctx, update_object(
             values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
         deaths = [e for e in sess.events if e["kind"] == "death"]
         self.assertEqual(len(deaths), 1)
@@ -856,53 +861,53 @@ class DeathAndCorpseHandlerTest(unittest.TestCase):
         sess = make_session()
         sess.player_guid = CREATURE
         sess.world_state.set_my_guid(CREATURE)
-        sess._parse_update_object(update_object(
-            object_block(se.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
+        hworld.parse_update_object(sess.ctx, update_object(
+            object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
                          values=values_body({uf.UNIT_FIELD_HEALTH: 100}))))
         sess._record_event("attacker_state_update", attacker_guid=0xBEEF, victim_guid=CREATURE)
-        sess._parse_update_object(update_object(
+        hworld.parse_update_object(sess.ctx, update_object(
             values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
         self.assertEqual(sess.events[-1]["killer_guid"], 0xBEEF)
 
     def test_corpse_reclaim_delay_sets_ready_at(self):
         sess = make_session()
         before = time.monotonic()
-        sess._handle_corpse_reclaim_delay(struct.pack('<I', 30000))
+        sess._dispatch(hdeath.SMSG_CORPSE_RECLAIM_DELAY, struct.pack('<I', 30000))
         self.assertGreater(sess.corpse_reclaim_ready_at, before + 29)
         self.assertLess(sess.corpse_reclaim_ready_at, before + 31)
 
     def test_death_release_loc_stores_graveyard_position(self):
         sess = make_session()
         payload = struct.pack('<i3f', 0, 1.0, 2.0, 3.0)
-        sess._handle_death_release_loc(payload)
+        sess._dispatch(hdeath.SMSG_DEATH_RELEASE_LOC, payload)
         self.assertEqual(sess.graveyard_position, (0, 1.0, 2.0, 3.0))
 
     def test_death_release_loc_ignores_clear_sentinel(self):
         sess = make_session()
         sess.graveyard_position = (0, 1.0, 2.0, 3.0)
         payload = struct.pack('<i3f', -1, 0.0, 0.0, 0.0)
-        sess._handle_death_release_loc(payload)
+        sess._dispatch(hdeath.SMSG_DEATH_RELEASE_LOC, payload)
         self.assertEqual(sess.graveyard_position, (0, 1.0, 2.0, 3.0))  # unchanged
 
     def test_corpse_query_response_valid(self):
         sess = make_session()
         payload = struct.pack('<Bi3fiI', 1, 0, 10.0, 20.0, 30.0, 0, 0)
-        sess._handle_corpse_query_response(payload)
+        sess._dispatch(hdeath.MSG_CORPSE_QUERY, payload)
         self.assertEqual(sess.corpse_position, (0, 10.0, 20.0, 30.0))
 
     def test_corpse_query_response_invalid_clears_position(self):
         sess = make_session()
         sess.corpse_position = (0, 1.0, 2.0, 3.0)
-        sess._handle_corpse_query_response(struct.pack('<B', 0))
+        sess._dispatch(hdeath.MSG_CORPSE_QUERY, struct.pack('<B', 0))
         self.assertIsNone(sess.corpse_position)
 
     def test_dispatch_routes_new_opcodes(self):
         sess = make_session()
-        self.assertTrue(sess._dispatch(se.SMSG_CORPSE_RECLAIM_DELAY, struct.pack('<I', 1000)))
+        self.assertTrue(sess._dispatch(hdeath.SMSG_CORPSE_RECLAIM_DELAY, struct.pack('<I', 1000)))
         self.assertIsNotNone(sess.corpse_reclaim_ready_at)
-        self.assertTrue(sess._dispatch(se.SMSG_DEATH_RELEASE_LOC, struct.pack('<i3f', 0, 1.0, 2.0, 3.0)))
+        self.assertTrue(sess._dispatch(hdeath.SMSG_DEATH_RELEASE_LOC, struct.pack('<i3f', 0, 1.0, 2.0, 3.0)))
         self.assertEqual(sess.graveyard_position, (0, 1.0, 2.0, 3.0))
-        self.assertTrue(sess._dispatch(se.MSG_CORPSE_QUERY, struct.pack('<Bi3fiI', 1, 0, 1.0, 2.0, 3.0, 0, 0)))
+        self.assertTrue(sess._dispatch(hdeath.MSG_CORPSE_QUERY, struct.pack('<Bi3fiI', 1, 0, 1.0, 2.0, 3.0, 0, 0)))
         self.assertEqual(sess.corpse_position, (0, 1.0, 2.0, 3.0))
 
 
@@ -938,7 +943,7 @@ class LootDispatchTest(unittest.TestCase):
     def test_loot_response_sets_session_loot_and_records_event(self):
         sess = make_session()
         payload = struct.pack('<Q', 5) + bytes([lo.LOOT_CORPSE]) + struct.pack('<IB', 10, 0)
-        sess._dispatch(se.SMSG_LOOT_RESPONSE, payload)
+        sess._dispatch(lo.SMSG_LOOT_RESPONSE, payload)
         self.assertEqual(sess.loot["guid"], 5)
         self.assertTrue(sess.loot["success"])
         self.assertEqual(sess.events[-1]["kind"], "loot_response")
@@ -946,25 +951,25 @@ class LootDispatchTest(unittest.TestCase):
     def test_loot_release_response_clears_matching_loot(self):
         sess = make_session()
         sess.loot = {"guid": 5, "success": True, "items": []}
-        sess._dispatch(se.SMSG_LOOT_RELEASE_RESPONSE, struct.pack('<Q', 5) + bytes([1]))
+        sess._dispatch(lo.SMSG_LOOT_RELEASE_RESPONSE, struct.pack('<Q', 5) + bytes([1]))
         self.assertIsNone(sess.loot)
 
     def test_loot_release_response_ignores_mismatched_guid(self):
         sess = make_session()
         sess.loot = {"guid": 5, "success": True, "items": []}
-        sess._dispatch(se.SMSG_LOOT_RELEASE_RESPONSE, struct.pack('<Q', 999) + bytes([1]))
+        sess._dispatch(lo.SMSG_LOOT_RELEASE_RESPONSE, struct.pack('<Q', 999) + bytes([1]))
         self.assertIsNotNone(sess.loot)
 
     def test_loot_removed_drops_item_from_session_loot(self):
         sess = make_session()
         sess.loot = {"guid": 5, "success": True, "items": [{"slot": 0, "entry": 1}, {"slot": 1, "entry": 2}]}
-        sess._dispatch(se.SMSG_LOOT_REMOVED, bytes([0]))
+        sess._dispatch(lo.SMSG_LOOT_REMOVED, bytes([0]))
         self.assertEqual(sess.loot["items"], [{"slot": 1, "entry": 2}])
 
     def test_loot_money_notify_records_event(self):
         sess = make_session()
         sess.loot = {"guid": 5, "success": True, "items": [], "coins": 12}
-        sess._dispatch(se.SMSG_LOOT_MONEY_NOTIFY, struct.pack('<I', 12) + bytes([1]))
+        sess._dispatch(lo.SMSG_LOOT_MONEY_NOTIFY, struct.pack('<I', 12) + bytes([1]))
         self.assertEqual(sess.loot["coins"], 0)
         self.assertEqual(sess.events[-1]["kind"], "loot_money")
         self.assertEqual(sess.events[-1]["money"], 12)
@@ -974,7 +979,7 @@ class LootDispatchTest(unittest.TestCase):
         payload = (struct.pack('<Q', 1) + struct.pack('<III', 1, 0, 1) + bytes([0])
                    + struct.pack('<I', 23) + struct.pack('<I', 159) + struct.pack('<I', 0)
                    + struct.pack('<i', -1) + struct.pack('<II', 1, 1))
-        sess._dispatch(se.SMSG_ITEM_PUSH_RESULT, payload)
+        sess._dispatch(lo.SMSG_ITEM_PUSH_RESULT, payload)
         self.assertEqual(sess.events[-1]["kind"], "item_received")
         self.assertEqual(sess.events[-1]["entry"], 159)
 
@@ -982,14 +987,14 @@ class LootDispatchTest(unittest.TestCase):
         sess = make_session()
         payload = (bytes([lo.EQUIP_ERR_INV_FULL]) + struct.pack('<Q', 0) + struct.pack('<Q', 0)
                    + bytes([0]) + struct.pack('<i', 0))
-        sess._dispatch(se.SMSG_INVENTORY_CHANGE_FAILURE, payload)
+        sess._dispatch(lo.SMSG_INVENTORY_CHANGE_FAILURE, payload)
         self.assertEqual(sess.events[-1]["kind"], "inventory_change_failure")
         self.assertFalse(sess.events[-1]["ok"])
 
     def test_item_query_response_populates_world_state_cache(self):
         sess = make_session()
         payload = struct.pack('<I', 999999 | 0x80000000)  # "not found" (short payload, valid)
-        sess._dispatch(se.SMSG_ITEM_QUERY_SINGLE_RESPONSE, payload)
+        sess._dispatch(lo.SMSG_ITEM_QUERY_SINGLE_RESPONSE, payload)
         self.assertIn(999999, sess.world_state.items.items)
         self.assertIsNone(sess.world_state.items.items[999999])
 
@@ -1003,7 +1008,7 @@ class LootDispatchTest(unittest.TestCase):
                                           "x": 0.0, "y": 0.0, "z": 0.0, "o": 0.0},
                                 fields={})
         sess.world_state.update_object(block)
-        sess._sync_self_from_block(block)
+        hworld.sync_self_from_block(sess.ctx, block)
         # Zero-value fields aren't sent over the wire, so a missing coinage field
         # once the self object exists defaults to 0 rather than staying None.
         self.assertEqual(sess.coinage, 0)
@@ -1013,7 +1018,7 @@ class LootDispatchTest(unittest.TestCase):
         block2 = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=CREATURE,
                                  fields={uf.PLAYER_FIELD_COINAGE: 100})
         sess.world_state.update_object(block2)
-        sess._sync_self_from_block(block2)
+        hworld.sync_self_from_block(sess.ctx, block2)
         self.assertEqual(sess.coinage, 100)
         self.assertEqual(sess.events[-1], {**sess.events[-1], "kind": "money_changed",
                                             "old": 0, "new": 100, "delta": 100})
@@ -1021,7 +1026,7 @@ class LootDispatchTest(unittest.TestCase):
         block3 = uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=CREATURE,
                                  fields={uf.PLAYER_FIELD_COINAGE: 150})
         sess.world_state.update_object(block3)
-        sess._sync_self_from_block(block3)
+        hworld.sync_self_from_block(sess.ctx, block3)
         self.assertEqual(sess.coinage, 150)
         self.assertEqual(sess.events[-1], {**sess.events[-1], "kind": "money_changed",
                                             "old": 100, "new": 150, "delta": 50})

@@ -12,6 +12,7 @@ from agent import actions as ac
 from agent import channels as ch
 from agent import perception as per
 from agent import session as se
+from agent.handlers import chat as hchat
 
 GENERAL = "General - Eversong Woods"
 ME = 0x0000000000000042
@@ -28,7 +29,7 @@ def you_joined(channel: str, channel_id: int, flags: int = 0x18) -> bytes:
 def channel_chat(sender_guid: int, channel: str, text: str) -> bytes:
     """SMSG_MESSAGECHAT as Chat::Write builds it for CHAT_MSG_CHANNEL."""
     t = text.encode("utf-8") + b"\x00"
-    return (struct.pack("<BiQI", se.CHAT_MSG_CHANNEL, 1, sender_guid, 0)
+    return (struct.pack("<BiQI", hchat.CHAT_MSG_CHANNEL, 1, sender_guid, 0)
             + channel.encode("utf-8") + b"\x00"
             + struct.pack("<Q", sender_guid)
             + struct.pack("<I", len(t)) + t + b"\x00")
@@ -164,7 +165,7 @@ class SessionNotifyTest(unittest.TestCase):
 
     def test_incoming_channel_chat_lands_in_inbox(self):
         sess = make_session()
-        sess._dispatch(se.SMSG_MESSAGECHAT, channel_chat(7, GENERAL, "hi all"))
+        sess._dispatch(hchat.SMSG_MESSAGECHAT, channel_chat(7, GENERAL, "hi all"))
         e = sess.chat_inbox[-1]
         self.assertEqual((e["kind"], e["channel"], e["text"], e["sender_guid"]), ("channel", GENERAL, "hi all", 7))
 
