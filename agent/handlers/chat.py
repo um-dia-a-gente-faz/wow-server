@@ -10,9 +10,13 @@ from ..router import ROUTER
 
 log = logging.getLogger("agent.session")
 
-SMSG_GROUP_INVITE       = 0x06F
-SMSG_MESSAGECHAT        = 0x096
-SMSG_GM_MESSAGECHAT     = 0x3B3
+from ..opcodes import (
+    SMSG_GROUP_INVITE,
+    SMSG_PARTY_COMMAND_RESULT,
+    SMSG_MESSAGECHAT,
+    SMSG_CHAT_PLAYER_NOT_FOUND,
+    SMSG_GM_MESSAGECHAT,
+)
 
 # Whisper/group-invite failure acks (UM-68 bugfix). Verified against
 # TrinityCore branch `3.3.5`:
@@ -25,8 +29,6 @@ SMSG_GM_MESSAGECHAT     = 0x3B3
 #     and failure (e.g. ERR_BAD_PLAYER_NAME_S, ERR_ALREADY_IN_GROUP_S) —
 #     WhisperAction/InviteToGroupAction only treat a non-OK `result` as a
 #     failure, per the SendPartyResult call sites)
-SMSG_CHAT_PLAYER_NOT_FOUND = 0x2A9
-SMSG_PARTY_COMMAND_RESULT  = 0x07F
 
 # PartyResult (Group.h) — only the values SendPartyResult actually uses from
 # HandleGroupInviteOpcode; anything else falls back to f"result_{n}".

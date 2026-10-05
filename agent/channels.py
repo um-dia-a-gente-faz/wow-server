@@ -31,9 +31,11 @@ import struct
 
 from . import packets as pk
 
-CMSG_JOIN_CHANNEL = 0x097
-CMSG_LEAVE_CHANNEL = 0x098
-SMSG_CHANNEL_NOTIFY = 0x099
+from .opcodes import (
+    CMSG_JOIN_CHANNEL,
+    CMSG_LEAVE_CHANNEL,
+    SMSG_CHANNEL_NOTIFY,
+)
 
 # ChatChannels.dbc (enUS name pattern in comments), keyed by the short name
 # a player types ("/join General"). Lower-cased for lookup.

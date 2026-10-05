@@ -24,22 +24,24 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-CMSG_USE_ITEM                   = 0x0AB
-CMSG_AUTOEQUIP_ITEM             = 0x0A8
-CMSG_DESTROYITEM                = 0x111
-SMSG_INVENTORY_CHANGE_FAILURE   = 0x112
-CMSG_AUTOSTORE_LOOT_ITEM        = 0x108
-CMSG_LOOT                       = 0x15D
-CMSG_LOOT_MONEY                 = 0x15E
-CMSG_LOOT_RELEASE                = 0x15F
-SMSG_LOOT_RESPONSE               = 0x160
-SMSG_LOOT_RELEASE_RESPONSE       = 0x161
-SMSG_LOOT_REMOVED                = 0x162
-SMSG_LOOT_MONEY_NOTIFY           = 0x163
-SMSG_LOOT_CLEAR_MONEY            = 0x165
-SMSG_ITEM_PUSH_RESULT            = 0x166
-CMSG_ITEM_QUERY_SINGLE           = 0x056
-SMSG_ITEM_QUERY_SINGLE_RESPONSE  = 0x058
+from .opcodes import (
+    CMSG_ITEM_QUERY_SINGLE,
+    SMSG_ITEM_QUERY_SINGLE_RESPONSE,
+    CMSG_AUTOEQUIP_ITEM,
+    CMSG_USE_ITEM,
+    CMSG_AUTOSTORE_LOOT_ITEM,
+    CMSG_DESTROYITEM,
+    SMSG_INVENTORY_CHANGE_FAILURE,
+    CMSG_LOOT,
+    CMSG_LOOT_MONEY,
+    CMSG_LOOT_RELEASE,
+    SMSG_LOOT_RESPONSE,
+    SMSG_LOOT_RELEASE_RESPONSE,
+    SMSG_LOOT_REMOVED,
+    SMSG_LOOT_MONEY_NOTIFY,
+    SMSG_LOOT_CLEAR_MONEY,
+    SMSG_ITEM_PUSH_RESULT,
+)
 
 # LootType (Loot.h) — the "AcquireReason" byte in SMSG_LOOT_RESPONSE. 0
 # (LOOT_NONE) never appears on a successful response (Player::SendLoot always

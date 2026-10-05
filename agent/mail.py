@@ -43,16 +43,18 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-CMSG_SEND_MAIL              = 0x238
-SMSG_SEND_MAIL_RESULT       = 0x239
-CMSG_GET_MAIL_LIST          = 0x23A
-SMSG_MAIL_LIST_RESULT       = 0x23B
-CMSG_MAIL_TAKE_MONEY        = 0x245
-CMSG_MAIL_TAKE_ITEM         = 0x246
-CMSG_MAIL_MARK_AS_READ      = 0x247
-CMSG_MAIL_RETURN_TO_SENDER  = 0x248
-CMSG_MAIL_DELETE            = 0x249
-SMSG_RECEIVED_MAIL          = 0x285
+from .opcodes import (
+    CMSG_SEND_MAIL,
+    SMSG_SEND_MAIL_RESULT,
+    CMSG_GET_MAIL_LIST,
+    SMSG_MAIL_LIST_RESULT,
+    CMSG_MAIL_TAKE_MONEY,
+    CMSG_MAIL_TAKE_ITEM,
+    CMSG_MAIL_MARK_AS_READ,
+    CMSG_MAIL_RETURN_TO_SENDER,
+    CMSG_MAIL_DELETE,
+    SMSG_RECEIVED_MAIL,
+)
 
 MAX_MAIL_ITEMS = 12                    # Mail.h
 MAX_INSPECTED_ENCHANTMENT_SLOT = 7     # ItemDefines.h
