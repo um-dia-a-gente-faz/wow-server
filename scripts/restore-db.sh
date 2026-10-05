@@ -8,6 +8,7 @@ DB_CONTAINER=${DB_CONTAINER:-trinitycore-db}
 dry=0; [ "${1:-}" = "--dry-run" ] && { dry=1; shift; }
 file=${1:?usage: restore-db.sh [--dry-run] <db>-<stamp>.sql.gz}
 db=$(basename "$file"); db=${db%%-*}
+[[ $db =~ ^[A-Za-z0-9_]+$ ]] || { echo "bad database name '$db' in file name" >&2; exit 1; }
 
 gzip -t "$file"
 echo "restore $file -> database '$db' in container '$DB_CONTAINER'"

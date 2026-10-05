@@ -62,7 +62,28 @@ class BackupRestore(unittest.TestCase):
         (self.tmp / "bin" / "docker").write_text("#!/usr/bin/env bash\nexit 1\n")
         r = self.run_sh("backup-db.sh")
         self.assertNotEqual(r.returncode, 0)
-        self.assertFalse(list((self.tmp / "b").glob("*.sql.gz")))
+        self.assertFalse(list((self.tmp / "b").glob("*.sql.gz*")))
+
+    def test_auth_failure_does_not_skip_characters_or_prune(self):
+        b = self.tmp / "b"
+        b.mkdir()
+        stale = b / "x-1.sql.gz.part"
+        stale.write_bytes(b"x")
+        os.utime(stale, (1, 1))
+        (self.tmp / "bin" / "docker").write_text(
+            '#!/usr/bin/env bash\ncase "$*" in *" auth") echo partial; exit 1;; esac\necho "INSERT 1;"\n')
+        r = self.run_sh("backup-db.sh")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual([p.name.split("-")[0] for p in b.glob("*.sql.gz")], ["characters"])
+        self.assertFalse(list(b.glob("*.part")))  # failed auth part and stale part both gone
+        self.assertEqual(next(b.glob("characters-*.sql.gz")).stat().st_mode & 0o077, 0)
+
+    def test_restore_rejects_bad_db_name(self):
+        f = self.tmp / "a`;drop-1.sql.gz"
+        f.write_bytes(gzip.compress(b"select 1;"))
+        r = self.run_sh("restore-db.sh", "--dry-run", str(f))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("bad database name", r.stderr)
 
 
 if __name__ == "__main__":
