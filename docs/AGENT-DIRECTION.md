@@ -56,8 +56,8 @@ below describe the LLM brain.
   per agent.
 - **Pacing:** a cost preference, not a latency limit. Each agent thinks every
   10–30 s rather than every 3 s to keep model spend down. Decision latency does
-  not bound it, so 3 s is not technically infeasible; it is gated on a real
-  spend cap. Measurements and what would change this:
+  not bound it, so 3 s is not technically infeasible; it is bounded by cost and
+  the per-agent token cap, not by Jev. Measurements and what would change this:
   [ADR 0004](adr/0004-jev-decision-pacing.md) (F1, F2, F6, D4).
 
 UM-61 benchmarks the options and sizes the capacity. Estimates until then:
