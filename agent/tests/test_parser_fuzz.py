@@ -96,7 +96,7 @@ class ParserFuzzTest(unittest.TestCase):
             rng = random.Random(opcode)
             for seed in seeds_for(opcode):
                 for payload in variants(seed, rng):
-                    with self.subTest(opcode=hex(opcode), payload=payload[:40].hex(), n=len(payload)):
+                    with self.subTest(opcode=hex(opcode), payload=payload[:40].hex(), n=len(payload), iterations=ITERATIONS):
                         tracemalloc.reset_peak()
                         t0 = time.monotonic()
                         try:
