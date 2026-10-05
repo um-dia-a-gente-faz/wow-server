@@ -27,9 +27,12 @@ runner runs from the repo checkout on the agent host. No new pip dependency is a
 - Only the integer travels at runtime: `API_VERSION` in `http_api.py`, `SUPPORTED_API_VERSIONS`
   in wowmap and in the runner. The schema file is not copied into the wowmap image. Tests
   pin each constant to the schema's `api_version`, and CI runs from the repo where all of
-  them exist, so a shape or version change in one place fails the other suites in the same PR.
-- Producer tests validate real server responses; consumer tests build their fake agents from
-  `sample()`, so renaming or retyping a schema field breaks them.
+  them exist, so a version change in one place fails the other suites in the same PR.
+- Producer tests validate real server responses against the schema. Consumer tests build their
+  fake agents from `sample()`, but they do not read individual fields, so a field rename or
+  removal that also updates the schema is caught by the agent suite only (the producer
+  validation and the generated-doc test), not by the wowmap or runner suites. What pins the
+  consumers is the `api_version` constant, not the field shapes.
 - Consumers: an absent `api_version` is an older agent and is treated as version 1 (the shape
   is the same). A present but unsupported version gives wowmap a 502 with `code: api_version`
   and the message "agent API version X not supported", which the Agent mind tab shows instead
