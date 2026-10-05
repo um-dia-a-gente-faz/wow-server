@@ -274,10 +274,13 @@ with `textContent`, never `innerHTML`. The drawer's CSS, HTML, and JS live in
 `static/character.css`, `static/character.js` (`Inspect`) and `static/inventory.js`
 (`Coins`, `ItemTip`); its markup is in `static/index.html`.
 
-Health is current only, and so is power. The worldserver computes maximum
-health and power at runtime and never saves them, so there are no bars (see
-`docs/ROADMAP.md`, Operator dashboard panel, Phase B). With the 5 s
-`PlayerSaveInterval`, damage taken in game shows up within about 10 s.
+Health and the class's power show as bars when `characters.character_stats`
+has a row for the character, and as plain numbers otherwise. The worldserver
+writes that row on every save because `docker-compose.yml` sets
+`PlayerSave.Stats.MinLevel=1` and `PlayerSave.Stats.SaveOnlyOnLogout=0` (see
+`docs/HP_POWER_SPIKE.md`). A character that hasn't logged in since that change
+has no row yet. With the 5 s `PlayerSaveInterval`, damage taken in game shows
+up within about 10 s.
 
 ## Recent activity (UM-76)
 
