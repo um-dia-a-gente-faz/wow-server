@@ -263,7 +263,7 @@ Verified against the live `TrinityCore/TrinityCore` branch `3.3.5` (UM-66;
 `gh api repos/TrinityCore/TrinityCore/contents/... ?ref=3.3.5`).
 
 ```
-uint8  slashCmd            // ChatMsg (SharedDefines.h) — see agent/session.py::CHAT_KIND_NAMES for the full enum
+uint8  slashCmd            // ChatMsg (SharedDefines.h) — see agent/handlers/chat.py::CHAT_KIND_NAMES for the full enum
 int32  language
 uint64 senderGuid          // raw ObjectGuid, NOT packed (ByteBuffer operator<<(ObjectGuid))
 uint32 flags                // always 0 in 3.3.5
@@ -284,7 +284,7 @@ Then always: `uint32 len + chatText`, `uint8 chatTag`, and — only for
 
 All the length-prefixed strings (`senderName`, `targetName`, `chatText`) use
 the same shape: `uint32 byteLength` (includes the trailing null) followed by
-that many bytes, UTF-8, null-terminated — `agent/session.py::_read_len_string`.
+that many bytes, UTF-8, null-terminated — `agent/handlers/chat.py::_read_len_string`.
 The `channel` name is different: a plain null-terminated cstring with no
 length prefix (`agent/packets.py::cstring`).
 
@@ -317,7 +317,7 @@ void Player::Whisper(std::string_view text, Language language, Player* target, b
 So `targetGuid == senderGuid` for say/yell/emote/channel/whisper, and it
 never identifies who *heard* the message. Confirmed on the live realm: every
 capture in `agent/tests/fixtures/chat/` has the two fields equal.
-`agent/session.py::_handle_messagechat` therefore skips `targetGuid` rather
+`agent/handlers/chat.py::handle_messagechat` therefore skips `targetGuid` rather
 than exporting a field that reads like an addressee but isn't one.
 
 The whisper pair is the one case where `slashCmd` alone doesn't tell you who
@@ -384,9 +384,9 @@ Verified against TrinityCore branch `3.3.5`:
     `agent/spells.py::SPELL_CAST_RESULT_NAMES` maps all of them)
 
 `agent/spells.py` holds every pure parser/builder (no opcodes, no I/O — same
-split as `agent/names.py`); opcodes live in `agent/session.py`, dispatched
-through `_SPELL_DISPATCH` into thirteen thin handlers that call
-`WoWSession._record_event()`. `agent/actions.py` adds `auto_attack`,
+split as `agent/names.py`); opcodes and the thirteen thin handlers live in
+`agent/handlers/spells.py` (registered on `agent.router.ROUTER`), which call
+`GameState.record_event()`. `agent/actions.py` adds `auto_attack`,
 `stop_attack`, `cast_spell` to the Action registry, all reading confirmation
 off `session.events` (a bounded deque) rather than blocking on a single
 expected reply — the same shape `set_target`/`face` established in UM-36.
