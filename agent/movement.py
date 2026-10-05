@@ -2,7 +2,7 @@
 """MovementInfo wire writer — the client-side counterpart of
 agent.update_object.parse_movement_info: the same packed-guid + MovementInfo
 shape, but built for *sending* instead of parsed from a received packet.
-Used by every MSG_MOVE_* the agent sends (agent/actions.py's `face`; the
+Used by every MSG_MOVE_* the agent sends (agent/actions/movement.py's `face`; the
 straight-line Mover below for UM-38).
 
 Verified against TrinityCore branch `3.3.5`:
@@ -95,7 +95,7 @@ def build_movement_info(guid: int, x: float, y: float, z: float, o: float,
 
 def send_set_facing(session, x: float, y: float, z: float, o: float):
     """MSG_MOVE_SET_FACING (0x0DA): turn in place to face orientation `o`,
-    without otherwise moving — agent/actions.py::FaceAction."""
+    without otherwise moving — agent/actions/movement.py::FaceAction."""
     payload = build_movement_info(session.player_guid, x, y, z, o)
     session._send_packet(MSG_MOVE_SET_FACING, payload)
 
@@ -163,7 +163,7 @@ def _simulate(session, world, get_target, stop_distance: float, run_speed: float
 
     Returns {"ok": bool, "error": str | None, "detail": dict} — wrapped into
     an agent.actions.ActionResult by the caller (kept as a plain dict here
-    so this module never needs to import actions.py, which imports this one).
+    so this module never needs to import agent/actions/, which imports this one).
     """
     map_id, sx, sy, sz, _so = session.player_position
     if _dead_before_release(world):
@@ -345,7 +345,7 @@ class Mover:
 
 def get_mover(session, world) -> Mover:
     """One Mover per session, created lazily and cached on the session —
-    actions.py's move_to/move_towards/stop_movement all need to reach the
+    agent/actions/movement.py's move_to/move_towards/stop_movement all need to reach the
     *same* Mover so stop_movement can cancel a move_to issued moments
     earlier from a different action call."""
     mover = getattr(session, "_mover", None)

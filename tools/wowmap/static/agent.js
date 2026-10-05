@@ -139,7 +139,7 @@ const AgentMind = (() => {
   async function getJson(who, view) {
     const r = await fetch(`/api/agent/${encodeURIComponent(who)}/${view}` + (view === 'brain' ? '?n=5' : ''));
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'error ' + r.status);
+    if (!r.ok) throw Object.assign(new Error(j.error || 'error ' + r.status), {code: j.code});
     return j;
   }
 
@@ -164,6 +164,8 @@ const AgentMind = (() => {
       status.textContent = 'agent updated ' + new Date().toLocaleTimeString();
     } catch (e) {
       if (mine !== seq) return;
+      // #264: the agent answered, in a version this page cannot render (not "unreachable").
+      if (e.code === 'api_version') return say(`Agent ${kind.name} — ${e.message}`, 'Update wowmap or the agent so their API versions match.');
       const last = lastOk.get(who);
       say(`Agent ${kind.name} — brain API unreachable`,
           'last successful poll: ' + (last ? last.toLocaleTimeString() : 'never this session'), e.message);

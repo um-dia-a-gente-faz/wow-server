@@ -35,7 +35,7 @@ TRADE_STATUS_EXTENDED with trader_data=1). What DOES reliably come back to
 the sender is SMSG_TRADE_STATUS: TRADE_STATUS_BACK_TO_TRADE (any offer
 change, either side, un-accepts both — TradeData::SetAccepted(false) is
 unconditional) or a failure status (TRADE_STATUS_TRADE_CANCELED/
-NOT_ON_TAPLIST) if the change was rejected — agent/actions.py's offer
+NOT_ON_TAPLIST) if the change was rejected — agent/actions/trade.py's offer
 actions wait for one of those instead.
 """
 

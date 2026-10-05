@@ -2,7 +2,7 @@
 """Chat channels (UM-93): joining General/custom channels and parsing
 SMSG_CHANNEL_NOTIFY. Pure builders/parsers (no I/O), same split as
 agent/mail.py and agent/trade.py; agent/session.py dispatches the notify and
-agent/actions.py's `channel_say` sends into a joined channel.
+agent/actions/chat.py's `channel_say` sends into a joined channel.
 
 Verified against TrinityCore branch `3.3.5` (commit 48128f325ac5):
   src/server/game/Server/Protocol/Opcodes.h (CMSG_JOIN_CHANNEL 0x097,

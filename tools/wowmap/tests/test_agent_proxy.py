@@ -10,9 +10,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 import app  # noqa: E402
 import pagesrc  # noqa: E402
 import agents  # noqa: E402
+from agent import api_contract  # noqa: E402  (#264: the shared agent API schema)
 
 
 class FakeAgent(BaseHTTPRequestHandler):
@@ -101,6 +103,42 @@ class ProxyTests(unittest.TestCase):
         status, body = self.get("/api/agent/Gone/brain")
         self.assertEqual(status, 502)
         self.assertNotIn("127.0.0.1", body)
+
+
+class ContractTests(unittest.TestCase):
+    """#264: the fake agent serves bodies generated from agent/api_schema.json."""
+
+    def test_supported_versions_include_schema_version(self):
+        self.assertIn(api_contract.load()["api_version"], agents.SUPPORTED_API_VERSIONS)
+
+    def test_schema_bodies_pass_through_with_unknown_fields(self):
+        contract = api_contract.load()
+        for ep, view in (("/healthz", "healthz"), ("/state", "state"), ("/perception", "perception"), ("/brain", "brain")):
+            for name, schema in contract["endpoints"][ep]["responses"].items():
+                body = json.dumps(api_contract.sample(schema, added_in_a_later_release=1)).encode()
+                self.assertIsNone(agents.unsupported_api_version(body), (ep, name))
+
+    def test_unsupported_version_is_a_clear_error_not_an_empty_tab(self):
+        class Future(FakeAgent):
+            def do_GET(self):  # noqa: N802
+                body = json.dumps({"api_version": 99, "goal": "x"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        srv = _serve(Future)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        with mock.patch.object(agents, "AGENT_APIS", {"f": ("F", f"http://127.0.0.1:{srv.server_address[1]}")}):
+            status, body = agents.fetch_agent_view("F", "brain")
+        self.assertEqual(status, 502)
+        j = json.loads(body)
+        self.assertEqual((j["code"], j["api_version"]), ("api_version", 99))
+        self.assertIn("version 99 not supported", j["error"])
+
+    def test_missing_version_is_treated_as_current(self):
+        self.assertIsNone(agents.unsupported_api_version(b'{"goal": "x"}'))
+        self.assertIsNone(agents.unsupported_api_version(b'[1]'))
 
 
 class PageTests(unittest.TestCase):

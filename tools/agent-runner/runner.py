@@ -85,6 +85,8 @@ DEFAULT_CHARACTER_URL = "http://192.168.1.64:9400"
 IMAGE = "wow-agent:latest"
 
 PROBE_TIMEOUT_S = 2.0
+# #264: agent API versions this runner understands (agent/api_schema.json; a test pins it).
+SUPPORTED_API_VERSIONS = (1,)
 CHARACTER_TTL_S = 10.0
 AUDIT_TAIL_BYTES = 256 * 1024
 UP_TIMEOUT_S = 120
@@ -295,6 +297,9 @@ class Fleet:
             health = self._get_json(base + "/healthz")
         except (OSError, ValueError) as e:
             return {"state": "unreachable", "error": scrub(str(e))[:200]}
+        v = health.get("api_version")  # #264: absent = older agent, same shape as version 1
+        if v is not None and v not in SUPPORTED_API_VERSIONS:
+            return {"state": "unsupported", "error": f"agent API version {v} not supported"}
         out = {"state": "ok" if health.get("ok") else "unreachable",
                "connected": health.get("connected")}
         try:

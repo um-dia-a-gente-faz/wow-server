@@ -1,0 +1,138 @@
+{
+  "api_version": 1,
+  "title": "Agent observability API",
+  "description": "Shapes of the JSON served by agent/http_api.py and read by tools/wowmap and tools/agent-runner. Subset of JSON Schema (type, properties, required, items, enum): unknown fields are always allowed. Every response carries api_version. Change a shape additively and keep api_version; a breaking change bumps api_version here, in agent/http_api.py and in the consumers' supported set (tests pin all three together).",
+  "endpoints": {
+    "/healthz": {
+      "summary": "Liveness: is the process up, and is a game session attached.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "agent", "connected", "uptime_s"], "properties": {
+          "api_version": {"type": "integer"},
+          "ok": {"type": "boolean"},
+          "agent": {"type": "string"},
+          "connected": {"type": "boolean"},
+          "uptime_s": {"type": "number"}}}
+      }
+    },
+    "/state": {
+      "summary": "Own stats, spellbook, quest log, equipment and inventory.",
+      "responses": {
+        "not in game": {"type": "object", "required": ["api_version", "agent", "connected"], "properties": {
+          "api_version": {"type": "integer"},
+          "agent": {"type": "string"},
+          "connected": {"type": "boolean"}}},
+        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "self", "spellbook", "quest_log", "equipment", "inventory"], "properties": {
+          "api_version": {"type": "integer"},
+          "agent": {"type": "string"},
+          "connected": {"type": "boolean"},
+          "self": {"type": "object", "required": ["name", "guid", "race", "class", "level", "money"], "properties": {
+            "name": {"type": ["string", "null"]},
+            "guid": {"type": ["integer", "null"]},
+            "race": {"type": ["integer", "null"]},
+            "class": {"type": ["integer", "null"]},
+            "level": {"type": ["integer", "null"]},
+            "health": {"type": ["integer", "null"]},
+            "max_health": {"type": ["integer", "null"]},
+            "power": {"type": "object"},
+            "max_power": {"type": "object"},
+            "is_dead": {"type": "boolean"},
+            "is_ghost": {"type": "boolean"},
+            "xp": {"type": "integer"},
+            "next_level_xp": {"type": "integer"},
+            "money": {"type": ["integer", "null"]},
+            "position": {"type": "object", "required": ["map", "x", "y", "z"], "properties": {
+              "map": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}}}},
+          "spellbook": {"type": "array", "items": {"type": "object", "required": ["id", "name"], "properties": {
+            "id": {"type": "integer"}, "name": {"type": ["string", "null"]}}}},
+          "quest_log": {"type": "array"},
+          "equipment": {"type": "object"},
+          "inventory": {"type": "array"}}}
+      }
+    },
+    "/perception": {
+      "summary": "WorldState.snapshot(): the same view the LLM gets, GUIDs as short handles.",
+      "responses": {
+        "not in game": {"type": "object", "required": ["api_version", "agent", "connected"], "properties": {
+          "api_version": {"type": "integer"},
+          "agent": {"type": "string"},
+          "connected": {"type": "boolean"}}},
+        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "position", "nearby_units", "nearby_players", "nearby_objects", "chat_inbox"], "properties": {
+          "api_version": {"type": "integer"},
+          "agent": {"type": "string"},
+          "connected": {"type": "boolean"},
+          "position": {"type": ["object", "null"], "properties": {
+            "map": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}},
+          "is_dead": {"type": "boolean"},
+          "is_ghost": {"type": "boolean"},
+          "corpse_position": {"type": ["object", "null"]},
+          "nearby_units": {"type": "array", "items": {"type": "object", "required": ["distance"], "properties": {
+            "name": {"type": ["string", "null"]}, "type": {"type": ["string", "null"]}, "entry": {"type": ["integer", "null"]},
+            "level": {"type": ["integer", "null"]}, "health_pct": {"type": ["number", "null"]},
+            "in_combat": {"type": "boolean"}, "distance": {"type": "number"}}}},
+          "nearby_players": {"type": "array", "items": {"type": "object", "required": ["distance"], "properties": {
+            "name": {"type": ["string", "null"]}, "distance": {"type": "number"}}}},
+          "nearby_objects": {"type": "array", "items": {"type": "object", "required": ["distance"], "properties": {
+            "name": {"type": ["string", "null"]}, "distance": {"type": "number"}}}},
+          "window": {"type": ["object", "null"]},
+          "trade": {"type": ["object", "null"]},
+          "pending_invite": {"type": ["object", "null"]},
+          "chat_inbox": {"type": "array"},
+          "channels": {"type": "array"},
+          "quest_log": {"type": "array"},
+          "equipment": {"type": "object"},
+          "inventory": {"type": "array"}}}
+      }
+    },
+    "/brain": {
+      "summary": "Goal, brain (jev/llm), model, last decisions, action history, reflexes, token usage. Query: n = number of decisions.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "agent", "connected", "goal", "brain", "model", "cycle", "decisions", "history", "reflexes", "tokens"], "properties": {
+          "api_version": {"type": "integer"},
+          "agent": {"type": "string"},
+          "connected": {"type": "boolean"},
+          "goal": {"type": ["string", "null"]},
+          "brain": {"type": ["string", "null"]},
+          "model": {"type": ["string", "null"]},
+          "cycle": {"type": ["integer", "null"]},
+          "decisions": {"type": "array", "items": {"type": "object", "required": ["seq"], "properties": {
+            "seq": {"type": "integer"}, "cycle": {"type": ["integer", "null"]}, "ts": {"type": ["number", "null"]},
+            "brain": {"type": ["string", "null"]}, "confidence": {"type": ["number", "null"]},
+            "fallback": {"type": ["string", "boolean", "null"]},
+            "tool_call": {"type": ["object", "null"]}, "result": {"type": ["object", "null"]}}}},
+          "history": {"type": "array"},
+          "reflexes": {"type": "object"},
+          "tokens": {"type": "object", "required": ["prompt_total", "completion_total", "cycles", "since"], "properties": {
+            "prompt_total": {"type": "integer"}, "completion_total": {"type": "integer"},
+            "cycles": {"type": "integer"}, "since": {"type": "number"}}}}}
+      }
+    },
+    "/": {
+      "summary": "Endpoint index.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "endpoints"], "properties": {
+          "api_version": {"type": "integer"},
+          "endpoints": {"type": "array", "items": {"type": "string"}}}}
+      }
+    },
+    "POST /control/walk": {
+      "summary": "Operator walk (only with AGENT_CONTROL_TOKEN set). Success, refusal and error bodies all carry api_version.",
+      "responses": {
+        "any": {"type": "object", "required": ["api_version"], "properties": {
+          "api_version": {"type": "integer"},
+          "ok": {"type": "boolean"},
+          "outcome": {"type": "string"},
+          "code": {"type": "string"},
+          "error": {"type": "string"}}}
+      }
+    }
+  },
+  "errors": {
+    "summary": "Any non-2xx JSON body: {api_version, error}.",
+    "schema": {"type": "object", "required": ["api_version", "error"], "properties": {
+      "api_version": {"type": "integer"}, "error": {"type": "string"}}}
+  },
+  "notes": [
+    "GET /events is a Server-Sent Events stream (event: event | decision, data: JSON) and is not versioned per message.",
+    "A missing api_version means an agent older than this contract; consumers treat it as version 1 (the shape did not change)."
+  ]
+}

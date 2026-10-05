@@ -354,7 +354,7 @@ class MailDispatchTest(unittest.TestCase):
 class TradeDispatchTest(unittest.TestCase):
     """UM-59: dispatch wiring for SMSG_TRADE_STATUS/SMSG_TRADE_STATUS_EXTENDED
     — parsing lands in world_state.trade, and every status is recorded as a
-    raw 'trade_status' event (actions.py's offer_item/offer_gold wait on
+    raw 'trade_status' event (agent/actions/trade.py's offer_item/offer_gold wait on
     that directly — see agent/trade.py's docstring for why)."""
 
     def test_begin_trade_opens_request_and_records_events(self):

@@ -140,7 +140,8 @@ and `docs/PROTOCOL-NOTES.md`.
 
 Who owns what in the tree. Every path below exists on `main`; decisions behind the
 agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config schema,
-0008 wowmap split, 0009 threading model as it is today).
+0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract;
+the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.json`).
 
 ### `agent/` (stdlib-only Python 3.12, one process per character)
 

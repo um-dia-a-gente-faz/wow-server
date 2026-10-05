@@ -196,7 +196,7 @@ def get_follow_reflex(session) -> FollowReflex:
 
 
 def pause_for_llm_override(session, world, reason: str = "llm_override"):
-    """Called by move_to/move_towards/stop_movement (agent/actions.py) before
+    """Called by move_to/move_towards/stop_movement (agent/actions/movement.py) before
     they act: an explicit conflicting movement action from the LLM outranks
     the reflex (docs/AI-AGENT-SPEC.md's reflex priority: survival > follow/
     assist > idle), so following pauses and reports why via a
