@@ -44,6 +44,8 @@ from .audit import _redact
 
 log = logging.getLogger("agent.http")
 
+# #264: bump with agent/api_schema.json (a test pins them together); breaking changes only.
+API_VERSION = 1
 DECISIONS_MAXLEN = 50     # decisions kept in memory for /brain and /events
 DEFAULT_BRAIN_DECISIONS = 10
 SSE_POLL_S = 0.5
@@ -238,7 +240,7 @@ class _Handler(BaseHTTPRequestHandler):
         log.debug("%s " + fmt, self.address_string(), *args)
 
     def _send_json(self, status: int, body: dict, extra_headers: dict | None = None):
-        data = json.dumps(body, default=str).encode("utf-8")
+        data = json.dumps({"api_version": API_VERSION, **body}, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
