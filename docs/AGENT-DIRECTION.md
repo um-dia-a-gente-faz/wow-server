@@ -54,7 +54,11 @@ below describe the LLM brain.
 - **Later:** paid models may be added; keep the provider behind an interface.
 - **One model server per GPU machine**, shared by all agents. Not one model
   per agent.
-- **Pacing:** each agent thinks every 10–30 s, not every 3 s.
+- **Pacing:** a cost preference, not a latency limit. Each agent thinks every
+  10–30 s rather than every 3 s to keep model spend down. Decision latency does
+  not bound it, so 3 s is not technically infeasible; it is bounded by cost and
+  the per-agent token cap, not by Jev. Measurements and what would change this:
+  [ADR 0004](adr/0004-jev-decision-pacing.md) (F1, F2, F6, D4).
 
 UM-61 benchmarks the options and sizes the capacity. Estimates until then:
 

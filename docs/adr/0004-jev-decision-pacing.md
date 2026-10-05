@@ -161,7 +161,7 @@ Recommendation, for the owner to accept or change:
 | D4 | **Do not speed the fleet up before the spend cap is real.** Either wire `AGENT_MAX_TOKENS_PER_HOUR` (F2) or delete it and document the true ceiling. Speeding up while the only guard is dead config makes the first invoice the discovery. |
 | D5 | **`jev_status` must stop reporting `success` for a cycle Jev was never asked** (F4) — the short-circuit gets its own value. Otherwise the observability of #201 and of any future pacing change is false. |
 | D6 | **If a specific beat is the goal, sleep to a deadline**, not `sleep(interval)` (F5). |
-| D7 | **`docs/AGENT-DIRECTION.md` §3's "every 10–30 s, not every 3 s"** is restated as a cost/pacing preference with these numbers behind it, or superseded — it currently reads as a latency limit, and F1 says it is not one. |
+| D7 | **`docs/AGENT-DIRECTION.md` §3's "every 10–30 s, not every 3 s"** is restated as a cost/pacing preference that links this ADR instead of repeating its numbers (#217). It no longer reads as a latency limit. The 10–30 s band itself is unchanged; moving it to 3 s stays the owner's call, gated on D3/D4. |
 
 Order matters: D3 and D4 before D2. `AGENT-DIRECTION.md` is the higher authority,
 so D7 is an edit to that document, not something this ADR overrides.
