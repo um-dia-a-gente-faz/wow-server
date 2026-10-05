@@ -18,12 +18,14 @@ from ..router import ROUTER
 #     (HandleSpiritHealerActivateOpcode)
 #   src/server/game/Entities/Player/Player.h (enum PlayerFlags —
 #     PLAYER_FLAGS_GHOST = 0x10; CORPSE_RECLAIM_RADIUS = 39)
-CMSG_REPOP_REQUEST          = 0x15A  # payload: uint8 CheckInstance (always 0 from a real client)
-CMSG_RECLAIM_CORPSE         = 0x1D2  # payload: uint64 CorpseGUID (raw, not packed — ObjectGuid::operator>>)
-CMSG_SPIRIT_HEALER_ACTIVATE = 0x21C  # payload: uint64 guid (raw)
-MSG_CORPSE_QUERY            = 0x216  # client->server: empty; server->client: see handle_corpse_query_response
-SMSG_CORPSE_RECLAIM_DELAY   = 0x269  # payload: uint32 Remaining (ms)
-SMSG_DEATH_RELEASE_LOC      = 0x378  # payload: int32 MapID, float x, y, z
+from ..opcodes import (
+    CMSG_REPOP_REQUEST,
+    CMSG_RECLAIM_CORPSE,
+    MSG_CORPSE_QUERY,
+    CMSG_SPIRIT_HEALER_ACTIVATE,
+    SMSG_CORPSE_RECLAIM_DELAY,
+    SMSG_DEATH_RELEASE_LOC,
+)
 
 
 def check_death_transition(ctx, me):
