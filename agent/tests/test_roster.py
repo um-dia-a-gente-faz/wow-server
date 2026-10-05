@@ -336,6 +336,7 @@ class CommittedFilesTests(unittest.TestCase):
 
     def test_generated_services_profiles_ports_and_legacy_names(self):
         text = gen.render(gen.load_roster())
+        self.assertIn("AGENT_THINK_INTERVAL_S: ${AGENT_THINK_INTERVAL_S:-5}\n", text)
         for n in ("luaprata", "farstrider", "shadowblade", "sunspeaker", "spellweaver"):
             self.assertIn(f"\n  agent-{n}:\n", text)
             self.assertIn(f"container_name: wow-agent-{n}\n", text)
