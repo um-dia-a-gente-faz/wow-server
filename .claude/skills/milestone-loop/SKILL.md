@@ -17,6 +17,8 @@ Arguments: `[<start milestone title>] [idle=<n>]`. Default start `M3 - Jev decis
 (`gh api repos/um-dia-a-gente-faz/wow-server/milestones?state=open`). The **current
 milestone** is the first one at or after the start milestone that still has open issues. When
 it is finished the loop moves to the next one by itself; it never goes back before the start.
+Finishing a milestone is never a reason to stop: the next milestone in order becomes the
+current one and the same tick continues there (see *Idle, advancing, stop*).
 
 Repo `um-dia-a-gente-faz/wow-server`, board = org project 7. Use
 `gh` (auth: `gh auth status`). Never run anything on the VM.
@@ -80,7 +82,11 @@ Only if I have no open PR waiting on me. Eligible = all of:
 - not an umbrella/staged issue you cannot finish in one PR (e.g. a multi-stage roster plan):
   report it instead of starting it
 
-Take the lowest-numbered eligible one. None eligible in the current milestone → see *Idle*.
+Take the lowest-numbered eligible one. None eligible in the current milestone → check
+*Milestone done* below before anything else: if every issue in it is closed and none of my
+PRs is open, the milestone is finished, so advance to the next milestone **in this same tick**
+and continue from step 2 on it. Fall through to *Idle* only when a later milestone also has
+nothing eligible.
 
 ### 3. Develop it
 
@@ -104,8 +110,10 @@ Take the lowest-numbered eligible one. None eligible in the current milestone �
 ### 4. Re-arm
 
 Call `ScheduleWakeup` with `delaySeconds: 300`, prompt `/milestone-loop <current milestone> idle=<n>`,
-`noop: true` when this tick changed nothing (still waiting), `false` otherwise. Write a
-two-line summary in the reply: what you did, what you are waiting for.
+`noop: true` when this tick changed nothing (still waiting), `false` otherwise. Never pass
+`stop: true` while any later milestone still has open issues — the loop ends only on
+*All done* or an explicit owner stop. Write a two-line summary in the reply: what you did,
+what you are waiting for.
 
 ## Idle, advancing, stop
 
@@ -114,6 +122,11 @@ two-line summary in the reply: what you did, what you are waiting for.
 - **Milestone done** = every issue in it is closed (merged) and none of my PRs is open. Then
   the current milestone becomes the next one in order, and the same tick continues from
   step 2 on it. Say so in the tick summary: milestone name, issues merged.
+- **Advancing is mandatory, not a judgement call.** Moving on when a milestone is finished is
+  not optional and not something to defer to the owner. The current milestone becomes the next
+  one in order and work continues in the same tick: M2 → M3 → M4 → M5 → M6 → M7 → Later. A
+  milestone counts as finished as soon as its issues are closed, whether or not it was the
+  milestone the loop was started at.
 - **Milestone stuck** = `idle` reaches 12 (about an hour) with open issues left that I cannot
   act on (blocked by something outside my PRs, skipped as ambiguous or too big, or owned by
   another agent). Do not wait forever: record them as *left over* for the final report,
