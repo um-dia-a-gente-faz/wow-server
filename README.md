@@ -88,14 +88,14 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/REPRODUCE-PROMPT.md` | Self-contained prompt to rebuild the whole environment from scratch on Proxmox (agent-ready) |
 | `docs/DEPLOYMENT.md` | Actual deployment, redeploying via `scripts/deploy.sh`, gotchas, debugging, troubleshooting table |
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
-| `docs/ARCHITECTURE.md` | Components, compose projects, volumes and the full port table |
+| `docs/ARCHITECTURE.md` | Components, compose projects, module map, volumes and the full port table |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
 | `docs/LIVE-MAP.md` | Live map: how it was built, DBC field order, extraction, alignment notes |
 | `docs/ROADMAP.md` | What shipped, the agent perception dev plan, the operator dashboard plan |
 | `docs/AI-AGENT-SPEC.md` | Spec for autonomous AI agents playing on the server |
 | `CLAUDE.md` / `AGENTS.md` | Entry point for coding agents: hard rules, where things are, what to read. Skills live in `.claude/skills/` |
 | `docs/AGENT-DIRECTION.md` | Owner decisions for the agents (autonomy, free models, in-game-only chat, milestones); overrides the spec where they differ |
-| `docs/NEXT-AGENT-HANDOFF.md` | Superseded pointer to the current agent docs |
+| `docs/adr/` | Architecture decision records (Jev, agent host, session split, router, config schema, wowmap split, threading model) |
 | `docs/PROTOCOL-NOTES.md` | 3.3.5a wire-format notes (update-object layout, field indices), each checked against TrinityCore source |
 | `docs/CHAT_FEED_SPIKE.md` | Why the chat feed tails `Server.log` instead of polling the DB |
 | `exporters/README.md` | Custom game metrics exporter: catalog, build, and its gotchas |

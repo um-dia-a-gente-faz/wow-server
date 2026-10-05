@@ -5,7 +5,7 @@ Every index below is copied from TrinityCore branch `3.3.5`,
 src/server/game/Entities/Object/Updates/UpdateFields.h (commit
 ed939325374216d6a049e778d6ad864c65283ae6), whose own header comment reads
 "Auto generated for version 3, 3, 5, 12340" — the exact build this repo's
-client speaks. docs/NEXT-AGENT-HANDOFF.md's field table (ENTRY=0x02,
+client speaks. The removed handoff doc's field table (ENTRY=0x02,
 HEALTH=0x21, ...) does NOT match this source; don't use it.
 
 Field values in EObjectFields (OBJECT_FIELD_GUID..OBJECT_FIELD_PADDING) are
