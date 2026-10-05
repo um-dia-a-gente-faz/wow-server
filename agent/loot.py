@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Loot request builders + response parsers (UM-42), pure functions, no I/O —
-see agent/session.py for the opcodes' dispatch and agent/actions.py for the
+see agent/session.py for the opcodes' dispatch and agent/actions/loot.py for the
 loot() action that drives the loot/loot_money/autostore/loot_release
 sequence.
 
@@ -66,7 +66,7 @@ LOOT_ERROR_NAMES = {
 }
 
 # EquipError / InventoryResult (ItemDefines.h) — only the couple of values
-# callers (agent/actions.py) need to recognize by name; everything else stays
+# callers (agent/actions/loot.py) need to recognize by name; everything else stays
 # reachable as the raw int.
 EQUIP_ERR_OK = 0
 EQUIP_ERR_INV_FULL = 50
