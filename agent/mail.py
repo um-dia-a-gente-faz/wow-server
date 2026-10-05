@@ -60,7 +60,6 @@ MAX_MAIL_ITEMS = 12                    # Mail.h
 MAX_INSPECTED_ENCHANTMENT_SLOT = 7     # ItemDefines.h
 GAMEOBJECT_TYPE_MAILBOX = 19           # SharedDefines.h
 UNIT_NPC_FLAG_MAILBOX = 0x04000000     # UnitDefines.h
-MAILBOX_INTERACT_RANGE_YD = 5.0        # same GetGameObjectIfCanInteractWith-style range as npc.INTERACT_RANGE_YD
 MAIL_POSTAGE_COPPER = 30               # HandleSendMail: cost = 30 * attachments.size() if any, else 30 flat
 ITEM_FIELD_FLAG_SOULBOUND = 0x00000001  # ItemTemplate.h — Item::CanBeTraded() rejects a soulbound attachment the same as a trade offer
 

@@ -40,6 +40,7 @@ LAYERS = {
     "metrics": set(),
     "api_contract": set(),
     "auth": {"packets"},
+    "rules": set(),
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "packets"},
     "quests": {"opcodes", "packets"},
@@ -65,11 +66,11 @@ LAYERS = {
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
     "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "quests",
-                "spells", "trade", "update_fields"},
+                "rules", "spells", "trade", "update_fields"},
     "reflexes": {"actions", "movement", "opcodes", "perception", "update_fields"},
     "control": {"actions", "movement"},
-    "death": {"actions", "movement", "opcodes", "perception"},
-    "candidates": {"handles", "item_compare"},
+    "death": {"actions", "movement", "opcodes", "perception", "rules"},
+    "candidates": {"handles", "item_compare", "rules"},
     # deciding
     "llm": set(),
     "jev": {"llm"},

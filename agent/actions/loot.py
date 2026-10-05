@@ -7,6 +7,7 @@ import time
 
 from .. import item_compare
 from .. import loot as lootmod
+from ..rules import LOOT_RANGE_YD
 from .base import (
     Action,
     ActionResult,
@@ -32,7 +33,6 @@ from .base import (
 #   src/server/game/Server/Packets/ItemPackets.cpp (CMSG_DESTROYITEM)
 # See agent/loot.py for the byte-level detail on each of these.
 
-LOOT_RANGE_YD = 5.0
 UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same bit perception.py's _object_dict uses
 
 
