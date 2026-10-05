@@ -65,6 +65,8 @@ import re
 import time
 from dataclasses import dataclass, field
 
+from . import config
+
 log = logging.getLogger("agent.audit")
 
 DEFAULT_BASE_DIR = "/data/audit"
@@ -101,16 +103,13 @@ def _compact_json(obj) -> str:
 
 
 def env_base_dir() -> str:
-    return os.environ.get("AGENT_AUDIT_DIR", DEFAULT_BASE_DIR).strip() or DEFAULT_BASE_DIR
+    return config.get("AGENT_AUDIT_DIR") or DEFAULT_BASE_DIR
 
 
 def env_retention_days() -> int:
-    raw = os.environ.get("AGENT_AUDIT_RETENTION_DAYS", "").strip()
-    if not raw:
-        return DEFAULT_RETENTION_DAYS
     try:
-        return int(raw)
-    except ValueError:
+        return config.get("AGENT_AUDIT_RETENTION_DAYS")
+    except config.ConfigError:  # the audit log must not take the agent down over a typo
         return DEFAULT_RETENTION_DAYS
 
 
