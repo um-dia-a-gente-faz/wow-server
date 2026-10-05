@@ -56,7 +56,7 @@ _DETAIL_MAX_CHARS = 160  # keep each history line short; the prompt is token-bud
 # leaves out things that drift on their own (own health/mana regen, chat,
 # other units' positions) so "changed" means progress, not noise.
 _PROGRESS_KEYS = ("position", "is_dead", "is_ghost", "window", "trade", "mailbox",
-                  "equipment", "inventory", "quest_log", "pending_invite")
+                  "equipment", "inventory", "quest_log", "pending_invite", "group")
 
 
 def _args_key(params: dict) -> str:
@@ -241,6 +241,7 @@ def think_and_act(session, world, brain, persona: str = "",
     # test double without it.
     snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None),
                                pending_invite=getattr(session, "pending_invite", None),
+                               group=getattr(session, "group", None),
                                chat_inbox=getattr(session, "chat_inbox", None))
     snapshot.update(_self_status(session, world))
     fingerprint = progress_fingerprint(snapshot)

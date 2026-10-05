@@ -39,6 +39,7 @@ class GameState:
         # (agent/__main__.py) — mirrors heard chat to tools/chat-feed.
         self.chat_relay = None
         self.pending_invite = None  # {"inviter_name": str} or None
+        self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
         self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}

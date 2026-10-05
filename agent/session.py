@@ -23,7 +23,7 @@ from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle 
 # Importing a handler module registers its opcodes (and per-tick query
 # senders) on ROUTER. Tick order = import order: names, npc text, items, quests.
 from .handlers import world as _world
-from .handlers import chat, death, mail, npc, spells, trade  # noqa: F401
+from .handlers import chat, death, group, mail, npc, spells, trade  # noqa: F401
 from .handlers import loot, quests  # noqa: F401
 
 log = logging.getLogger("agent.session")
