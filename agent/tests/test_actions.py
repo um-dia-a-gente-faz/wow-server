@@ -459,6 +459,21 @@ class AutoAttackActionTest(unittest.TestCase):
         self.assertIn(ac.CMSG_ATTACKSWING, opcodes)
         self.assertFalse(result.ok)  # no attack_start event ever arrived
 
+    def test_execute_faces_target_before_attackswing(self):
+        sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 3.14))
+        world = per.WorldState()
+        world.set_my_map(530)
+        world.update_object(object_at(5, 3.0, 0.0, 0.0))  # due east
+        action = ac.AutoAttackAction()
+        action.confirm_timeout = 0.05
+        action.confirm_interval = 0.01
+        action.execute(sess, world, guid=5)
+        opcodes = [op for op, _ in sess._sent]
+        self.assertIn(mv.MSG_MOVE_SET_FACING, opcodes)
+        self.assertLess(opcodes.index(mv.MSG_MOVE_SET_FACING),
+                        opcodes.index(ac.CMSG_ATTACKSWING))
+        self.assertAlmostEqual(sess.player_position[4], 0.0, places=4)
+
     def test_execute_confirms_via_attack_start_event(self):
         sess = fake_session(player_position=(530, 0.0, 0.0, 0.0, 0.0))
         world = per.WorldState()
