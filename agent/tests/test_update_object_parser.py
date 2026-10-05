@@ -11,25 +11,11 @@ import unittest
 
 from agent import packets as pk
 from agent import update_object as uo
+from agent.tests.builders import values_body
 
 
 def block_header(block_count: int, *block_bytes: bytes) -> bytes:
     return struct.pack('<I', block_count) + b''.join(block_bytes)
-
-
-def values_body(field_values: dict) -> bytes:
-    """uint8 mask_block_count, mask words, one uint32 per set bit ascending."""
-    if not field_values:
-        return b'\x00'
-    max_bit = max(field_values)
-    block_count = max_bit // 32 + 1
-    words = [0] * block_count
-    for idx in field_values:
-        words[idx // 32] |= 1 << (idx % 32)
-    out = bytes([block_count]) + b''.join(struct.pack('<I', w) for w in words)
-    for idx in sorted(field_values):
-        out += struct.pack('<I', field_values[idx])
-    return out
 
 
 class MovementFramingTest(unittest.TestCase):

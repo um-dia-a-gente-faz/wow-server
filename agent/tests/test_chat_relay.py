@@ -18,15 +18,9 @@ from types import SimpleNamespace
 from agent import chat_relay as cr
 from agent import session as se
 from agent.handlers import chat as hchat
+from agent.tests.builders import make_session
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "chat"
-
-
-def make_session() -> se.WoWSession:
-    sess = se.WoWSession("127.0.0.1", 8085, "TEST", b"\x00" * 40, 1)
-    sess.world_state.names.cache_path = os.path.join(
-        tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
-    return sess
 
 
 def len_string(s: str) -> bytes:

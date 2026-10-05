@@ -28,112 +28,14 @@ from agent import state as state_mod
 from agent import trade as tr
 from agent import update_fields as uf
 from agent import update_object as uo
-from agent.tests.test_packets import tc_server_header
+from agent.tests.builders import tc_server_header  # noqa: F401
 
 
-class FakeSocket:
-    """Serves a fixed byte stream in chunks; EOF (b'') when exhausted."""
-
-    def __init__(self, data: bytes, chunk: int = 7, timeout_at: int | None = None):
-        self.data = data
-        self.pos = 0
-        self.chunk = chunk
-        self.timeout_at = timeout_at  # stream offset at which recv times out
-        self.timeout = None
-        self.sent = b''
-
-    def recv(self, n):
-        if self.timeout_at is not None and self.pos >= self.timeout_at:
-            raise socket.timeout("timed out")
-        end = min(self.pos + n, self.pos + self.chunk, len(self.data))
-        if self.timeout_at is not None:
-            end = min(end, self.timeout_at)
-        out = self.data[self.pos:end]
-        self.pos = end
-        return out
-
-    def settimeout(self, t):
-        self.timeout = t
-
-    def gettimeout(self):
-        return self.timeout
-
-    def sendall(self, b):
-        self.sent += b
-
-    def close(self):
-        pass
-
-
-def server_packet(opcode: int, payload: bytes) -> bytes:
-    return tc_server_header(len(payload) + 2, opcode) + payload
-
-
-def update_object(*blocks: bytes) -> bytes:
-    return struct.pack('<I', len(blocks)) + b''.join(blocks)
-
-
-def stationary_movement(x=1.0, y=2.0, z=3.0, o=0.5) -> bytes:
-    """A minimal, valid movement sub-block: UPDATEFLAG_STATIONARY_POSITION
-    only (uint16 flags + 4 floats) — the smallest real conditional path."""
-    return struct.pack('<H', uo.UPDATEFLAG_STATIONARY_POSITION) + struct.pack('<4f', x, y, z, o)
-
-
-def no_values() -> bytes:
-    """A VALUES_UPDATE with zero mask words set (nothing changed)."""
-    return b'\x00'
-
-
-def values_body(field_values: dict) -> bytes:
-    """uint8 mask_block_count, mask words, one uint32 per set bit ascending —
-    see agent/tests/test_update_object_parser.py for the same helper."""
-    if not field_values:
-        return b'\x00'
-    max_bit = max(field_values)
-    block_count = max_bit // 32 + 1
-    words = [0] * block_count
-    for idx in field_values:
-        words[idx // 32] |= 1 << (idx % 32)
-    out = bytes([block_count]) + b''.join(struct.pack('<I', w) for w in words)
-    for idx in sorted(field_values):
-        out += struct.pack('<I', field_values[idx])
-    return out
-
-
-def object_block(update_type: int, guid: int, object_type: int = uo.TYPEID_UNIT,
-                  movement: bytes = None, values: bytes = None) -> bytes:
-    """A CREATE_OBJECT[2] block body: packed guid, object type, movement, values."""
-    if movement is None:
-        movement = stationary_movement()
-    if values is None:
-        values = no_values()
-    return bytes([update_type]) + pk.pack_packed_guid(guid) + bytes([object_type]) + movement + values
-
-
-def values_block(guid: int, values: bytes = None) -> bytes:
-    """A VALUES block body: packed guid, values."""
-    if values is None:
-        values = no_values()
-    return bytes([uo.UPDATETYPE_VALUES]) + pk.pack_packed_guid(guid) + values
-
-
-def out_of_range_block(*guids: int) -> bytes:
-    return (bytes([hworld.UPDATETYPE_OUT_OF_RANGE_OBJECTS]) + struct.pack('<I', len(guids))
-            + b''.join(pk.pack_packed_guid(g) for g in guids))
-
-
-def compressed(payload: bytes) -> bytes:
-    return struct.pack('<I', len(payload)) + zlib.compress(payload)
-
-
-def make_session(stream: bytes = b'', **kw) -> se.WoWSession:
-    sess = se.WoWSession('127.0.0.1', 8085, 'TEST', b'\x00' * 40, 1, **kw)
-    sess.sock = FakeSocket(stream)
-    # A "found" creature/gameobject query response saves the on-disk name
-    # cache — never let that touch the real ~/.cache/wow-agent/names.json.
-    sess.world_state.names.cache_path = os.path.join(
-        tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
-    return sess
+from agent.tests.builders import (  # noqa: F401  (re-exported: other tests import from here)
+    FakeSocket, cstr as _cstr, compressed, make_session, no_values, object_block,
+    out_of_range_block, server_packet, stationary_movement, update_object, values_block,
+    values_body,
+)
 
 
 CREATURE = 0xF130000123000456
@@ -302,10 +204,6 @@ class WorldStateTest(unittest.TestCase):
         self.assertEqual(ws.get_objects(), {})
         ws.record_guid(2, uo.UPDATETYPE_CREATE_OBJECT2)
         self.assertEqual(list(ws.get_objects()), [2])
-
-
-def _cstr(s: str) -> bytes:
-    return s.encode('utf-8') + b'\x00'
 
 
 def name_query_response_payload(guid: int, name: str) -> bytes:
