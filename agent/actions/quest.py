@@ -4,6 +4,7 @@ Split out of the former agent/actions.py (issue #248).
 """
 
 from .. import quests as qu
+from ..rules import INTERACT_RANGE_YD
 from .base import (Action, ActionResult, register, send)
 
 
@@ -13,7 +14,6 @@ from .base import (Action, ActionResult, register, send)
 # the module docstring there); everything here is still wrapped by
 # session.py's usual per-packet try/except-and-drop.
 
-QUEST_INTERACT_RANGE_YD = qu.INTERACT_RANGE_YD
 
 
 def _open_quest_giver_window(session, world, npc_guid: int, quest_id: int, kinds: tuple):
@@ -48,9 +48,9 @@ class AcceptQuestAction(Action):
             return f"guid {npc_guid:#x} is not currently perceived"
         if session.player_position is not None:
             distance = target.distance_to(session.player_position)
-            if distance is not None and distance > QUEST_INTERACT_RANGE_YD:
+            if distance is not None and distance > INTERACT_RANGE_YD:
                 return (f"guid {npc_guid:#x} is {distance:.1f} yd away, out of interact range "
-                        f"({QUEST_INTERACT_RANGE_YD} yd) — try move_towards first")
+                        f"({INTERACT_RANGE_YD} yd) — try move_towards first")
         window = world.get_ui_state()
         if window is None or window.get("kind") not in ("quest_list", "quest_details", "gossip"):
             return "no quest list/details/gossip window is open for that NPC — interact() with it first"
@@ -104,9 +104,9 @@ class CompleteQuestAction(Action):
             return f"guid {npc_guid:#x} is not currently perceived"
         if session.player_position is not None:
             distance = target.distance_to(session.player_position)
-            if distance is not None and distance > QUEST_INTERACT_RANGE_YD:
+            if distance is not None and distance > INTERACT_RANGE_YD:
                 return (f"guid {npc_guid:#x} is {distance:.1f} yd away, out of interact range "
-                        f"({QUEST_INTERACT_RANGE_YD} yd) — try move_towards first")
+                        f"({INTERACT_RANGE_YD} yd) — try move_towards first")
         quest_log = world.build_quest_log()
         if not any(q["quest_id"] == quest_id for q in quest_log):
             return f"quest {quest_id} is not in the quest log"
