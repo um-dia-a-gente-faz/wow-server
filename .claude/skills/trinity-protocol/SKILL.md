@@ -19,6 +19,12 @@ curl -s https://raw.githubusercontent.com/TrinityCore/TrinityCore/3.3.5/src/serv
 gh api "repos/TrinityCore/TrinityCore/git/trees/3.3.5?recursive=1" --jq '.tree[].path' | grep -i mailhandler
 ```
 
+**Opcode values and update-field indices are generated, not typed.** To add one, run
+`scripts/gen_protocol_tables.py --source <TrinityCore checkout> --commit <sha> --add <NAME>`
+and commit the result; never edit between the `GENERATED` markers in `agent/opcodes.py`
+or `agent/update_fields.py` (CI's `scripts/check.sh generated` fails on a hand edit).
+Steps are in `docs/PROTOCOL-NOTES.md`, *Generated tables*.
+
 Rules of thumb:
 - The **handler's read order** is the wire order. A packet class's *member declaration*
   order can differ — that bug shipped once (`CTextEmote` reads `EmoteID, SoundIndex,
