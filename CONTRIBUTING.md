@@ -139,9 +139,15 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **Ratchet, never loosen.** `ruff.toml` `per-file-ignores` lists files that already
   violated a rule when the gate landed; fix a file's violations and delete its line.
   New code must be clean.
-- **Typing allowlist:** add a file to `files =` in `mypy.ini` (one line) once it
-  type-checks. mypy was chosen over pyright because it is pip-only (no Node download in
-  CI) and its gradual mode matches the allowlist model.
+- **Typing tiers (#350):** `mypy` checks all of `agent/` (tests excluded). A module is
+  `strict` (`[mypy-<module>]` with `disallow_untyped_defs`), `checked` (no section, the
+  default: a new `agent/*.py` lands here and must pass) or `legacy` (`[mypy-<module>]
+  ignore_errors = True`, a baseline that may only shrink). To move a module up: fix its
+  errors, delete its legacy section in `mypy.ini` and its line in `BASELINE` in
+  `scripts/tests/test_mypy_ratchet.py`; to make it `strict`, replace the section with
+  `disallow_untyped_defs = True`. Count the legacy modules in the PR description. Never
+  add a module to legacy. mypy was chosen over pyright because it is pip-only (no Node
+  download in CI) and its gradual mode matches the tiers.
 
 ## Size budget
 

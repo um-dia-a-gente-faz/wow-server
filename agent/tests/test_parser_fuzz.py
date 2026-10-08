@@ -14,15 +14,12 @@ import time
 import tempfile
 import tracemalloc
 import unittest
-import uuid
 from collections import deque
 from unittest import mock
 
 from agent import opcodes as op
 from agent import update_object as uo
 from agent import session as _session  # noqa: F401  (registers every handler)
-from agent.items import ItemCache
-from agent.names import NameCache
 from agent.packets import ProtocolError
 from agent.router import ROUTER
 from agent.tests import builders as b
@@ -134,13 +131,7 @@ def populated_session():
     a group and spells. A write that depends on existing state (#418) is only
     reachable here."""
     sess = make_session()
-    # build_world() makes its own WorldState whose caches save to the real
-    # ~/.cache/wow-agent/*.json on every response: keep those saves off disk, then
-    # point the caches at the temp files make_session() uses.
-    with mock.patch.object(NameCache, "save"), mock.patch.object(ItemCache, "save"):
-        sess.world_state = build_world()
-    sess.world_state.names.cache_path = os.path.join(tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
-    sess.world_state.items.cache_path = os.path.join(tempfile.gettempdir(), f"wow-agent-test-items-{uuid.uuid4().hex}.json")
+    sess.world_state = build_world()
     sess.loot = {"coins": 5, "items": []}
     sess.pending_invite = {"inviter_name": "Bob"}
     sess.group = {"leader_guid": 0x12, "raid": False, "loot_method": 1, "members": []}

@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- UM-77 spike prototype: in-game-style continent <-> zone zoom (painted art) and a
      satellite (minimap tile) view behind one toggle, on ONE Leaflet map, with stub players.
-     No server, no DB. Serve the build_art.py output dir (see docs/MAP_ENGINE_SPIKE.md).
+     No server, no DB. Serve the build_art.py output dir (see docs/spikes/MAP_ENGINE_SPIKE.md).
      Throwaway: not part of wowmap. -->
 <html lang="en">
 <head>
@@ -203,7 +203,7 @@ function start(data) {
   map.fitBounds(frame, { animate: false });
   placePlayers(); updateArt();
 
-  // handles for the headless checks in docs/MAP_ENGINE_SPIKE.md
+  // handles for the headless checks in docs/spikes/MAP_ENGINE_SPIKE.md
   window.__proto = {
     map, zoomToZone, zoomOut, setView, zonesAt, players, zones, wp, ws,
     state: () => ({ view, zoom: map.getZoom(), level: view === "painted" ? currentLevel() : "satellite",

@@ -68,8 +68,8 @@ jobs:
       # Config + baseline in ruff.toml; fails on any violation not in per-file-ignores.
       - name: ruff check
         run: scripts/check.sh lint
-      # Allowlist of typed files in mypy.ini (`files =`); everything else is unchecked.
-      - name: mypy (allowlist)
+      # All of agent/ in tiers (mypy.ini); the legacy list is guarded by scripts/tests.
+      - name: mypy (tiers)
         run: scripts/check.sh types
 
   # #253: informational only (continue-on-error), never gates a merge. `coverage`

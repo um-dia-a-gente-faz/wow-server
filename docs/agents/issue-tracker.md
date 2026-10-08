@@ -11,7 +11,7 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
-`UM-*` issues are mirrored from Linear (the tracker of record for planning). The GitHub issue number is not the UM id: take the UM id from the "Migrated from Linear" footer. Branches and PRs reference `gh-<n>` or `UM-<n>`; PR bodies say `Closes <ref>`.
+`UM-*` issues are mirrored from Linear (the older mirror, no longer kept up to date; GitHub issues and project 7 are the tracker of record). The GitHub issue number is not the UM id: take the UM id from the "Migrated from Linear" footer. Branches and PRs reference `gh-<n>` or `UM-<n>`; PR bodies say `Closes <ref>`.
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
 
