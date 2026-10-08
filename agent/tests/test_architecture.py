@@ -21,7 +21,7 @@ UNLAYERED = {"tools", "tests"}
 
 # unit -> units it may import. A unit missing here may import nothing from agent/.
 # Groups (see docs/ARCHITECTURE.md, `agent/` table):
-#   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines,
+#   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines, action_names,
 #       known_targets, metrics, api_contract, ports (the typed session contract, #304)
 #   pure parsers and builders: npc, quests, loot, mail, trade, spells, channels, names,
 #       items, item_compare, update_object, update_fields, movement
@@ -71,7 +71,8 @@ LAYERS = {
     "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
     "control": {"actions", "movement"},
     "death": {"actions", "movement", "opcodes", "perception", "rules"},
-    "candidates": {"handles", "item_compare", "rules"},
+    "action_names": set(),
+    "candidates": {"action_names", "handles", "item_compare", "rules"},
     # deciding
     "llm": set(),
     "jev": {"llm"},
