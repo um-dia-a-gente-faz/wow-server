@@ -3,20 +3,17 @@ they reach the game. The rejected inputs below are the ones the model
 actually sent in the 2026-09-19 live run."""
 
 import unittest
-from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import perception as per
 from agent.reflexes import follow as fr
+from agent.tests.builders import FakeSession
 
 
-class _Sent(SimpleNamespace):
-    def __init__(self):
-        super().__init__(packets=[], chat_inbox=[], events=[], race=10,
-                         player_position=(530, 0.0, 0.0, 0.0, 0.0))
-
-    def _send_packet(self, opcode, payload=b""):
-        self.packets.append((opcode, payload))
+def _Sent():
+    sess = FakeSession(chat_inbox=[], events=[], race=10, player_position=(530, 0.0, 0.0, 0.0, 0.0))
+    sess.packets = sess.sent
+    return sess
 
 
 class ChatTextTest(unittest.TestCase):

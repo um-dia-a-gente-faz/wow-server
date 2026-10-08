@@ -6,13 +6,13 @@ import struct
 import threading
 import time
 import unittest
-from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import channels as ch
 from agent import perception as per
 from agent import session as se
 from agent.handlers import chat as hchat
+from agent.tests.builders import FakeSession
 
 GENERAL = "General - Eversong Woods"
 ME = 0x0000000000000042
@@ -194,10 +194,7 @@ class SessionNotifyTest(unittest.TestCase):
 
 
 def fake_session():
-    sent = []
-    sess = SimpleNamespace(race=10, player_guid=ME, events=[], chat_inbox=[])
-    sess._send_packet = lambda opcode, payload=b"": sent.append((opcode, payload))
-    sess._sent = sent
+    sess = FakeSession(race=10, player_guid=ME, events=[], chat_inbox=[])
     return sess
 
 

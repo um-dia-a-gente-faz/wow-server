@@ -48,6 +48,10 @@ class Transport:
         self._lock = threading.Lock()
         self._error_throttle = _ErrorThrottle(ERROR_LOG_INTERVAL_S)
 
+    def send_packet(self, opcode: int, payload: bytes = b'') -> None:
+        """The public name (agent.ports.PacketSink), which actions and reflexes use."""
+        self._send_packet(opcode, payload)
+
     def _send_packet(self, opcode: int, payload: bytes = b''):
         hdr = struct.pack('>H', len(payload) + 4) + struct.pack('<I', opcode)
         if self.crypt:

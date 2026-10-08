@@ -1,22 +1,19 @@
 """Shared fakes for the test_actions_*.py modules (split out of test_actions.py, issue #248).
 """
 
-from types import SimpleNamespace
 import threading
 import time
 
 from agent import update_fields as uf
 from agent import update_object as uo
+from agent.tests.builders import FakeSession
 
 
 def fake_session(race=10, player_guid=0xF130000000000099, player_position=None, class_=0):
     """race defaults to 10 (Blood Elf, Horde)."""
-    sent = []
-    sess = SimpleNamespace(race=race, class_=class_, pending_invite={"inviter_name": "Rubens"},
+    sess = FakeSession(race=race, class_=class_, pending_invite={"inviter_name": "Rubens"},
                             player_guid=player_guid, player_position=player_position,
                             events=[], spellbook=set(), spell_cooldowns={})
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
     return sess
 
 
