@@ -148,15 +148,14 @@ class ThinkState:
         return out
 
 
-def _self_status(session, world) -> tuple[Me | None, list[KnownSpell]]:
-    """Own level/health/power/xp (None before our own object arrived) and
-    castable spells, which the goal prompt needs ("mobs of your level", "rest
-    when low", "cast_spell from your spellbook") and WorldState.snapshot()
-    doesn't carry."""
-    mine: Me | None = None
+def _self_status(session, world, snapshot: Snapshot) -> None:
+    """Add own level/health/power/xp (`me`) and castable spells (`spells`) to
+    `snapshot`: the goal prompt needs them ("mobs of your level", "rest when
+    low", "cast_spell from your spellbook") and WorldState.snapshot() doesn't
+    carry them."""
     me = world.get_my_object()
     if me is not None:
-        mine = {"level": me.level, "class_id": getattr(session, "class_", None)}
+        mine: Me = {"level": me.level, "class_id": getattr(session, "class_", None)}
         if me.health is not None and me.max_health:
             mine["health"] = f"{me.health}/{me.max_health}"
         for name, cur in (me.power or {}).items():
@@ -168,13 +167,15 @@ def _self_status(session, world) -> tuple[Me | None, list[KnownSpell]]:
             mine["xp"] = raw[uf.PLAYER_XP]
         if uf.PLAYER_NEXT_LEVEL_XP in raw:
             mine["next_level_xp"] = raw[uf.PLAYER_NEXT_LEVEL_XP]
+        snapshot["me"] = mine
     known = getattr(session, "spellbook", None) or ()
     # Only spells agent.spells has metadata for: the raw spellbook is
     # mostly passives (languages, weapon skills) that would waste tokens.
     spell_list: list[KnownSpell] = [
         {"id": i.spell_id, "name": i.name}
         for i in (sp.get_spell_info(s) for s in sorted(known)) if i is not None]
-    return mine, spell_list
+    if spell_list:
+        snapshot["spells"] = spell_list
 
 
 class ThinkResult:
@@ -243,11 +244,7 @@ def think_and_act(session, world, brain, persona: str = "",
                                pending_invite=getattr(session, "pending_invite", None),
                                group=getattr(session, "group", None),
                                chat_inbox=getattr(session, "chat_inbox", None))
-    me, spells = _self_status(session, world)
-    if me is not None:
-        snapshot["me"] = me
-    if spells:
-        snapshot["spells"] = spells
+    _self_status(session, world, snapshot)
     fingerprint = progress_fingerprint(snapshot)
     if state is not None:
         state.observe(fingerprint)
