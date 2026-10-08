@@ -1,0 +1,2211 @@
+{
+ "candidates": {
+  "assisting": [
+   {
+    "action": "stop_following",
+    "id": "stop_following",
+    "label": "stop following the leader",
+    "params": {}
+   },
+   {
+    "action": "assist",
+    "id": "assist:on=False",
+    "label": "stop assisting the leader's target",
+    "params": {
+     "on": false
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "dead": [
+   {
+    "action": "release_spirit",
+    "id": "release_spirit",
+    "label": "release your spirit to become a ghost",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "details": [
+   {
+    "action": "accept_quest",
+    "id": "accept_quest:npc_guid=8,quest_id=9",
+    "label": "accept quest 9",
+    "params": {
+     "npc_guid": 8,
+     "quest_id": 9
+    }
+   },
+   {
+    "action": "close_window",
+    "id": "close_window",
+    "label": "close the quest_details window",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "fixture_combat": [
+   {
+    "action": "auto_attack",
+    "id": "auto_attack:guid=4660",
+    "label": "attack Mana Wyrm (level 3, 3.1 yd, attacking you)",
+    "params": {
+     "guid": 4660
+    }
+   },
+   {
+    "action": "loot",
+    "id": "loot:guid=4661",
+    "label": "loot Mana Wyrm (4.0 yd)",
+    "params": {
+     "guid": 4661
+    }
+   },
+   {
+    "action": "move_towards",
+    "id": "move_towards:guid=4663,stop_distance=3.0",
+    "label": "move to attack Mana Wyrm (level 2, 14.2 yd)",
+    "params": {
+     "guid": 4663,
+     "stop_distance": 3.0
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "fixture_idle": [
+   {
+    "action": "accept_group",
+    "id": "accept_group",
+    "label": "accept the group invite from Rubens",
+    "params": {}
+   },
+   {
+    "action": "follow",
+    "id": "follow:player_name=Rubens",
+    "label": "follow Rubens (6.0 yd)",
+    "params": {
+     "player_name": "Rubens"
+    }
+   },
+   {
+    "action": "follow",
+    "id": "follow:player_name=Luaprata",
+    "label": "follow Luaprata (11.0 yd)",
+    "params": {
+     "player_name": "Luaprata"
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "fixture_loot": [
+   {
+    "action": "loot",
+    "id": "loot:guid=4661",
+    "label": "loot Mana Wyrm (2.0 yd)",
+    "params": {
+     "guid": 4661
+    }
+   },
+   {
+    "action": "move_towards",
+    "id": "move_towards:guid=4664,stop_distance=2.0",
+    "label": "move to loot Mana Wyrm (12.0 yd)",
+    "params": {
+     "guid": 4664,
+     "stop_distance": 2.0
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "fixture_quest": [
+   {
+    "action": "complete_quest",
+    "id": "complete_quest:npc_guid=5001,quest_id=8325",
+    "label": "hand in quest Reclaiming Sunstrider Isle",
+    "params": {
+     "npc_guid": 5001,
+     "quest_id": 8325
+    }
+   },
+   {
+    "action": "accept_quest",
+    "id": "accept_quest:npc_guid=5001,quest_id=8326",
+    "label": "accept quest Unfortunate Measures",
+    "params": {
+     "npc_guid": 5001,
+     "quest_id": 8326
+    }
+   },
+   {
+    "action": "gossip_select",
+    "id": "gossip_select:option_index=0",
+    "label": "choose dialogue option: Tell me about this place.",
+    "params": {
+     "option_index": 0
+    }
+   },
+   {
+    "action": "close_window",
+    "id": "close_window",
+    "label": "close the gossip window",
+    "params": {}
+   },
+   {
+    "action": "move_towards",
+    "id": "move_towards:guid=5002,stop_distance=3.0",
+    "label": "walk to Julia Sunstriker (quest ready to turn in, 20.0 yd)",
+    "params": {
+     "guid": 5002,
+     "stop_distance": 3.0
+    }
+   },
+   {
+    "action": "abandon_quest",
+    "id": "abandon_quest:slot=1",
+    "label": "abandon failed quest A Timed Errand",
+    "params": {
+     "slot": 1
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "following": [
+   {
+    "action": "stop_following",
+    "id": "stop_following",
+    "label": "stop following Ann",
+    "params": {}
+   },
+   {
+    "action": "assist",
+    "id": "assist:on=True",
+    "label": "start assisting Ann's target",
+    "params": {
+     "on": true
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "gear": [
+   {
+    "action": "equip_item",
+    "id": "equip_item:bag=255,slot=23",
+    "label": "equip upgrade None",
+    "params": {
+     "bag": 255,
+     "slot": 23
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "ghost": [
+   {
+    "action": "reclaim_corpse",
+    "id": "reclaim_corpse",
+    "label": "run back to your corpse and resurrect",
+    "params": {}
+   },
+   {
+    "action": "move_to",
+    "id": "move_to:x=1,y=2,z=3",
+    "label": "run back to your corpse",
+    "params": {
+     "x": 1,
+     "y": 2,
+     "z": 3
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "giver": [
+   {
+    "action": "interact",
+    "id": "interact:guid=5",
+    "label": "talk to trainer (has a quest)",
+    "params": {
+     "guid": 5
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "heal": [
+   {
+    "action": "cast_spell",
+    "id": "cast_spell:spell_id=635",
+    "label": "cast Holy Light on yourself",
+    "params": {
+     "spell_id": 635
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "history_drop": [
+   {
+    "action": "auto_attack",
+    "id": "auto_attack:guid=4660",
+    "label": "attack Mana Wyrm (level 3, 3.1 yd, attacking you)",
+    "params": {
+     "guid": 4660
+    }
+   },
+   {
+    "action": "loot",
+    "id": "loot:guid=4661",
+    "label": "loot Mana Wyrm (4.0 yd)",
+    "params": {
+     "guid": 4661
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "invite": [
+   {
+    "action": "accept_group",
+    "id": "accept_group",
+    "label": "accept the group invite from Bob",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "players": [
+   {
+    "action": "follow",
+    "id": "follow:player_name=Bob",
+    "label": "follow Bob (2.0 yd)",
+    "params": {
+     "player_name": "Bob"
+    }
+   },
+   {
+    "action": "follow",
+    "id": "follow:player_name=Ann",
+    "label": "follow Ann (4.0 yd)",
+    "params": {
+     "player_name": "Ann"
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "request_items": [
+   {
+    "action": "complete_quest",
+    "id": "complete_quest:npc_guid=8,quest_id=9",
+    "label": "hand in quest 9",
+    "params": {
+     "npc_guid": 8,
+     "quest_id": 9
+    }
+   },
+   {
+    "action": "close_window",
+    "id": "close_window",
+    "label": "close the quest_request_items window",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "reward": [
+   {
+    "action": "turn_in_quest",
+    "id": "turn_in_quest:npc_guid=8,quest_id=9,reward_choice=0",
+    "label": "turn in quest 9 taking reward item 1",
+    "params": {
+     "npc_guid": 8,
+     "quest_id": 9,
+     "reward_choice": 0
+    }
+   },
+   {
+    "action": "turn_in_quest",
+    "id": "turn_in_quest:npc_guid=8,quest_id=9,reward_choice=1",
+    "label": "turn in quest 9 taking reward item 2",
+    "params": {
+     "npc_guid": 8,
+     "quest_id": 9,
+     "reward_choice": 1
+    }
+   },
+   {
+    "action": "close_window",
+    "id": "close_window",
+    "label": "close the quest_offer_reward window",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "threat_spell": [
+   {
+    "action": "cast_spell",
+    "id": "cast_spell:spell_id=133,target_guid=2",
+    "label": "cast Fireball at unit 0x2",
+    "params": {
+     "spell_id": 133,
+     "target_guid": 2
+    }
+   },
+   {
+    "action": "cast_spell",
+    "id": "cast_spell:spell_id=585,target_guid=2",
+    "label": "cast 585 at unit 0x2",
+    "params": {
+     "spell_id": 585,
+     "target_guid": 2
+    }
+   },
+   {
+    "action": "auto_attack",
+    "id": "auto_attack:guid=2",
+    "label": "attack unit 0x2 (level ?, 3.0 yd, attacking you)",
+    "params": {
+     "guid": 2
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "trainer": [
+   {
+    "action": "train_spell",
+    "id": "train_spell:spell_id=587,trainer_guid=8",
+    "label": "train spell 587",
+    "params": {
+     "spell_id": 587,
+     "trainer_guid": 8
+    }
+   },
+   {
+    "action": "close_window",
+    "id": "close_window",
+    "label": "close the trainer window",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "usable": [
+   {
+    "action": "use_item",
+    "id": "use_item:bag=255,slot=23",
+    "label": "use None",
+    "params": {
+     "bag": 255,
+     "slot": 23
+    }
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ],
+  "vendor": [
+   {
+    "action": "sell_item",
+    "id": "sell_item:bag=255,slot=23,vendor_guid=8",
+    "label": "sell grey item grey",
+    "params": {
+     "bag": 255,
+     "slot": 23,
+     "vendor_guid": 8
+    }
+   },
+   {
+    "action": "sell_item",
+    "id": "sell_item:bag=255,slot=24,vendor_guid=8",
+    "label": "sell grey item grey",
+    "params": {
+     "bag": 255,
+     "slot": 24,
+     "vendor_guid": 8
+    }
+   },
+   {
+    "action": "sell_item",
+    "id": "sell_item:bag=255,slot=25,vendor_guid=8",
+    "label": "sell grey item grey",
+    "params": {
+     "bag": 255,
+     "slot": 25,
+     "vendor_guid": 8
+    }
+   },
+   {
+    "action": "close_window",
+    "id": "close_window",
+    "label": "close the vendor window",
+    "params": {}
+   },
+   {
+    "action": "idle",
+    "id": "idle",
+    "label": "do nothing this cycle",
+    "params": {}
+   }
+  ]
+ },
+ "catalog": [
+  {
+   "description": "Target a nearby unit, player, or object by its handle from the perception snapshot.",
+   "name": "set_target",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the object to target.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Turn in place to face a nearby object by handle, or a specific x,y position, without otherwise moving.",
+   "name": "face",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the object to face. Mutually exclusive with x/y.",
+      "type": "string"
+     },
+     "x": {
+      "description": "Target X coordinate. Requires y; mutually exclusive with guid.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Target Y coordinate. Requires x; mutually exclusive with guid.",
+      "type": "number"
+     }
+    },
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Walk in a straight line to a point on the ground, stopping within stop_distance yards. No pathfinding \u2014 obstacles will block it (returns ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.",
+   "name": "move_to",
+   "parameters": {
+    "properties": {
+     "stop_distance": {
+      "description": "How close counts as arrived, in yards. Default 1.0.",
+      "type": "number"
+     },
+     "x": {
+      "description": "Destination X coordinate.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Destination Y coordinate.",
+      "type": "number"
+     },
+     "z": {
+      "description": "Destination Z coordinate. Optional \u2014 omit to stay level with the current height (no terrain data in v1).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Chase a nearby unit or player by handle, re-targeting its position every tick, stopping within stop_distance yards. Blocks until arrival, stuck, the target leaving perception, or stopped.",
+   "name": "move_towards",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the object to move towards.",
+      "type": "string"
+     },
+     "stop_distance": {
+      "description": "How close counts as arrived, in yards. Default 1.0.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Stop any in-progress move_to/move_towards immediately.",
+   "name": "stop_movement",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Target and start melee auto-attack on a nearby hostile unit.",
+   "name": "auto_attack",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the unit to attack.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Stop melee auto-attack.",
+   "name": "stop_attack",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Do nothing this cycle (wait and watch). Always a valid choice.",
+   "name": "idle",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted).",
+   "name": "cast_spell",
+   "parameters": {
+    "properties": {
+     "spell_id": {
+      "description": "Spell ID to cast \u2014 must be in the agent's spellbook.",
+      "type": "integer"
+     },
+     "target_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the unit to cast on. Omit to cast on self.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "spell_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Interact with a nearby NPC or gameobject by handle: opens its gossip, vendor, or trainer window (whichever its flags indicate), or activates it directly if it's a gameobject. Must be within 5.0 yd \u2014 use move_towards first if not.",
+   "name": "interact",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the NPC or gameobject to interact with.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Select an option in the currently open gossip window by its index.",
+   "name": "gossip_select",
+   "parameters": {
+    "properties": {
+     "code": {
+      "description": "Text for options that require a text-entry box (rare; the window's option marks `coded: true` when needed).",
+      "type": "string"
+     },
+     "option_index": {
+      "description": "The option's `index` from the open gossip window.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "option_index"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Buy an item from the vendor window currently open for vendor_guid, identified by vendor slot or item entry (from the window's items list). Waits for the server's confirmation/failure response before returning, so ok=True means the purchase actually went through.",
+   "name": "buy_item",
+   "parameters": {
+    "properties": {
+     "count": {
+      "description": "How many to buy. Default 1.",
+      "type": "integer"
+     },
+     "entry": {
+      "description": "Item entry, as an alternative to slot.",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Vendor slot from the open window's items list.",
+      "type": "integer"
+     },
+     "vendor_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the open vendor.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "vendor_guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Sell an item at bag/slot to the vendor window currently open for vendor_guid. Resolves the item's GUID from bag/slot (UM-42's inventory model) and waits for the server's confirmation/failure response before returning.",
+   "name": "sell_item",
+   "parameters": {
+    "properties": {
+     "bag": {
+      "description": "Bag byte of the item (255 = equipped items/backpack).",
+      "type": "integer"
+     },
+     "count": {
+      "description": "How many to sell from the stack. Default: whole stack.",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Inventory slot of the item.",
+      "type": "integer"
+     },
+     "vendor_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the vendor to sell to.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "vendor_guid",
+     "bag",
+     "slot"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Learn a spell from the trainer window currently open for trainer_guid. Waits for the server's confirmation/failure response before returning, so ok=True means the spell was actually learned.",
+   "name": "train_spell",
+   "parameters": {
+    "properties": {
+     "spell_id": {
+      "description": "Spell ID from the open trainer window's spells list.",
+      "type": "integer"
+     },
+     "trainer_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the open trainer.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "trainer_guid",
+     "spell_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Invite a player to a party/group by name.",
+   "name": "invite_to_group",
+   "parameters": {
+    "properties": {
+     "name": {
+      "description": "Exact player name to invite.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Accept the currently pending party invite (see the snapshot's pending_invite).",
+   "name": "accept_group",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Decline the currently pending party invite (see the snapshot's pending_invite).",
+   "name": "decline_group",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Leave the party you are in (see the snapshot's group).",
+   "name": "leave_group",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Hand party leadership to a member of your group (you must be the leader).",
+   "name": "promote_leader",
+   "parameters": {
+    "properties": {
+     "name": {
+      "description": "Exact name of the group member to make leader.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Close the currently open gossip/vendor/trainer window.",
+   "name": "close_window",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Loot a nearby lootable corpse/creature (UNIT_DYNFLAG_LOOTABLE): opens the loot window, takes all money and every item (v1: take-everything, no selective looting), then releases it. Must be within 5 yards.",
+   "name": "loot",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the lootable corpse/creature.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Use/consume an item from inventory \u2014 e.g. eat food or drink water. Not usable while in combat (server-enforced for most consumables; checked here too).",
+   "name": "use_item",
+   "parameters": {
+    "properties": {
+     "bag": {
+      "description": "Bag byte (255 = equipped items/backpack; see CMSG_USE_ITEM's bag field).",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Slot within that bag (0-18 equipment, 19-22 equipped bags, 23-38 backpack).",
+      "type": "integer"
+     },
+     "target_guid": {
+      "description": "Optional target snapshot handle (a string like \"p1\"), e.g. a bandage used on an ally. Omit to target self.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "bag",
+     "slot"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Permanently destroy `count` of the item at bag/slot. Irreversible \u2014 requires confirm=true as an explicit safety guard against accidental calls.",
+   "name": "destroy_item",
+   "parameters": {
+    "properties": {
+     "bag": {
+      "description": "Bag byte (255 = equipped items/backpack).",
+      "type": "integer"
+     },
+     "confirm": {
+      "description": "Must be true \u2014 a safety guard, not read by the server.",
+      "type": "boolean"
+     },
+     "count": {
+      "description": "How many to destroy from the stack.",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Slot within that bag.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "bag",
+     "slot",
+     "count",
+     "confirm"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Compare two items at given bag/slot positions for the character's own class (UM-69 v1 heuristic: primary stat for class + item level as a tiebreaker, no talent/spec awareness \u2014 see agent.item_compare's docstring). Returns which item scores higher and a human-readable reason.",
+   "name": "compare_items",
+   "parameters": {
+    "properties": {
+     "bag_a": {
+      "description": "Bag byte of the first item (255 = equipped items/backpack).",
+      "type": "integer"
+     },
+     "bag_b": {
+      "description": "Bag byte of the second item (255 = equipped items/backpack).",
+      "type": "integer"
+     },
+     "slot_a": {
+      "description": "Inventory slot of the first item.",
+      "type": "integer"
+     },
+     "slot_b": {
+      "description": "Inventory slot of the second item.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "bag_a",
+     "slot_a",
+     "bag_b",
+     "slot_b"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Equip the item at bag/slot (CMSG_AUTOEQUIP_ITEM) \u2014 the server picks the equip slot from the item itself. Refuses up front if the item's cached template says it can't be used by this character (wrong armor type, class-restricted); otherwise waits for the server's confirmation/failure response before returning, so ok=True means the item was actually equipped.",
+   "name": "equip_item",
+   "parameters": {
+    "properties": {
+     "bag": {
+      "description": "Bag byte of the item (255 = equipped items/backpack).",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Inventory slot of the item.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "bag",
+     "slot"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Accept a quest offered by a nearby questgiver. Requires that NPC's quest list/quest details window, or a gossip window listing the quest, to already be open (interact() with the NPC first) and the quest to be present in it.",
+   "name": "accept_quest",
+   "parameters": {
+    "properties": {
+     "npc_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC.",
+      "type": "string"
+     },
+     "quest_id": {
+      "description": "Quest ID to accept, from the open quest_list/quest_details/gossip window.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "npc_guid",
+     "quest_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Tell a nearby questgiver you're ready to turn in quest_id \u2014 the first step of turning a quest in. Opens the request-items or offer-reward window (check the perception snapshot's `window` after calling this); use turn_in_quest to actually finish once that window is open.",
+   "name": "complete_quest",
+   "parameters": {
+    "properties": {
+     "npc_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC.",
+      "type": "string"
+     },
+     "quest_id": {
+      "description": "Quest ID to complete, from quest_log.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "npc_guid",
+     "quest_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Finish turning in quest_id at a nearby questgiver, picking reward_choice (index into the open offer-reward window's reward_choice_items, if any). Requires the offer-reward window to already be open (call complete_quest first).",
+   "name": "turn_in_quest",
+   "parameters": {
+    "properties": {
+     "npc_guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC.",
+      "type": "string"
+     },
+     "quest_id": {
+      "description": "Quest ID to turn in.",
+      "type": "integer"
+     },
+     "reward_choice": {
+      "description": "Index of the reward item to pick, from the open window's reward_choice_items. Default 0.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "npc_guid",
+     "quest_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Drop a quest from the quest log by its slot number. Irreversible.",
+   "name": "abandon_quest",
+   "parameters": {
+    "properties": {
+     "slot": {
+      "description": "Quest log slot (0-24), from quest_log's `slot` field \u2014 not the quest id.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "slot"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Request a trade with a nearby player. Must be within 11.1 yd. The other side sees the request and decides via accept_trade_request.",
+   "name": "open_trade",
+   "parameters": {
+    "properties": {
+     "guid": {
+      "description": "Snapshot handle (a string like \"u3\") of the player to trade with.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "guid"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Accept a pending incoming trade request (see the trade window's `phase`: 'requested').",
+   "name": "accept_trade_request",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Put an item from your bag/slot into the open trade's next free slot (0-5; pass trade_slot to pick a specific one). Offers the item's whole stack \u2014 trade doesn't support splitting a partial count. Rejected if the item is soulbound.",
+   "name": "offer_item",
+   "parameters": {
+    "properties": {
+     "bag": {
+      "description": "Bag byte of the item (255 = equipped items/backpack).",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Inventory slot of the item.",
+      "type": "integer"
+     },
+     "trade_slot": {
+      "description": "Which of the 6 trade slots (0-5) to put it in. Default: the first free one.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "bag",
+     "slot"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Set the gold (in copper) offered in the open trade. Replaces any previous amount.",
+   "name": "offer_gold",
+   "parameters": {
+    "properties": {
+     "amount": {
+      "description": "Copper to offer (100 copper = 1 silver, 10000 = 1 gold). 0 clears a previous offer.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "amount"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Accept the open trade \u2014 but only given what you currently believe the other side is offering (from the trade window's `their_gold`/`their_items`). Rejected if that no longer matches the live offer, so re-check the window before calling this again; a change on either side after an accept un-accepts both sides automatically (server behavior), so this never lets a stale offer through silently.",
+   "name": "accept_trade",
+   "parameters": {
+    "properties": {
+     "expected_their_gold": {
+      "description": "Gold you believe the other side has offered. Default 0.",
+      "type": "integer"
+     },
+     "expected_their_item_entries": {
+      "description": "Item entries you believe the other side has offered (any order). Omit/empty if you believe they're offering no items.",
+      "items": {
+       "type": "integer"
+      },
+      "type": "array"
+     }
+    },
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Cancel/decline the pending or open trade.",
+   "name": "cancel_trade",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Open the nearest mailbox within 5 yd and request its inbox (check the perception snapshot's `mailbox` after calling this).",
+   "name": "open_mailbox",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Send mail (with optional gold and one optional item) to a player by name \u2014 works even if they're offline or far away. Costs 30 copper postage in addition to any gold sent. Requires a nearby mailbox.",
+   "name": "send_mail",
+   "parameters": {
+    "properties": {
+     "bag": {
+      "description": "Bag byte of an item to attach (255 = equipped items/backpack). Omit to send no item.",
+      "type": "integer"
+     },
+     "body": {
+      "description": "Mail body text.",
+      "type": "string"
+     },
+     "gold": {
+      "description": "Copper to send. Default 0.",
+      "type": "integer"
+     },
+     "slot": {
+      "description": "Inventory slot of the item to attach \u2014 required together with bag.",
+      "type": "integer"
+     },
+     "subject": {
+      "description": "Mail subject.",
+      "type": "string"
+     },
+     "to": {
+      "description": "Recipient character name.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "to",
+     "subject",
+     "body"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Take all money and every item attached to mail_id from the currently open mailbox window (call open_mailbox first) \u2014 v1 take-everything, no selective taking, same as loot().",
+   "name": "take_mail",
+   "parameters": {
+    "properties": {
+     "mail_id": {
+      "description": "Mail id, from the open mailbox window's `mails` list.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "mail_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Delete mail_id from the currently open mailbox window (call open_mailbox first). Irreversible \u2014 take any attachments first, they're lost otherwise.",
+   "name": "delete_mail",
+   "parameters": {
+    "properties": {
+     "mail_id": {
+      "description": "Mail id, from the open mailbox window's `mails` list.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "mail_id"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Follow a nearby party member/player by name, keeping roughly `distance` yards away and matching their target if assist is on, until stop_following is called or the leader is lost.",
+   "name": "follow",
+   "parameters": {
+    "properties": {
+     "distance": {
+      "description": "How close to stay, in yards. Default 3.0.",
+      "type": "number"
+     },
+     "player_name": {
+      "description": "Name of a nearby player to follow (case-insensitive).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "player_name"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Turn assisting the followed leader's current combat target on or off.",
+   "name": "assist",
+   "parameters": {
+    "properties": {
+     "on": {
+      "description": "True to assist, false to stop assisting.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "on"
+    ],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Stop following the current leader and stop assisting.",
+   "name": "stop_following",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Rest to recover HP/mana: eats/drinks if inventory has food, otherwise sits. Stops automatically once healed or attacked. This also runs as an automatic reflex whenever HP/mana drop low out of combat, so this action is mainly for resting proactively before a fight you can see coming.",
+   "name": "rest",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  }
+ ],
+ "tools": [
+  {
+   "function": {
+    "description": "Target a nearby unit, player, or object by its handle from the perception snapshot.",
+    "name": "set_target",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the object to target.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Turn in place to face a nearby object by handle, or a specific x,y position, without otherwise moving.",
+    "name": "face",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the object to face. Mutually exclusive with x/y.",
+       "type": "string"
+      },
+      "x": {
+       "description": "Target X coordinate. Requires y; mutually exclusive with guid.",
+       "type": "number"
+      },
+      "y": {
+       "description": "Target Y coordinate. Requires x; mutually exclusive with guid.",
+       "type": "number"
+      }
+     },
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Walk in a straight line to a point on the ground, stopping within stop_distance yards. No pathfinding \u2014 obstacles will block it (returns ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.",
+    "name": "move_to",
+    "parameters": {
+     "properties": {
+      "stop_distance": {
+       "description": "How close counts as arrived, in yards. Default 1.0.",
+       "type": "number"
+      },
+      "x": {
+       "description": "Destination X coordinate.",
+       "type": "number"
+      },
+      "y": {
+       "description": "Destination Y coordinate.",
+       "type": "number"
+      },
+      "z": {
+       "description": "Destination Z coordinate. Optional \u2014 omit to stay level with the current height (no terrain data in v1).",
+       "type": "number"
+      }
+     },
+     "required": [
+      "x",
+      "y"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Chase a nearby unit or player by handle, re-targeting its position every tick, stopping within stop_distance yards. Blocks until arrival, stuck, the target leaving perception, or stopped.",
+    "name": "move_towards",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the object to move towards.",
+       "type": "string"
+      },
+      "stop_distance": {
+       "description": "How close counts as arrived, in yards. Default 1.0.",
+       "type": "number"
+      }
+     },
+     "required": [
+      "guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Stop any in-progress move_to/move_towards immediately.",
+    "name": "stop_movement",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Target and start melee auto-attack on a nearby hostile unit.",
+    "name": "auto_attack",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the unit to attack.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Stop melee auto-attack.",
+    "name": "stop_attack",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Do nothing this cycle (wait and watch). Always a valid choice.",
+    "name": "idle",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted).",
+    "name": "cast_spell",
+    "parameters": {
+     "properties": {
+      "spell_id": {
+       "description": "Spell ID to cast \u2014 must be in the agent's spellbook.",
+       "type": "integer"
+      },
+      "target_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the unit to cast on. Omit to cast on self.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "spell_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Interact with a nearby NPC or gameobject by handle: opens its gossip, vendor, or trainer window (whichever its flags indicate), or activates it directly if it's a gameobject. Must be within 5.0 yd \u2014 use move_towards first if not.",
+    "name": "interact",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the NPC or gameobject to interact with.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Select an option in the currently open gossip window by its index.",
+    "name": "gossip_select",
+    "parameters": {
+     "properties": {
+      "code": {
+       "description": "Text for options that require a text-entry box (rare; the window's option marks `coded: true` when needed).",
+       "type": "string"
+      },
+      "option_index": {
+       "description": "The option's `index` from the open gossip window.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "option_index"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Buy an item from the vendor window currently open for vendor_guid, identified by vendor slot or item entry (from the window's items list). Waits for the server's confirmation/failure response before returning, so ok=True means the purchase actually went through.",
+    "name": "buy_item",
+    "parameters": {
+     "properties": {
+      "count": {
+       "description": "How many to buy. Default 1.",
+       "type": "integer"
+      },
+      "entry": {
+       "description": "Item entry, as an alternative to slot.",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Vendor slot from the open window's items list.",
+       "type": "integer"
+      },
+      "vendor_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the open vendor.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "vendor_guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Sell an item at bag/slot to the vendor window currently open for vendor_guid. Resolves the item's GUID from bag/slot (UM-42's inventory model) and waits for the server's confirmation/failure response before returning.",
+    "name": "sell_item",
+    "parameters": {
+     "properties": {
+      "bag": {
+       "description": "Bag byte of the item (255 = equipped items/backpack).",
+       "type": "integer"
+      },
+      "count": {
+       "description": "How many to sell from the stack. Default: whole stack.",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Inventory slot of the item.",
+       "type": "integer"
+      },
+      "vendor_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the vendor to sell to.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "vendor_guid",
+      "bag",
+      "slot"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Learn a spell from the trainer window currently open for trainer_guid. Waits for the server's confirmation/failure response before returning, so ok=True means the spell was actually learned.",
+    "name": "train_spell",
+    "parameters": {
+     "properties": {
+      "spell_id": {
+       "description": "Spell ID from the open trainer window's spells list.",
+       "type": "integer"
+      },
+      "trainer_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the open trainer.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "trainer_guid",
+      "spell_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Invite a player to a party/group by name.",
+    "name": "invite_to_group",
+    "parameters": {
+     "properties": {
+      "name": {
+       "description": "Exact player name to invite.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "name"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Accept the currently pending party invite (see the snapshot's pending_invite).",
+    "name": "accept_group",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Decline the currently pending party invite (see the snapshot's pending_invite).",
+    "name": "decline_group",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Leave the party you are in (see the snapshot's group).",
+    "name": "leave_group",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Hand party leadership to a member of your group (you must be the leader).",
+    "name": "promote_leader",
+    "parameters": {
+     "properties": {
+      "name": {
+       "description": "Exact name of the group member to make leader.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "name"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Close the currently open gossip/vendor/trainer window.",
+    "name": "close_window",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Loot a nearby lootable corpse/creature (UNIT_DYNFLAG_LOOTABLE): opens the loot window, takes all money and every item (v1: take-everything, no selective looting), then releases it. Must be within 5 yards.",
+    "name": "loot",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the lootable corpse/creature.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Use/consume an item from inventory \u2014 e.g. eat food or drink water. Not usable while in combat (server-enforced for most consumables; checked here too).",
+    "name": "use_item",
+    "parameters": {
+     "properties": {
+      "bag": {
+       "description": "Bag byte (255 = equipped items/backpack; see CMSG_USE_ITEM's bag field).",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Slot within that bag (0-18 equipment, 19-22 equipped bags, 23-38 backpack).",
+       "type": "integer"
+      },
+      "target_guid": {
+       "description": "Optional target snapshot handle (a string like \"p1\"), e.g. a bandage used on an ally. Omit to target self.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "bag",
+      "slot"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Permanently destroy `count` of the item at bag/slot. Irreversible \u2014 requires confirm=true as an explicit safety guard against accidental calls.",
+    "name": "destroy_item",
+    "parameters": {
+     "properties": {
+      "bag": {
+       "description": "Bag byte (255 = equipped items/backpack).",
+       "type": "integer"
+      },
+      "confirm": {
+       "description": "Must be true \u2014 a safety guard, not read by the server.",
+       "type": "boolean"
+      },
+      "count": {
+       "description": "How many to destroy from the stack.",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Slot within that bag.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "bag",
+      "slot",
+      "count",
+      "confirm"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Compare two items at given bag/slot positions for the character's own class (UM-69 v1 heuristic: primary stat for class + item level as a tiebreaker, no talent/spec awareness \u2014 see agent.item_compare's docstring). Returns which item scores higher and a human-readable reason.",
+    "name": "compare_items",
+    "parameters": {
+     "properties": {
+      "bag_a": {
+       "description": "Bag byte of the first item (255 = equipped items/backpack).",
+       "type": "integer"
+      },
+      "bag_b": {
+       "description": "Bag byte of the second item (255 = equipped items/backpack).",
+       "type": "integer"
+      },
+      "slot_a": {
+       "description": "Inventory slot of the first item.",
+       "type": "integer"
+      },
+      "slot_b": {
+       "description": "Inventory slot of the second item.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "bag_a",
+      "slot_a",
+      "bag_b",
+      "slot_b"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Equip the item at bag/slot (CMSG_AUTOEQUIP_ITEM) \u2014 the server picks the equip slot from the item itself. Refuses up front if the item's cached template says it can't be used by this character (wrong armor type, class-restricted); otherwise waits for the server's confirmation/failure response before returning, so ok=True means the item was actually equipped.",
+    "name": "equip_item",
+    "parameters": {
+     "properties": {
+      "bag": {
+       "description": "Bag byte of the item (255 = equipped items/backpack).",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Inventory slot of the item.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "bag",
+      "slot"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Accept a quest offered by a nearby questgiver. Requires that NPC's quest list/quest details window, or a gossip window listing the quest, to already be open (interact() with the NPC first) and the quest to be present in it.",
+    "name": "accept_quest",
+    "parameters": {
+     "properties": {
+      "npc_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC.",
+       "type": "string"
+      },
+      "quest_id": {
+       "description": "Quest ID to accept, from the open quest_list/quest_details/gossip window.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "npc_guid",
+      "quest_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Tell a nearby questgiver you're ready to turn in quest_id \u2014 the first step of turning a quest in. Opens the request-items or offer-reward window (check the perception snapshot's `window` after calling this); use turn_in_quest to actually finish once that window is open.",
+    "name": "complete_quest",
+    "parameters": {
+     "properties": {
+      "npc_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC.",
+       "type": "string"
+      },
+      "quest_id": {
+       "description": "Quest ID to complete, from quest_log.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "npc_guid",
+      "quest_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Finish turning in quest_id at a nearby questgiver, picking reward_choice (index into the open offer-reward window's reward_choice_items, if any). Requires the offer-reward window to already be open (call complete_quest first).",
+    "name": "turn_in_quest",
+    "parameters": {
+     "properties": {
+      "npc_guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC.",
+       "type": "string"
+      },
+      "quest_id": {
+       "description": "Quest ID to turn in.",
+       "type": "integer"
+      },
+      "reward_choice": {
+       "description": "Index of the reward item to pick, from the open window's reward_choice_items. Default 0.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "npc_guid",
+      "quest_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Drop a quest from the quest log by its slot number. Irreversible.",
+    "name": "abandon_quest",
+    "parameters": {
+     "properties": {
+      "slot": {
+       "description": "Quest log slot (0-24), from quest_log's `slot` field \u2014 not the quest id.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "slot"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Request a trade with a nearby player. Must be within 11.1 yd. The other side sees the request and decides via accept_trade_request.",
+    "name": "open_trade",
+    "parameters": {
+     "properties": {
+      "guid": {
+       "description": "Snapshot handle (a string like \"u3\") of the player to trade with.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "guid"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Accept a pending incoming trade request (see the trade window's `phase`: 'requested').",
+    "name": "accept_trade_request",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Put an item from your bag/slot into the open trade's next free slot (0-5; pass trade_slot to pick a specific one). Offers the item's whole stack \u2014 trade doesn't support splitting a partial count. Rejected if the item is soulbound.",
+    "name": "offer_item",
+    "parameters": {
+     "properties": {
+      "bag": {
+       "description": "Bag byte of the item (255 = equipped items/backpack).",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Inventory slot of the item.",
+       "type": "integer"
+      },
+      "trade_slot": {
+       "description": "Which of the 6 trade slots (0-5) to put it in. Default: the first free one.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "bag",
+      "slot"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Set the gold (in copper) offered in the open trade. Replaces any previous amount.",
+    "name": "offer_gold",
+    "parameters": {
+     "properties": {
+      "amount": {
+       "description": "Copper to offer (100 copper = 1 silver, 10000 = 1 gold). 0 clears a previous offer.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "amount"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Accept the open trade \u2014 but only given what you currently believe the other side is offering (from the trade window's `their_gold`/`their_items`). Rejected if that no longer matches the live offer, so re-check the window before calling this again; a change on either side after an accept un-accepts both sides automatically (server behavior), so this never lets a stale offer through silently.",
+    "name": "accept_trade",
+    "parameters": {
+     "properties": {
+      "expected_their_gold": {
+       "description": "Gold you believe the other side has offered. Default 0.",
+       "type": "integer"
+      },
+      "expected_their_item_entries": {
+       "description": "Item entries you believe the other side has offered (any order). Omit/empty if you believe they're offering no items.",
+       "items": {
+        "type": "integer"
+       },
+       "type": "array"
+      }
+     },
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Cancel/decline the pending or open trade.",
+    "name": "cancel_trade",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Open the nearest mailbox within 5 yd and request its inbox (check the perception snapshot's `mailbox` after calling this).",
+    "name": "open_mailbox",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Send mail (with optional gold and one optional item) to a player by name \u2014 works even if they're offline or far away. Costs 30 copper postage in addition to any gold sent. Requires a nearby mailbox.",
+    "name": "send_mail",
+    "parameters": {
+     "properties": {
+      "bag": {
+       "description": "Bag byte of an item to attach (255 = equipped items/backpack). Omit to send no item.",
+       "type": "integer"
+      },
+      "body": {
+       "description": "Mail body text.",
+       "type": "string"
+      },
+      "gold": {
+       "description": "Copper to send. Default 0.",
+       "type": "integer"
+      },
+      "slot": {
+       "description": "Inventory slot of the item to attach \u2014 required together with bag.",
+       "type": "integer"
+      },
+      "subject": {
+       "description": "Mail subject.",
+       "type": "string"
+      },
+      "to": {
+       "description": "Recipient character name.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "to",
+      "subject",
+      "body"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Take all money and every item attached to mail_id from the currently open mailbox window (call open_mailbox first) \u2014 v1 take-everything, no selective taking, same as loot().",
+    "name": "take_mail",
+    "parameters": {
+     "properties": {
+      "mail_id": {
+       "description": "Mail id, from the open mailbox window's `mails` list.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "mail_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Delete mail_id from the currently open mailbox window (call open_mailbox first). Irreversible \u2014 take any attachments first, they're lost otherwise.",
+    "name": "delete_mail",
+    "parameters": {
+     "properties": {
+      "mail_id": {
+       "description": "Mail id, from the open mailbox window's `mails` list.",
+       "type": "integer"
+      }
+     },
+     "required": [
+      "mail_id"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Follow a nearby party member/player by name, keeping roughly `distance` yards away and matching their target if assist is on, until stop_following is called or the leader is lost.",
+    "name": "follow",
+    "parameters": {
+     "properties": {
+      "distance": {
+       "description": "How close to stay, in yards. Default 3.0.",
+       "type": "number"
+      },
+      "player_name": {
+       "description": "Name of a nearby player to follow (case-insensitive).",
+       "type": "string"
+      }
+     },
+     "required": [
+      "player_name"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Turn assisting the followed leader's current combat target on or off.",
+    "name": "assist",
+    "parameters": {
+     "properties": {
+      "on": {
+       "description": "True to assist, false to stop assisting.",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "on"
+     ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Stop following the current leader and stop assisting.",
+    "name": "stop_following",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Rest to recover HP/mana: eats/drinks if inventory has food, otherwise sits. Stops automatically once healed or attacked. This also runs as an automatic reflex whenever HP/mana drop low out of combat, so this action is mainly for resting proactively before a fight you can see coming.",
+    "name": "rest",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  }
+ ]
+}
