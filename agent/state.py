@@ -38,6 +38,12 @@ class GameState:
         # UM-47: optional agent.chat_relay.ChatRelay, set by the caller
         # (agent/__main__.py) — mirrors heard chat to tools/chat-feed.
         self.chat_relay = None
+        # (time.monotonic(), normalised text) of our own recent channel messages:
+        # the channel_say action's rate limit and repeat guard.
+        self.channel_say_history: list[tuple[float, str]] = []
+        # The session's one reflex of each kind, filled by agent.reflexes on first use.
+        self.follow_reflex = None
+        self.rest_reflex = None
         self.pending_invite = None  # {"inviter_name": str} or None
         self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
@@ -63,4 +69,4 @@ class GameState:
         make plain index-based slicing wrong)."""
         self.events.append({"kind": kind, "t": time.monotonic(), **fields})
 
-    _record_event = record_event  # historical name, still used by actions and tests
+    _record_event = record_event  # historical name, still used by death.py and tests

@@ -238,7 +238,7 @@ class CompareItemsAction(Action):
     def execute(self, session, world, bag_a: int, slot_a: int, bag_b: int, slot_b: int, **_) -> ActionResult:
         _, entry_a, template_a = _resolve_item_template(world, bag_a, slot_a)
         _, entry_b, template_b = _resolve_item_template(world, bag_b, slot_b)
-        class_id = getattr(session, "class_", 0)
+        class_id = session.class_
         result = item_compare.compare(template_a, template_b, class_id)
         detail = {
             "entry_a": entry_a, "entry_b": entry_b,
@@ -270,7 +270,7 @@ class EquipItemAction(Action):
         if item_guid is None:
             return f"no known item at bag={bag} slot={slot}"
         if template is not None:
-            error = item_compare.usability_error(template, getattr(session, "class_", 0))
+            error = item_compare.usability_error(template, session.class_)
             if error is not None:
                 return error
         return None
