@@ -24,7 +24,6 @@ MODULE_MAX = 600
 
 BASELINE = {
     # modules
-    "agent/perception.py": 1151,
     "agent/tools/probe.py": 769,
     "tools/agent-runner/runner.py": 711,
     "tools/wowmap/activity.py": 639,
@@ -37,7 +36,6 @@ BASELINE = {
     "agent/metrics.py::derive_metrics": 101,
     "agent/metrics.py::render_prometheus_text": 87,
     "agent/movement.py::_simulate": 125,
-    "agent/perception.py::WorldState.snapshot": 91,
     "agent/think.py::think_and_act": 166,
     "agent/tools/ab.py::run": 101,
     "agent/update_object.py::parse_monster_move": 88,
