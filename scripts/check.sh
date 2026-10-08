@@ -11,6 +11,7 @@ SUITES=(
   "chat-feed|python3 -m unittest discover -s tools/chat-feed/tests"
   "dbc|python3 -m unittest discover -s tools/dbc/tests"
   "world-mock|python3 -m unittest discover -s tools/world-mock/tests"
+  "loadtest|python3 -m unittest discover -s tools/loadtest/tests"
   "jev-mock|python3 -m unittest discover -s tools/jev-mock/tests"
   "agent-runner|python3 -m unittest discover -s tools/agent-runner/tests"
   "wow-agents|python3 -m unittest discover -s scripts/wow-agents/tests"
