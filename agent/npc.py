@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """NPC interaction (UM-40): gossip/vendor/trainer/gameobject request
 builders + response parsers (pure, no I/O — see agent/session.py for the
-opcodes' dispatch, agent/perception.py for the ui_state ('window') this
+opcodes' dispatch, agent/perception/windows.py for the ui_state ('window') this
 feeds), plus a small NpcTextCache mirroring agent.names.NameCache's shape
 for gossip body text (SMSG_NPC_TEXT_UPDATE), keyed by text id.
 

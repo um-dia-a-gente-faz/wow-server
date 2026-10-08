@@ -206,7 +206,7 @@ def player_name_error(name, field: str = "name") -> str | None:
 
 def _known_player_name(session, world, target_name: str) -> bool:
     """A whisper target is "resolvable" if its name has shown up either as a
-    currently-perceived object (agent/perception.py's ObjectInfo.name,
+    currently-perceived object (agent/perception/objects.py's ObjectInfo.name,
     filled in via agent/names.py's CMSG_NAME_QUERY cache) or as the sender
     of a recent chat message (session.chat_inbox) — either is enough
     evidence the name is real and spelled correctly, without requiring the
