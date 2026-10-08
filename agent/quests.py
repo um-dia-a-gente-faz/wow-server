@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Quest system (UM-41): quest text query, questgiver flow (status/hello/
 accept/complete/turn-in) request builders + response parsers (pure, no I/O —
-see agent/session.py for opcodes' dispatch, agent/perception.py for
+see agent/session.py for opcodes' dispatch, agent/perception/windows.py for
 quest_giver_status on nearby NPCs and quest_log in snapshot()), plus a small
 QuestCache mirroring agent.names.NameCache's shape for static per-quest-id
 text (SMSG_QUEST_QUERY_RESPONSE), keyed by quest id.
