@@ -19,6 +19,10 @@ def main(argv=None) -> int:
     ap.add_argument("--compare", help="baseline report; exit 1 on a per-agent regression")
     ap.add_argument("--tolerance", type=float, default=0.2)
     a = ap.parse_args(argv)
+    baseline = soak.load(a.compare) if a.compare else None
+    if baseline:    # fail in a second, not after the whole soak
+        soak.check_comparable({"agents": a.agents, "duration_s": a.duration,
+                               "think_interval_ms": a.think_interval * 1000}, baseline)
     rep = soak.run_soak(a.agents, a.duration, a.faults, a.think_interval, a.host,
                         allow_non_loopback=a.allow_non_loopback)
     text = json.dumps(rep, indent=1)
@@ -26,8 +30,8 @@ def main(argv=None) -> int:
     if a.out:
         with open(a.out, "w") as f:
             f.write(text)
-    if a.compare:
-        bad = soak.compare(rep, soak.load(a.compare), a.tolerance)
+    if baseline:
+        bad = soak.compare(rep, baseline, a.tolerance)
         for line in bad:
             print("REGRESSION", line, file=sys.stderr)
         return 1 if bad else 0

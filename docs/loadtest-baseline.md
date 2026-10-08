@@ -19,7 +19,8 @@ and perception state.
 RSS is flat after login (N=25: 33.7 MB at 1 s, 33.8 MB at 59 s). The tick recorder is a
 fixed-size histogram allocated before the baseline RSS is read, so it no longer grows
 with run length. Check: N=25 for 30 s gives 176 kB per agent and for 300 s gives
-179 kB per agent.
+179 kB per agent. The few kB that remain are the harness's own `samples` list and the mock's `received`
+list, not `agent/`.
 
 ## Reading it: fixed plus marginal
 

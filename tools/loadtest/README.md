@@ -7,7 +7,7 @@ Stdlib only; Linux (reads `/proc`).
 
 ```bash
 python3 -m tools.loadtest --agents 25 --duration 300                  # the manual soak
-python3 -m tools.loadtest --agents 25 --duration 300 --out run.json --compare docs/loadtest-baseline.json
+python3 -m tools.loadtest --agents 25 --duration 60 --out run.json --compare docs/loadtest-baseline.json   # same shape as the baseline
 # with faults (MOCK_FAULTS syntax, repeated for the whole run, see tools/world-mock/README.md)
 python3 -m tools.loadtest --agents 25 --duration 600 \
   --faults ';;;drop_after=8,reset;;stall=20,stall_at=6;bad_crypt_from=6'
@@ -15,7 +15,7 @@ python3 -m unittest discover -s tools/loadtest/tests                   # CI: 3 a
 ```
 
 `--compare` exits 1 when `rss_per_agent_kb` or `threads_per_agent` is more than
-`--tolerance` (default 20 %) above the baseline. It refuses (exit 1, message) when `agents`,
+`--tolerance` (default 20 %) above the baseline. It refuses (exit 1, message, before the soak starts) when `agents`,
 `duration_s` or `think_interval_ms` differ from the baseline, or the baseline lacks those keys.
 The committed baseline is N=25, 60 s, 100 ms.
 
@@ -36,7 +36,8 @@ exits unless `--allow-non-loopback` is given (the mock still runs locally).
   brain the loop just sleeps to a deadline: this measures wake-up jitter, not think latency.
 - `reconnects`: login attempts beyond the first, per agent. A `reset` that lands during
   login is one reconnect. `recovery_s`: time from "went down" to "online again"
-  (includes the 5 s `logout()` wait on a dead stream, #406).
+  (includes the reconnect backoff; since #434 `logout()` skips the logout exchange
+  after an unexpected disconnect, so there is no 5 s wait on a dead stream).
 - `container_items`: total `len()` of every list/dict/set/deque held directly by the
   `WoWSession` and its `WorldState`, per sample. A number that keeps climbing in a long
   healthy run is an unbounded collection: file a bug. The mock sends no stream after

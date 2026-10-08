@@ -233,16 +233,24 @@ def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, fault
     }
 
 
-def compare(report_: dict, baseline: dict, tolerance: float = 0.2) -> list[str]:
-    """Regressions of per-agent cost against a baseline report; empty list = fine.
-    Exits non-zero when the two runs are not comparable (different shape, or a baseline
-    without the compared keys): a mismatched comparison proves nothing either way."""
-    keys = ("rss_per_agent_kb", "threads_per_agent")
-    problems = [f"{k}: run {report_.get(k)!r} vs baseline {baseline.get(k)!r}"
-                for k in ("agents", "duration_s", "think_interval_ms") if report_.get(k) != baseline.get(k)]
-    problems += [f"baseline lacks {k}" for k in keys if not baseline.get(k)]
+def check_comparable(run: dict, baseline: dict) -> None:
+    """Exit non-zero when the two runs are not comparable (different shape, or a baseline
+    without the compared keys): a mismatched comparison proves nothing either way. `run` needs
+    only agents, duration_s and think_interval_ms, so it can be checked before the soak."""
+    problems = [f"{k}: run {run.get(k)!r} vs baseline {baseline.get(k)!r}"
+                for k in ("agents", "duration_s", "think_interval_ms") if run.get(k) != baseline.get(k)]
+    problems += [f"baseline lacks {k}" for k in COMPARED if not baseline.get(k)]
     if problems:
         raise SystemExit("cannot compare, run does not match the baseline: " + "; ".join(problems))
+
+
+COMPARED = ("rss_per_agent_kb", "threads_per_agent")
+
+
+def compare(report_: dict, baseline: dict, tolerance: float = 0.2) -> list[str]:
+    """Regressions of per-agent cost against a baseline report; empty list = fine."""
+    check_comparable(report_, baseline)
+    keys = COMPARED
     out = []
     for key in keys:
         base, now = baseline[key], report_.get(key)

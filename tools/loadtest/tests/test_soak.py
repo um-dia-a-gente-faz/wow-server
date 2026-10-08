@@ -1,6 +1,10 @@
+import json
+import tempfile
 import unittest
+from unittest import mock
 
 from tools.loadtest import soak
+from tools.loadtest.__main__ import main
 
 
 class SoakTest(unittest.TestCase):
@@ -36,6 +40,16 @@ class SoakTest(unittest.TestCase):
             with self.subTest(missing=key), self.assertRaises(SystemExit) as cm:
                 soak.compare(run, {k: v for k, v in base.items() if k != key})
             self.assertIn(key, str(cm.exception))
+
+    def test_main_checks_the_baseline_before_soaking(self):
+        shape = {"agents": 25, "duration_s": 60.0, "think_interval_ms": 100.0}
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+            json.dump({**shape, "rss_per_agent_kb": 1, "threads_per_agent": 1}, f)
+            f.flush()
+            with mock.patch.object(soak, "run_soak", side_effect=AssertionError("soaked")), \
+                    self.assertRaises(SystemExit) as cm:
+                main(["--agents", "5", "--duration", "60", "--compare", f.name])
+        self.assertIn("agents", str(cm.exception))
 
     def test_tick_recorder_is_fixed_size_and_percentiles_work(self):
         t = soak.TickRecorder()
