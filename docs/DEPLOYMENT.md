@@ -182,9 +182,9 @@ ssh root@192.168.1.64 '/opt/wow-server/scripts/deploy.sh'
 ### Automatic deploys (cron poller)
 
 The VM redeploys itself: a cron job runs `scripts/auto-deploy.sh` every 5
-minutes, which fetches `origin/main` and calls `deploy.sh` only when the
-remote moved (polling, because GitHub webhooks cannot reach a LAN IP; flock
-prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
+minutes, which fetches `origin/main` and calls `deploy.sh` when the remote
+moved or while a deferred game-stack change is still pending (polling, because
+GitHub webhooks cannot reach a LAN IP; flock prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
 
 ```
 */5 * * * * root /opt/wow-server/scripts/auto-deploy.sh >> /var/log/wow-auto-deploy.log 2>&1
@@ -195,8 +195,9 @@ up within 5 minutes. Watch `/var/log/wow-auto-deploy.log` on the VM for
 history.
 
 This fast-forwards the checkout to `origin/main` and runs `docker compose up -d
---build` for both projects, which only recreates containers whose image, build
-context, or compose file actually changed. Env-only changes to
+--build` only for the projects whose files changed (see "Path-aware deploys"
+below), which in turn only recreates containers whose image, build context, or
+compose file actually changed. Env-only changes to
 `TC_WORLD__*` still require the `trinitycore-wowserver` container to be
 recreated (not just restarted) for `ConfigurationWriter.js` to regenerate
 `worldserver.conf` — `up -d` does this automatically when the compose file
@@ -211,14 +212,15 @@ on the *separate* docker-stack VM (192.168.1.60), not this one:
 
 ### Path-aware deploys and the players-online guard
 
-`deploy.sh` compares the checkout's `HEAD` with `origin/main` and only touches the stacks
+`deploy.sh` compares, per stack, the commit that stack was last deployed at
+(`refs/deployed/<stack>` in the VM's checkout) with `origin/main`, and only touches the stacks
 whose files changed:
 
 | Changed path | Stack redeployed |
 |---|---|
-| `docker-compose.yml`, `Dockerfile`, `tdb/`, `tools/chat-feed/` | game |
+| `docker-compose.yml`, `tdb/`, `tools/chat-feed/` | game |
 | `monitoring/`, `exporters/`, `tools/wowmap/`, `tools/dbc/` | monitoring |
-| anything else (docs, `agent/`, `scripts/`, tests) | none, the checkout just advances |
+| anything else (docs, `agent/`, `scripts/`, tests, the root `Dockerfile`, which is the agent image) | none, the checkout just advances |
 
 Before the game stack, it counts online characters (`characters.characters WHERE online = 1`,
 the same source as `wow_players_online`). If anyone is online, or the query fails, the game

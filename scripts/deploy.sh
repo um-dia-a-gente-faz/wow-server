@@ -5,16 +5,17 @@
 #
 #   cd /opt/wow-server && ./scripts/deploy.sh
 #
-# Fast-forwards the checkout to origin/main, then recreates any containers
-# whose image, build context, or compose file changed. Both the game stack
-# (docker-compose.yml) and the monitoring stack (monitoring/docker-compose.yml)
-# live in this same checkout but run as separate compose projects.
+# Fast-forwards the checkout to origin/main, then runs `up -d --build` only for
+# the stacks whose files changed. Both the game stack (docker-compose.yml) and
+# the monitoring stack (monitoring/docker-compose.yml) live in this same
+# checkout but run as separate compose projects.
 #
 # Path-aware: each stack is compared from the commit it was last deployed at
 # (refs/deployed/<stack>) to origin/main, and only stacks whose files changed
-# are touched (game: docker-compose.yml, Dockerfile, tdb/, tools/chat-feed;
+# are touched (game: docker-compose.yml, tdb/, tools/chat-feed;
 # monitoring: monitoring/, exporters/, tools/wowmap, tools/dbc). A docs, agent
-# or test merge touches neither. Before the game stack, the script defers it
+# or test merge touches neither; the root Dockerfile is the agent image, in
+# neither stack. Before the game stack, the script defers it
 # while any character is online (agent characters included) or the count cannot
 # be read: the game stack stays pending (refs/deployed/game does not move) and
 # the other stacks still deploy. Exit status 75 means "game stack deferred".
@@ -34,7 +35,7 @@ stacks_for() {
   local f game=0 mon=0
   while IFS= read -r -d '' f; do
     case "$f" in
-      docker-compose.yml|Dockerfile|tdb/*|tools/chat-feed/*) game=1 ;;
+      docker-compose.yml|tdb/*|tools/chat-feed/*) game=1 ;;
       monitoring/*|exporters/*|tools/wowmap/*|tools/dbc/*) mon=1 ;;
     esac
   done
@@ -54,15 +55,21 @@ HEAD_SHA=$(git rev-parse HEAD)
 TO=$(git rev-parse origin/main)
 # Last commit each stack was deployed at; unset means "as of HEAD".
 since() { git rev-parse -q --verify "refs/deployed/$1" || echo "$HEAD_SHA"; }
+# changed <stack>: prints <stack> if it has changes pending since its own ref, and nothing
+# else (the game-ref range may also hold monitoring paths that were already deployed).
 changed() {  # --no-renames: a rename out of tdb/ shows as a delete there; -z: no path quoting
-  git diff --name-only --no-renames -z "$(since "$1")" "$TO" | stacks_for
+  local s
+  s=$(git diff --name-only --no-renames -z "$(since "$1")" "$TO" | stacks_for) || return
+  grep -x "$1" <<<"$s" || true
 }
 if [ "${ALL:-0}" = 1 ]; then
   STACKS="game monitoring"
 else
-  STACKS=$({ changed game; changed monitoring; } | sort -u | tr '\n' ' ')
+  # One plain assignment each: a failing `git diff` aborts here (set -e), before any update-ref.
+  GAME_CHANGED=$(changed game)
+  MON_CHANGED=$(changed monitoring)
+  STACKS=$(echo $GAME_CHANGED $MON_CHANGED)
 fi
-STACKS=${STACKS% }
 echo "== ${HEAD_SHA:0:7} -> ${TO:0:7}, stacks: ${STACKS:-none} =="
 
 M=${METRICS_DIR:-/opt/wow-server-metrics}

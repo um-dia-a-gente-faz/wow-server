@@ -42,6 +42,12 @@ class DeployTest(unittest.TestCase):
         bindir.mkdir()
         (bindir / "docker").write_text(FAKE_DOCKER)
         (bindir / "docker").chmod(0o755)
+        # git wrapper: FAKE_GIT_DIFF_FAIL=<marker path> fails the first `git diff` only (the game
+        # one; the monitoring diff then succeeds); everything else is the real git
+        (bindir / "git").write_text('#!/bin/sh\n[ "$1" = diff ] && [ -n "$FAKE_GIT_DIFF_FAIL" ] && '
+                                    '[ ! -e "$FAKE_GIT_DIFF_FAIL" ] && { : > "$FAKE_GIT_DIFF_FAIL"; exit 128; }\n'
+                                    f'exec {shutil.which("git")} "$@"\n')
+        (bindir / "git").chmod(0o755)
         self.log = tmp / "docker.log"
         self.env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "FAKE_LOG": str(self.log),
                     "FAKE_ONLINE": "0", "METRICS_DIR": str(tmp / "metrics")}
@@ -75,6 +81,7 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.stacks_for("tdb/a.sql", "monitoring/docker-compose.yml"), ["game", "monitoring"])
         self.assertEqual(self.stacks_for("docs/X.md", "scripts/check.sh", "agent/tests/t.py"), [])
         self.assertEqual(self.stacks_for("tdb/ação.sql"), ["game"])
+        self.assertEqual(self.stacks_for("Dockerfile"), [])  # root Dockerfile is the agent image
 
     def test_docs_only_merge_touches_no_stack(self):
         self.merge("docs/NOTE.md")
@@ -121,6 +128,25 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("docker compose up -d --build", self.calls())
         self.assertIn("stacks: none", self.run_deploy().stdout)  # nothing pending any more
+
+    def test_deferred_polls_deploy_monitoring_once(self):
+        self.merge("docker-compose.yml")
+        self.merge("tools/wowmap/app.py")
+        for _ in range(2):  # two cron polls while the game stack stays deferred
+            self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertEqual(self.calls().count("monitoring/docker-compose.yml up -d --build"), 1)
+        self.assertEqual(self.deploy_log().count("deployed"), 1)
+
+    def test_failing_git_diff_aborts_before_recording_a_deploy(self):
+        self.run_deploy()  # creates refs/deployed/* at the base commit
+        base = git(self.work, "rev-parse", "HEAD")
+        self.merge("docker-compose.yml")
+        r = self.run_deploy(FAKE_GIT_DIFF_FAIL=str(self.tmp / "diff-failed"))
+        self.assertNotIn(r.returncode, (0, 75), r.stdout)
+        self.assertNotIn("up -d", self.calls())
+        self.assertEqual(git(self.work, "rev-parse", "HEAD"), base)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), base)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/monitoring"), base)
 
     def test_game_deploy_runs_when_empty(self):
         self.merge("docker-compose.yml")

@@ -49,8 +49,9 @@
 ```
 
 Both compose projects run from the same checkout. `scripts/deploy.sh`
-fast-forwards it to `origin/main` and runs `docker compose up -d --build` for each
-(`docs/DEPLOYMENT.md` → "Updating"). The monitoring project joins the game
+fast-forwards it to `origin/main` and runs `docker compose up -d --build` only for
+the projects whose files changed, holding the game project back while players are
+online (`docs/DEPLOYMENT.md` → "Path-aware deploys and the players-online guard"). The monitoring project joins the game
 project's network (`wow-server_default`, declared `external`) so its services
 can reach `trinitycore-db` by name.
 
