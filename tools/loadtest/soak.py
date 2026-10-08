@@ -12,7 +12,6 @@ import itertools
 import json
 import logging
 import pathlib
-import statistics
 import sys
 import threading
 import time
@@ -57,20 +56,40 @@ def pct(values, q):
     return vals[min(len(vals) - 1, int(q * len(vals)))] if vals else None
 
 
+BUCKET_S = 0.0001      # tick histogram resolution
+N_BUCKETS = 20000      # covers 0 .. 2 s; anything longer lands in the last bucket
+
+
 class TickRecorder(logging.Handler):
     """The think loop logs "perception: ..." once per cycle at INFO; the gap between two
-    of them on one agent thread is the real tick period (no change to agent/ needed)."""
+    of them on one agent thread is the real tick period (no change to agent/ needed).
+    Fixed-size histogram, allocated up front, so the recorder adds nothing to the RSS it
+    is measuring however long the run is."""
 
     def __init__(self):
         super().__init__(logging.INFO)
-        self.last, self.periods = {}, []
+        self.last, self.max = {}, 0.0
+        self.hist = [0] * N_BUCKETS
+        self.count = 0
 
     def emit(self, record):
         if str(record.msg).startswith("perception:"):
             now, prev = time.monotonic(), self.last.get(record.threadName)
             self.last[record.threadName] = now
             if prev is not None:
-                self.periods.append(now - prev)    # list.append is atomic; no lock needed
+                d = now - prev
+                self.hist[min(N_BUCKETS - 1, int(d / BUCKET_S))] += 1
+                self.count += 1
+                self.max = max(self.max, d)
+
+    def percentile(self, q):
+        """Upper edge of the bucket holding quantile q (seconds), None when empty."""
+        target, seen = min(self.count - 1, int(q * self.count)), 0
+        for i, c in enumerate(self.hist):
+            seen += c
+            if c and seen > target:
+                return (i + 1) * BUCKET_S
+        return None
 
     def new_session(self):
         self.last.pop(threading.current_thread().name, None)
@@ -133,7 +152,7 @@ def sample(agents, t0, cpu0):
     now, cpu = time.monotonic(), time.process_time()
     live = [a.session for a in agents if a.session is not None]
     return {"t": round(now - t0, 1), "rss_kb": read_rss_kb(), "threads": threading.active_count(),
-            "cpu_pct": round(100 * (cpu - cpu0) / max(now - t0, 1e-6), 1),
+            "cpu_s": round(cpu - cpu0, 3),
             "container_items": sum(container_items(s, getattr(s, "world_state", None)) for s in live)}
 
 
@@ -141,10 +160,10 @@ def run_soak(agents: int, duration: float, faults: str = "", think_interval: flo
              host: str = "127.0.0.1", sample_every: float = 1.0, allow_non_loopback: bool = False) -> dict:
     check_host(host, allow_non_loopback)
     plans = server.FaultPlan.parse(faults) if faults else [server.FaultPlan()]
+    ticks = TickRecorder()    # allocated before rss0 is read: the measurement excludes it
     threads0, rss0 = threading.active_count(), read_rss_kb()
     mock = server.WorldMock(host=host, faults=itertools.cycle(plans))
     mock.accounts = {f"SOAK{i}": PASSWORD for i in range(agents)}
-    ticks = TickRecorder()
     agent_log = logging.getLogger("agent")
     saved = (agent_log.level, agent_log.propagate, agent_log.handlers[:])
     agent_log.handlers, agent_log.propagate = [ticks], False    # quiet, and the recorder sees every record
@@ -171,6 +190,22 @@ def run_soak(agents: int, duration: float, faults: str = "", think_interval: flo
     return report(pool, mock, ticks, samples, think_interval, duration, threads0, rss0, faults)
 
 
+STEADY_FROM_S = 5.0    # skip the login burst (SRP) when taking the steady-state CPU figure
+
+
+def cpu_figures(samples) -> dict:
+    """cpu_pct_total: process CPU over wall time for the whole run (login included), % of one
+    core. cpu_pct_steady: the same from STEADY_FROM_S on. Whole process: mock, sampler, agents."""
+    if not samples:
+        return {"cpu_pct_total": None, "cpu_pct_steady": None}
+    last = samples[-1]
+    tail = [s for s in samples if s["t"] >= STEADY_FROM_S]
+    steady = None
+    if tail and last["t"] > tail[0]["t"]:
+        steady = round(100 * (last["cpu_s"] - tail[0]["cpu_s"]) / (last["t"] - tail[0]["t"]), 1)
+    return {"cpu_pct_total": round(100 * last["cpu_s"] / max(last["t"], 1e-6), 1), "cpu_pct_steady": steady}
+
+
 def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, faults) -> dict:
     n = len(pool)
     rec = [r for a in pool for r in a.recoveries]
@@ -184,9 +219,9 @@ def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, fault
         "rss_per_agent_kb": round((peak - rss0) / n),
         "threads_before": threads0, "threads_peak": threads_peak, "threads_end": threading.active_count(),
         "threads_per_agent": round((threads_peak - threads0) / n, 1),
-        "cpu_pct_mean": round(statistics.fmean(s["cpu_pct"] for s in samples), 1) if samples else None,
-        "tick_period_ms": {"count": len(ticks.periods), "p50": ms(pct(ticks.periods, .5)),
-                           "p99": ms(pct(ticks.periods, .99)), "max": ms(max(ticks.periods, default=None))},
+        **cpu_figures(samples),
+        "tick_period_ms": {"count": ticks.count, "p50": ms(ticks.percentile(.5)),
+                           "p99": ms(ticks.percentile(.99)), "max": ms(ticks.max if ticks.count else None)},
         "reconnects": sum(a.builds - 1 for a in pool), "auth_connections": mock.auth_connections,
         "world_connections": mock.world_connections,
         "recovery_s": {"count": len(rec), "p50": round(pct(rec, .5), 2) if rec else None,
@@ -199,11 +234,19 @@ def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, fault
 
 
 def compare(report_: dict, baseline: dict, tolerance: float = 0.2) -> list[str]:
-    """Regressions of per-agent cost against a baseline report; empty list = fine."""
+    """Regressions of per-agent cost against a baseline report; empty list = fine.
+    Exits non-zero when the two runs are not comparable (different shape, or a baseline
+    without the compared keys): a mismatched comparison proves nothing either way."""
+    keys = ("rss_per_agent_kb", "threads_per_agent")
+    problems = [f"{k}: run {report_.get(k)!r} vs baseline {baseline.get(k)!r}"
+                for k in ("agents", "duration_s", "think_interval_ms") if report_.get(k) != baseline.get(k)]
+    problems += [f"baseline lacks {k}" for k in keys if not baseline.get(k)]
+    if problems:
+        raise SystemExit("cannot compare, run does not match the baseline: " + "; ".join(problems))
     out = []
-    for key in ("rss_per_agent_kb", "threads_per_agent"):
-        base, now = baseline.get(key), report_.get(key)
-        if base and now is not None and now > base * (1 + tolerance):
+    for key in keys:
+        base, now = baseline[key], report_.get(key)
+        if now is not None and now > base * (1 + tolerance):
             out.append(f"{key}: {now} vs baseline {base} (+{(now / base - 1):.0%}, limit {tolerance:.0%})")
     return out
 
