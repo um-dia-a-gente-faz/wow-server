@@ -19,10 +19,10 @@ all mean rest() just sits, per this card.
 
 import logging
 import struct
-import time
 
 from .. import actions
 from .. import update_fields as uf
+from ..ports import ActionSession, ReflexSlots
 from ..perception import POWER_MANA
 
 log = logging.getLogger("agent.reflexes.rest")
@@ -43,17 +43,6 @@ REST_STOP_HP_PCT = 0.9
 # (no item DB lookup), good enough until there's a real "is this consumable
 # food/drink" flag to check instead.
 _FOOD_DRINK_NAME_HINTS = ("bread", "water", "ration", "food", "drink", "juice", "bandage")
-
-
-def _record_event(session, kind: str, **fields):
-    """Same shape as WoWSession._record_event — duplicated here instead of
-    calling that method directly so this module also works against the
-    plain `events: list` fake sessions used in unit tests (matches
-    agent.reflexes.follow._record_event)."""
-    events = getattr(session, "events", None)
-    if events is None:
-        return
-    events.append({"kind": kind, "t": time.monotonic(), **fields})
 
 
 def _in_combat(me) -> bool:
@@ -109,7 +98,7 @@ class RestReflex:
         self.active = False
         self.method: str | None = None  # "food" | "sit", set while active
 
-    def start(self, session, world) -> bool:
+    def start(self, session: ActionSession, world) -> bool:
         """Begin resting now, regardless of needs_rest() — used by both the
         reflex's own tick() and the `rest` action (so the LLM can rest
         proactively). No-op (returns False) if already resting."""
@@ -117,23 +106,23 @@ class RestReflex:
             return False
         ate = _try_eat_and_drink(session, world)
         if not ate:
-            session._send_packet(CMSG_STANDSTATECHANGE, struct.pack('<I', UNIT_STAND_STATE_SIT))
+            session.send_packet(CMSG_STANDSTATECHANGE, struct.pack('<I', UNIT_STAND_STATE_SIT))
         self.active = True
         self.method = "food" if ate else "sit"
-        _record_event(session, "resting_started", method=self.method)
+        session.record_event("resting_started", method=self.method)
         return True
 
-    def stop(self, session, reason: str = "stopped") -> bool:
+    def stop(self, session: ActionSession, reason: str = "stopped") -> bool:
         if not self.active:
             return False
         if self.method == "sit":
-            session._send_packet(CMSG_STANDSTATECHANGE, struct.pack('<I', UNIT_STAND_STATE_STAND))
+            session.send_packet(CMSG_STANDSTATECHANGE, struct.pack('<I', UNIT_STAND_STATE_STAND))
         self.active = False
         self.method = None
-        _record_event(session, "resting_stopped", reason=reason)
+        session.record_event("resting_stopped", reason=reason)
         return True
 
-    def tick(self, session, world):
+    def tick(self, session: ActionSession, world):
         """One reflex step. Safe to call repeatedly — production:
         agent/__main__.py's reflex loop; tests: call directly with a fake
         session/world. No-op besides the checks below."""
@@ -150,14 +139,12 @@ class RestReflex:
             self.start(session, world)
 
 
-def get_rest_reflex(session) -> RestReflex:
+def get_rest_reflex(session: ReflexSlots) -> RestReflex:
     """One RestReflex per session, created lazily and cached on it —
     mirrors agent.reflexes.follow.get_follow_reflex()."""
-    reflex = getattr(session, "_rest_reflex", None)
-    if reflex is None:
-        reflex = RestReflex()
-        session._rest_reflex = reflex
-    return reflex
+    if session.rest_reflex is None:
+        session.rest_reflex = RestReflex()
+    return session.rest_reflex
 
 
 @actions.register

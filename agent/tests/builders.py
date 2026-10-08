@@ -16,6 +16,7 @@ import zlib
 
 from agent import packets as pk
 from agent import session as se
+from agent import state
 from agent import update_object as uo
 
 # update_object.UPDATETYPE_OUT_OF_RANGE_OBJECTS lives in handlers.world.
@@ -87,6 +88,30 @@ def make_session(stream: bytes = b'', **kw) -> se.WoWSession:
     sess.world_state.names.cache_path = os.path.join(
         tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
     return sess
+
+
+class FakeSession(state.GameState):
+    """The session as actions and reflexes see it (agent.ports), without a socket.
+
+    It is the real GameState, so `record_event` and every attribute a port names
+    are the production ones; only sending is faked. Keyword arguments override
+    attributes, e.g. `FakeSession(player_guid=ME, events=[])` for a plain list of
+    events. `send_packet` goes through `_send_packet`, as on Transport, so a test
+    that replaces `_send_packet` sees both names; movement.py and death.py still
+    use the private one."""
+
+    def __init__(self, **attrs):
+        super().__init__()
+        self.sent: list[tuple[int, bytes]] = []
+        self._sent = self.sent  # the name the older tests read
+        for name, value in attrs.items():
+            setattr(self, name, value)
+
+    def send_packet(self, opcode: int, payload: bytes = b'') -> None:
+        self._send_packet(opcode, payload)
+
+    def _send_packet(self, opcode: int, payload: bytes = b'') -> None:
+        self.sent.append((opcode, payload))
 
 
 # ── SMSG_UPDATE_OBJECT ─────────────────────────────────────────────────────

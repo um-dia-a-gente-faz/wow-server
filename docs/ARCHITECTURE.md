@@ -152,7 +152,7 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 | State | `state.py` (`GameState`), `perception/` (`WorldState`, one snapshot builder per section), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |
 | Domain builders and parsers | `npc.py`, `quests.py`, `loot.py`, `mail.py`, `trade.py`, `spells.py`, `channels.py`, `names.py`, `items.py`, `item_compare.py`, `death.py`, `movement.py`, `group.py` | pure request builders and response parsers (and `death.py`/`movement.py` flows) used by handlers and actions. |
-| Acting | `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
+| Acting | `ports.py` (the typed contract: the `typing.Protocol` ports `PacketSink`, `EventLog`, `PlayerView`, `Inbox`, `ReflexSlots` that actions and reflexes may use of a session; `WoWSession` and the test fake `agent.tests.builders.FakeSession` both satisfy them), `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
 | Deciding | `think.py`, `brain.py`, `jev.py`, `llm.py` | one brain decision per think cycle: Jev over candidates or the LLM (ADRs 0001, 0003, 0004). |
 | Observing | `http_api.py`, `audit.py`, `metrics.py`, `chat_relay.py` | read-only HTTP API (:9601..9625), decision audit log, Prometheus-style counters, relay of heard chat to `tools/chat-feed`. |
 | Dev tools | `tools/` (`ab.py`, `cache_probe.py`, `dump_update.py`, `probe.py`, `replay.py`) | not run by the agent itself. |
@@ -194,7 +194,8 @@ The old Node.js runtime (`agent-runtime/`) was removed and lives only in git his
 Opcode constants are centralised in `agent/opcodes.py` (PR #258, issue #247).
 `agent/actions/` is a package (issue #248): importing it registers every module in
 a fixed order, which is the order of `catalog()`. Actions send packets through
-`actions.base.send`, not the session's private `_send_packet`, and the follow reflex
+`actions.base.send`, which calls the session's public `send_packet` (the `PacketSink` port
+of `agent/ports.py`, #304), not its private `_send_packet`, and the follow reflex
 registers its pause in `actions.base.MOVE_OVERRIDE_HOOKS`, so `actions` never imports
 `reflexes`.
 
