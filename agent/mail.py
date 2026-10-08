@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mailbox (UM-60): opcode builders + response parsers (pure, no I/O — same
 split as agent/npc.py and agent/trade.py), for agent/session.py's dispatch
-and agent/perception.py's `world.mailbox` state.
+and agent/perception/windows.py's `world.mailbox` state.
 
 Every wire layout below is copied from TrinityCore branch `3.3.5`:
   src/server/game/Server/Protocol/Opcodes.h (opcode values)
@@ -31,7 +31,7 @@ update-object format.
 A mailbox is found in perception the same way a vendor/trainer NPC is: a
 gameobject whose queried template `type == GAMEOBJECT_TYPE_MAILBOX` (19), or
 (rarer, some custom mailbox NPCs) a unit/player with `UNIT_NPC_FLAG_MAILBOX`
-(`0x04000000`) set — `agent/perception.py::ObjectInfo.is_mailbox()`.
+(`0x04000000`) set — `agent/perception/objects.py::ObjectInfo.is_mailbox()`.
 CMSG_GET_MAIL_LIST/CMSG_SEND_MAIL/etc. all validate range and mailbox-ness
 server-side via `CanOpenMailBox` — there's no separate "use" opcode to open
 the mailbox window first, unlike an NPC's gossip/vendor window; sending

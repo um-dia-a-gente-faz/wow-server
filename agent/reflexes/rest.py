@@ -33,7 +33,7 @@ from ..opcodes import (
 UNIT_STAND_STATE_STAND = 0
 UNIT_STAND_STATE_SIT = 1
 
-UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask perception.py/follow.py use
+UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask agent/perception/nearby.py and follow.py use
 
 REST_HP_PCT_THRESHOLD = 0.5
 REST_MANA_PCT_THRESHOLD = 0.3

@@ -5,6 +5,12 @@ import hashlib
 import struct
 
 
+class ProtocolError(Exception):
+    """A server packet is malformed (truncated, bad count, undecodable text).
+    The one family a handler may raise on bad wire data; the router converts
+    the raw parse errors into it (#364)."""
+
+
 def sha1(*parts: bytes) -> bytes:
     h = hashlib.sha1()
     for p in parts:

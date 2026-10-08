@@ -33,7 +33,7 @@ from .base import (
 #   src/server/game/Server/Packets/ItemPackets.cpp (CMSG_DESTROYITEM)
 # See agent/loot.py for the byte-level detail on each of these.
 
-UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same bit perception.py's _object_dict uses
+UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same bit agent/perception/nearby.py uses
 
 
 @register

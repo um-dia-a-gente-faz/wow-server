@@ -58,11 +58,11 @@ LAYERS = {
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
-    "perception": {"group", "handles", "items", "names", "npc", "quests", "trade", "update_fields",
-                   "update_object"},
+    "perception": {"group", "handles", "items", "names", "npc", "packets", "quests", "trade",
+                   "update_fields", "update_object"},
     "state": {"perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
-    "router": set(),
+    "router": {"packets"},
     "handlers": {"channels", "group", "loot", "mail", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
