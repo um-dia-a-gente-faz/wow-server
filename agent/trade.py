@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Player-to-player trade (UM-59): opcode builders + response parsers (pure,
 no I/O — same split as agent/npc.py), for agent/session.py's dispatch and
-agent/perception.py's `world.trade` state.
+agent/perception/trade_state.py's `world.trade` state.
 
 Every wire layout below is copied from TrinityCore branch `3.3.5`:
   src/server/game/Server/Protocol/Opcodes.h (opcode values)

@@ -4,7 +4,6 @@ pattern as test_actions_movement.py's fast_session) so tick() calls resolve
 instantly, deterministically, and without real threads or sleeping."""
 
 import unittest
-from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import movement as mv
@@ -12,6 +11,7 @@ from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.reflexes import follow as fl
+from agent.tests.builders import FakeSession
 
 
 UNIT_FLAG_IN_COMBAT = fl.UNIT_FLAG_IN_COMBAT
@@ -41,10 +41,7 @@ def object_at(guid, x, y, z, object_type="unit"):
 def fast_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
     """Mirrors test_actions_movement.py's fast_session: a fake session pre-wired with
     a Mover on a FakeClock, so move_towards resolves instantly in tests."""
-    sent = []
-    sess = SimpleNamespace(player_guid=guid, player_position=position, events=[])
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
+    sess = FakeSession(player_guid=guid, player_position=position, events=[])
     world = per.WorldState()
     if position is not None:
         world.set_my_map(position[0])

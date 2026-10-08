@@ -149,6 +149,25 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   add a module to legacy. mypy was chosen over pyright because it is pip-only (no Node
   download in CI) and its gradual mode matches the tiers.
 
+## Size budget
+
+`agent/tests/test_size_budget.py` (part of `scripts/check.sh test-agent`) measures the
+non-test code under `agent/` and `tools/` with `ast`:
+
+- a **function** is at most **80 lines** (`def` line to its last line);
+- a **module** is at most **600 lines**.
+
+`BASELINE` in that file lists the functions and modules that were already over when the
+gate landed, each with its size then. Same ratchet as ruff and mypy:
+
+- **New code never gets an entry.** Over budget means split it.
+- **An entry is a ceiling.** A baselined function or module that grows past its entry
+  fails the test.
+- **Entries only go down.** When you shrink or split a baselined offender, lower its entry
+  to the new size, or delete it once it is within budget or gone. The test reports such
+  stale entries as a skip with the list, rather than failing, so two PRs that touch the
+  same offender cannot turn `main` red in merge order (#407 makes it a failure).
+
 ## Secrets
 
 - Never commit credentials, API keys, or tokens.

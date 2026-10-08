@@ -11,7 +11,6 @@ import struct
 import tempfile
 import unittest
 import uuid
-from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import perception as per
@@ -19,7 +18,7 @@ from agent import quests as qu
 from agent import session as se
 from agent import update_fields as uf
 from agent import update_object as uo
-from agent.tests.builders import make_session, reward_list
+from agent.tests.builders import FakeSession, make_session, reward_list
 
 
 def cstring(s: str) -> bytes:
@@ -510,10 +509,7 @@ class QuestLogSnapshotTest(unittest.TestCase):
 # ── Actions (agent.actions) ────────────────────────────────────────────────
 
 def fake_session(player_position=(0, 0.0, 0.0, 0.0, 0.0)):
-    sent = []
-    sess = SimpleNamespace(player_position=player_position, events=[])
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
+    sess = FakeSession(player_position=player_position, events=[])
     return sess
 
 

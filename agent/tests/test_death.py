@@ -5,7 +5,6 @@ so no real threads or sleeping are involved. No network."""
 
 import struct
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from agent import actions as ac
@@ -14,6 +13,7 @@ from agent import movement as mv
 from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
+from agent.tests.builders import FakeSession
 
 
 PLAYER_FLAGS_GHOST = per.PLAYER_FLAGS_GHOST
@@ -32,12 +32,8 @@ class FakeClock:
 
 
 def fast_session(guid=0xF130000000000099, position=(0, 0.0, 0.0, 0.0, 0.0)):
-    sent = []
-    sess = SimpleNamespace(player_guid=guid, player_position=position, events=[],
+    sess = FakeSession(player_guid=guid, player_position=position, events=[],
                             corpse_position=None, corpse_reclaim_ready_at=None)
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
-    sess._record_event = lambda kind, **fields: sess.events.append({"kind": kind, **fields})
     world = per.WorldState()
     world.set_my_guid(guid)
     if position is not None:

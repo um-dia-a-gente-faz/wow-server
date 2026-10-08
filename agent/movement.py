@@ -130,7 +130,7 @@ STUCK_PROGRESS_WINDOW_S = 3.0
 
 def run_speed_of(obj) -> float:
     """`obj.speeds[RUN_SPEED_INDEX]` if we've ever seen a LIVING movement
-    block for it (perception.py), else DEFAULT_RUN_SPEED_YPS."""
+    block for it (agent/perception/fields.py), else DEFAULT_RUN_SPEED_YPS."""
     if obj is not None and obj.speeds and len(obj.speeds) > RUN_SPEED_INDEX:
         return obj.speeds[RUN_SPEED_INDEX] or DEFAULT_RUN_SPEED_YPS
     return DEFAULT_RUN_SPEED_YPS

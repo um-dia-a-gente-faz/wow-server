@@ -11,7 +11,6 @@ import time
 import unittest
 import urllib.error
 import urllib.request
-from types import SimpleNamespace
 from unittest import mock
 
 from agent import actions as ac
@@ -20,6 +19,7 @@ from agent import movement as mv
 from agent import perception as per
 from agent import update_object as uo
 from agent.http_api import AgentObserver, make_server
+from agent.tests.builders import FakeSession
 
 TOKEN = "control-token-for-tests"
 ME, RUBENS, MOB = 0x10, 0x30, 0x40
@@ -54,7 +54,7 @@ def make_session(position=(530, 10.0, 20.0, 30.0, 0.0), real_sleep=None):
     _create(ws, MOB, uo.TYPEID_UNIT, 12.0, 20.0, 30.0, name="Wolf")
     ws.get_my_object().health = 100
     sent = []
-    sess = SimpleNamespace(world_state=ws, player_guid=ME, player_name="Luaprata", player_position=position,
+    sess = FakeSession(world_state=ws, player_guid=ME, player_name="Luaprata", player_position=position,
                            unexpected_disconnect=False, _sent=sent,
                            _send_packet=lambda opcode, payload=b"": sent.append(opcode))
     fc = FakeClock()
