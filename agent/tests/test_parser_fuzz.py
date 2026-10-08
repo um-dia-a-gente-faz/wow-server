@@ -22,6 +22,7 @@ from agent.packets import ProtocolError
 from agent.router import ROUTER
 from agent.tests import builders as b
 from agent.tests.builders import make_session
+from agent.tests.test_perception_golden import build_world
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 ITERATIONS = int(os.environ.get("FUZZ_ITERATIONS", "20"))  # per seed; nightly raises it
@@ -108,10 +109,29 @@ def snapshot(obj, _seen=None):
     return {k: snapshot(v, seen) for k, v in attrs.items() if k not in _SKIP}
 
 
-def _changed(before, after):
-    """Top-level attributes that differ (a short message; assertEqual on two
-    deep dicts spends minutes in difflib)."""
-    return sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+def _changed(before, after, path="session"):
+    """Dotted paths of the leaves that differ (a short message; assertEqual on
+    two deep dicts spends minutes in difflib)."""
+    if before == after:
+        return []
+    if isinstance(before, dict) and isinstance(after, dict):
+        return [p for k in sorted(before.keys() | after.keys(), key=str)
+                for p in _changed(before.get(k), after.get(k), f"{path}.{k}")]
+    return [path]
+
+
+def populated_session():
+    """A session with state to lose: the perception golden world (self, items,
+    units, quest log, trade, mailbox, channel) plus open loot, a pending invite,
+    a group and spells. A write that depends on existing state (#418) is only
+    reachable here."""
+    sess = make_session()
+    sess.world_state = build_world()
+    sess.loot = {"coins": 5, "items": []}
+    sess.pending_invite = {"inviter_name": "Bob"}
+    sess.group = {"leader_guid": 0x12, "raid": False, "loot_method": 1, "members": []}
+    sess.spellbook.add(133)
+    return sess
 
 
 def variants(seed, rng):
@@ -148,6 +168,13 @@ class ParserFuzzTest(unittest.TestCase):
             mutate()
             self.assertNotEqual(snapshot(sess), before)
 
+    def test_changed_names_the_path_below_world_state(self):
+        sess = populated_session()
+        before = snapshot(sess)
+        sess.world_state.player_guid = 99
+        sess.loot["coins"] = 0
+        self.assertEqual(_changed(before, snapshot(sess)), ["session.loot.coins", "session.world_state.player_guid"])
+
     def test_every_handler_survives_malformed_payloads(self):
         tracemalloc.start()
         self.addCleanup(tracemalloc.stop)
@@ -156,20 +183,26 @@ class ParserFuzzTest(unittest.TestCase):
             for s, seed in enumerate(seeds_for(opcode)):
                 for i, payload in enumerate(variants(seed, rng)):
                     if i % 16 == 0:  # fresh state keeps the before/after snapshots small
-                        sess = make_session()
+                        # Every 4th batch is populated: both reached, budget kept.
+                        sess = populated_session() if (i // 16) % 4 == 1 else make_session()
+                        before = snapshot(sess)
                     with self.subTest(opcode=hex(opcode), seed=s, i=i, payload=payload[:40].hex(), n=len(payload)):
                         tracemalloc.reset_peak()
-                        before = snapshot(sess)
                         t0 = time.monotonic()
+                        ok = False
                         try:
                             ROUTER.dispatch(sess.ctx, opcode, payload)
+                            ok = True
                         except ProtocolError:
-                            # A handler that fails must not have changed state.
+                            # A handler that fails must not have changed state. (One snapshot
+                            # per dispatch: `before` is still valid after a failure.)
                             self.assertEqual(_changed(before, snapshot(sess)), [])
                         except Exception as e:
                             if opcode not in KNOWN_EXCEPTIONS:
                                 raise AssertionError(f"{type(e).__name__} is not a ProtocolError: {e}") from e
                         self.assertLess(time.monotonic() - t0, MAX_SECONDS)
+                        if ok:
+                            before = snapshot(sess)  # a normal return may change state: new baseline
                         self.assertLess(tracemalloc.get_traced_memory()[1], MAX_BYTES)
 
 
