@@ -147,7 +147,7 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 
 | Area | Modules | Owns |
 |---|---|---|
-| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). |
+| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). `rules.py` holds game-rule constants (ranges, level margin) shared by candidates and actions; it imports nothing. |
 | Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `transport.py`, `opcodes.py` (all opcode constants), `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
 | State | `state.py` (`GameState`), `perception/` (`WorldState`, one snapshot builder per section), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |

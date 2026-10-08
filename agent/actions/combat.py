@@ -7,6 +7,7 @@ import struct
 import time
 
 from .. import spells
+from ..rules import MELEE_RANGE_YD
 from .. import update_fields as uf
 from ..opcodes import (
     CMSG_ATTACKSTOP,
@@ -26,7 +27,6 @@ from .base import (
 from .movement import (FaceAction, send_target)
 
 
-MELEE_RANGE_YD = 5.0  # ~ melee weapon range + average combat reach
 
 
 def send_attack(session, guid: int):
