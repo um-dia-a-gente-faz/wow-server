@@ -63,6 +63,8 @@ World packets are numbered from 1 after the unencrypted `SMSG_AUTH_CHALLENGE`:
 | `bad_crypt_from=N` | headers unencrypted from packet N (RC4 desync) | mid-packet timeout ends the session, one reconnect, no busy loop |
 | `slow_auth=S` | auth server answers the challenge after S seconds | login still succeeds |
 | `auth_reject=CODE` | logon challenge fails with that `AuthResult` | login raises, world server never contacted, backoff doubles |
+| `login_silence=S` | S seconds between `CMSG_PLAYER_LOGIN` and `SMSG_LOGIN_VERIFY_WORLD`, mock still reading | login waits without pinging (#426); `mock.ping_times` has every ping arrival |
+| `overspeed_s=T` | TrinityCore `HandlePing` rule: pings closer than T s count, the 3rd one hangs up (T = 27 in TrinityCore, tests scale it down) | no two pings closer than T, no kick |
 
 Every test also asserts that the password is in no log record and that the thread
 count is back to where it started.
