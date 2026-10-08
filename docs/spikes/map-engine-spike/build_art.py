@@ -24,7 +24,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-WOWMAP = os.path.normpath(os.path.join(HERE, "..", "..", "tools", "wowmap"))
+WOWMAP = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "wowmap"))
 sys.path.insert(0, WOWMAP)
 
 from PIL import Image, ImageStat  # noqa: E402
@@ -101,7 +101,7 @@ def main():
     ap.add_argument("--minimap", default="", help="md5translate directory, e.g. Kalimdor")
     ap.add_argument("--zones", default="", help="comma-separated WorldMapArea names")
     args = ap.parse_args()
-    if os.path.realpath(args.out).startswith(os.path.realpath(os.path.join(HERE, "..", ".."))):
+    if os.path.realpath(args.out).startswith(os.path.realpath(os.path.join(HERE, "..", "..", ".."))):
         sys.exit("--out is inside the repo: client art must not be committed")
 
     chain = open_chain(args.client, args.locale)
