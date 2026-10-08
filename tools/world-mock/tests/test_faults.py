@@ -20,6 +20,7 @@ from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
 from agent import session as session_mod  # noqa: E402
 from agent import transport  # noqa: E402
+from agent.auth import AuthRejected  # noqa: E402
 from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_connection  # noqa: E402
 
 BACKOFF_S = 1.0     # handed to an injected sleep, never really slept
@@ -300,13 +301,19 @@ class FaultInjectionTest(unittest.TestCase):
         self.assertGreaterEqual(time.monotonic() - t0, 0.3)
         self.assertTrue(wait_for(lambda: burst_applied(sess)))
 
-    def test_auth_reject_raises_without_reaching_the_world_server(self):
-        self.start(FaultPlan(auth_reject=3))
-        # ConnectionError today: the agent waits for a full 119-byte challenge (#405).
-        with self.assertRaises((RuntimeError, ConnectionError)):
-            _connect_and_login(self.cfg, self.log)
-        self.assertEqual(self.mock.world_connections, 0)
-
+    def test_auth_reject_fails_fast_naming_the_code(self):
+        # TrinityCore sends 3 bytes and leaves the socket open (#405): the agent must not wait for 119.
+        for code, name in ((3, "banned"), (4, "unknown account"), (9, "version invalid")):
+            with self.subTest(code=code):
+                self.start(FaultPlan(auth_reject=code))
+                t0 = time.monotonic()
+                with self.assertRaises(AuthRejected) as cm:
+                    _connect_and_login(self.cfg, self.log)
+                self.assertLess(time.monotonic() - t0, 1.0)
+                self.assertEqual(cm.exception.code, code)
+                self.assertIn(name, str(cm.exception))
+                self.assertIn(f"0x{code:02X}", str(cm.exception))
+                self.assertEqual(self.mock.world_connections, 0)
 
 if __name__ == "__main__":
     unittest.main()

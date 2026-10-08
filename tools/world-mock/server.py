@@ -256,15 +256,15 @@ class WorldMock:
         body = _recvn(sock, pk.u16(head, 2))
         username = body[30:30 + body[29]].decode('ascii').upper()
         time.sleep(plan.slow_auth)
-        if plan.auth_reject:
-            # AuthSession::LogonChallengeCallback failure: cmd, 0x00, AuthResult. TrinityCore
-            # leaves the socket open afterwards; the mock hangs up (see README, #405).
-            _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, plan.auth_reject]), plan)
+        password = self.accounts.get(username)
+        reject = plan.auth_reject or (0 if password else 4)    # 4 = WOW_FAIL_UNKNOWN_ACCOUNT
+        if reject:
+            # AuthSession::LogonChallengeCallback failure: cmd, 0x00, AuthResult (3 bytes), then
+            # SendPacket and return with the socket left open: the client must hang up (#405).
+            _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, reject]), plan)
+            sock.recv(1)
             return
         self._plans[username] = plan
-        password = self.accounts.get(username)
-        if password is None:
-            return                                  # unknown account: just hang up
         srp = _Srp6Server(username, password)
         # AuthSession::HandleLogonChallenge success layout (AuthSession.cpp).
         _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, 0]) + srp.B + bytes([1, SRP_G, 32])
@@ -274,6 +274,7 @@ class WorldMock:
         res = srp.verify(proof[1:33], proof[33:53])
         if res is None:
             _write(sock, bytes([au.AUTH_CMD_LOGON_PROOF, 4]) + struct.pack('<H', 0), plan)
+            sock.recv(1)                             # wrong password: 4 bytes, socket left open
             return
         K, m2 = res
         self.session_keys[username] = K

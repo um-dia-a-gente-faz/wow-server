@@ -915,3 +915,18 @@ Verified against TrinityCore 3.3.5 `Group.cpp` (`SendUpdateToPlayer`, `RemoveMem
 - Not implemented yet: `CMSG_PUSHQUESTTOPARTY (0x19D, u32 quest_id)` and accepting a shared
   quest (`CMSG_QUESTGIVER_ACCEPT_QUEST` / `CMSG_QUEST_CONFIRM_ACCEPT 0x19B`, `MSG_QUEST_PUSH_RESULT 0x276`);
   failures come back only as `MSG_QUEST_PUSH_RESULT`, which nothing parses yet.
+
+## Auth server: failure replies are short (#405)
+
+Source: TrinityCore `3.3.5` @ `41d89b32c015`, `src/server/authserver/Server/AuthSession.cpp` and
+`Authentication/AuthCodes.h` (`AuthResult`: 0x03 banned, 0x04 unknown account, 0x05 wrong password,
+0x06 already online, 0x08 db busy, 0x09 version invalid, 0x0C suspended, 0x10 locked enforced).
+
+| Reply | Failure | Success |
+|---|---|---|
+| `AUTH_LOGON_CHALLENGE` (`LogonChallengeCallback`) | `cmd 0x00, 0x00, result` = **3 bytes**, socket left open | 119 bytes, plus 20 / 8 / 1 more when security flags 0x01 / 0x02 / 0x04 are set |
+| `AUTH_LOGON_PROOF` (`HandleLogonProof`) | wrong password or bad token: `cmd 0x01, 0x04, uint16 0` = 4 bytes; bad build CRC: `cmd 0x01, 0x09` = 2 bytes | 32 bytes (`sAuthLogonProof_S`) |
+| `REALM_LIST` | no failure path | `cmd, uint16 size, body` |
+
+So read up to the result byte, branch, then read the rest. `agent/auth.py::_reply` does this once for both
+steps and raises `AuthRejected` (carries `.code`).

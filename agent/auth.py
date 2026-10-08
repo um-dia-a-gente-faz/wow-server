@@ -71,10 +71,45 @@ def compute_srp6(username: str, password: str, s_le: bytes, B_le: bytes,
     return A_le, M1, crc_hash, session_key
 
 
-def auth_logon(host: str, port: int, username: str, password: str):
-    """Auth handshake. Returns (account_name, session_key, realm_info)."""
-    sock = socket.create_connection((host, port), timeout=10)
+# AuthResult (TrinityCore 3.3.5 AuthCodes.h) as named in an error message.
+AUTH_RESULT_NAMES = {
+    0x03: "banned", 0x04: "unknown account or wrong password", 0x05: "incorrect password",
+    0x06: "account already online", 0x08: "auth database busy", 0x09: "client version invalid",
+    0x0A: "client version update required", 0x0C: "suspended (temporary ban)", 0x0D: "no access",
+    0x10: "account locked to another IP", 0x19: "account locked to another country",
+}
 
+
+class AuthRejected(RuntimeError):
+    """The auth server answered a logon step with a non-zero AuthResult. `code` is that
+    byte; the message names the step and the result, never a credential or key."""
+
+    def __init__(self, step: str, code: int):
+        self.code = code
+        name = AUTH_RESULT_NAMES.get(code, "unknown result")
+        super().__init__(f"auth server rejected the {step}: {name} (AuthResult 0x{code:02X})")
+
+
+def _reply(sock: socket.socket, cmd: int, error_at: int, rest: int, step: str) -> bytes:
+    """One auth reply. TrinityCore (AuthSession.cpp) sends only the bytes up to and including
+    the AuthResult when it fails (challenge: cmd, 0, result = 3; proof: cmd, result, ...) and
+    leaves the socket open, so read up to the result byte, branch, then read the other `rest`."""
+    head = _recvn(sock, error_at + 1)
+    if head[0] != cmd:
+        raise pk.ProtocolError(f"auth {step}: expected command 0x{cmd:02X}, got 0x{head[0]:02X}")
+    if head[error_at] != AUTH_RESULT_SUCCESS:
+        raise AuthRejected(step, head[error_at])
+    return head + _recvn(sock, rest)
+
+
+def auth_logon(host: str, port: int, username: str, password: str):
+    """Auth handshake. Returns (account_name, session_key, realm_info).
+    Raises AuthRejected when the server refuses the account or the password."""
+    with socket.create_connection((host, port), timeout=10) as sock:
+        return _handshake(sock, username, password)
+
+
+def _handshake(sock: socket.socket, username: str, password: str):
     u_upper = username.upper().encode('ascii')
     pkt = pk.p8(AUTH_CMD_LOGON_CHALLENGE)
     pkt += pk.p8(0)  # error
@@ -91,17 +126,9 @@ def auth_logon(host: str, port: int, username: str, password: str):
     pkt += u_upper
     sock.sendall(pkt)
 
-    # Challenge response (119 bytes minimum)
-    resp = _recvn(sock, 119)
-    off = 0
-    cmd = pk.u8(resp, off); off += 1
-    _unused = pk.u8(resp, off); off += 1
-    result = pk.u8(resp, off); off += 1
-    assert cmd == AUTH_CMD_LOGON_CHALLENGE
-    if result != AUTH_RESULT_SUCCESS:
-        sock.close()
-        return None, None, None
-
+    # Success is 119 bytes (3 + B 32 + g 2 + N 33 + s 32 + crc 16 + security flags 1).
+    resp = _reply(sock, AUTH_CMD_LOGON_CHALLENGE, 2, 116, "logon challenge")
+    off = 3
     B = resp[off:off+32]; off += 32
     g_len = pk.u8(resp, off); off += 1
     _g_val = resp[off:off+g_len]; off += g_len
@@ -117,23 +144,16 @@ def auth_logon(host: str, port: int, username: str, password: str):
     proof += pk.p8(0) + pk.p8(security_flags)
     sock.sendall(proof)
 
-    proof_resp = _recvn(sock, 2)
-    cmd2 = pk.u8(proof_resp, 0)
-    err2 = pk.u8(proof_resp, 1)
-    assert cmd2 == AUTH_CMD_LOGON_PROOF
-    if err2 != 0:
-        sock.close()
-        return None, None, None
-
-    more = _recvn(sock, 30)
-    proof_resp += more
+    # A wrong password is 4 bytes (cmd, result, uint16 0); success is 32 (M2 + account flags ...).
+    _reply(sock, AUTH_CMD_LOGON_PROOF, 1, 30, "logon proof")
 
     # Realm list
     sock.sendall(pk.p8(AUTH_CMD_REALM_LIST) + pk.p32(BUILD))
     hdr = _recvn(sock, 3)
     rcmd = pk.u8(hdr, 0)
     rsize = pk.u16(hdr, 1)
-    assert rcmd == AUTH_CMD_REALM_LIST
+    if rcmd != AUTH_CMD_REALM_LIST:
+        raise pk.ProtocolError(f"auth realm list: expected command 0x10, got 0x{rcmd:02X}")
     body = _recvn(sock, rsize)
 
     off = 0
@@ -154,7 +174,6 @@ def auth_logon(host: str, port: int, username: str, password: str):
             off += 5  # build info
         realm_info[rid] = {'name': rname, 'address': raddr, 'id': rid}
 
-    sock.close()
     return username.upper(), session_key, realm_info
 
 
