@@ -45,9 +45,9 @@ import urllib.request
 from dataclasses import dataclass, field
 
 from .. import actions as ac
+from .. import rules
 from .. import known_targets as kt
 from .. import lines
-from .. import npc
 from ..reflexes import follow as _follow  # noqa: F401 -- importing registers follow/assist
 from ..reflexes import rest as restmod
 
@@ -378,9 +378,9 @@ def step_quest(env: Env) -> Outcome:
     d = _distance(env, giver_obj)
     if d is None:
         return skip(f"{quest.name} position unknown")
-    if d > npc.INTERACT_RANGE_YD:
+    if d > rules.INTERACT_RANGE_YD:
         return skip(f"{quest.name} is {d:.0f} yd away, not within interact range "
-                    f"({npc.INTERACT_RANGE_YD:.0f} yd); the probe does not walk for this step")
+                    f"({rules.INTERACT_RANGE_YD:.0f} yd); the probe does not walk for this step")
     existing = _quest_in_log(env, quest.quest_id)
     if existing is not None:
         return skip(f"quest {quest.quest_id} is already in the quest log ({existing.get('state_name')})")
@@ -436,7 +436,7 @@ def step_combat(env: Env) -> Outcome:
     mob = mobs[0]
     start_d = _distance(env, mob)
     raws = []
-    if start_d is not None and start_d > ac.MELEE_RANGE_YD - 1.0:
+    if start_d is not None and start_d > rules.MELEE_RANGE_YD - 1.0:
         res = env.act("move_towards", guid=mob.guid, stop_distance=MOVE_STOP_YD)
         raws.append({"move_towards": raw_result(res)})
         if not res.ok:
@@ -509,7 +509,7 @@ def step_loot(env: Env) -> Outcome:
         return skip("no lootable corpse within %.0f yd" % LOOT_WALK_YD)
     raws = []
     d = _distance(env, corpse)
-    if d is not None and d > ac.LOOT_RANGE_YD - 1.0:
+    if d is not None and d > rules.LOOT_RANGE_YD - 1.0:
         res = env.act("move_towards", guid=corpse.guid, stop_distance=MOVE_STOP_YD)
         raws.append({"move_towards": raw_result(res)})
         if not res.ok:
