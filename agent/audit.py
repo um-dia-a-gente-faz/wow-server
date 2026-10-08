@@ -66,6 +66,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import config
+from .metrics import swallowed
 
 log = logging.getLogger("agent.audit")
 
@@ -248,7 +249,7 @@ class AuditLogger:
             try:
                 self.on_record(rec.to_dict())
             except Exception:  # an observer must never break auditing
-                log.exception("audit on_record hook failed")
+                swallowed("audit.on_record", log)
 
         self._maybe_clean_retention(ts)
         os.makedirs(self.agent_dir, exist_ok=True)

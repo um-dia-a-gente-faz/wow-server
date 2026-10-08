@@ -17,6 +17,7 @@ from . import channels as ch_mod
 from . import crypt as cr
 from . import packets as pk
 from .router import Context, ROUTER
+from .metrics import swallowed
 from .state import GameState
 from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
 
@@ -281,7 +282,7 @@ class WoWSession(Transport, GameState):
                     if opcode == SMSG_LOGOUT_COMPLETE:
                         break
             except Exception:
-                pass
+                swallowed("session.logout_wait", log, level=logging.DEBUG)  # a dead socket is expected here
         self.sock.close()
         self.sock = None
 
@@ -346,11 +347,8 @@ class WoWSession(Transport, GameState):
             return self._dispatch(opcode, payload)
         except Exception:
             self.dropped_packets += 1
-            should_log, suppressed = self._error_throttle.check(opcode)
-            if should_log:
-                log.warning("dropped %#05x packet (%d B) after handler error "
-                            "(%d more on this opcode suppressed since last report)",
-                            opcode, len(payload), suppressed, exc_info=True)
+            swallowed("session.dispatch", log, f"dropped {opcode:#05x} packet, {len(payload)} B",
+                      key=opcode, throttle=self._error_throttle, level=logging.WARNING)
             return True
 
     def _recv_loop(self):
@@ -358,7 +356,7 @@ class WoWSession(Transport, GameState):
         try:
             self._recv_until_stopped()
         except Exception:
-            log.exception("recv thread crashed")
+            swallowed("session.recv_thread", log)
         finally:
             if self._running:
                 log.warning("recv thread exited while the session was still running")

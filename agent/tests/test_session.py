@@ -696,6 +696,8 @@ class RecvLoopSafetyNetTest(unittest.TestCase):
         with self.assertLogs('agent.session', level='WARNING') as logs:
             sess._recv_loop()  # runs until the fake socket hits EOF
         self.assertEqual(sess.dropped_packets, 3)
+        from agent import metrics
+        self.assertGreaterEqual(metrics.SWALLOWED.get("session.dispatch", 0), 3)  # #306
         self.assertIn(CREATURE, sess.world_state.get_objects())
         self.assertFalse(sess._running)
         dropped = [m for m in logs.output if 'dropped' in m]

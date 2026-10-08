@@ -37,7 +37,7 @@ LAYERS = {
     "handles": set(),
     "lines": set(),
     "known_targets": set(),
-    "metrics": set(),
+    "metrics": {"transport"},   # swallowed() reuses transport's log throttle (#306)
     "api_contract": set(),
     "auth": {"packets"},
     "rules": set(),
@@ -63,29 +63,38 @@ LAYERS = {
     "state": {"perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
     "router": {"packets"},
-    "handlers": {"channels", "group", "loot", "mail", "names", "npc", "opcodes", "packets", "perception",
+    "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
     "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
-    "control": {"actions", "movement"},
+    "control": {"actions", "metrics", "movement"},
     "death": {"actions", "movement", "opcodes", "perception", "rules"},
     "action_names": set(),
-    "candidates": {"action_names", "handles", "item_compare", "rules"},
+    "candidates": {"action_names", "handles", "item_compare", "metrics", "rules"},
     # deciding
     "llm": set(),
     "jev": {"llm"},
     "brain": {"actions", "candidates", "jev", "llm", "metrics"},
     "think": {"actions", "brain", "handles", "llm", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
-    "session": {"actions", "channels", "crypt", "handlers", "opcodes", "packets", "router", "state",
+    "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport"},
-    "audit": {"config"},
-    "chat_relay": set(),
-    "http_api": {"audit", "control", "spells", "update_fields"},
+    "audit": {"config", "metrics"},
+    "chat_relay": {"metrics"},
+    "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
     "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "http_api",
-                 "reflexes", "session", "think"},
+                 "metrics", "reflexes", "session", "think"},
+}
+
+# Files whose broad `except Exception` sites may stay as they are (#306), each with the reason.
+SWALLOW_ALLOWLIST = {
+    # One-shot live-test CLI run by hand: every failure is put in the report/stdout it prints
+    # (run_step, login) or is best-effort cleanup of its own connection (stream close, logout).
+    "agent/tools/probe.py",
+    # Offline A/B replay CLI: the error text is stored in the result row it prints (item["error"]).
+    "agent/tools/ab.py",
 }
 
 ADR = {
@@ -198,6 +207,28 @@ class AgentArchitectureTests(unittest.TestCase):
     def test_nothing_imports_main(self):
         offenders = [u for u, edges in self.graph.items() if "__main__" in edges]
         self.assertEqual(offenders, [])
+
+    def test_broad_except_calls_swallowed(self):
+        """#306: a broad `except Exception` in agent/ must call metrics.swallowed (log with
+        context + count it), re-raise, or sit in SWALLOW_ALLOWLIST with a reason. Narrow it
+        instead if you can; a bare `except:` is never allowed."""
+        bad = []
+        for path, _, _ in _agent_files():
+            rel = str(path.relative_to(ROOT))
+            if "/tests/" in rel or rel in SWALLOW_ALLOWLIST:
+                continue
+            for node in ast.walk(ast.parse(path.read_text(), rel)):
+                if not isinstance(node, ast.ExceptHandler):
+                    continue
+                names = {getattr(n, "id", "") for n in ast.walk(node.type)} if node.type else {"<bare>"}
+                if not names & {"Exception", "BaseException", "<bare>"}:
+                    continue
+                calls = {c.func.id if isinstance(c.func, ast.Name) else getattr(c.func, "attr", "")
+                         for b in node.body for c in ast.walk(b) if isinstance(c, ast.Call)}
+                reraises = any(isinstance(n, ast.Raise) for b in node.body for n in ast.walk(b))
+                if "swallowed" not in calls and not reraises:
+                    bad.append(f"{rel}:{node.lineno}")
+        self.assertEqual(bad, [], "broad except without swallowed(where, log): see agent/metrics.py")
 
     def test_parsers_do_not_reach_into_state_or_actions(self):
         # "parsers are pure": they may use the wire helpers and each other's data, never

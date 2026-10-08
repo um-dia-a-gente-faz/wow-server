@@ -146,6 +146,9 @@ class _NullLog:
     def exception(self, *a, **k):
         pass
 
+    def log(self, *a, **k):
+        pass
+
     def critical(self, *a, **k):
         pass
 
