@@ -2,7 +2,8 @@
 extreme-count variants of fixture packets (seeded, stdlib only, #307).
 
 A handler may raise (WoWSession._dispatch_guarded drops the packet) but only
-a parse error, and it must return fast and keep allocations bounded: a count
+a parse error, must leave the session state unchanged when it does (#363),
+and it must return fast and keep allocations bounded: a count
 field of 2^32 driving a loop would hang or exhaust the recv thread, which the
 guard cannot catch. Opcodes with no captured fixture get synthetic seeds."""
 
@@ -14,6 +15,7 @@ import time
 import tracemalloc
 import unittest
 import zlib
+from collections import deque
 
 from agent import opcodes as op
 from agent import session as _session  # noqa: F401  (registers every handler)
@@ -65,6 +67,41 @@ def seeds_for(opcode):
     return out + [b'', bytes(16), bytes(rng.randrange(256) for _ in range(48))]
 
 
+_SCALARS = {int, float, str, bytes, bool, type(None)}
+_SKIP = {"sock", "_lock", "ctx", "_recv_thread", "_error_throttle", "dropped_packets"}
+
+
+def snapshot(obj, _seen=None):
+    """A comparable deep copy of the session's game state (attributes, slots,
+    containers), so a handler that mutated state before failing shows as a diff."""
+    seen = _seen if _seen is not None else set()
+    if type(obj) in _SCALARS:
+        return obj
+    if id(obj) in seen:
+        return "<cycle>"
+    seen.add(id(obj))
+    if isinstance(obj, dict):
+        return {k if isinstance(k, (str, int)) else repr(k): snapshot(v, seen) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, deque)):
+        return [snapshot(v, seen) for v in obj]
+    if isinstance(obj, (set, frozenset)):
+        return sorted(repr(v) for v in obj)
+    if not type(obj).__module__.startswith("agent"):
+        return repr(obj)  # functions, classes, modules, locks: not game state
+    attrs = dict(getattr(obj, "__dict__", {}))
+    for cls in type(obj).__mro__:
+        for name in getattr(cls, "__slots__", ()):
+            if hasattr(obj, name):
+                attrs[name] = getattr(obj, name)
+    return {k: snapshot(v, seen) for k, v in attrs.items() if k not in _SKIP}
+
+
+def _changed(before, after):
+    """Top-level attributes that differ (a short message; assertEqual on two
+    deep dicts spends minutes in difflib)."""
+    return sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+
+
 def variants(seed, rng):
     n = len(seed)
     for cut in sorted(set(range(min(n, 48)))
@@ -88,21 +125,35 @@ class ParserFuzzTest(unittest.TestCase):
         logging.disable(logging.CRITICAL)  # handlers warn on every malformed packet
         self.addCleanup(logging.disable, logging.NOTSET)
 
-    def test_every_handler_survives_malformed_payloads(self):
+    def test_snapshot_sees_state_changes(self):
         sess = make_session()
+        for mutate in (lambda: setattr(sess, "level", 9),
+                       lambda: sess.spellbook.add(1),
+                       lambda: sess.events.append("x"),
+                       lambda: setattr(sess.world_state, "player_guid", 7),
+                       lambda: sess.world_state.names.__dict__.update(extra=1)):
+            before = snapshot(sess)
+            mutate()
+            self.assertNotEqual(snapshot(sess), before)
+
+    def test_every_handler_survives_malformed_payloads(self):
         tracemalloc.start()
         self.addCleanup(tracemalloc.stop)
         for opcode in sorted(ROUTER._handlers):
             rng = random.Random(opcode)
             for seed in seeds_for(opcode):
-                for payload in variants(seed, rng):
+                for i, payload in enumerate(variants(seed, rng)):
+                    if i % 16 == 0:  # fresh state keeps the before/after snapshots small
+                        sess = make_session()
                     with self.subTest(opcode=hex(opcode), payload=payload[:40].hex(), n=len(payload), iterations=ITERATIONS):
                         tracemalloc.reset_peak()
+                        before = snapshot(sess)
                         t0 = time.monotonic()
                         try:
                             ROUTER.dispatch(sess.ctx, opcode, payload)
                         except PARSE_ERRORS:
-                            pass
+                            # A handler that fails must not have changed state.
+                            self.assertEqual(_changed(before, snapshot(sess)), [])
                         self.assertLess(time.monotonic() - t0, MAX_SECONDS)
                         self.assertLess(tracemalloc.get_traced_memory()[1], MAX_BYTES)
 
