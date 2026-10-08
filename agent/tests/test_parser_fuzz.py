@@ -11,13 +11,18 @@ import logging
 import os
 import random
 import time
+import tempfile
 import tracemalloc
 import unittest
+import uuid
 from collections import deque
+from unittest import mock
 
 from agent import opcodes as op
 from agent import update_object as uo
 from agent import session as _session  # noqa: F401  (registers every handler)
+from agent.items import ItemCache
+from agent.names import NameCache
 from agent.packets import ProtocolError
 from agent.router import ROUTER
 from agent.tests import builders as b
@@ -109,6 +114,9 @@ def snapshot(obj, _seen=None):
     return {k: snapshot(v, seen) for k, v in attrs.items() if k not in _SKIP}
 
 
+_MISSING = object()  # a key absent on one side differs from a None value
+
+
 def _changed(before, after, path="session"):
     """Dotted paths of the leaves that differ (a short message; assertEqual on
     two deep dicts spends minutes in difflib)."""
@@ -116,7 +124,7 @@ def _changed(before, after, path="session"):
         return []
     if isinstance(before, dict) and isinstance(after, dict):
         return [p for k in sorted(before.keys() | after.keys(), key=str)
-                for p in _changed(before.get(k), after.get(k), f"{path}.{k}")]
+                for p in _changed(before.get(k, _MISSING), after.get(k, _MISSING), f"{path}.{k}")]
     return [path]
 
 
@@ -126,7 +134,13 @@ def populated_session():
     a group and spells. A write that depends on existing state (#418) is only
     reachable here."""
     sess = make_session()
-    sess.world_state = build_world()
+    # build_world() makes its own WorldState whose caches save to the real
+    # ~/.cache/wow-agent/*.json on every response: keep those saves off disk, then
+    # point the caches at the temp files make_session() uses.
+    with mock.patch.object(NameCache, "save"), mock.patch.object(ItemCache, "save"):
+        sess.world_state = build_world()
+    sess.world_state.names.cache_path = os.path.join(tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
+    sess.world_state.items.cache_path = os.path.join(tempfile.gettempdir(), f"wow-agent-test-items-{uuid.uuid4().hex}.json")
     sess.loot = {"coins": 5, "items": []}
     sess.pending_invite = {"inviter_name": "Bob"}
     sess.group = {"leader_guid": 0x12, "raid": False, "loot_method": 1, "members": []}
@@ -174,6 +188,18 @@ class ParserFuzzTest(unittest.TestCase):
         sess.world_state.player_guid = 99
         sess.loot["coins"] = 0
         self.assertEqual(_changed(before, snapshot(sess)), ["session.loot.coins", "session.world_state.player_guid"])
+        sess.world_state.names.players[9] = None  # a new key holding None is a change
+        self.assertIn("session.world_state.names.players.9", _changed(before, snapshot(sess)))
+
+    def test_populated_session_never_writes_outside_a_temp_dir(self):
+        with mock.patch("os.replace") as replace, mock.patch("builtins.open", mock.mock_open()) as opened:
+            sess = populated_session()
+            for cache in (sess.world_state.names, sess.world_state.items):
+                cache.save()
+        paths = [c.args[0] for c in opened.call_args_list if c.args and "w" in (c.args[1:2] or ("",))[0]]
+        paths += [c.args[1] for c in replace.call_args_list]
+        self.assertTrue(paths)
+        self.assertTrue(all(p.startswith(tempfile.gettempdir()) for p in paths), paths)
 
     def test_every_handler_survives_malformed_payloads(self):
         tracemalloc.start()
@@ -183,7 +209,7 @@ class ParserFuzzTest(unittest.TestCase):
             for s, seed in enumerate(seeds_for(opcode)):
                 for i, payload in enumerate(variants(seed, rng)):
                     if i % 16 == 0:  # fresh state keeps the before/after snapshots small
-                        # Every 4th batch is populated: both reached, budget kept.
+                        # Every 4th batch is populated (both kinds reached); default run ~6 s (5.9-6.3 s over 10 runs, was 5.3-5.4 s on empty sessions only).
                         sess = populated_session() if (i // 16) % 4 == 1 else make_session()
                         before = snapshot(sess)
                     with self.subTest(opcode=hex(opcode), seed=s, i=i, payload=payload[:40].hex(), n=len(payload)):
@@ -196,7 +222,9 @@ class ParserFuzzTest(unittest.TestCase):
                         except ProtocolError:
                             # A handler that fails must not have changed state. (One snapshot
                             # per dispatch: `before` is still valid after a failure.)
-                            self.assertEqual(_changed(before, snapshot(sess)), [])
+                            after = snapshot(sess)
+                            changed, before = _changed(before, after), after  # one offender, one failure
+                            self.assertEqual(changed, [])
                         except Exception as e:
                             if opcode not in KNOWN_EXCEPTIONS:
                                 raise AssertionError(f"{type(e).__name__} is not a ProtocolError: {e}") from e
