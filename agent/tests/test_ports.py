@@ -23,8 +23,8 @@ def _sources(*packages):
 
 
 def _static_contract(real: session.WoWSession, fake: builders.FakeSession) -> None:
-    """Never called. mypy checks these assignments, so a port member the session or
-    the fake lacks is a type error instead of an AttributeError at run time."""
+    """Never called. Not checked yet: #410 adds this file to the mypy scope, and from
+    then on a port member the session or the fake lacks is a type error."""
     _real: ports.ActionSession = real
     _fake: ports.ActionSession = fake
 

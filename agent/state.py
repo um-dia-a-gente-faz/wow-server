@@ -25,7 +25,7 @@ class GameState:
         # Game state
         self.player_guid = 0
         self.player_name = ""
-        self.player_position = None  # (map_id, x, y, z, orient)
+        self.player_position: tuple | None = None  # (map_id, x, y, z, orient)
         self.level = 0
         self.race = 0  # ChrRaces.dbc ID; set by callers (e.g. __main__.py) from enum_characters()
         self.class_ = 0  # ChrClasses.dbc ID (UM-69); set by callers from enum_characters(), same as race
@@ -44,7 +44,7 @@ class GameState:
         # The session's one reflex of each kind, filled by agent.reflexes on first use.
         self.follow_reflex = None
         self.rest_reflex = None
-        self.pending_invite = None  # {"inviter_name": str} or None
+        self.pending_invite: dict | None = None  # {"inviter_name": str} or None
         self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape

@@ -4,7 +4,10 @@
 fake (`agent.tests.builders.FakeSession`). An action or reflex uses only these
 members, so the interface is written down once instead of living in each test's
 fake. Read-only members are properties: code behind a port reads them and never
-rebinds them.
+rebinds them. Two `PlayerView` members are plain writable attributes because
+actions do set them: `player_position` (`FaceAction` and the walk in
+`agent.movement` mirror what they sent, since the server does not echo our own
+movement) and `pending_invite` (`accept_group`/`decline_group` clear it).
 
 This module imports nothing from `agent/`.
 """
@@ -31,14 +34,16 @@ class EventLog(Protocol):
 
 @runtime_checkable
 class PlayerView(Protocol):
-    """Read-only facts about the agent's own character."""
+    """Facts about the agent's own character. Read-only, except the two plain
+    attributes, which actions set (see the module docstring)."""
+
+    # (map_id, x, y, z, orientation), or None before the first position.
+    player_position: tuple | None
+    # {"inviter_name": str} while an invite is open, else None.
+    pending_invite: dict | None
 
     @property
     def player_guid(self) -> int: ...
-
-    @property
-    def player_position(self) -> tuple | None:
-        """(map_id, x, y, z, orientation), or None before the first position."""
 
     @property
     def race(self) -> int: ...
@@ -54,9 +59,6 @@ class PlayerView(Protocol):
 
     @property
     def spell_cooldowns(self) -> Mapping[int, dict]: ...
-
-    @property
-    def pending_invite(self) -> dict | None: ...
 
     @property
     def group(self) -> dict | None: ...
