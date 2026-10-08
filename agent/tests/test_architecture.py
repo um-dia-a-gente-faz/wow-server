@@ -21,8 +21,8 @@ UNLAYERED = {"tools", "tests"}
 
 # unit -> units it may import. A unit missing here may import nothing from agent/.
 # Groups (see docs/ARCHITECTURE.md, `agent/` table):
-#   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines,
-#       known_targets, metrics, api_contract
+#   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines, action_names,
+#       known_targets, metrics, api_contract, ports (the typed session contract, #304)
 #   pure parsers and builders: npc, quests, loot, mail, trade, spells, channels, names,
 #       items, item_compare, update_object, update_fields, movement
 #   state: perception, state;  routing: router, handlers (ADR 0005, 0006)
@@ -41,6 +41,7 @@ LAYERS = {
     "api_contract": set(),
     "auth": {"packets"},
     "rules": set(),
+    "ports": set(),
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "packets"},
     "quests": {"opcodes", "packets"},
@@ -57,20 +58,21 @@ LAYERS = {
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
-    "perception": {"group", "handles", "items", "names", "npc", "quests", "trade", "update_fields",
-                   "update_object"},
+    "perception": {"group", "handles", "items", "names", "npc", "packets", "quests", "trade",
+                   "update_fields", "update_object"},
     "state": {"perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
-    "router": set(),
+    "router": {"packets"},
     "handlers": {"channels", "group", "loot", "mail", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
-    "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "quests",
-                "rules", "spells", "trade", "update_fields"},
-    "reflexes": {"actions", "movement", "opcodes", "perception", "update_fields"},
+    "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
+                "quests", "rules", "spells", "trade", "update_fields"},
+    "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
     "control": {"actions", "movement"},
     "death": {"actions", "movement", "opcodes", "perception", "rules"},
-    "candidates": {"handles", "item_compare", "rules"},
+    "action_names": set(),
+    "candidates": {"action_names", "handles", "item_compare", "rules"},
     # deciding
     "llm": set(),
     "jev": {"llm"},

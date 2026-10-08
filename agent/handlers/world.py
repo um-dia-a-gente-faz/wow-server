@@ -122,7 +122,7 @@ def handle_monster_move(ctx, payload: bytes):
     """SMSG_MONSTER_MOVE (0x0DD): an NPC's new destination/path (UM-64).
     Starts or replaces that object's spline-interpolation state in
     world_state — see agent/update_object.py::parse_monster_move and
-    agent/perception.py::WorldState.apply_monster_move."""
+    agent/perception/world.py::WorldState.apply_monster_move."""
     ctx.dump(SMSG_MONSTER_MOVE, payload)
     try:
         info = uo.parse_monster_move(payload)

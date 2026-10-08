@@ -356,7 +356,7 @@ def _reflex_state(sess) -> dict:
     """Best-effort snapshot of active reflexes for the audit log — never
     raises, since a reflex's internal shape isn't this loop's business."""
     state = {}
-    follow = getattr(sess, "_follow_reflex", None)
+    follow = getattr(sess, "follow_reflex", None)
     if follow is not None and getattr(follow, "enabled", False):
         state["follow"] = {
             "enabled": True,
@@ -364,7 +364,7 @@ def _reflex_state(sess) -> dict:
             "leader_name": getattr(follow, "leader_name", None),
             "assist": getattr(follow, "assist", False),
         }
-    rest = getattr(sess, "_rest_reflex", None)
+    rest = getattr(sess, "rest_reflex", None)
     if rest is not None and getattr(rest, "active", False):
         state["rest"] = {"active": True, "method": getattr(rest, "method", None)}
     return state

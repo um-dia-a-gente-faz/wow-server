@@ -3,7 +3,6 @@ sees, and handle -> GUID resolution before a tool call reaches an action."""
 
 import json
 import unittest
-from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import handles as hd
@@ -12,6 +11,7 @@ from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.think import think_and_act
+from agent.tests.builders import FakeSession
 
 # Magistrix Erona's GUID from the 2026-09-19 live run — above 2^53, so a
 # float64 round-trip turns it into 17379391218345058000.
@@ -155,10 +155,7 @@ class FakeLLMClient:
 
 
 def fake_session():
-    sent = []
-    sess = SimpleNamespace(race=10, player_guid=1, player_position=(530, 0.0, 0.0, 0.0, 0.0))
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
+    sess = FakeSession(race=10, player_guid=1, player_position=(530, 0.0, 0.0, 0.0, 0.0))
     return sess
 
 

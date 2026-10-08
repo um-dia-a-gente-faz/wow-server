@@ -22,7 +22,7 @@ from .base import (
 
 # ── NPC interaction (UM-40) ───────────────────────────────────────────────
 # Depends on UM-36 (this Action framework) and UM-35 (name cache, which
-# feeds npc_flags detection via agent/perception.py — see ObjectInfo.
+# feeds npc_flags detection via agent/perception/objects.py — see ObjectInfo.
 # is_gossip/is_vendor/is_trainer/is_quest_giver). Opcodes/layouts live in
 # agent/npc.py; response parsing lands in agent.perception.WorldState's
 # ui_state, exposed to the LLM as snapshot()'s 'window' key.

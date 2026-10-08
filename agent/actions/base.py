@@ -7,18 +7,7 @@ from dataclasses import dataclass, field
 import time
 
 from .. import update_fields as uf
-
-
-def _record_event(session, kind: str, **fields):
-    """Same shape as WoWSession._record_event — duplicated here (matching
-    agent.reflexes.follow/rest's own copy of this) instead of calling
-    session._record_event() directly, so an action that records its own
-    event (send_mail, UM-60) also works against the plain `events: list`
-    fake sessions this module's tests use, which have no _record_event."""
-    events = getattr(session, "events", None)
-    if events is None:
-        return
-    events.append({"kind": kind, "t": time.monotonic(), **fields})
+from ..ports import ActionSession, PacketSink
 
 
 # ── Action framework (UM-36) ─────────────────────────────────────────────
@@ -78,16 +67,16 @@ class Action:
     params: dict = {}
     required: tuple = ()  # subset of params.keys() the schema marks required
 
-    def check(self, session, world, **params) -> str | None:
+    def check(self, session: ActionSession, world, **params) -> str | None:
         """Return an error string if this action shouldn't execute right
         now, else None. Called by run() before execute() — execute()
         implementations can assume check() already passed."""
         return None
 
-    def execute(self, session, world, **params) -> ActionResult:
+    def execute(self, session: ActionSession, world, **params) -> ActionResult:
         raise NotImplementedError
 
-    def run(self, session, world, **params) -> ActionResult:
+    def run(self, session: ActionSession, world, **params) -> ActionResult:
         error = self.check(session, world, **params)
         if error is not None:
             return ActionResult(ok=False, error=error)
@@ -154,7 +143,6 @@ def _pause_follow_reflex(session, world):
         hook(session, world)
 
 
-def send(session, opcode: int, payload: bytes = b""):
-    """Session facade: the one place actions send a packet through, so they
-    don't each reach for the session's private _send_packet."""
-    session._send_packet(opcode, payload)
+def send(session: PacketSink, opcode: int, payload: bytes = b""):
+    """The one place actions send a packet through (agent.ports.PacketSink)."""
+    session.send_packet(opcode, payload)
