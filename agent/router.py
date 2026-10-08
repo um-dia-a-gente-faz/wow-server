@@ -5,7 +5,15 @@ on the shared ROUTER at import time; WoWSession only calls ROUTER.dispatch().
 Unknown opcodes return False. Handlers get a Context (game state + send/dump),
 not the whole session."""
 
+import struct
+import zlib
 from typing import Callable
+
+from .packets import ProtocolError
+
+# What reading a truncated or garbled payload raises (UnicodeError is a ValueError; zlib.error is a bad compressed update).
+# ponytail: a logic bug raising one of these is also folded in; #274's Reader narrows it.
+RAW_PARSE_ERRORS = (struct.error, IndexError, ValueError, zlib.error)
 
 
 class Context:
@@ -50,7 +58,10 @@ class PacketRouter:
         handler = self._handlers.get(opcode)
         if handler is None:
             return False
-        handler(ctx, payload)
+        try:
+            handler(ctx, payload)
+        except RAW_PARSE_ERRORS as e:
+            raise ProtocolError(f"malformed {opcode:#05x} ({len(payload)} B): {e!r}") from e
         return True
 
     def tick(self, ctx: Context):

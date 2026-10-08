@@ -5,6 +5,8 @@ import math
 import time
 from dataclasses import dataclass, field
 
+from ..packets import ProtocolError
+
 
 UNIT_NPC_FLAG_GOSSIP = 0x00000001
 UNIT_NPC_FLAG_QUESTGIVER = 0x00000002
@@ -28,7 +30,7 @@ PLAYER_FLAGS_GHOST = 0x00000010
 POWER_MANA = 0
 
 
-class PerceptionParseError(Exception):
+class PerceptionParseError(ProtocolError):
     """A server packet could not be parsed into world state.
 
     Raised for truncated or malformed update-object data. The session drops
