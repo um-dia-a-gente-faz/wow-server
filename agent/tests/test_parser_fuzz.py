@@ -2,7 +2,7 @@
 extreme-count variants of fixture packets (seeded, stdlib only, #307).
 
 A handler may raise (WoWSession._dispatch_guarded drops the packet) but only
-a parse error, must leave the session state unchanged when it does (#363),
+a `ProtocolError`, must leave the session state unchanged when it does (#363),
 and it must return fast and keep allocations bounded: a count
 field of 2^32 driving a loop would hang or exhaust the recv thread, which the
 guard cannot catch. Opcodes with no captured fixture get synthetic seeds."""
@@ -10,26 +10,27 @@ guard cannot catch. Opcodes with no captured fixture get synthetic seeds."""
 import logging
 import os
 import random
-import struct
 import time
 import tracemalloc
 import unittest
-import zlib
 from collections import deque
 
 from agent import opcodes as op
+from agent import update_object as uo
 from agent import session as _session  # noqa: F401  (registers every handler)
-from agent.perception import PerceptionParseError
+from agent.packets import ProtocolError
 from agent.router import ROUTER
+from agent.tests import builders as b
 from agent.tests.builders import make_session
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 ITERATIONS = int(os.environ.get("FUZZ_ITERATIONS", "20"))  # per seed; nightly raises it
 MAX_SECONDS = 1.0
 MAX_BYTES = 32 * 1024 * 1024
-# What a malformed packet may legitimately raise; anything else is a bug.
-PARSE_ERRORS = (struct.error, IndexError, ValueError, UnicodeError, KeyError, zlib.error,
-                PerceptionParseError)
+# A malformed packet may raise ProtocolError (the router converts raw struct/index/value/zlib
+# errors, #364); anything else is a bug. An opcode that cannot be fixed yet goes here with its
+# issue number, so the list can only shrink.
+KNOWN_EXCEPTIONS: dict[int, str] = {}
 EXTREME = (b'\xff\xff\xff\xff', b'\x00\x00\x00\x80', b'\xff\xff\x00\x00', b'\x00\x00\x00\x00')
 
 # fixture dir/file prefix -> router opcodes it seeds
@@ -64,7 +65,18 @@ def seeds_for(opcode):
                 out.append(_load(os.path.join(FIXTURES, d, name)))
     # Synthetic seeds so every opcode is exercised, with and without a body.
     rng = random.Random(opcode)
-    return out + [b'', bytes(16), bytes(rng.randrange(256) for _ in range(48))]
+    return out + builder_seeds(opcode) + [b'', bytes(16), bytes(rng.randrange(256) for _ in range(48))]
+
+
+def builder_seeds(opcode):
+    """Valid packets from tests/builders.py: the mutations start from the happy path."""
+    blk = b.object_block(uo.UPDATETYPE_CREATE_OBJECT, 0x42)
+    return {
+        op.SMSG_UPDATE_OBJECT: [b.update_object(blk), b.update_object(blk, b.values_block(0x42))],
+        op.SMSG_COMPRESSED_UPDATE_OBJECT: [b.compressed(b.update_object(blk))],
+        op.SMSG_QUESTGIVER_OFFER_REWARD: [b.offer_reward_payload(1, 2, "t", "x", [(3, 1, 4)], [(5, 1, 6)])],
+        op.SMSG_QUESTGIVER_QUEST_COMPLETE: [b.quest_complete_payload(2, 10, 20)],
+    }.get(opcode, [])
 
 
 _SCALARS = {int, float, str, bytes, bool, type(None)}
@@ -141,19 +153,22 @@ class ParserFuzzTest(unittest.TestCase):
         self.addCleanup(tracemalloc.stop)
         for opcode in sorted(ROUTER._handlers):
             rng = random.Random(opcode)
-            for seed in seeds_for(opcode):
+            for s, seed in enumerate(seeds_for(opcode)):
                 for i, payload in enumerate(variants(seed, rng)):
                     if i % 16 == 0:  # fresh state keeps the before/after snapshots small
                         sess = make_session()
-                    with self.subTest(opcode=hex(opcode), payload=payload[:40].hex(), n=len(payload), iterations=ITERATIONS):
+                    with self.subTest(opcode=hex(opcode), seed=s, i=i, payload=payload[:40].hex(), n=len(payload)):
                         tracemalloc.reset_peak()
                         before = snapshot(sess)
                         t0 = time.monotonic()
                         try:
                             ROUTER.dispatch(sess.ctx, opcode, payload)
-                        except PARSE_ERRORS:
+                        except ProtocolError:
                             # A handler that fails must not have changed state.
                             self.assertEqual(_changed(before, snapshot(sess)), [])
+                        except Exception as e:
+                            if opcode not in KNOWN_EXCEPTIONS:
+                                raise AssertionError(f"{type(e).__name__} is not a ProtocolError: {e}") from e
                         self.assertLess(time.monotonic() - t0, MAX_SECONDS)
                         self.assertLess(tracemalloc.get_traced_memory()[1], MAX_BYTES)
 
