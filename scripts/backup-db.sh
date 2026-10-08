@@ -3,7 +3,7 @@
 # Runs mysqldump inside the DB container so the root password never leaves it.
 #   BACKUP_DIR=/opt/wow-server-backups  KEEP_DAYS=14  DBS="auth characters"  DB_CONTAINER=trinitycore-db
 # Add world (reproducible from the TDB) with DBS="auth characters world" if wanted.
-# A failed dump does not skip the other schemas or the prune; the exit code is non-zero.
+# A failed dump does not skip the other schemas; the exit code is non-zero and old dumps are kept.
 set -euo pipefail
 umask 077  # dumps contain account password hashes
 BACKUP_DIR=${BACKUP_DIR:-/opt/wow-server-backups}
@@ -31,5 +31,12 @@ for db in $DBS; do
   fi
   part=
 done
-find "$BACKUP_DIR" -maxdepth 1 \( -name '*.sql.gz' -o -name '*.sql.gz.part' \) -mtime "+$KEEP_DAYS" -delete
+find "$BACKUP_DIR" -maxdepth 1 -name '*.sql.gz.part' -mtime "+$KEEP_DAYS" -delete
+# Old dumps are pruned only after a fully successful run: a backup that keeps failing
+# must not age out the last good dumps.
+if [ "$rc" -eq 0 ]; then
+  find "$BACKUP_DIR" -maxdepth 1 -name '*.sql.gz' -mtime "+$KEEP_DAYS" -delete
+else
+  echo "backup FAILED: old dumps kept, prune skipped" >&2
+fi
 exit $rc

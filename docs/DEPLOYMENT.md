@@ -173,7 +173,8 @@ committing a dashboard — an empty result almost always means a wrong label mat
 irreplaceable state (`world` is rebuilt from the TDB). `scripts/backup-db.sh` runs
 `mysqldump --single-transaction` inside `trinitycore-db` (the password stays in the
 container) and writes `<db>-<timestamp>.sql.gz` to `/opt/wow-server-backups`, deleting
-files older than `KEEP_DAYS` (14). Override with `BACKUP_DIR`, `KEEP_DAYS`, `DBS`.
+files older than `KEEP_DAYS` (14) only when every dump succeeded, so a failing backup never
+ages out the last good dumps. Override with `BACKUP_DIR`, `KEEP_DAYS`, `DBS`.
 
 Install once on the VM, as root (idempotent, overwrites the same file):
 
@@ -188,7 +189,8 @@ Check it: `ls -l /opt/wow-server-backups`. Off-VM copy (optional), from the Prox
 **Restore drill** (never restore over the live DB for a drill; do not restart the worldserver):
 
 ```bash
-docker run -d --name wow-scratch -e MYSQL_ROOT_PASSWORD=scratch mysql:8.4
+docker run -d --name wow-scratch --memory 512m -e MYSQL_ROOT_PASSWORD=scratch mysql:8.4
+until docker exec wow-scratch mysqladmin ping -h127.0.0.1 -uroot -pscratch --silent; do sleep 2; done  # TCP: the init-time temp server is socket-only
 f=$(ls -t /opt/wow-server-backups/characters-*.sql.gz | head -1)
 scripts/restore-db.sh --dry-run "$f"                  # validates the archive only
 DB_CONTAINER=wow-scratch scripts/restore-db.sh "$f"

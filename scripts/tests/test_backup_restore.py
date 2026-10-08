@@ -78,6 +78,17 @@ class BackupRestore(unittest.TestCase):
         self.assertFalse(list(b.glob("*.part")))  # failed auth part and stale part both gone
         self.assertEqual(next(b.glob("characters-*.sql.gz")).stat().st_mode & 0o077, 0)
 
+    def test_failed_run_keeps_old_dumps(self):
+        b = self.tmp / "b"
+        b.mkdir()
+        old = b / "auth-19700101T000000.sql.gz"  # may be the last good backup
+        old.write_bytes(b"x")
+        os.utime(old, (1, 1))
+        (self.tmp / "bin" / "docker").write_text("#!/usr/bin/env bash\nexit 1\n")
+        r = self.run_sh("backup-db.sh")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(old.exists())
+
     def test_restore_rejects_bad_db_name(self):
         f = self.tmp / "a`;drop-1.sql.gz"
         f.write_bytes(gzip.compress(b"select 1;"))
