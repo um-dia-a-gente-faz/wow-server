@@ -55,8 +55,6 @@ QUEST_REWARD_ITEM_COUNT = 4
 QUEST_REWARD_REPUTATIONS_COUNT = 5
 PVP_TEAMS_COUNT = 2
 
-INTERACT_RANGE_YD = 5.0    # matches agent.npc.INTERACT_RANGE_YD
-
 # QuestGiverStatus (best-effort — SharedDefines.h `enum QuestGiverStatus` in
 # real TrinityCore mixes plain states and "reward" bit-flags; only the
 # handful of values worth surfacing to the LLM are named, everything else

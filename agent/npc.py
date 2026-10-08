@@ -57,9 +57,6 @@ from .opcodes import (
 MAX_NPC_TEXT_OPTIONS = 8  # MAX_GOSSIP_TEXT_OPTIONS, GossipDef.h
 MAX_NPC_TEXT_EMOTES = 3   # MAX_GOSSIP_TEXT_EMOTES, GossipDef.h
 
-INTERACT_RANGE_YD = 5.0  # matches actions.MELEE_RANGE_YD — "in range" for interact()
-
-
 # ── Request builders ──────────────────────────────────────────────────────
 
 def build_gossip_hello(guid: int) -> bytes:
