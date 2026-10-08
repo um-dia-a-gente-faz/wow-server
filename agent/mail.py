@@ -43,7 +43,7 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use mail.CMSG_*/SMSG_*)
     CMSG_SEND_MAIL,
     SMSG_SEND_MAIL_RESULT,
     CMSG_GET_MAIL_LIST,
@@ -211,7 +211,7 @@ def _parse_mail_attached_item(payload: bytes, off: int) -> tuple[dict, int]:
 
 
 def _parse_mail_list_entry(payload: bytes, off: int) -> tuple[dict, int]:
-    entry_size = pk.u16(payload, off); off += 2  # byte size of everything below, not needed to parse it
+    _entry_size = pk.u16(payload, off); off += 2  # byte size of everything below, not needed to parse it
     mail_id = struct.unpack_from('<i', payload, off)[0]; off += 4
     sender_type = payload[off]; off += 1
     sender_guid = None

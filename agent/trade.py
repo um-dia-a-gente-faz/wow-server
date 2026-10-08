@@ -44,7 +44,7 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use trade.CMSG_*/SMSG_*)
     CMSG_INITIATE_TRADE,
     CMSG_BEGIN_TRADE,
     CMSG_BUSY_TRADE,

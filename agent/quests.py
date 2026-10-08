@@ -22,7 +22,7 @@ import time
 from . import packets as pk
 
 # ── Opcodes ───────────────────────────────────────────────────────────────
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use quests.CMSG_*/SMSG_*)
     CMSG_QUEST_QUERY,
     SMSG_QUEST_QUERY_RESPONSE,
     CMSG_QUESTGIVER_STATUS_QUERY,

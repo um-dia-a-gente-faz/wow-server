@@ -31,7 +31,7 @@ import struct
 
 from . import packets as pk
 
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use channels.CMSG_*/SMSG_*)
     CMSG_JOIN_CHANNEL,
     CMSG_LEAVE_CHANNEL,
     SMSG_CHANNEL_NOTIFY,

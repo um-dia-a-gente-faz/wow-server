@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """SRP6 auth client (port 3724) for WoW 3.3.5a / TrinityCore."""
 
-import hashlib
 import os
 import socket
 import struct
@@ -105,7 +104,7 @@ def auth_logon(host: str, port: int, username: str, password: str):
 
     B = resp[off:off+32]; off += 32
     g_len = pk.u8(resp, off); off += 1
-    g_val = resp[off:off+g_len]; off += g_len
+    _g_val = resp[off:off+g_len]; off += g_len
     n_len = pk.u8(resp, off); off += 1
     N = resp[off:off+n_len]; off += n_len
     s = resp[off:off+32]; off += 32
@@ -142,14 +141,14 @@ def auth_logon(host: str, port: int, username: str, password: str):
     realm_count = pk.u16(body, off); off += 2
     realm_info = {}
     for i in range(realm_count):
-        rtype = pk.u8(body, off); off += 1
-        locked = pk.u8(body, off); off += 1
+        _rtype = pk.u8(body, off); off += 1
+        _locked = pk.u8(body, off); off += 1
         rflags = pk.u8(body, off); off += 1
         rname, off = pk.cstring(body, off)
         raddr, off = pk.cstring(body, off)
-        rpop = pk.f32(body, off); off += 4
-        rchars = pk.u8(body, off); off += 1
-        rtz = pk.u8(body, off); off += 1
+        _rpop = pk.f32(body, off); off += 4
+        _rchars = pk.u8(body, off); off += 1
+        _rtz = pk.u8(body, off); off += 1
         rid = pk.u8(body, off); off += 1
         if rflags & 0x04:
             off += 5  # build info

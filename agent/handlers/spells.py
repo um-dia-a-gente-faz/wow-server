@@ -7,7 +7,6 @@ from ..router import ROUTER
 from ..opcodes import (
     SMSG_INITIAL_SPELLS,
     SMSG_LEARNED_SPELL,
-    CMSG_CAST_SPELL,
     SMSG_CAST_FAILED,
     SMSG_SPELL_START,
     SMSG_SPELL_GO,

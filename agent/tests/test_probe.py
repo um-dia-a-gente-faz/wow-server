@@ -16,7 +16,6 @@ from unittest import mock
 
 from agent import actions as ac
 from agent import known_targets as kt
-from agent import lines
 from agent import perception as per
 from agent import update_fields as uf
 from agent.reflexes import rest as restmod

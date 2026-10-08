@@ -264,7 +264,7 @@ class AssistTest(unittest.TestCase):
 
     def test_does_not_assist_known_friendly_target(self):
         sess, world = fast_session(position=(530, 0.0, 0.0, 0.0, 0.0))
-        leader = self._combat_ready_leader_and_target(world)
+        self._combat_ready_leader_and_target(world)
         # Give our own player object the same faction as the target -> friendly.
         world.set_my_guid(0xF130000000000099)
         world.update_object(object_at(0xF130000000000099, 0.0, 0.0, 0.0, object_type="player"))

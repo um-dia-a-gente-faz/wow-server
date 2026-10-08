@@ -24,7 +24,7 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use loot.CMSG_*/SMSG_*)
     CMSG_ITEM_QUERY_SINGLE,
     SMSG_ITEM_QUERY_SINGLE_RESPONSE,
     CMSG_AUTOEQUIP_ITEM,
@@ -184,7 +184,7 @@ def parse_item_push_result(payload: bytes) -> dict:
     player_guid = pk.u64(payload, off); off += 8
     received = pk.u32(payload, off); off += 4
     created = pk.u32(payload, off); off += 4
-    send_chat_message = pk.u32(payload, off); off += 4
+    _send_chat_message = pk.u32(payload, off); off += 4
     bag_slot = payload[off]; off += 1
     slot = pk.u32(payload, off); off += 4
     entry = pk.u32(payload, off); off += 4

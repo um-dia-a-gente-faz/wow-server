@@ -136,6 +136,18 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/mypy           # typed allowlist in mypy.ini
 ```
 
+- **Ruff rules land in stages (#386),** one small PR per stage, each with a baseline of
+  the files that violate it that day. Enabled: `E9`, `F` (baseline cleared, keep it empty),
+  `B` (bugbear), `E722` (bare `except`, no violations). Still to come: `BLE001`, `UP`,
+  `SIM`, `C901`. To add a stage: add the rule to `select` in `ruff.toml`, run
+  `ruff check . --fix` and review what it changed, then list each remaining
+  `ruff check . --output-format concise` hit as `"<file>" = ["<rule>"]`.
+- **The baseline is keyed by path.** A file you move keeps its debt: move its line with
+  it. A file that is new must be clean, and gets no line.
+- **An import other modules reach through this one** (`npc.CMSG_BUY_ITEM`) is a re-export,
+  not an unused import: mark it `# noqa: F401` with the reason. `ruff --fix` deletes it
+  otherwise, and nothing fails until the caller runs.
+
 - **Ratchet, never loosen.** `ruff.toml` `per-file-ignores` lists files that already
   violated a rule when the gate landed; fix a file's violations and delete its line.
   New code must be clean.

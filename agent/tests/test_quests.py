@@ -16,7 +16,6 @@ from types import SimpleNamespace
 from agent import actions as ac
 from agent import perception as per
 from agent import quests as qu
-from agent import session as se
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.tests.builders import make_session, reward_list
