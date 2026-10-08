@@ -161,7 +161,7 @@ class NameCache:
     only — a player's name never changes, but caching it across sessions
     buys nothing and the file would grow without bound).
 
-    Not thread-safe on its own; agent/perception.py::WorldState (which owns
+    Not thread-safe on its own; agent/perception/world.py::WorldState (which owns
     an instance) guards every call with its own lock.
     """
 

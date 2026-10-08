@@ -45,7 +45,7 @@ log = logging.getLogger("agent.reflexes.follow")
 
 DEFAULT_DISTANCE_YD = 3.0
 RANGE_MARGIN_YD = 1.0  # start walking once farther than distance + this
-UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask perception.py uses for in_combat
+UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask agent/perception/nearby.py uses for in_combat
 
 
 class FollowReflex:
