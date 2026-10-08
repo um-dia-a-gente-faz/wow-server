@@ -605,7 +605,7 @@ us.** `TradeData::SetItem`/`SetMoney` only ever call `Update(forTrader=true)`
 — which sends `SMSG_TRADE_STATUS_EXTENDED` to *the trade partner*, telling
 them about *our* new offer. Nothing equivalent goes back to the player who
 just changed their own offer (a real client already updated its own window
-optimistically the moment it sent the packet). So `agent/perception.py`'s
+optimistically the moment it sent the packet). So `agent/perception/`'s
 `world.trade["my_items"]`/`"my_gold"` are tracked client-side the moment
 `agent/actions/trade.py` sends `CMSG_SET_TRADE_ITEM`/`CMSG_SET_TRADE_GOLD` — only
 `their_items`/`their_gold` ever arrives from the server. What the sender
