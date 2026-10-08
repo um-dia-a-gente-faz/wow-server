@@ -7,6 +7,7 @@ import time
 
 from .. import mail as mailmod
 from .. import update_fields as uf
+from ..rules import INTERACT_RANGE_YD
 from .base import (
     Action,
     ActionResult,
@@ -29,7 +30,7 @@ from .chat import (chat_text_error, player_name_error)
 
 def _find_nearby_mailbox(session, world):
     """Closest currently-perceived mailbox (ObjectInfo.is_mailbox()) within
-    MAILBOX_INTERACT_RANGE_YD, or None. A gameobject's type only becomes
+    INTERACT_RANGE_YD, or None. A gameobject's type only becomes
     known once its SMSG_GAMEOBJECT_QUERY_RESPONSE arrives (queued
     automatically the moment it's first perceived, same as its name) — a
     mailbox just perceived this instant may not be recognized yet."""
@@ -41,7 +42,7 @@ def _find_nearby_mailbox(session, world):
         if not obj.is_mailbox():
             continue
         dist = obj.distance_to(session.player_position)
-        if dist is None or dist > mailmod.MAILBOX_INTERACT_RANGE_YD:
+        if dist is None or dist > INTERACT_RANGE_YD:
             continue
         if best_dist is None or dist < best_dist:
             best, best_dist = obj, dist
@@ -68,7 +69,7 @@ def _mail_item_flags(world, bag: int, slot: int):
 @register
 class OpenMailboxAction(Action):
     name = "open_mailbox"
-    description = (f"Open the nearest mailbox within {mailmod.MAILBOX_INTERACT_RANGE_YD:.0f} yd "
+    description = (f"Open the nearest mailbox within {INTERACT_RANGE_YD:.0f} yd "
                     "and request its inbox (check the perception snapshot's `mailbox` after "
                     "calling this).")
     params = {}
