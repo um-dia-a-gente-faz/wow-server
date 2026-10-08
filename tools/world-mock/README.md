@@ -82,11 +82,13 @@ Fields compose (`FaultPlan(split_write=3, drop_after=8, truncate=True)`). Known 
 Run the mock as a process and let the fault list repeat for as long as the soak runs:
 
 ```bash
-MOCK_FAULTS=';;;drop_after=40,reset;;stall=20,stall_at=30;bad_crypt_from=25' \
+MOCK_FAULTS=';;;drop_after=8,reset;;stall=20,stall_at=6;bad_crypt_from=6' \
 MOCK_FAULTS_LOOP=1 python3 tools/world-mock/server.py
 ```
 
 `MOCK_FAULTS_LOOP=1` cycles the list (in code: `faults=itertools.cycle(plans)`), so the
 example gives three healthy logins, a reset, a healthy one, a 20 s stall and a desync,
-then starts over. The harness reads recovery from the agent side (reconnect count, time
+then starts over. Packet numbers count what the mock sends on one connection: 8 packets
+per login and only a handful of scripted replies after that (it does not answer
+`CMSG_PING` or `CMSG_KEEP_ALIVE`), so a fault set past 8 never fires. The harness reads recovery from the agent side (reconnect count, time
 back to "online", thread count, `dropped_packets`).

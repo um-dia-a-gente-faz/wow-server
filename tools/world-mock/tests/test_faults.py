@@ -24,6 +24,7 @@ from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_conne
 BACKOFF_S = 1.0     # handed to an injected sleep, never really slept
 SESSION_S = 1.0     # how long a healthy session's think loop runs before it ends cleanly
 RECOVER_S = 20.0    # upper bound for a whole fault -> reconnect -> healthy session run
+MAX_BACKOFFS = 5    # more backoffs than any plan here needs (the most is 3)
 
 
 def wait_for(pred, timeout=5.0):
@@ -53,6 +54,8 @@ class FaultPlanParseTest(unittest.TestCase):
 
 class FaultInjectionTest(unittest.TestCase):
     def setUp(self):
+        # Once per test, not per start(): a subTest's mocks stay open until the test ends.
+        self.threads_before = threading.active_count()
         # Captures (and silences) every log record; tearDown checks none leaks the password.
         self.logs = self.enterContext(self.assertLogs(level="DEBUG"))
         self.log = logging.getLogger("test")
@@ -66,7 +69,6 @@ class FaultInjectionTest(unittest.TestCase):
                         f"thread leak: {threading.enumerate()}")
 
     def start(self, *faults):
-        self.threads_before = threading.active_count()
         self.mock = server.WorldMock(faults=faults)
         self.cfg = SimpleNamespace(
             wow_host="127.0.0.1", wow_auth_port=self.mock.auth_port, account=server.DEFAULT_ACCOUNT,
@@ -91,8 +93,16 @@ class FaultInjectionTest(unittest.TestCase):
             return self.sessions[-1]
 
         t0 = time.monotonic()
+
+        def sleep(backoff):
+            # Bounds the supervisor from the inside: without it a login that always
+            # fails would loop until the CI job timeout.
+            sleeps.append(backoff)
+            if len(sleeps) > MAX_BACKOFFS or time.monotonic() - t0 > RECOVER_S:
+                raise AssertionError(f"supervisor did not recover: backoffs {sleeps}")
+
         _supervise_connection(build, lambda s: _run_think_loop(s, self.cfg, SESSION_S, time.monotonic()),
-                              self.log, sleep=sleeps.append, initial_backoff=BACKOFF_S)
+                              self.log, sleep=sleep, initial_backoff=BACKOFF_S)
         self.assertLess(time.monotonic() - t0, RECOVER_S)
         self.assertTrue(burst_applied(self.sessions[-1]), "the session after the fault is not healthy")
         return sleeps
