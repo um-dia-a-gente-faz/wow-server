@@ -74,7 +74,6 @@ Fields compose (`FaultPlan(split_write=3, drop_after=8, truncate=True)`). Known 
 - The mock answers `CMSG_PING` with `SMSG_PONG` (echoing the id) and sends nothing periodically, so a
   stall longer than `session.DEAD_SOCKET_TIMEOUT_S` ends the session (#404). Tests shorten the
   keepalive, ping and deadline constants with `mock.patch.object`.
-- After a desync the agent's `logout()` still waits on the dead stream (#406).
 - Plans are handed out per login attempt in arrival order and looked up by account, so
   with several agents on one account the assignment is not deterministic.
 
