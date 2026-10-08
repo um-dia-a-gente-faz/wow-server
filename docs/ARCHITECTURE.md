@@ -169,9 +169,9 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 
 | Area | Modules | Owns |
 |---|---|---|
-| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). |
+| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). `rules.py` holds game-rule constants (ranges, level margin) shared by candidates and actions; it imports nothing. |
 | Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `transport.py`, `opcodes.py` (all opcode constants), `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
-| State | `state.py` (`GameState`), `perception.py` (`WorldState`, snapshots), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
+| State | `state.py` (`GameState`), `perception/` (`WorldState`, one snapshot builder per section), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |
 | Domain builders and parsers | `npc.py`, `quests.py`, `loot.py`, `mail.py`, `trade.py`, `spells.py`, `channels.py`, `names.py`, `items.py`, `item_compare.py`, `death.py`, `movement.py`, `group.py` | pure request builders and response parsers (and `death.py`/`movement.py` flows) used by handlers and actions. |
 | Acting | `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |

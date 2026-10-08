@@ -269,7 +269,7 @@ attached.
 Expected categories (fill in as they occur, don't force a fit):
 
 - **Perception gaps** — agent can't see something it needs to (an item, an
-  NPC, a corpse) because `agent/perception.py` doesn't surface it.
+  NPC, a corpse) because `agent/perception/` doesn't surface it.
 - **Movement stuck** — pathing fails against terrain (evidence toward
   UM-49's navmesh/pathfinding sidecar).
 - **Quest logic** — wrong NPC targeted, objective missed or misread.

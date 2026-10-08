@@ -76,13 +76,10 @@ chosen candidate is executed, so a stale candidate fails safely.
 
 from .handles import UnknownHandle
 from . import item_compare
+from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
 
 MAX_CANDIDATES = 15
 
-MELEE_RANGE_YD = 5.0      # agent.actions.MELEE_RANGE_YD (auto_attack's check)
-INTERACT_RANGE_YD = 5.0   # agent.npc / agent.quests INTERACT_RANGE_YD, loot range too
-APPROACH_MAX_YD = 40.0    # move_towards is straight-line only (no navmesh): short hops
-ATTACK_LEVEL_MARGIN = 3   # don't offer to pull mobs more than this many levels above us
 
 MAX_THREATS = 3
 MAX_LOOT = 3
