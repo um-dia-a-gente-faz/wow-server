@@ -1,5 +1,7 @@
 # Map engine spike (UM-77)
 
+> **Archived spike.** Outcome: stay on Leaflet, do not adopt MapLibre. Date: 2026-10-03. Issue: UM-77 (GitHub #80). Superseded by: nothing.
+
 Date: 2026-10-03. Issue: UM-77 (GitHub #80). Feeds UM-78 (click-to-zoom navigation,
 GitHub #79). The owner wants the console map to behave like the in-game world map and
 floated "our own map engine". This note decides the v2 approach before it is built.
@@ -37,11 +39,11 @@ The owner decisions this needs are listed at the end.
 - **Done, with a local 3.3.5a enUS client (read-only):** read the DBCs out of the MPQs,
   extracted continent and zone art with the repo's own `extract_maps.py` code,
   extracted all 3,636 minimap tiles of the four continents and built a Kalimdor pyramid,
-  built a static prototype (`docs/map-engine-spike/prototype.html`) and a benchmark page
+  built a static prototype (`docs/spikes/map-engine-spike/prototype.html`) and a benchmark page
   (`bench.html`), and drove both in headless Chrome 154.
 - **Not done:** nothing ran against the live server or database (the prototype uses
   stub players); MapLibre was only built for the benchmark, not for the painted view; no
-  Linear/GitHub issues were created.
+  GitHub issues were created.
 - **Whether the local client is byte-identical to the VM's** `/opt/wow-server/client` is
   **[U]**. The pipeline code is the same, so the art should be.
 - **Screenshots are not committed.** This repository is public and `CLAUDE.md`/`.gitignore`
@@ -367,23 +369,23 @@ directory **outside the repository**.
 
 ```bash
 # 1. art, DBCs, data.json and the Kalimdor tile pyramid (about 20 s)
-PYTHONPATH=<dir with mpyq.py> python3 docs/map-engine-spike/build_art.py \
+PYTHONPATH=<dir with mpyq.py> python3 docs/spikes/map-engine-spike/build_art.py \
     --client "/path/to/World of Warcraft 3.3.5a" --out /tmp/spike-out \
     --minimap Kalimdor --zones Durotar,Mulgore,Barrens,Teldrassil,Darkshore,Ashenvale
 
 # 2. the pages and libraries (Leaflet 1.9.4 from npm; once #123 merges, copy
 #    tools/wowmap/static/leaflet.* instead; MapLibre only for bench.html)
-cp docs/map-engine-spike/*.html /tmp/spike-out/ && mkdir -p /tmp/spike-out/vendor
+cp docs/spikes/map-engine-spike/*.html /tmp/spike-out/ && mkdir -p /tmp/spike-out/vendor
 # put leaflet.js, leaflet.css (and images/) into /tmp/spike-out/vendor;
 # put maplibre-gl.mjs, maplibre-gl-shared.mjs, maplibre-gl-worker.mjs, maplibre-gl.css there too
 
 # 3. serve and drive
 (cd /tmp/spike-out && python3 -m http.server 8765 &)
-cd docs/map-engine-spike
+cd docs/spikes/map-engine-spike
 OUT=/tmp/spike-shots node proto_check.mjs       # prints state after each step, saves shots
 node bench_run.mjs gpu                          # or: swiftshader | gpu <libs> <counts> <cpuThrottle>
 ```
 
-Files in `docs/map-engine-spike/`: `build_art.py`, `prototype.html`, `bench.html`,
+Files in `docs/spikes/map-engine-spike/`: `build_art.py`, `prototype.html`, `bench.html`,
 `cdp.mjs`, `proto_check.mjs`, `bench_run.mjs`. All throwaway spike tooling, not part of
 wowmap and not tested by CI beyond `py_compile`.

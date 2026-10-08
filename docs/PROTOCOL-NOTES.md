@@ -3,7 +3,7 @@
 Wire-format notes for the `agent/` client, **each checked against TrinityCore
 branch `3.3.5`** (paths relative to `src/server/game/`). Only add a line here if
 you checked it against that source too, and name the file it came from. The
-perception work that consumes this is tracked in Linear **UM-32** (block framing +
+perception work that consumes this is tracked in **UM-32** (block framing +
 movement block) and **UM-33** (VALUES_UPDATE mask + field mapping).
 
 All integers are little-endian.

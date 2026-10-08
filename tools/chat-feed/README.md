@@ -1,6 +1,6 @@
 # Chat-feed sidecar prototype
 
-This is the prototype recommended by [the global-chat-feed spike](../../docs/CHAT_FEED_SPIKE.md)
+This is the prototype recommended by [the global-chat-feed spike](../../docs/spikes/CHAT_FEED_SPIKE.md)
 for [ROADMAP item 4](../../docs/ROADMAP.md). It follows the TrinityCore
 `Server.log` file, normalizes ChatLogScript payloads, keeps a bounded in-memory
 replay buffer, and publishes public messages using Server-Sent Events (SSE).

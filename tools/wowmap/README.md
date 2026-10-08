@@ -573,7 +573,7 @@ JS tests: `node --test tools/wowmap/tests/js/*.test.js` (pure functions in `form
 
 The inspect drawer shows the character's body as a 3D model (drag to rotate, wheel to
 zoom) when `MODELS_DIR` holds that race and gender. Equipment is not drawn yet. The
-spike, sizes and limits are in `docs/CHARACTER-MODEL-SPIKE.md`.
+spike, sizes and limits are in `docs/spikes/CHARACTER-MODEL-SPIKE.md`.
 
 Like the icons, the art comes from the user-supplied client, so it is extracted on the
 VM and never committed. Run once, with `mpyq` and `Pillow` available:

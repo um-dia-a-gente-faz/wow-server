@@ -76,7 +76,7 @@ class DbcTables:
 
         # The four continent maps are the WorldMapArea rows with AreaID 0 (Kalimdor,
         # Azeroth, Expansion01, Northrend), same field layout as a zone; keyed by MapID.
-        # WorldMapContinent.dbc is not needed (docs/MAP_ENGINE_SPIKE.md, section 1).
+        # WorldMapContinent.dbc is not needed (docs/spikes/MAP_ENGINE_SPIKE.md, section 1).
         self.continent_rects = {}
         self.continent_dirs = {}
         for r in self._wm:
