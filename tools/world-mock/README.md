@@ -57,7 +57,7 @@ World packets are numbered from 1 after the unencrypted `SMSG_AUTH_CHALLENGE`:
 | `drop_after=N` | hang up (FIN) after N world packets | supervisor reconnects exactly once, backoff resets after a good login, no thread left |
 | `reset` | with `drop_after`: RST instead of FIN | same; a RST also discards unread data, so it may land during login |
 | `truncate` | with `drop_after`: only half of packet N is sent | a partial packet ends the session, one reconnect |
-| `stall=S`, `stall_at=N` | S seconds of silence, socket open, before packet N | think loop keeps its period, recv thread alive, session carries on afterwards |
+| `stall=S`, `stall_at=N` | S seconds of silence, socket open, before packet N | short: think loop keeps its period, session carries on. Longer than the dead-socket deadline: one reconnect (#404), keepalive and ping sent meanwhile |
 | `split_write=B` | every write in B-byte chunks, 0.5 ms apart | `Transport` reassembles headers and payloads, nothing dropped |
 | `corrupt_opcode=OP` | that opcode's payload becomes `0xFF` bytes | `dropped_packets` counts it, session and framing survive |
 | `bad_crypt_from=N` | headers unencrypted from packet N (RC4 desync) | mid-packet timeout ends the session, one reconnect, no busy loop |
@@ -71,8 +71,9 @@ Fields compose (`FaultPlan(split_write=3, drop_after=8, truncate=True)`). Known 
 
 - `auth_reject` hangs up after the 3-byte failure; TrinityCore leaves the socket open,
   which the agent does not handle yet (#405).
-- A stall that never ends is not detected by the agent at all (#404), so the test only
-  covers a stall the session should survive. The 15 s keepalive is not asserted.
+- The mock answers `CMSG_PING` with `SMSG_PONG` (echoing the id) and sends nothing periodically, so a
+  stall longer than `session.DEAD_SOCKET_TIMEOUT_S` ends the session (#404). Tests shorten the
+  keepalive, ping and deadline constants with `mock.patch.object`.
 - After a desync the agent's `logout()` still waits on the dead stream (#406).
 - Plans are handed out per login attempt in arrival order and looked up by account, so
   with several agents on one account the assignment is not deterministic.

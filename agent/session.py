@@ -57,6 +57,18 @@ CHAR_CREATE_MAX_SKIPPED_PACKETS = 32
 CHAR_CREATE_NAME_IN_USE = 50  # 0x32
 
 
+# Liveness of the world socket (#404), checked against TrinityCore 3.3.5 WorldSocket.cpp /
+# WorldSession.cpp / worldserver.conf.dist. CMSG_KEEP_ALIVE gets no reply but resets the
+# server's idle timer (SocketTimeOutTimeActive, 60 s). CMSG_PING gets SMSG_PONG, but pings
+# less than 27 s apart count as over-speed and kick past MaxOverspeedPings (2), so the ping
+# period stays above 27 s (the real client uses 30 s). The deadline is the longest silence
+# (no packet of any kind) tolerated before the socket is declared dead and the reconnect
+# supervisor takes over; it must exceed PING_INTERVAL_S plus a round trip.
+KEEPALIVE_INTERVAL_S = 15.0
+PING_INTERVAL_S = 30.0
+DEAD_SOCKET_TIMEOUT_S = 45.0
+
+
 class WoWSession(Transport, GameState):
     """Manages a single character's World of Warcraft session."""
 
@@ -356,21 +368,33 @@ class WoWSession(Transport, GameState):
                 self.unexpected_disconnect = True
 
     def _recv_until_stopped(self):
-        last_keepalive = time.monotonic()
+        now = time.monotonic()
+        last_rx = last_keepalive = last_ping = now
+        ping_id = 0
         while self._running:
             self.sock.settimeout(0.5)
             try:
                 opcode, payload = self._recv_packet()
             except (socket.timeout, TimeoutError):
                 now = time.monotonic()
-                if now - last_keepalive > 15:
+                if now - last_rx > DEAD_SOCKET_TIMEOUT_S:
+                    # #404: connection open, nothing arrives, not even SMSG_PONG.
+                    log.warning("world socket silent for %.0f s, treating it as dead", now - last_rx)
+                    self._in_world = False  # logout() would only wait on a socket that answers nothing
+                    return
+                if now - last_keepalive > KEEPALIVE_INTERVAL_S:
                     self._send_packet(CMSG_KEEP_ALIVE)
                     last_keepalive = now
+                if now - last_ping > PING_INTERVAL_S:
+                    ping_id += 1
+                    self._send_packet(CMSG_PING, struct.pack('<II', ping_id, 0))
+                    last_ping = now
                 ROUTER.tick(self.ctx)
                 continue
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
                 return
+            last_rx = time.monotonic()
             self._dispatch_guarded(opcode, payload)
             ROUTER.tick(self.ctx)
 
