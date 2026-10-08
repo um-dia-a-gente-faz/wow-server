@@ -25,6 +25,7 @@ from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_conne
 BACKOFF_S = 1.0     # handed to an injected sleep, never really slept
 SESSION_S = 1.0     # how long a healthy session's think loop runs before it ends cleanly
 RECOVER_S = 20.0    # upper bound for a whole fault -> reconnect -> healthy session run
+LOGOUT_AFTER_DROP_S = 1.0   # logout() after a lost connection (5 s before #406; generous for CI)
 MAX_BACKOFFS = 5    # more backoffs than any plan here needs (the most is 3)
 
 
@@ -104,6 +105,15 @@ class FaultInjectionTest(unittest.TestCase):
             return self.sessions[-1]
 
         t0 = time.monotonic()
+        self.logout_s = []     # how long each session's logout() took (#406)
+        real_logout = session_mod.WoWSession.logout
+
+        def timed_logout(sess):
+            start = time.monotonic()
+            real_logout(sess)
+            self.logout_s.append(time.monotonic() - start)
+
+        self.enterContext(mock.patch.object(session_mod.WoWSession, "logout", timed_logout))
 
         def sleep(backoff):
             # Bounds the supervisor from the inside: without it a login that always
@@ -125,6 +135,7 @@ class FaultInjectionTest(unittest.TestCase):
                      FaultPlan(drop_after=6, truncate=True)):
             with self.subTest(plan=plan):
                 self.assertEqual(self.supervise(plan), [BACKOFF_S])
+                self.assertLess(self.logout_s[0], LOGOUT_AFTER_DROP_S)    # #406: nobody to say goodbye to
                 self.assertEqual((self.mock.auth_connections, self.mock.world_connections), (2, 2))
                 # A RST also discards what the client has not read yet, so it can land
                 # during login (a failed attempt) instead of in the session: either way
@@ -167,6 +178,7 @@ class FaultInjectionTest(unittest.TestCase):
         self.assertEqual(sleeps, [BACKOFF_S])
         self.assertEqual((self.mock.auth_connections, self.mock.world_connections), (2, 2))
         self.assertTrue(self.sessions[0].unexpected_disconnect)
+        self.assertLess(self.logout_s[0], LOGOUT_AFTER_DROP_S)
         self.assertFalse(self.sessions[-1].unexpected_disconnect)
         # Sent during the stall (the mock reads them once it wakes): keepalive and a ping
         # with the TrinityCore layout, uint32 ping id + uint32 latency (HandlePing).
@@ -217,12 +229,28 @@ class FaultInjectionTest(unittest.TestCase):
     def test_bad_header_crypt_fails_cleanly_and_reconnects_once(self):
         # A desynced RC4 stream turns headers into noise; the agent ends up waiting for a
         # payload that never comes and gives up after MID_PACKET_TIMEOUT_S (30 s live).
-        # Most of this test's ~7 s is logout() waiting 5 s on the dead stream (#406).
         with mock.patch.object(transport, "MID_PACKET_TIMEOUT_S", 0.2):
             sleeps = self.supervise(FaultPlan(bad_crypt_from=6))
         self.assertEqual(sleeps, [BACKOFF_S])            # one backoff, not a busy loop
         self.assertEqual((self.mock.auth_connections, self.mock.world_connections), (2, 2))
         self.assertTrue(self.sessions[0].unexpected_disconnect)
+        self.assertLess(self.logout_s[0], LOGOUT_AFTER_DROP_S)
+
+    def test_graceful_logout_on_a_healthy_session_still_waits_for_logout_complete(self):
+        self.start()
+        sess = self.login()
+        self.assertTrue(wait_for(lambda: burst_applied(sess)))
+        real_recv, seen = session_mod.WoWSession._recv_packet, []
+
+        def recording_recv(self):
+            seen.append(real_recv(self))
+            return seen[-1]
+
+        with mock.patch.object(session_mod.WoWSession, "_recv_packet", recording_recv):
+            sess.logout()
+        self.assertEqual(len(self.mock.packets_received(op.CMSG_LOGOUT_REQUEST)), 1)
+        self.assertEqual(seen[-1][0], op.SMSG_LOGOUT_COMPLETE)    # waited for the reply
+        self.assertIsNone(sess.sock)
 
     # ── auth ─────────────────────────────────────────────────────────────
 

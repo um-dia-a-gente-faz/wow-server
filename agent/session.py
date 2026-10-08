@@ -269,7 +269,9 @@ class WoWSession(Transport, GameState):
         self._running = False
         if self._recv_thread:
             self._recv_thread.join(timeout=5)
-        if self._in_world:
+        # #406: after an unexpected disconnect (drop, desync, dead socket, server-forced
+        # logout) nobody is there to answer a request, so just close.
+        if self._in_world and not self.unexpected_disconnect:
             self._in_world = False
             try:
                 self._send_packet(CMSG_LOGOUT_REQUEST)
@@ -380,7 +382,6 @@ class WoWSession(Transport, GameState):
                 if now - last_rx > DEAD_SOCKET_TIMEOUT_S:
                     # #404: connection open, nothing arrives, not even SMSG_PONG.
                     log.warning("world socket silent for %.0f s, treating it as dead", now - last_rx)
-                    self._in_world = False  # logout() would only wait on a socket that answers nothing
                     return
                 if now - last_keepalive > KEEPALIVE_INTERVAL_S:
                     self._send_packet(CMSG_KEEP_ALIVE)
