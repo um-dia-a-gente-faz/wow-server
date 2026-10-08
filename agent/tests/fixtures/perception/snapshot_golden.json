@@ -1,0 +1,203 @@
+{
+ "channels": [
+  "General - Elwynn"
+ ],
+ "chat_inbox": [
+  {
+   "from": "Bob",
+   "text": "hi"
+  }
+ ],
+ "corpse_position": {
+  "map": 0,
+  "x": 1.0,
+  "y": 2.0,
+  "z": 3.0
+ },
+ "equipment": {
+  "0": {
+   "count": 1,
+   "entry": 1234,
+   "guid": "o5",
+   "name": null,
+   "template": {
+    "inventory_type": 1,
+    "quality": 2,
+    "stats": []
+   }
+  }
+ },
+ "group": {
+  "is_leader": false,
+  "leader_guid": "p3",
+  "leader_name": "Bob",
+  "loot_method": 1,
+  "members": [
+   {
+    "guid": "p3",
+    "name": "Bob"
+   }
+  ],
+  "raid": false
+ },
+ "has_new_mail": true,
+ "inventory": [
+  {
+   "count": 4,
+   "entry": 159,
+   "guid": "o6",
+   "name": "Tough Jerky",
+   "slot": 23,
+   "template": {}
+  }
+ ],
+ "is_dead": false,
+ "is_ghost": false,
+ "mailbox": {
+  "mailbox_guid": "p4",
+  "mails": null,
+  "total_records": null
+ },
+ "nearby_objects": [
+  {
+   "distance": 4.0,
+   "entry": null,
+   "guid": "p4",
+   "in_combat": false,
+   "name": null,
+   "position": {
+    "map": 0,
+    "x": 14.0,
+    "y": 10.0,
+    "z": 0.0
+   },
+   "type": "gameobject"
+  },
+  {
+   "distance": 14.1,
+   "entry": 1234,
+   "guid": "o5",
+   "in_combat": false,
+   "name": null,
+   "position": {
+    "map": 0,
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
+   },
+   "type": "item"
+  }
+ ],
+ "nearby_players": [
+  {
+   "distance": 3.0,
+   "entry": null,
+   "guid": "p3",
+   "in_combat": false,
+   "in_group": true,
+   "name": null,
+   "position": {
+    "map": 0,
+    "x": 13.0,
+    "y": 10.0,
+    "z": 0.0
+   },
+   "type": "player"
+  }
+ ],
+ "nearby_units": [
+  {
+   "distance": 1.0,
+   "entry": 6369,
+   "guid": "p1",
+   "in_combat": false,
+   "name": null,
+   "position": {
+    "map": 0,
+    "x": 11.0,
+    "y": 10.0,
+    "z": 0.0
+   },
+   "quest_giver_status": "available",
+   "type": "unit"
+  },
+  {
+   "distance": 2.0,
+   "entry": 6368,
+   "guid": "p2",
+   "health_pct": 0.5,
+   "in_combat": false,
+   "level": 3,
+   "name": "Wolf",
+   "position": {
+    "map": 0,
+    "x": 12.0,
+    "y": 10.0,
+    "z": 0.0
+   },
+   "type": "unit"
+  }
+ ],
+ "pending_invite": {
+  "inviter": "Bob"
+ },
+ "position": {
+  "map": 0,
+  "x": 10.0,
+  "y": 10.0,
+  "z": 0.0
+ },
+ "quest_log": [
+  {
+   "counters": [
+    3,
+    0,
+    0,
+    0
+   ],
+   "objectives": [
+    {
+     "count": 3,
+     "entry": 6368,
+     "gameobject": false,
+     "name": "Wolf",
+     "needed": 8,
+     "text": "Wolf slain: 3/8"
+    },
+    {
+     "count": null,
+     "item": 99,
+     "needed": 2,
+     "text": "item 99: ?/2"
+    }
+   ],
+   "objectives_text": "Kill 8",
+   "quest_id": 33,
+   "slot": 0,
+   "state": 0,
+   "state_name": "incomplete",
+   "time": 0,
+   "title": "Wolves"
+  }
+ ],
+ "trade": {
+  "initiated_by_me": true,
+  "last_activity_at": 100.0,
+  "my_accepted": false,
+  "my_gold": 0,
+  "my_items": {},
+  "opened_at": 100.0,
+  "partner_guid": "p3",
+  "phase": "requested",
+  "their_accepted": false,
+  "their_gold": 0,
+  "their_items": {}
+ },
+ "window": {
+  "kind": "gossip",
+  "npc_guid": "p1",
+  "options": [],
+  "quests": [],
+  "text_id": 7
+ }
+}

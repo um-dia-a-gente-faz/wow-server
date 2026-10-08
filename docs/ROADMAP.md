@@ -51,7 +51,7 @@ straight-line position interpolation between their own update-object/
 
 The step-by-step plan that used to sit here was executed and removed; the wire formats
 it relied on are in `docs/PROTOCOL-NOTES.md`, the code in `agent/update_object.py`,
-`agent/update_fields.py` and `agent/perception.py`.
+`agent/update_fields.py` and `agent/perception/`.
 
 ### Phase 2 — basic actions
 
@@ -330,7 +330,7 @@ reveal about what's hard.
 
 ## Pickup order for the agent track
 
-1. Perception (`agent/session.py` + `agent/perception.py`), steps 1-8 above —
+1. Perception (`agent/session.py` + `agent/perception/`), steps 1-8 above —
    single highest-leverage task, fully speced, no dependencies.
 2. `face`/`set_target` → `interact` → combat basics → `loot` — each proves
    out perceive→act without needing pathfinding yet.
