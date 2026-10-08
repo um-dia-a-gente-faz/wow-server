@@ -18,6 +18,7 @@ from server import FaultPlan  # noqa: E402
 
 from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
+from agent import session as session_mod  # noqa: E402
 from agent import transport  # noqa: E402
 from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_connection  # noqa: E402
 
@@ -50,6 +51,16 @@ class FaultPlanParseTest(unittest.TestCase):
              FaultPlan(corrupt_opcode=op.SMSG_UPDATE_OBJECT)])
         with self.assertRaises(KeyError):
             FaultPlan.parse("no_such_fault=1")
+
+
+class LivenessConstantsTest(unittest.TestCase):
+    def test_ping_interval_respects_the_server_overspeed_floor(self):
+        # WorldSocket::HandlePing counts pings less than 27 s apart and kicks past
+        # MaxOverspeedPings (2); SocketTimeOutTimeActive (60 s) kicks a silent client.
+        self.assertGreater(session_mod.PING_INTERVAL_S, 27)
+        self.assertGreater(session_mod.DEAD_SOCKET_TIMEOUT_S, session_mod.PING_INTERVAL_S)
+        self.assertLess(session_mod.DEAD_SOCKET_TIMEOUT_S, 60)
+        self.assertLess(session_mod.KEEPALIVE_INTERVAL_S, 60)
 
 
 class FaultInjectionTest(unittest.TestCase):
@@ -141,7 +152,38 @@ class FaultInjectionTest(unittest.TestCase):
         self.assertTrue(sess.recv_thread_alive())
         self.assertFalse(sess.unexpected_disconnect)
         self.assertTrue(wait_for(lambda: burst_applied(sess)), "no recovery after the stall")
-        # Not covered: the 15 s keepalive, and a stall that never ends (nothing detects it, #404).
+
+    def short_liveness(self):
+        """Keepalive, ping and dead-socket deadline shrunk (checked on 0.5 s recv ticks) so a test needs seconds, not minutes."""
+        for name, value in (("KEEPALIVE_INTERVAL_S", 0.1), ("PING_INTERVAL_S", 0.2), ("DEAD_SOCKET_TIMEOUT_S", 1.2)):
+            self.enterContext(mock.patch.object(session_mod, name, value))
+
+    def test_stall_longer_than_the_deadline_is_a_dead_socket_and_reconnects_once(self):
+        # #404: the socket stays open but the server says nothing. Stall before packet 9, the
+        # reply to the quest query the agent sends once the login burst is applied.
+        self.short_liveness()
+        self.enterContext(mock.patch.dict(globals(), SESSION_S=3.0))   # outlast the 1.2 s deadline
+        sleeps = self.supervise(FaultPlan(stall=3.0, stall_at=9))
+        self.assertEqual(sleeps, [BACKOFF_S])
+        self.assertEqual((self.mock.auth_connections, self.mock.world_connections), (2, 2))
+        self.assertTrue(self.sessions[0].unexpected_disconnect)
+        self.assertFalse(self.sessions[-1].unexpected_disconnect)
+        # Sent during the stall (the mock reads them once it wakes): keepalive and a ping
+        # with the TrinityCore layout, uint32 ping id + uint32 latency (HandlePing).
+        self.assertTrue(wait_for(lambda: self.mock.packets_received(op.CMSG_KEEP_ALIVE)))
+        self.assertTrue(wait_for(lambda: self.mock.packets_received(op.CMSG_PING)))
+        self.assertEqual(len(self.mock.packets_received(op.CMSG_PING)[0]), 8)
+
+    def test_quiet_server_that_answers_pings_is_not_a_dead_socket(self):
+        self.short_liveness()
+        self.start()
+        sess = self.login()
+        self.assertTrue(wait_for(lambda: burst_applied(sess)))
+        time.sleep(2 * session_mod.DEAD_SOCKET_TIMEOUT_S)    # silent except for pong replies
+        self.assertFalse(sess.unexpected_disconnect)
+        self.assertTrue(sess.recv_thread_alive())
+        self.assertGreaterEqual(len(self.mock.packets_received(op.CMSG_PING)), 3)
+        self.assertEqual(self.mock.world_connections, 1)
 
     # ── split writes ─────────────────────────────────────────────────────
 

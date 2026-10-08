@@ -360,6 +360,8 @@ class WorldMock:
                 slot = uf.PLAYER_QUEST_LOG_1_1
                 send(op.SMSG_UPDATE_OBJECT, bd.update_object(bd.values_block(
                     SELF_GUID, bd.values_body({slot: 0, slot + 1: 0}))))
+        elif opcode == op.CMSG_PING:
+            send(op.SMSG_PONG, payload[:4])      # HandlePing: SMSG_PONG echoes the uint32 ping id
         elif opcode == op.CMSG_LOGOUT_REQUEST:
             send(op.SMSG_LOGOUT_COMPLETE)
 
