@@ -9,7 +9,7 @@ import unittest
 
 from agent import actions as ac
 from agent import candidates as cand
-from agent import llm
+from agent import death, llm  # noqa: F401  death registers release_spirit/reclaim_corpse
 from agent.reflexes import follow, rest  # noqa: F401  register follow/assist/stop_following/rest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"

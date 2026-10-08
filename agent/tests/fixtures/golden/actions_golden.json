@@ -1254,6 +1254,24 @@
    }
   },
   {
+   "description": "After dying, release your spirit to become a ghost at the graveyard. Required before a corpse run/reclaim_corpse.",
+   "name": "release_spirit",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
+   "description": "Walk to your corpse and resurrect there. Falls back to the nearest spirit healer if the corpse can't be reached (obstacle, out of range, or no corpse perceived). Asks the server for the corpse position if unknown. Requires release_spirit first.",
+   "name": "reclaim_corpse",
+   "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+   }
+  },
+  {
    "description": "Follow a nearby party member/player by name, keeping roughly `distance` yards away and matching their target if assist is on, until stop_following is called or the leader is lost.",
    "name": "follow",
    "parameters": {
@@ -2136,6 +2154,30 @@
      "required": [
       "mail_id"
      ],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "After dying, release your spirit to become a ghost at the graveyard. Required before a corpse run/reclaim_corpse.",
+    "name": "release_spirit",
+    "parameters": {
+     "properties": {},
+     "required": [],
+     "type": "object"
+    }
+   },
+   "type": "function"
+  },
+  {
+   "function": {
+    "description": "Walk to your corpse and resurrect there. Falls back to the nearest spirit healer if the corpse can't be reached (obstacle, out of range, or no corpse perceived). Asks the server for the corpse position if unknown. Requires release_spirit first.",
+    "name": "reclaim_corpse",
+    "parameters": {
+     "properties": {},
+     "required": [],
      "type": "object"
     }
    },
