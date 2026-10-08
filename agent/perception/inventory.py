@@ -1,9 +1,10 @@
 """The `equipment` and `inventory` sections of the snapshot (UM-42)."""
 
 from .. import update_fields as uf
+from ..model import Item
 
 
-def build_equipment_and_inventory(me, objects, items) -> tuple[dict, list]:
+def build_equipment_and_inventory(me, objects, items) -> tuple[dict[int, Item], list[Item]]:
     """UM-42: equipment (slot -> item dict, slots 0-18) and inventory
     (list of item dicts, slots 19-38: 4 equipped-bag-container slots +
     16 backpack slots) built from the self player's own INV_SLOT_HEAD/
@@ -18,11 +19,11 @@ def build_equipment_and_inventory(me, objects, items) -> tuple[dict, list]:
     if me is None:
         return {}, []
     slot_guids = uf.decode_equipment_and_inventory_guids(me.raw_fields)
-    equipment: dict[int, dict] = {}
-    inventory: list = []
+    equipment: dict[int, Item] = {}
+    inventory: list[Item] = []
     for slot, guid in slot_guids.items():
         item_obj = objects.get(guid)
-        d = {"guid": guid}
+        d: Item = {"guid": guid}
         if item_obj is not None:
             d["entry"] = item_obj.entry
             d["name"] = item_obj.name or None

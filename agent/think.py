@@ -21,6 +21,8 @@ from . import trade as tr
 from . import update_fields as uf
 from .brain import Brain, BrainError, Decision
 from .handles import UnknownHandle
+from .llm import LLMError
+from .model import ActionRecord, KnownSpell, Me, Snapshot
 
 log = logging.getLogger("agent.think")
 
@@ -62,7 +64,7 @@ def _args_key(params: dict) -> str:
     return json.dumps(params or {}, sort_keys=True, default=str)
 
 
-def progress_fingerprint(snapshot: dict) -> str:
+def progress_fingerprint(snapshot: Snapshot) -> str:
     """Digest of the parts of a snapshot an action can change (UM-90's
     "returned no state change" test): the _PROGRESS_KEYS (position rounded
     to 1 yd so float jitter doesn't count), own level/xp, and the health of
@@ -71,8 +73,8 @@ def progress_fingerprint(snapshot: dict) -> str:
     pos = snapshot.get("position")
     if isinstance(pos, dict):
         view["position"] = {k: round(v) if isinstance(v, float) else v for k, v in pos.items()}
-    me = snapshot.get("me") or {}
-    view["me"] = {"level": me.get("level"), "xp": me.get("xp")}
+    me = snapshot.get("me")
+    view["me"] = {"level": me.get("level") if me else None, "xp": me.get("xp") if me else None}
     view["fights"] = sorted(
         (str(u.get("guid")), u.get("health_pct"))
         for u in snapshot.get("nearby_units") or [] if u.get("in_combat"))
@@ -131,11 +133,11 @@ class ThinkState:
                 return False
         return True
 
-    def for_prompt(self) -> list[dict]:
+    def for_prompt(self) -> list[ActionRecord]:
         """Compact oldest-first view for agent.llm.build_messages."""
-        out = []
+        out: list[ActionRecord] = []
         for h in self.history:
-            e = {"action": h["action"], "args": h["args"], "ok": h["ok"]}
+            e: ActionRecord = {"action": h["action"], "args": h["args"], "ok": h["ok"]}
             if h["error"]:
                 e["error"] = _short(h["error"])
             elif (d := _short(h["detail"])) is not None:
@@ -146,34 +148,33 @@ class ThinkState:
         return out
 
 
-def _self_status(session, world) -> dict:
-    """Own level/health/power/xp and castable spells, which the goal prompt
-    needs ("mobs of your level", "rest when low", "cast_spell from your
-    spellbook") and WorldState.snapshot() doesn't carry."""
-    out = {}
+def _self_status(session, world) -> tuple[Me | None, list[KnownSpell]]:
+    """Own level/health/power/xp (None before our own object arrived) and
+    castable spells, which the goal prompt needs ("mobs of your level", "rest
+    when low", "cast_spell from your spellbook") and WorldState.snapshot()
+    doesn't carry."""
+    mine: Me | None = None
     me = world.get_my_object()
     if me is not None:
-        mine = {"level": me.level}
-        mine["class_id"] = getattr(session, "class_", None)
+        mine = {"level": me.level, "class_id": getattr(session, "class_", None)}
         if me.health is not None and me.max_health:
             mine["health"] = f"{me.health}/{me.max_health}"
         for name, cur in (me.power or {}).items():
             top = (me.max_power or {}).get(name)
-            mine[name] = f"{cur}/{top}" if top else cur
+            # `name` is one of agent.update_fields.POWER_NAMES, all declared on Me.
+            mine[name] = f"{cur}/{top}" if top else cur  # type: ignore[literal-required]
         raw = me.raw_fields or {}
         if uf.PLAYER_XP in raw:
             mine["xp"] = raw[uf.PLAYER_XP]
         if uf.PLAYER_NEXT_LEVEL_XP in raw:
             mine["next_level_xp"] = raw[uf.PLAYER_NEXT_LEVEL_XP]
-        out["me"] = mine
     known = getattr(session, "spellbook", None) or ()
     # Only spells agent.spells has metadata for: the raw spellbook is
     # mostly passives (languages, weapon skills) that would waste tokens.
-    spell_list = [{"id": i.spell_id, "name": i.name}
-                  for i in (sp.get_spell_info(s) for s in sorted(known)) if i is not None]
-    if spell_list:
-        out["spells"] = spell_list
-    return out
+    spell_list: list[KnownSpell] = [
+        {"id": i.spell_id, "name": i.name}
+        for i in (sp.get_spell_info(s) for s in sorted(known)) if i is not None]
+    return mine, spell_list
 
 
 class ThinkResult:
@@ -238,11 +239,15 @@ def think_and_act(session, world, brain, persona: str = "",
     # of WorldState — pass it through so the snapshot exposes it alongside
     # is_dead/is_ghost. getattr() with a default: harmless if session is a
     # test double without it.
-    snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None),
+    snapshot: Snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None),
                                pending_invite=getattr(session, "pending_invite", None),
                                group=getattr(session, "group", None),
                                chat_inbox=getattr(session, "chat_inbox", None))
-    snapshot.update(_self_status(session, world))
+    me, spells = _self_status(session, world)
+    if me is not None:
+        snapshot["me"] = me
+    if spells:
+        snapshot["spells"] = spells
     fingerprint = progress_fingerprint(snapshot)
     if state is not None:
         state.observe(fingerprint)
@@ -299,8 +304,8 @@ def think_and_act(session, world, brain, persona: str = "",
         return ThinkResult(ok=False, error=str(e))
     action_name, params = decision.action, decision.params
 
-    action = registry.get(action_name)
-    if action is None:
+    action = registry.get(action_name) if action_name is not None else None
+    if action is None or action_name is None:
         log.warning("model chose unknown action %r (params=%r)", action_name, params)
         _audit(action_name=action_name, params=params, valid=False,
                error=f"unknown action: {action_name!r}")

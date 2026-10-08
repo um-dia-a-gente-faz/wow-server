@@ -75,9 +75,11 @@ chosen candidate is executed, so a stale candidate fails safely.
 """
 
 import logging
+from typing import Literal
 
 from .handles import UnknownHandle
 from . import action_names as A, item_compare
+from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
 from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
 from .metrics import swallowed
 
@@ -111,12 +113,12 @@ _EQUIP_SLOTS = {
 _BACKPACK_FIRST, _BACKPACK_LAST = 23, 38
 
 
-def _backpack(item: dict) -> bool:
+def _backpack(item: Item) -> bool:
     return isinstance(item.get("slot"), int) and _BACKPACK_FIRST <= item["slot"] <= _BACKPACK_LAST
 
 
-def _resource_pct(me: dict, resource: str) -> float | None:
-    value = me.get(resource)
+def _resource_pct(me: Me | None, resource: Literal["health", "mana"]) -> float | None:
+    value = me.get(resource) if me else None
     if isinstance(value, str) and "/" in value:
         try:
             current, maximum = (float(part) for part in value.split("/", 1))
@@ -157,22 +159,23 @@ _QUEST_GIVER_WORTH_VISITING = {"available": "has a quest", "reward": "quest read
                                "reward_rep": "quest ready to turn in"}
 
 
-def candidate(action: str, params: dict, label: str) -> dict:
+def candidate(action: str, params: dict, label: str) -> Candidate:
     """Build one candidate with its stable id."""
     key = ",".join(f"{k}={params[k]}" for k in sorted(params))
     return {"id": f"{action}:{key}" if key else action, "label": label,
             "action": action, "params": dict(params)}
 
 
-def _name(unit: dict) -> str:
-    if unit.get("name"):
-        return unit["name"]
+def _name(unit: Unit) -> str:
+    name = unit.get("name")
+    if name:
+        return name
     guid = unit.get("guid")
     # guid may be a handle string ("u3") on an encoded snapshot (UM-89).
     return f"unit {guid:#x}" if isinstance(guid, int) else f"unit {guid or 'unknown'}"
 
 
-def _guid_value(unit: dict, key: str, handles) -> int | None:
+def _guid_value(unit: Unit, key: Literal["guid", "target_guid"], handles) -> int | None:
     """The int GUID behind a unit field, whether the snapshot carries it as
     a raw int or as a short handle string (UM-89), so the comparisons in
     generate() work on both shapes. None when it is neither."""
@@ -187,22 +190,23 @@ def _guid_value(unit: dict, key: str, handles) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _dist(unit: dict) -> float:
+def _dist(unit: Unit) -> float:
     d = unit.get("distance")
     return d if isinstance(d, (int, float)) else float("inf")
 
 
-def _alive(unit: dict) -> bool:
+def _alive(unit: Unit) -> bool:
     hp = unit.get("health_pct")
     return hp is None or hp > 0
 
 
-def _my_level(snapshot: dict):
-    level = (snapshot.get("me") or {}).get("level")
+def _my_level(snapshot: Snapshot):
+    me = snapshot.get("me")
+    level = me.get("level") if me else None
     return level if isinstance(level, int) else None
 
 
-def _engage(unit: dict, why: str) -> dict:
+def _engage(unit: Unit, why: str) -> Candidate:
     """auto_attack when in melee range, else a short approach."""
     desc = f"{_name(unit)} (level {unit.get('level', '?')}, {_dist(unit):.1f} yd{', ' + why if why else ''})"
     if _dist(unit) <= MELEE_RANGE_YD:
@@ -211,7 +215,7 @@ def _engage(unit: dict, why: str) -> dict:
                      f"move to attack {desc}")
 
 
-def _window_candidates(snapshot: dict) -> list:
+def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
     window = snapshot.get("window")
     if not isinstance(window, dict):
         return []
@@ -270,10 +274,10 @@ def _window_candidates(snapshot: dict) -> list:
     return out
 
 
-def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict | None = None,
-             history: list | None = None,
+def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: dict | None = None,
+             history: list[ActionRecord] | None = None,
              limit: int = MAX_CANDIDATES, handles=None,
-             notes: list | None = None) -> list[dict]:
+             notes: list | None = None) -> list[Candidate]:
     """Concrete candidates for this think cycle; see the module docstring.
     `handles` (world.handles) resolves handle-string GUIDs (UM-89) for the
     unit comparisons; without it only raw-int snapshots are understood.
@@ -313,9 +317,9 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
                      585: "smite", 589: "shadow_word_pain", 133: "fireball",
                      116: "frostbolt", 143: "fireball"}
     rank = {133: 1, 143: 2}
-    spell_by_family = {}
+    spell_by_family: dict[str, KnownSpell] = {}
     for spell in snapshot.get("spells") or []:
-        family = offensive_ids.get(spell.get("id"))
+        family = offensive_ids.get(spell.get("id", 0))
         if family and (family not in spell_by_family or rank.get(spell["id"], 1) >
                        rank.get(spell_by_family[family]["id"], 1)):
             spell_by_family[family] = spell
@@ -327,7 +331,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
 
     # Offer on-use consumables only when a health or mana resource is low.
     # Quest items aren't consumables and remain available to quest actions.
-    me = snapshot.get("me") or {}
+    me = snapshot.get("me")
     health_pct = _resource_pct(me, "health")
     mana_pct = _resource_pct(me, "mana")
     needs_health, needs_mana = health_pct is not None and health_pct < 0.7, mana_pct is not None and mana_pct < 0.5
@@ -355,13 +359,13 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
 
     # Only offer an item if its cached template proves it scores above the
     # currently equipped item in the same slot and is usable by this class.
-    class_id = me.get("class_id")
+    class_id = me.get("class_id") if me else None
     equipment = snapshot.get("equipment") or {}
     for item in (snapshot.get("inventory") or []):
         tpl = item.get("template")
         if not tpl or class_id not in item_compare.CLASS_PRIMARY_STAT or not _backpack(item):
             continue
-        equip_slot = tpl.get("inventory_type")
+        equip_slot = tpl.get("inventory_type", 0)
         slots = _EQUIP_SLOTS.get(equip_slot)
         if not slots:
             continue
@@ -404,7 +408,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     givers = [u for u in units if u.get("quest_giver_status") in _QUEST_GIVER_WORTH_VISITING
               and _dist(u) <= APPROACH_MAX_YD]
     for u in givers[:MAX_QUEST_GIVERS]:
-        why = _QUEST_GIVER_WORTH_VISITING[u["quest_giver_status"]]
+        why = _QUEST_GIVER_WORTH_VISITING[str(u["quest_giver_status"])]
         if _dist(u) <= INTERACT_RANGE_YD:
             out.append(candidate(A.INTERACT, {"guid": u["guid"]}, f"talk to {_name(u)} ({why})"))
         else:
@@ -454,7 +458,7 @@ HISTORY_DEMOTE_REPEATS = 2  # consecutive no-effect successes before demotion
 _DETERMINISTIC_ERRORS = ("missing required params", "bad params", "unknown handle", "unknown action")
 
 
-def _history_effects(history) -> tuple[dict, dict]:
+def _history_effects(history: list[ActionRecord] | None) -> tuple[dict, dict]:
     """({id: reason} to drop, {id: reason} to demote) from ThinkState history.
     Tolerates malformed entries (skipped); never raises."""
     entries = []
@@ -473,7 +477,7 @@ def _history_effects(history) -> tuple[dict, dict]:
     drop, demote = {}, {}
 
     recent = entries[-HISTORY_DROP_WINDOW:]
-    by_id = {}
+    by_id: dict[str, list[ActionRecord]] = {}
     for cid, h in recent:
         by_id.setdefault(cid, []).append(h)
     for cid, hs in by_id.items():
@@ -498,9 +502,9 @@ def _history_effects(history) -> tuple[dict, dict]:
     return drop, demote
 
 
-def _finish(out: list, idle: dict, limit: int, drop: dict | None = None,
+def _finish(out: list[Candidate], idle: Candidate, limit: int, drop: dict | None = None,
             demote: dict | None = None, protected: set | frozenset = frozenset(),
-            notes: list | None = None) -> list:
+            notes: list | None = None) -> list[Candidate]:
     """De-duplicate by id (first, highest-priority wins), apply the history
     `drop`/`demote` maps ({id: reason}; `protected` ids are exempt), cap, end
     with idle."""

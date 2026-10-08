@@ -16,6 +16,7 @@ from .. import npc as npc_mod
 from .. import quests as qu
 from .. import update_object as uo
 from .fields import FieldsMixin
+from ..model import Item, QuestEntry, Snapshot
 from .inventory import build_equipment_and_inventory
 from .objects import ObjectInfo
 from .quest_log import build_quest_log
@@ -209,14 +210,14 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
                 self.objects.pop(guid, None)
 
 
-    def build_quest_log(self) -> list:
+    def build_quest_log(self) -> list[QuestEntry]:
         """UM-41: the self player's quest log, enriched from the quest-text
         cache (see perception/quest_log.py). Queues a CMSG_QUEST_QUERY for
         any quest id not cached yet."""
         with self._lock:
             return build_quest_log(self.objects.get(self.my_guid), self.quest_texts, self.names)
 
-    def build_equipment_and_inventory(self) -> tuple[dict, list]:
+    def build_equipment_and_inventory(self) -> tuple[dict[int, Item], list[Item]]:
         """UM-42: equipment (slot -> item dict, slots 0-18) and inventory
         (list of item dicts, slots 19-38: 4 equipped-bag-container slots +
         16 backpack slots) built from the self player's own INV_SLOT_HEAD/
@@ -232,7 +233,7 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
 
     def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40,
                  corpse_position=None, pending_invite=None, chat_inbox=None,
-                 group=None) -> dict:
+                 group=None) -> Snapshot:
         """A JSON-serialisable view shaped like docs/AI-AGENT-SPEC.md's
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
         nearby_objects, sorted by distance and capped at `limit` each.
