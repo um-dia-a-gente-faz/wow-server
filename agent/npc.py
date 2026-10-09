@@ -31,7 +31,7 @@ import time
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use npc.CMSG_*/SMSG_*)
     CMSG_GAMEOBJ_USE,
     CMSG_GOSSIP_HELLO,
     CMSG_GOSSIP_SELECT_OPTION,

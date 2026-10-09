@@ -47,7 +47,6 @@ from .opcodes import (
     SMSG_LOGIN_VERIFY_WORLD,
     CMSG_SET_ACTIVE_MOVER,
     SMSG_STANDSTATE_UPDATE,
-    SMSG_ADDON_INFO,
     SMSG_TIME_SYNC_REQ,
     CMSG_TIME_SYNC_RESP,
     CMSG_KEEP_ALIVE,
@@ -100,7 +99,7 @@ class WoWSession(Transport, GameState):
         server_challenge = payload[4:8]
 
         # Build CMSG_AUTH_SESSION
-        import os, hashlib, hmac
+        import os
         local_challenge = os.urandom(4)
         digest = pk.sha1(self.account_name.encode(), b'\x00'*4, local_challenge,
                           server_challenge, self.session_key)
@@ -195,7 +194,7 @@ class WoWSession(Transport, GameState):
             y = struct.unpack_from('<f', payload, off)[0]; off += 4
             z = struct.unpack_from('<f', payload, off)[0]; off += 4
             off += 4  # guild
-            char_flags = struct.unpack_from('<I', payload, off)[0]; off += 4
+            _char_flags = struct.unpack_from('<I', payload, off)[0]; off += 4
             # Everything after the flags, exactly as TrinityCore 3.3.5's
             # Player::BuildEnumData() writes it (Player.cpp, branch 3.3.5):
             # a uint32 customizeFlags that is ALWAYS present (the old

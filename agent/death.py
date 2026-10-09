@@ -28,7 +28,7 @@ import time
 from . import actions
 from . import movement
 from .rules import SPIRIT_HEALER_SEARCH_RANGE_YD
-from .perception import PLAYER_FLAGS_GHOST, UNIT_NPC_FLAG_SPIRITHEALER
+from .perception import UNIT_NPC_FLAG_SPIRITHEALER
 
 from .opcodes import (
     CMSG_REPOP_REQUEST,

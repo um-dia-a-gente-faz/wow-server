@@ -19,7 +19,7 @@ import time
 
 import pymysql
 from prometheus_client import REGISTRY, start_http_server
-from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
+from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

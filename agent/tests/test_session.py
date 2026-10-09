@@ -10,8 +10,6 @@ import struct
 import tempfile
 import time
 import unittest
-import uuid
-import zlib
 
 from agent import mail as mail_mod
 from agent import names as nm

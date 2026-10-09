@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import characters
-import runner
 from test_runner import PASSWORD, REPO, TOKEN, RunnerCase
 
 
