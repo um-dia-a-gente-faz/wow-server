@@ -47,6 +47,7 @@ import itertools
 import logging
 import os
 import pathlib
+import select
 import socket
 import struct
 import sys
@@ -142,6 +143,8 @@ class FaultPlan:
     corrupt_opcode: int = 0  # this opcode keeps its header, the payload becomes 0xFF bytes
     bad_crypt_from: int = 0  # from this world packet on, headers are sent unencrypted
     slow_auth: float = 0.0   # seconds before the auth server answers the logon challenge
+    login_silence: float = 0.0  # seconds after CMSG_PLAYER_LOGIN before SMSG_LOGIN_VERIFY_WORLD (still reading, unlike stall)
+    overspeed_s: float = 0.0    # TrinityCore HandlePing: pings closer than this count, more than 2 of them kick (27 in TC, 0 = off)
     auth_reject: int = 0     # logon challenge fails with this AuthResult (AuthCodes.h), e.g. 3 banned
 
     @classmethod
@@ -196,6 +199,7 @@ class WorldMock:
         self.world_connections = 0
         self.accounts = {account.upper(): password}
         self.session_keys = {}     # account -> K of the last successful auth
+        self.ping_times = []       # monotonic arrival time of every CMSG_PING
         self.received = []         # (opcode, payload) of every post-login client packet
         self._lock = threading.Lock()
         self._auth = self._listen(auth_port, self._serve_auth)
@@ -333,13 +337,35 @@ class WorldMock:
         send(op.SMSG_TIME_SYNC_REQ, struct.pack('<I', 0))
         send(op.SMSG_TUTORIAL_FLAGS, b'\0' * 32)          # payload content is not read by the agent
 
+        login_at = None             # monotonic time the delayed SMSG_LOGIN_VERIFY_WORLD is due
+        last_ping, fast_pings = None, 0
         while True:
+            if login_at is not None:
+                wait = login_at - time.monotonic()
+                if wait <= 0:
+                    login_at = None
+                    self._enter_world(send)
+                elif not select.select([sock], [], [], wait)[0]:
+                    continue
             h = dec(_recvn(sock, 6))
             size, opcode = struct.unpack('>H', h[:2])[0], struct.unpack('<I', h[2:])[0]
             payload = _recvn(sock, size - 4)
             with self._lock:
                 self.received.append((opcode, payload))
-            self._on_packet(send, opcode, payload)
+            if opcode == op.CMSG_PING:
+                now = time.monotonic()
+                self.ping_times.append(now)
+                if last_ping is not None and now - last_ping < plan.overspeed_s:
+                    fast_pings += 1
+                    if fast_pings > 2:      # MaxOverspeedPings; WorldSocket::HandlePing returns false
+                        raise ConnectionAbortedError("over-speed pings")
+                elif last_ping is not None:
+                    fast_pings = 0
+                last_ping = now
+            if opcode == op.CMSG_PLAYER_LOGIN and plan.login_silence:
+                login_at = time.monotonic() + plan.login_silence
+            else:
+                self._on_packet(send, opcode, payload)
 
     def _on_packet(self, send, opcode: int, payload: bytes):
         if opcode == op.CMSG_CHAR_ENUM:
