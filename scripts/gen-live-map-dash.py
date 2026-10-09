@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate the WoW live-map Grafana dashboard."""
-import json
+import sys
+
+from genlib import dashboard_text, sync
 
 DS = {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
 panels, pid = [], 0
@@ -18,11 +20,13 @@ def panel(t, title, x, y, w, h, targets=None, **kw):
 
 
 # --- link to the actual live map app
-panel("text", "Mapa ao vivo", 0, 0, 24, 3, options={"mode": "markdown", "content": """
-# [Abrir mapa ao vivo →](http://192.168.1.64:9400)
+panel("text", "Mapa ao vivo", 0, 0, 24, 3, options={"mode": "markdown", "content": f"""
+# [Abrir console ao vivo →](http://192.168.1.64:9400)
 
-O mapa interativo mostra cada jogador online em posição no mapa do WoW,
-com cor de classe e seletor de zona. Atualização a cada 5 segundos.
+O console mostra, numa só página: mapa interativo com cada jogador online
+(cor de classe, seletor de zona), lista de jogadores, chat público ao vivo
+(aba Chat) e um painel de inspeção de personagem (clique num nome ou
+marcador). Atualização a cada 5 segundos.
 
 Abaixo, os mesmos dados como métricas no Grafana (sem o mapa de fundo —
 para isso, use o link acima).
@@ -59,6 +63,5 @@ dash = {"uid": "wow-live-map", "title": "WoW — Mapa ao Vivo",
         "time": {"from": "now-1h", "to": "now"},
         "schemaVersion": 39, "version": 1, "panels": panels}
 
-with open("/root/wow-live-map.json", "w") as f:
-    json.dump(dash, f, indent=2)
-print("done:", dash["uid"], "—", len(panels), "painéis")
+sys.exit(sync("monitoring/grafana-dashboard-wow-live-map.json", dashboard_text(dash),
+              "--check" in sys.argv, "scripts/gen-live-map-dash.py"))
