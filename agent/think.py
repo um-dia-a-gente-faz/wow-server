@@ -21,7 +21,6 @@ from . import trade as tr
 from . import update_fields as uf
 from .brain import Brain, BrainError, Decision
 from .handles import UnknownHandle
-from .llm import LLMError
 from .model import ActionRecord, KnownSpell, Me, Snapshot
 
 log = logging.getLogger("agent.think")
