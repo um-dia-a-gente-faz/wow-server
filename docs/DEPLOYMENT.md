@@ -220,9 +220,9 @@ ssh root@192.168.1.64 '/opt/wow-server/scripts/deploy.sh'
 ### Automatic deploys (cron poller)
 
 The VM redeploys itself: a cron job runs `scripts/auto-deploy.sh` every 5
-minutes, which fetches `origin/main` and calls `deploy.sh` only when the
-remote moved (polling, because GitHub webhooks cannot reach a LAN IP; flock
-prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
+minutes, which fetches `origin/main` and calls `deploy.sh` when the remote
+moved or while a deferred game-stack change is still pending (polling, because
+GitHub webhooks cannot reach a LAN IP; flock prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
 
 ```
 */5 * * * * root /opt/wow-server/scripts/auto-deploy.sh >> /var/log/wow-auto-deploy.log 2>&1
@@ -233,8 +233,9 @@ up within 5 minutes. Watch `/var/log/wow-auto-deploy.log` on the VM for
 history.
 
 This fast-forwards the checkout to `origin/main` and runs `docker compose up -d
---build` for both projects, which only recreates containers whose image, build
-context, or compose file actually changed. Env-only changes to
+--build` only for the projects whose files changed (see "Path-aware deploys"
+below), which in turn only recreates containers whose image, build context, or
+compose file actually changed. Env-only changes to
 `TC_WORLD__*` still require the `trinitycore-wowserver` container to be
 recreated (not just restarted) for `ConfigurationWriter.js` to regenerate
 `worldserver.conf` — `up -d` does this automatically when the compose file
@@ -246,6 +247,43 @@ on the *separate* docker-stack VM (192.168.1.60), not this one:
 ```bash
 ./scripts/deploy-dashboards.sh   # run from a machine with SSH to 192.168.1.60
 ```
+
+### Path-aware deploys and the players-online guard
+
+`deploy.sh` compares, per stack, the commit that stack was last deployed at
+(`refs/deployed/<stack>` in the VM's checkout) with `origin/main`, and only touches the stacks
+whose files changed:
+
+| Changed path | Stack redeployed |
+|---|---|
+| `docker-compose.yml`, `tdb/`, `tools/chat-feed/` | game |
+| `monitoring/`, `exporters/`, `tools/wowmap/`, `tools/dbc/` | monitoring |
+| anything else (docs, `agent/`, `scripts/`, tests, the root `Dockerfile`, which is the agent image) | none, the checkout just advances |
+
+Before the game stack, it counts online characters (`characters.characters WHERE online = 1`,
+the same source as `wow_players_online`). If anyone is online, or the query fails, the game
+stack is **deferred**: it logs `DEFERRED game <sha>` (also to `deploy.log`) and the script exits
+75. Other stacks still deploy; the game stack stays pending (each stack is diffed from
+`refs/deployed/<stack>`, which a deferral does not move), and `auto-deploy.sh` keeps polling
+until it goes through. Later merges therefore do not queue behind a deferral.
+Each real deploy appends `<time> deployed <sha>, stacks: <list>` to
+`/opt/wow-server-metrics/deploy.log` (`METRICS_DIR` overrides).
+
+Two consequences to know (owner decision pending, see the PR for #266):
+
+- **Agent characters count as players.** The headless agents are normally online, so
+  without `FORCE=1` a game-stack change defers until they are all logged out.
+- **A missing or broken `trinitycore-db` container also defers**, indefinitely, because
+  the count cannot be read. Use `FORCE=1` to deploy the fix.
+
+| Env | Effect |
+|---|---|
+| `FORCE=1` | deploy the game stack even with players online |
+| `ALL=1` | deploy both stacks regardless of the diff (the old behaviour) |
+| `DRY_RUN=1` | print the plan and the guard result, change nothing |
+
+To check a merge left the worldserver alone, compare
+`docker inspect -f '{{.State.StartedAt}}' trinitycore-wowserver` before and after.
 
 ### Required: `/opt/wow-server/.env`
 
