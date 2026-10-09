@@ -24,12 +24,14 @@ Result: `outcome` is one of arrived | blocked | timeout | stopped | target_lost 
 simulation last sent to the server), not a database read.
 """
 
+import logging
 import math
 import threading
 import time
 
 from . import actions as ac
 from . import movement
+from .metrics import swallowed
 
 DEFAULT_TIMEOUT_S = 60.0
 MAX_TIMEOUT_S = 120.0
@@ -201,6 +203,7 @@ def walk(observer, body, dry_run: bool = False, clock=time.monotonic) -> tuple[i
     except ControlError as e:
         return e.status, e.body()
     except Exception as e:  # noqa: BLE001 - the HTTP layer must always answer
+        swallowed("control.walk", logging.getLogger("agent.control"))
         return 500, {"ok": False, "outcome": "failed", "code": "internal", "error": f"{type(e).__name__}: {e}"}
 
 

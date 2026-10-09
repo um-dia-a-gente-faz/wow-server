@@ -74,9 +74,12 @@ reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
 chosen candidate is executed, so a stale candidate fails safely.
 """
 
+import logging
+
 from .handles import UnknownHandle
 from . import action_names as A, item_compare
 from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
+from .metrics import swallowed
 
 MAX_CANDIDATES = 15
 
@@ -463,6 +466,8 @@ def _history_effects(history) -> tuple[dict, dict]:
         try:
             cid = candidate(h["action"], args, "")["id"]
         except Exception:
+            swallowed("candidates.history", logging.getLogger("agent.candidates"), h["action"],
+                      level=logging.WARNING)
             continue
         entries.append((cid, h))
     drop, demote = {}, {}

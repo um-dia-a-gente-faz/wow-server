@@ -26,6 +26,7 @@ from .brain import Brain
 from .think import ThinkState, think_and_act
 from .audit import AuditLogger
 from .http_api import AgentObserver, start_server
+from .metrics import swallowed
 from .reflexes.follow import get_follow_reflex
 from .reflexes.rest import get_rest_reflex
 
@@ -273,7 +274,7 @@ def _supervise_connection(build_session, run_session, log,
         try:
             session = build_session()
         except Exception:
-            log.exception("connect/login attempt %d failed", attempt)
+            swallowed("main.connect", log, f"attempt {attempt}")
             log.warning("retrying in %.0fs", backoff)
             sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
@@ -286,7 +287,7 @@ def _supervise_connection(build_session, run_session, log,
             try:
                 session.logout()
             except Exception:
-                log.exception("error logging out after this session attempt")
+                swallowed("main.logout", log, "after this session attempt")
 
         if not disconnected:
             return
@@ -312,7 +313,7 @@ def _run_follow_reflex_loop(sess, stop_event: threading.Event,
         try:
             reflex.tick(sess, sess.world_state)
         except Exception:
-            log.exception("follow reflex tick failed")
+            swallowed("reflex.follow_tick", log)
         stop_event.wait(tick_interval)
 
 
@@ -326,7 +327,7 @@ def _run_rest_reflex_loop(sess, stop_event: threading.Event,
         try:
             reflex.tick(sess, sess.world_state)
         except Exception:
-            log.exception("rest reflex tick failed")
+            swallowed("reflex.rest_tick", log)
         stop_event.wait(tick_interval)
 
 

@@ -128,3 +128,26 @@ class DeriveMetricsMultiAgentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SwallowedTest(unittest.TestCase):
+    def setUp(self):
+        from agent import metrics
+        self.m = metrics
+        metrics.SWALLOWED.clear()
+
+    def test_counts_logs_with_traceback_and_throttles(self):
+        import logging
+        log = logging.getLogger("t.swallowed")
+        with self.assertLogs("t.swallowed", level="ERROR") as cm:
+            for _ in range(3):
+                try:
+                    raise ValueError("boom")
+                except Exception:
+                    self.m.swallowed("unit.site", log, "ctx 7")
+        self.assertEqual(self.m.SWALLOWED, {"unit.site": 3})
+        self.assertEqual(len(cm.records), 1)        # same (where, type): throttled
+        self.assertIsNotNone(cm.records[0].exc_info)
+        self.assertIn("unit.site (ctx 7): ValueError: boom", cm.output[0])
+        text = self.m.render_swallowed("A")
+        self.assertIn('wow_agent_swallowed_errors_total{agent="A",where="unit.site"} 3', text)

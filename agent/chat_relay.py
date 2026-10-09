@@ -44,6 +44,8 @@ import time
 import urllib.error
 import urllib.request
 
+from .metrics import swallowed
+
 log = logging.getLogger("agent.chat_relay")
 
 DEFAULT_INGEST_PATH = "/api/chat/ingest"
@@ -139,7 +141,6 @@ class ChatRelay:
         self._sleep = sleep
         self._thread = None
         self._stopping = threading.Event()
-        self._last_error_log = 0.0
         # Counters, surfaced by stats() and the agent's metrics endpoint.
         self.sent = 0
         self.dropped = 0   # queue was full (sidecar down/slow, or a chat flood)
@@ -194,7 +195,8 @@ class ChatRelay:
                 self.publish(*item)
             except Exception:  # noqa: BLE001 — observability must not kill the agent
                 self.failed += 1
-                self._log_error_throttled()
+                swallowed("chat_relay.publish", log, f"POST to {self.url}, {self.failed} failed, "
+                          f"{self.dropped} dropped so far", level=logging.WARNING)
 
     def publish(self, entry: dict, resolve_name, at: str, queued_at: float):
         """Resolve the speaker (bounded wait), build the event and POST it.
@@ -234,16 +236,6 @@ class ChatRelay:
             request.add_header("Authorization", f"Bearer {self._token}")
         with self._opener(request, timeout=self.timeout) as response:
             response.read()
-
-    def _log_error_throttled(self):
-        now = self._clock()
-        if now - self._last_error_log < ERROR_LOG_INTERVAL_S:
-            return
-        self._last_error_log = now
-        # The URL is LAN-internal and carries no credential (the token, when
-        # set, travels in a header and is never logged).
-        log.warning("chat relay POST to %s failing (%d failed, %d dropped so far)",
-                    self.url, self.failed, self.dropped, exc_info=True)
 
 
 def _ingest_url(url: str) -> str:

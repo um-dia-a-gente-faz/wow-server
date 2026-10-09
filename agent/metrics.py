@@ -11,9 +11,14 @@ filesystem beyond the fixtures it's given.
 
 import glob
 import json
+import logging
 import os
+import sys
+import threading
 import time
 from dataclasses import dataclass, field
+
+from .transport import ERROR_LOG_INTERVAL_S, _ErrorThrottle
 
 # Bucket upper bounds (ms) for the LLM latency histogram. Chosen to span
 # "fast local model" (~200ms) to "slow free-tier API, rate limited" (~20s).
@@ -284,4 +289,42 @@ def render_prometheus_text(by_agent: dict) -> str:
         lines.append(f"wow_agent_jev_latency_ms_sum{label} {m.jev_latency_sum_ms}")
         lines.append(f"wow_agent_jev_latency_ms_count{label} {m.jev_latency_count}")
 
+    return "\n".join(lines) + "\n"
+
+
+# ── Swallowed errors (#306) ───────────────────────────────────────────────
+# Live, in-process (unlike the audit-derived metrics above): one counter per
+# call site label, shared by every thread, rendered by the agent's GET /metrics.
+SWALLOWED: dict[str, int] = {}
+_swallowed_lock = threading.Lock()
+_swallowed_throttle = _ErrorThrottle(ERROR_LOG_INTERVAL_S)
+
+
+def swallowed(where: str, logger: logging.Logger, detail: str = "", *, key=None,
+              throttle=None, level: int = logging.ERROR) -> None:
+    """Call from inside an `except Exception:` block that swallows the error.
+
+    Counts it under `where` (wow_agent_swallowed_errors_total{where=...}) and logs
+    it with traceback, at most once per (where, exception type) per interval, or per
+    `key` when the caller has a better one (the opcode) and its own `throttle`.
+    `detail` is context the caller already knows (opcode, action name); never put
+    packet payloads, credentials or prompts in it. Does not re-raise."""
+    exc = sys.exc_info()[1]
+    with _swallowed_lock:
+        SWALLOWED[where] = SWALLOWED.get(where, 0) + 1
+    should, suppressed = (throttle or _swallowed_throttle).check(
+        key if key is not None else (where, type(exc).__name__))
+    if should:
+        logger.log(level, "swallowed error in %s%s: %s: %s (%d more suppressed since last report)",
+                   where, f" ({detail})" if detail else "", type(exc).__name__, exc, suppressed,
+                   exc_info=True)
+
+
+def render_swallowed(agent: str) -> str:
+    """The swallowed-error counter as Prometheus exposition text."""
+    with _swallowed_lock:
+        items = sorted(SWALLOWED.items())
+    lines = ["# HELP wow_agent_swallowed_errors_total Exceptions caught and swallowed, by call site",
+             "# TYPE wow_agent_swallowed_errors_total counter"]
+    lines += [f'wow_agent_swallowed_errors_total{{agent="{agent}",where="{w}"}} {n}' for w, n in items]
     return "\n".join(lines) + "\n"
