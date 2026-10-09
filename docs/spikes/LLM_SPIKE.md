@@ -1,5 +1,7 @@
 # LLM benchmark spike (UM-61)
 
+> **Archived spike.** Outcome: pinned free tool-calling model primary, local llama.cpp/Ollama fallback; the later Jev design is in `docs/adr/0001-jev-in-the-think-loop.md`. Issue: UM-61. Superseded by: ADR 0001 for the decision path.
+
 Timeboxed spike for UM-44's think loop: which free LLM should decide agent
 actions, and how many agents can one shared model server support at
 UM-63's 5/25-agent scale? Constraints from `docs/AGENT-DIRECTION.md` §3:

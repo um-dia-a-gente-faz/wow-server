@@ -15,7 +15,6 @@ per packet, same as the current `_parse_update_object`, rather than guessing
 at an offset it can't yet compute correctly.
 """
 
-import struct
 import sys
 
 from .. import packets as pk

@@ -75,14 +75,11 @@ chosen candidate is executed, so a stale candidate fails safely.
 """
 
 from .handles import UnknownHandle
-from . import item_compare
+from . import action_names as A, item_compare
+from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
 
 MAX_CANDIDATES = 15
 
-MELEE_RANGE_YD = 5.0      # agent.actions.MELEE_RANGE_YD (auto_attack's check)
-INTERACT_RANGE_YD = 5.0   # agent.npc / agent.quests INTERACT_RANGE_YD, loot range too
-APPROACH_MAX_YD = 40.0    # move_towards is straight-line only (no navmesh): short hops
-ATTACK_LEVEL_MARGIN = 3   # don't offer to pull mobs more than this many levels above us
 
 MAX_THREATS = 3
 MAX_LOOT = 3
@@ -128,28 +125,28 @@ def _resource_pct(me: dict, resource: str) -> float | None:
 # Registered actions deliberately absent from the candidate generator. Kept
 # adjacent to it so registry growth is visible and the coverage test pins it.
 NOT_OFFERED = {
-    "set_target": "combat micro; auto_attack selects targets",
-    "face": "combat micro; cast and movement actions orient as needed",
-    "stop_attack": "combat micro; no levelling decision currently needs it",
-    "stop_movement": "combat micro; no levelling decision currently needs it",
-    "buy_item": "buy nothing by default until an item purchasing policy is decided",
-    "destroy_item": "destructive inventory action is intentionally excluded",
-    "compare_items": "comparison is used internally to offer equip upgrades",
-    "rest": "reflex-controlled survival action, not an explicit candidate",
-    "invite_to_group": "social grouping is out of scope",
-    "decline_group": "Jev accepts invites; declining is an LLM-brain decision (GH-71)",
-    "leave_group": "group management is an LLM-brain decision (GH-71)",
-    "promote_leader": "group management is an LLM-brain decision (GH-71)",
-    "open_trade": "trade family is out of scope",
-    "accept_trade_request": "trade family is out of scope",
-    "offer_item": "trade family is out of scope",
-    "offer_gold": "trade family is out of scope",
-    "accept_trade": "trade family is out of scope",
-    "cancel_trade": "trade family is out of scope",
-    "open_mailbox": "mail family is out of scope",
-    "send_mail": "mail family is out of scope",
-    "take_mail": "mail family is out of scope",
-    "delete_mail": "mail family is out of scope",
+    A.SET_TARGET: "combat micro; auto_attack selects targets",
+    A.FACE: "combat micro; cast and movement actions orient as needed",
+    A.STOP_ATTACK: "combat micro; no levelling decision currently needs it",
+    A.STOP_MOVEMENT: "combat micro; no levelling decision currently needs it",
+    A.BUY_ITEM: "buy nothing by default until an item purchasing policy is decided",
+    A.DESTROY_ITEM: "destructive inventory action is intentionally excluded",
+    A.COMPARE_ITEMS: "comparison is used internally to offer equip upgrades",
+    A.REST: "reflex-controlled survival action, not an explicit candidate",
+    A.INVITE_TO_GROUP: "social grouping is out of scope",
+    A.DECLINE_GROUP: "Jev accepts invites; declining is an LLM-brain decision (GH-71)",
+    A.LEAVE_GROUP: "group management is an LLM-brain decision (GH-71)",
+    A.PROMOTE_LEADER: "group management is an LLM-brain decision (GH-71)",
+    A.OPEN_TRADE: "trade family is out of scope",
+    A.ACCEPT_TRADE_REQUEST: "trade family is out of scope",
+    A.OFFER_ITEM: "trade family is out of scope",
+    A.OFFER_GOLD: "trade family is out of scope",
+    A.ACCEPT_TRADE: "trade family is out of scope",
+    A.CANCEL_TRADE: "trade family is out of scope",
+    A.OPEN_MAILBOX: "mail family is out of scope",
+    A.SEND_MAIL: "mail family is out of scope",
+    A.TAKE_MAIL: "mail family is out of scope",
+    A.DELETE_MAIL: "mail family is out of scope",
 }
 
 # agent.quests.QUEST_GIVER_STATUS_NAMES values worth walking over for.
@@ -206,8 +203,8 @@ def _engage(unit: dict, why: str) -> dict:
     """auto_attack when in melee range, else a short approach."""
     desc = f"{_name(unit)} (level {unit.get('level', '?')}, {_dist(unit):.1f} yd{', ' + why if why else ''})"
     if _dist(unit) <= MELEE_RANGE_YD:
-        return candidate("auto_attack", {"guid": unit["guid"]}, f"attack {desc}")
-    return candidate("move_towards", {"guid": unit["guid"], "stop_distance": 3.0},
+        return candidate(A.AUTO_ATTACK, {"guid": unit["guid"]}, f"attack {desc}")
+    return candidate(A.MOVE_TOWARDS, {"guid": unit["guid"], "stop_distance": 3.0},
                      f"move to attack {desc}")
 
 
@@ -224,49 +221,49 @@ def _window_candidates(snapshot: dict) -> list:
         known = {s.get("id") for s in snapshot.get("spells") or []}
         for spell in (window.get("spells") or [])[:MAX_TRAIN]:
             if spell.get("spell_id") not in known:
-                out.append(candidate("train_spell", {"trainer_guid": npc_guid, "spell_id": spell["spell_id"]},
+                out.append(candidate(A.TRAIN_SPELL, {"trainer_guid": npc_guid, "spell_id": spell["spell_id"]},
                                      f"train spell {spell['spell_id']}"))
     if kind == "vendor" and npc_guid is not None:
         inventory = snapshot.get("inventory") or []
         for item in inventory:
             if item.get("template", {}).get("quality") == 0 and _backpack(item):
-                out.append(candidate("sell_item", {"vendor_guid": npc_guid, "bag": 255,
+                out.append(candidate(A.SELL_ITEM, {"vendor_guid": npc_guid, "bag": 255,
                                                      "slot": item["slot"]},
                                      f"sell grey item {item.get('name') or item.get('entry')}"))
-                if sum(c["action"] == "sell_item" for c in out) >= MAX_SELL:
+                if sum(c["action"] == A.SELL_ITEM for c in out) >= MAX_SELL:
                     break
 
     if kind == "quest_details" and npc_guid is not None:
-        out.append(candidate("accept_quest", {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
+        out.append(candidate(A.ACCEPT_QUEST, {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
                              f"accept quest {window.get('title') or window['quest_id']}"))
     elif kind in ("quest_list", "gossip") and npc_guid is not None:
         for q in window.get("quests") or []:
             title = q.get("title") or q["quest_id"]
             if q["quest_id"] in in_log:
-                out.append(candidate("complete_quest", {"npc_guid": npc_guid, "quest_id": q["quest_id"]},
+                out.append(candidate(A.COMPLETE_QUEST, {"npc_guid": npc_guid, "quest_id": q["quest_id"]},
                                      f"hand in quest {title}"))
             else:
-                out.append(candidate("accept_quest", {"npc_guid": npc_guid, "quest_id": q["quest_id"]},
+                out.append(candidate(A.ACCEPT_QUEST, {"npc_guid": npc_guid, "quest_id": q["quest_id"]},
                                      f"accept quest {title}"))
         if kind == "gossip":
             # Coded options need typed text; that's free text, so never offered.
             options = [o for o in window.get("options") or [] if not o.get("coded")]
             for o in options[:MAX_GOSSIP_OPTIONS]:
-                out.append(candidate("gossip_select", {"option_index": o["index"]},
+                out.append(candidate(A.GOSSIP_SELECT, {"option_index": o["index"]},
                                      f"choose dialogue option: {o.get('text') or o['index']}"))
     elif kind == "quest_request_items" and npc_guid is not None:
-        out.append(candidate("complete_quest", {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
+        out.append(candidate(A.COMPLETE_QUEST, {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
                              f"hand in quest {window.get('title') or window['quest_id']}"))
     elif kind == "quest_offer_reward" and npc_guid is not None:
         title = window.get("title") or window["quest_id"]
         choices = window.get("reward_choice_items") or []
         for i, item in enumerate(choices or [None]):
             what = f" taking reward item {item.get('entry')}" if item else ""
-            out.append(candidate("turn_in_quest",
+            out.append(candidate(A.TURN_IN_QUEST,
                                  {"npc_guid": npc_guid, "quest_id": window["quest_id"], "reward_choice": i},
                                  f"turn in quest {title}{what}"))
 
-    out.append(candidate("close_window", {}, f"close the {kind or 'open'} window"))
+    out.append(candidate(A.CLOSE_WINDOW, {}, f"close the {kind or 'open'} window"))
     return out
 
 
@@ -281,7 +278,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     failed or repeated to no effect; `notes`, if given, collects what was
     changed and why."""
     limit = max(1, limit)
-    idle = candidate("idle", {}, "do nothing this cycle")
+    idle = candidate(A.IDLE, {}, "do nothing this cycle")
     out = []
 
     # Dead: release, then reclaim. No reflex does either (gh-208), and
@@ -289,13 +286,13 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     # ghost; it queries the server for the corpse itself.
     if snapshot.get("is_dead") or snapshot.get("is_ghost"):
         if snapshot.get("is_ghost"):
-            out.append(candidate("reclaim_corpse", {}, "run back to your corpse and resurrect"))
+            out.append(candidate(A.RECLAIM_CORPSE, {}, "run back to your corpse and resurrect"))
             corpse = snapshot.get("corpse_position")
             if isinstance(corpse, dict):
-                out.append(candidate("move_to", {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
+                out.append(candidate(A.MOVE_TO, {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
                                      "run back to your corpse"))
         else:
-            out.append(candidate("release_spirit", {}, "release your spirit to become a ghost"))
+            out.append(candidate(A.RELEASE_SPIRIT, {}, "release your spirit to become a ghost"))
         return _finish(out, idle, limit)
 
     out.extend(_window_candidates(snapshot))
@@ -321,7 +318,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
             spell_by_family[family] = spell
     for spell in list(spell_by_family.values())[:MAX_SPELLS]:
         if threats_snapshot:
-            out.append(candidate("cast_spell", {"spell_id": spell["id"],
+            out.append(candidate(A.CAST_SPELL, {"spell_id": spell["id"],
                                                   "target_guid": threats_snapshot[0]["guid"]},
                                  f"cast {spell.get('name') or spell['id']} at {_name(threats_snapshot[0])}"))
 
@@ -337,7 +334,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     if needs_health:
         known_heals = [s for s in snapshot.get("spells") or [] if s.get("id") in HEAL_SPELL_IDS]
         for spell in known_heals[:MAX_SPELLS]:
-            out.insert(0, candidate("cast_spell", {"spell_id": spell["id"]},
+            out.insert(0, candidate(A.CAST_SPELL, {"spell_id": spell["id"]},
                                     f"cast {spell.get('name') or spell['id']} on yourself"))
 
     use_count = 0
@@ -347,7 +344,7 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
         spells = template.get("spells") or []
         usable = any(s.get("trigger") == 0 for s in spells)
         if usable and _backpack(item) and (needs_health or needs_mana):
-            out.append(candidate("use_item", {"bag": 255, "slot": item["slot"]},
+            out.append(candidate(A.USE_ITEM, {"bag": 255, "slot": item["slot"]},
                                  f"use {item.get('name') or item.get('entry')}"))
             use_count += 1
             if use_count >= MAX_USE_ITEMS:
@@ -373,15 +370,15 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
         current_score = sum(current_scores) if equip_slot == 17 else (min(current_scores) if current_scores else None)
         if (item_compare.usability_error(tpl, class_id) is None and
                 (current_score is None or item_compare.score_item(tpl, class_id) > current_score)):
-            out.append(candidate("equip_item", {"bag": 255, "slot": item["slot"]},
+            out.append(candidate(A.EQUIP_ITEM, {"bag": 255, "slot": item["slot"]},
                                  f"equip upgrade {item.get('name') or item.get('entry')}"))
-            if sum(c["action"] == "equip_item" for c in out) >= MAX_EQUIP:
+            if sum(c["action"] == A.EQUIP_ITEM for c in out) >= MAX_EQUIP:
                 break
 
     invite = snapshot.get("pending_invite")
     if invite:  # session.pending_invite: {"inviter_name": str}
         inviter = invite.get("inviter_name") if isinstance(invite, dict) else None
-        out.append(candidate("accept_group", {}, f"accept the group invite{' from ' + inviter if inviter else ''}"))
+        out.append(candidate(A.ACCEPT_GROUP, {}, f"accept the group invite{' from ' + inviter if inviter else ''}"))
 
     units = sorted((u for u in snapshot.get("nearby_units") or []
                     if _guid_value(u, "guid", handles) is not None), key=_dist)
@@ -396,9 +393,9 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     loot = [u for u in units if u.get("lootable") and _dist(u) <= APPROACH_MAX_YD]
     for u in loot[:MAX_LOOT]:
         if _dist(u) <= INTERACT_RANGE_YD:
-            out.append(candidate("loot", {"guid": u["guid"]}, f"loot {_name(u)} ({_dist(u):.1f} yd)"))
+            out.append(candidate(A.LOOT, {"guid": u["guid"]}, f"loot {_name(u)} ({_dist(u):.1f} yd)"))
         else:
-            out.append(candidate("move_towards", {"guid": u["guid"], "stop_distance": 2.0},
+            out.append(candidate(A.MOVE_TOWARDS, {"guid": u["guid"], "stop_distance": 2.0},
                                  f"move to loot {_name(u)} ({_dist(u):.1f} yd)"))
 
     givers = [u for u in units if u.get("quest_giver_status") in _QUEST_GIVER_WORTH_VISITING
@@ -406,13 +403,13 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     for u in givers[:MAX_QUEST_GIVERS]:
         why = _QUEST_GIVER_WORTH_VISITING[u["quest_giver_status"]]
         if _dist(u) <= INTERACT_RANGE_YD:
-            out.append(candidate("interact", {"guid": u["guid"]}, f"talk to {_name(u)} ({why})"))
+            out.append(candidate(A.INTERACT, {"guid": u["guid"]}, f"talk to {_name(u)} ({why})"))
         else:
-            out.append(candidate("move_towards", {"guid": u["guid"], "stop_distance": 3.0},
+            out.append(candidate(A.MOVE_TOWARDS, {"guid": u["guid"], "stop_distance": 3.0},
                                  f"walk to {_name(u)} ({why}, {_dist(u):.1f} yd)"))
 
     for q in [q for q in snapshot.get("quest_log") or [] if q.get("state_name") == "failed"][:MAX_ABANDON]:
-        out.append(candidate("abandon_quest", {"slot": q["slot"]},
+        out.append(candidate(A.ABANDON_QUEST, {"slot": q["slot"]},
                              f"abandon failed quest {q.get('title') or q.get('quest_id')}"))
 
     targets = [u for u in units if u["guid"] not in threat_guids and _alive(u) and not u.get("lootable")
@@ -430,14 +427,14 @@ def generate(snapshot: dict, *, my_guid: int | None = None, reflex_state: dict |
     follow = (reflex_state or {}).get("follow") or {}
     if follow.get("enabled"):
         leader = follow.get("leader_name") or "the leader"
-        out.append(candidate("stop_following", {}, f"stop following {leader}"))
+        out.append(candidate(A.STOP_FOLLOWING, {}, f"stop following {leader}"))
         on = not follow.get("assist")
-        out.append(candidate("assist", {"on": on},
+        out.append(candidate(A.ASSIST, {"on": on},
                              f"{'start' if on else 'stop'} assisting {leader}'s target"))
     else:
         players = sorted((p for p in snapshot.get("nearby_players") or [] if p.get("name")), key=_dist)
         for p in players[:MAX_FOLLOW]:
-            out.append(candidate("follow", {"player_name": p["name"]},
+            out.append(candidate(A.FOLLOW, {"player_name": p["name"]},
                                  f"follow {p['name']} ({_dist(p):.1f} yd)"))
 
     drop, demote = _history_effects(history)

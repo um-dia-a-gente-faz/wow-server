@@ -319,7 +319,7 @@ def handle_party_command_result(ctx, payload: bytes):
     InviteToGroupAction's timeout-is-success default still applies to
     the OK case without special-casing it."""
     off = 0
-    operation = pk.u32(payload, off); off += 4
+    _operation = pk.u32(payload, off); off += 4
     member_name, off = pk.cstring(payload, off)
     result = pk.u32(payload, off); off += 4
     if result == ERR_PARTY_RESULT_OK:

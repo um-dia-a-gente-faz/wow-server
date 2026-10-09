@@ -49,8 +49,9 @@
 ```
 
 Both compose projects run from the same checkout. `scripts/deploy.sh`
-fast-forwards it to `origin/main` and runs `docker compose up -d --build` for each
-(`docs/DEPLOYMENT.md` → "Updating"). The monitoring project joins the game
+fast-forwards it to `origin/main` and runs `docker compose up -d --build` only for
+the projects whose files changed, holding the game project back while players are
+online (`docs/DEPLOYMENT.md` → "Path-aware deploys and the players-online guard"). The monitoring project joins the game
 project's network (`wow-server_default`, declared `external`) so its services
 can reach `trinitycore-db` by name.
 
@@ -93,7 +94,7 @@ connect over the compose network as `trinitycore-db:3306`.
 TrinityCore's `Server.log` from the `server_logs` volume (mounted read-only),
 normalises ChatLogScript lines and serves public chat as Server-Sent Events on
 port 9500, with a bounded replay buffer. It's a prototype: see
-`tools/chat-feed/README.md` and `docs/CHAT_FEED_SPIKE.md`.
+`tools/chat-feed/README.md` and `docs/spikes/CHAT_FEED_SPIKE.md`.
 
 ### Monitoring stack (`monitoring/docker-compose.yml`)
 
@@ -115,8 +116,8 @@ defined in this repo. Dashboard JSONs in `monitoring/` are shipped there with
 
 ### AI agents (`agent/`, `docker-compose.agents.yml`)
 
-`agent/` is a pure-stdlib Python 3.3.5a client: SRP6 auth, world login, keepalive,
-chat and target actions. The root `Dockerfile` packages it, and
+`agent/` is a stdlib-only Python 3.12 client for the 3.3.5a protocol that logs in as one
+character and plays it with an LLM (module map below). The root `Dockerfile` packages it, and
 `docker-compose.agents.yml` runs one container per agent character. The roster
 is `agents/roster.json` (UM-63): 25 agents, AGENT01..AGENT05 being Luaprata,
 Farstrider, Shadowblade, Sunspeaker and Spellweaver and AGENT06..AGENT25 random
@@ -133,8 +134,30 @@ coding-CLI dev host that happens to be called `agents`), see
 | Agent containers | `wow-agents` | 9601..9625 | one per character; read-only observability API |
 | `tools/agent-runner` | `wow-agents` | 9700 | control plane: fleet status, start/stop, character creation; shared-token HTTP, LAN only, owns the Docker socket (#136) |
 | `tools/wowmap` fleet panel | wow-server VM | 9400 | UI only; calls the runner over the LAN, never holds the Docker socket |
-Perception (parsing update-object packets) is in progress. See `docs/ROADMAP.md`
-and `docs/PROTOCOL-NOTES.md`.
+Data flow inside one agent process (details in the module map and ADRs 0005, 0006):
+
+```
+ :8085 world server
+        | packets (transport.py: RC4 framing)
+        v
+ session.py  WoWSession(Transport, GameState)
+        | recv loop
+        v
+ router.py --> handlers/*  --> state.py / perception.py (what the agent knows)
+                                      |
+        +-----------------------------+--------------------+
+        v                                                  v
+ reflexes/ (follow, rest)                       think.py (one decision per cycle)
+        |  fast, own threads                               |
+        |                                    brain.py --> candidates.py, jev.py / llm.py
+        |                                                  |
+        +-----------------> actions/ (validated) <---------+
+                                   |
+                                   v
+                         packets out via actions.base.send
+```
+
+Wire formats are in `docs/PROTOCOL-NOTES.md`.
 
 ## Module map
 
@@ -147,12 +170,12 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 
 | Area | Modules | Owns |
 |---|---|---|
-| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). |
+| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). `action_names.py` holds one constant per registered action name (candidates refer to actions through it; a test pins it to `REGISTRY`). `rules.py` holds game-rule constants (ranges, level margin) shared by candidates and actions; it imports nothing. |
 | Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `transport.py`, `opcodes.py` (all opcode constants), `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
-| State | `state.py` (`GameState`), `perception.py` (`WorldState`, snapshots), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
+| State | `state.py` (`GameState`), `perception/` (`WorldState`, one snapshot builder per section), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |
 | Domain builders and parsers | `npc.py`, `quests.py`, `loot.py`, `mail.py`, `trade.py`, `spells.py`, `channels.py`, `names.py`, `items.py`, `item_compare.py`, `death.py`, `movement.py`, `group.py` | pure request builders and response parsers (and `death.py`/`movement.py` flows) used by handlers and actions. |
-| Acting | `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
+| Acting | `ports.py` (the typed contract: the `typing.Protocol` ports `PacketSink`, `EventLog`, `PlayerView`, `Inbox`, `ReflexSlots` that actions and reflexes may use of a session; `WoWSession` and the test fake `agent.tests.builders.FakeSession` both satisfy them), `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
 | Deciding | `think.py`, `brain.py`, `jev.py`, `llm.py` | one brain decision per think cycle: Jev over candidates or the LLM (ADRs 0001, 0003, 0004). |
 | Observing | `http_api.py`, `audit.py`, `metrics.py`, `chat_relay.py` | read-only HTTP API (:9601..9625), decision audit log, Prometheus-style counters, relay of heard chat to `tools/chat-feed`. |
 | Dev tools | `tools/` (`ab.py`, `cache_probe.py`, `dump_update.py`, `probe.py`, `replay.py`) | not run by the agent itself. |
@@ -194,7 +217,8 @@ The old Node.js runtime (`agent-runtime/`) was removed and lives only in git his
 Opcode constants are centralised in `agent/opcodes.py` (PR #258, issue #247).
 `agent/actions/` is a package (issue #248): importing it registers every module in
 a fixed order, which is the order of `catalog()`. Actions send packets through
-`actions.base.send`, not the session's private `_send_packet`, and the follow reflex
+`actions.base.send`, which calls the session's public `send_packet` (the `PacketSink` port
+of `agent/ports.py`, #304), not its private `_send_packet`, and the follow reflex
 registers its pause in `actions.base.MOVE_OVERRIDE_HOOKS`, so `actions` never imports
 `reflexes`.
 

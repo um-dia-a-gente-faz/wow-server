@@ -6,7 +6,6 @@ import struct
 import unittest
 
 from agent import npc
-from agent import packets as pk
 
 
 def cstring(s: str) -> bytes:

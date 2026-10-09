@@ -1,9 +1,11 @@
 """PacketRouter: registration, unknown opcodes, tick hooks, and the session's
 error isolation (WoWSession._dispatch_guarded) on top of it."""
 
+import struct
 import unittest
 
 from agent import session as se
+from agent.packets import ProtocolError
 from agent.router import Context, PacketRouter, ROUTER
 from agent.tests.builders import make_session
 
@@ -17,6 +19,16 @@ class PacketRouterTest(unittest.TestCase):
 
     def test_unknown_opcode_returns_false(self):
         self.assertFalse(PacketRouter().dispatch("ctx", 0x99, b''))
+
+    def test_raw_parse_errors_become_protocol_error_but_logic_bugs_do_not(self):
+        r = PacketRouter()
+        r.register(0x10, lambda c, p: struct.unpack('<I', p))
+        r.register(0x11, lambda c, p: None.missing)
+        with self.assertRaises(ProtocolError) as cm:
+            r.dispatch("ctx", 0x10, b'ab')
+        self.assertIsInstance(cm.exception.__cause__, struct.error)
+        with self.assertRaises(AttributeError):
+            r.dispatch("ctx", 0x11, b'')
 
     def test_duplicate_registration_is_an_error(self):
         r = PacketRouter()

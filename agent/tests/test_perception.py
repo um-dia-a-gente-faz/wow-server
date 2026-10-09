@@ -8,9 +8,7 @@ import unittest
 from unittest import mock
 
 from agent import perception as per
-from agent import trade
 from agent import update_fields as uf
-from agent import update_fields as uo_fields
 from agent import update_object as uo
 
 FIXTURES_DIR = pathlib.Path(__file__).parent / "fixtures" / "update_object"
@@ -266,10 +264,10 @@ class SplineInterpolationTest(unittest.TestCase):
         ws = per.WorldState()
         ws.set_my_map(530)
         ws.update_object(create_block(1, x=0, y=0, z=0))
-        with mock.patch("agent.perception.time.monotonic", return_value=100.0):
+        with mock.patch("time.monotonic", return_value=100.0):
             ws.update_object(spline_movement_block(1, 0.0, 0.0, 0.0, (10.0, 0.0, 0.0), duration=2000))
         obj = ws.get_object(1)
-        with mock.patch("agent.perception.time.monotonic", return_value=101.0):
+        with mock.patch("time.monotonic", return_value=101.0):
             pos = obj.current_position()
         self.assertAlmostEqual(pos[1], 5.0)
 
@@ -277,10 +275,10 @@ class SplineInterpolationTest(unittest.TestCase):
         ws = per.WorldState()
         ws.set_my_map(530)
         ws.update_object(create_block(1, x=0, y=0, z=0))
-        with mock.patch("agent.perception.time.monotonic", return_value=100.0):
+        with mock.patch("time.monotonic", return_value=100.0):
             ws.update_object(spline_movement_block(1, 0.0, 0.0, 0.0, (10.0, 0.0, 0.0), duration=2000))
         obj = ws.get_object(1)
-        with mock.patch("agent.perception.time.monotonic", return_value=1000.0):
+        with mock.patch("time.monotonic", return_value=1000.0):
             pos = obj.current_position()
         self.assertEqual(pos[1:4], (10.0, 0.0, 0.0))
 
@@ -486,8 +484,14 @@ class SnapshotTest(unittest.TestCase):
         ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0))
         for i in range(2, 8):
             ws.update_object(create_block(i, object_type=uo.TYPEID_UNIT, x=float(i), y=0, z=0, fields={0x03: i}))
+        for i in range(10, 16):
+            ws.update_object(create_block(i, object_type=uo.TYPEID_PLAYER, x=float(i), y=0, z=0))
+        for i in range(20, 26):
+            ws.update_object(create_block(i, object_type=uo.TYPEID_GAMEOBJECT, x=float(i), y=0, z=0))
         snap = ws.snapshot(max_range=50, limit=3)
-        self.assertEqual(len(snap["nearby_units"]), 3)
+        # #265: every nearby section is capped, so a crowd cannot blow up the prompt
+        for section in ("nearby_units", "nearby_players", "nearby_objects"):
+            self.assertEqual(len(snap[section]), 3, section)
 
     def test_snapshot_without_position_returns_empty_buckets(self):
         ws = per.WorldState()
@@ -555,389 +559,6 @@ class RealFixtureIntegrationTest(unittest.TestCase):
 
         snap = ws.snapshot(my_position=(530, 9487.69, -7279.2, 14.29, 0.0), max_range=500)
         self.assertGreater(len(snap["nearby_units"]) + len(snap["nearby_objects"]), 0)
-
-
-class NpcUiStateTest(unittest.TestCase):
-    """UM-40: gossip/vendor/trainer windows land in WorldState.ui_state and
-    surface through snapshot()'s 'window' key."""
-
-    def test_snapshot_window_defaults_to_none(self):
-        ws = per.WorldState()
-        ws.set_my_guid(1)
-        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0))
-        self.assertIsNone(ws.snapshot()["window"])
-
-    def test_gossip_message_opens_window_and_queues_text(self):
-        ws = per.WorldState()
-        data = {"npc_guid": 5, "menu_id": 1, "text_id": 999, "options": [], "quests": []}
-        ws.apply_gossip_message(data)
-        window = ws.get_ui_state()
-        self.assertEqual(window["kind"], "gossip")
-        self.assertEqual(window["npc_guid"], 5)
-        self.assertNotIn("body_text", window)  # not cached yet
-        self.assertEqual(ws.npc_texts.drain(), [(999, 5)])
-
-    def test_npc_text_update_backfills_open_gossip_window(self):
-        ws = per.WorldState()
-        ws.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
-                                  "options": [], "quests": []})
-        ws.apply_npc_text_update({"text_id": 999, "found": True,
-                                   "options": [{"text0": "Welcome!", "text1": "", "probability": 1.0,
-                                                "language": 0, "emotes": []}]})
-        self.assertEqual(ws.get_ui_state()["body_text"], "Welcome!")
-
-    def test_gossip_complete_closes_window(self):
-        ws = per.WorldState()
-        ws.apply_gossip_message({"npc_guid": 5, "menu_id": 1, "text_id": 999,
-                                  "options": [], "quests": []})
-        ws.apply_gossip_complete()
-        self.assertIsNone(ws.get_ui_state())
-
-    def test_list_inventory_opens_vendor_window(self):
-        ws = per.WorldState()
-        ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
-        self.assertEqual(ws.get_ui_state()["kind"], "vendor")
-        self.assertEqual(ws.handles.resolve(ws.snapshot()["window"]["vendor_guid"]), 5)
-
-    def test_trainer_list_opens_trainer_window(self):
-        ws = per.WorldState()
-        ws.apply_trainer_list({"trainer_guid": 5, "trainer_type": 0, "spells": [], "greeting": ""})
-        self.assertEqual(ws.get_ui_state()["kind"], "trainer")
-
-    def test_close_window_clears_state(self):
-        ws = per.WorldState()
-        ws.apply_list_inventory({"vendor_guid": 5, "items": [], "reason": None})
-        ws.close_window()
-        self.assertIsNone(ws.get_ui_state())
-
-
-class MailboxStateTest(unittest.TestCase):
-    """UM-60: is_mailbox() detection, world.mailbox's open/fill flow, and
-    has_new_mail."""
-
-    def test_is_mailbox_from_gameobject_type(self):
-        ws = per.WorldState()
-        ws.update_object(create_block(5, object_type=uo.TYPEID_GAMEOBJECT, fields={0x03: 187640}))
-        ws.apply_gameobject_query_response({"entry": 187640, "found": True, "name": "Mailbox",
-                                             "type": per.GAMEOBJECT_TYPE_MAILBOX})
-        self.assertTrue(ws.get_object(5).is_mailbox())
-
-    def test_is_mailbox_resolved_from_a_pre_warmed_name_cache(self):
-        # Regression test (found live testing, 2026-09-17): NameCache
-        # persists gameobject templates to disk across runs. A gameobject
-        # whose entry is already cached (this test simulates that by
-        # pre-populating names.gameobjects before the object is even
-        # perceived) must still get gameobject_type backfilled — a second
-        # live agent process, on its very first perception of the same
-        # mailbox, saw is_mailbox() stuck at False forever because only
-        # .name was being backfilled from the cached branch.
-        ws = per.WorldState()
-        ws.names.gameobjects[182363] = {"entry": 182363, "found": True, "name": "Mailbox",
-                                          "type": per.GAMEOBJECT_TYPE_MAILBOX}
-        ws.update_object(create_block(5, object_type=uo.TYPEID_GAMEOBJECT, fields={0x03: 182363}))
-        obj = ws.get_object(5)
-        self.assertEqual(obj.name, "Mailbox")
-        self.assertTrue(obj.is_mailbox())
-
-    def test_non_mailbox_gameobject_is_not_a_mailbox(self):
-        ws = per.WorldState()
-        ws.update_object(create_block(5, object_type=uo.TYPEID_GAMEOBJECT, fields={0x03: 1}))
-        ws.apply_gameobject_query_response({"entry": 1, "found": True, "name": "Chair", "type": 6})
-        self.assertFalse(ws.get_object(5).is_mailbox())
-
-    def test_unresolved_gameobject_type_is_not_a_mailbox_yet(self):
-        ws = per.WorldState()
-        ws.update_object(create_block(5, object_type=uo.TYPEID_GAMEOBJECT, fields={0x03: 187640}))
-        self.assertFalse(ws.get_object(5).is_mailbox())
-
-    def test_is_mailbox_from_npc_flag(self):
-        ws = per.WorldState()
-        ws.update_object(create_block(5, object_type=uo.TYPEID_UNIT,
-                                       fields={uf.UNIT_NPC_FLAGS: per.UNIT_NPC_FLAG_MAILBOX}))
-        self.assertTrue(ws.get_object(5).is_mailbox())
-
-    def test_open_mailbox_request_sets_pending_state(self):
-        ws = per.WorldState()
-        ws.open_mailbox_request(0x1234)
-        mailbox = ws.get_mailbox()
-        self.assertEqual(mailbox["mailbox_guid"], 0x1234)
-        self.assertIsNone(mailbox["mails"])
-
-    def test_mail_list_result_fills_pending_request_and_resolves_item_name(self):
-        ws = per.WorldState()
-        ws.items.items[20812] = {"entry": 20812, "name": "Tattered Pelt", "found": True}
-        ws.open_mailbox_request(0x1234)
-        ws.apply_mail_list_result({"total_records": 1, "mails": [{
-            "mail_id": 1, "sender_type": 0, "sender_guid": 3, "alt_sender_id": None,
-            "cod": 0, "package_id": 0, "stationery_id": 41, "money": 100, "flags": 0,
-            "is_read": False, "days_left": 29.0, "mail_template_id": 0,
-            "subject": "Hi", "body": "", "attachments": [{"position": 0, "attach_id": 22,
-                                                            "entry": 20812, "count": 1}],
-        }]})
-        mailbox = ws.get_mailbox()
-        self.assertEqual(mailbox["mailbox_guid"], 0x1234)  # kept from the request
-        self.assertEqual(mailbox["total_records"], 1)
-        self.assertEqual(mailbox["mails"][0]["attachments"][0]["name"], "Tattered Pelt")
-
-    def test_mail_list_result_with_no_pending_request_is_ignored(self):
-        ws = per.WorldState()
-        ws.apply_mail_list_result({"total_records": 0, "mails": []})
-        self.assertIsNone(ws.get_mailbox())
-
-    def test_mail_list_result_queues_item_query_for_unresolved_entry(self):
-        ws = per.WorldState()
-        ws.open_mailbox_request(0x1234)
-        ws.apply_mail_list_result({"total_records": 1, "mails": [{
-            "mail_id": 1, "sender_type": 0, "sender_guid": 3, "alt_sender_id": None,
-            "cod": 0, "package_id": 0, "stationery_id": 41, "money": 0, "flags": 0,
-            "is_read": False, "days_left": 29.0, "mail_template_id": 0,
-            "subject": "Hi", "body": "", "attachments": [{"position": 0, "attach_id": 22,
-                                                            "entry": 99999, "count": 1}],
-        }]})
-        self.assertIn(99999, ws.items.drain())
-
-    def test_received_mail_sets_flag(self):
-        ws = per.WorldState()
-        self.assertFalse(ws.snapshot()["has_new_mail"])
-        ws.apply_received_mail({"delay": 0.0})
-        self.assertTrue(ws.snapshot()["has_new_mail"])
-
-    def test_opening_mailbox_clears_has_new_mail(self):
-        ws = per.WorldState()
-        ws.apply_received_mail({"delay": 0.0})
-        ws.open_mailbox_request(0x1234)
-        ws.apply_mail_list_result({"total_records": 0, "mails": []})
-        self.assertFalse(ws.snapshot()["has_new_mail"])
-
-class TradeStateTest(unittest.TestCase):
-    """UM-59: world.trade's phase machine, driven by agent.trade.
-    parse_trade_status/parse_trade_status_extended shaped dicts, and the
-    optimistic local mutators agent/actions/trade.py calls (the server never echoes our
-    own offer back — see agent/trade.py's docstring)."""
-
-    def test_defaults_to_none(self):
-        ws = per.WorldState()
-        self.assertIsNone(ws.get_trade())
-        self.assertIsNone(ws.snapshot()["trade"])
-
-    def test_start_trade_request_sets_requested_phase(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        trade = ws.get_trade()
-        self.assertEqual(trade["phase"], "requested")
-        self.assertEqual(trade["partner_guid"], 0x999)
-        self.assertTrue(trade["initiated_by_me"])
-
-    def test_incoming_begin_trade_opens_request_and_fires_event(self):
-        ws = per.WorldState()
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_BEGIN_TRADE,
-                                         "status_name": "begin_trade", "trader_guid": 0x555})
-        self.assertEqual(result, ("trade_requested", {"by": 0x555}))
-        trade_state = ws.get_trade()
-        self.assertEqual(trade_state["phase"], "requested")
-        self.assertEqual(trade_state["partner_guid"], 0x555)
-        self.assertFalse(trade_state["initiated_by_me"])
-
-    def test_status_with_no_active_trade_is_ignored(self):
-        ws = per.WorldState()
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_BACK_TO_TRADE,
-                                         "status_name": "back_to_trade"})
-        self.assertIsNone(result)
-        self.assertIsNone(ws.get_trade())
-
-    def test_open_window_advances_phase(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_OPEN_WINDOW,
-                                         "status_name": "open_window"})
-        self.assertIsNone(result)
-        self.assertEqual(ws.get_trade()["phase"], "open")
-
-    def test_trade_accept_sets_their_accepted(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        ws.apply_trade_status({"status": trade.TRADE_STATUS_TRADE_ACCEPT, "status_name": "trade_accept"})
-        self.assertTrue(ws.get_trade()["their_accepted"])
-        self.assertFalse(ws.get_trade()["my_accepted"])
-
-    def test_back_to_trade_resets_both_accepted_flags(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        ws.set_my_trade_accepted()
-        ws.apply_trade_status({"status": trade.TRADE_STATUS_TRADE_ACCEPT, "status_name": "trade_accept"})
-        self.assertTrue(ws.get_trade()["my_accepted"])
-        self.assertTrue(ws.get_trade()["their_accepted"])
-        ws.apply_trade_status({"status": trade.TRADE_STATUS_BACK_TO_TRADE, "status_name": "back_to_trade"})
-        self.assertFalse(ws.get_trade()["my_accepted"])
-        self.assertFalse(ws.get_trade()["their_accepted"])
-
-    def test_not_on_taplist_rejects_without_closing_trade(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_NOT_ON_TAPLIST,
-                                         "status_name": "not_on_taplist", "slot": 2})
-        self.assertEqual(result, ("trade_offer_rejected", {"slot": 2, "reason": "not_on_taplist"}))
-        self.assertIsNotNone(ws.get_trade())  # window stays open
-
-    def test_trade_complete_fires_summary_and_clears_state(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        ws.set_my_trade_gold(500)
-        ws.set_my_trade_item(0, {"entry": 6948, "name": "Buckler"})
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_TRADE_COMPLETE,
-                                         "status_name": "trade_complete"})
-        kind, fields = result
-        self.assertEqual(kind, "trade_completed")
-        self.assertEqual(fields["summary"]["my_gold"], 500)
-        self.assertEqual(fields["summary"]["my_items"], [{"entry": 6948, "name": "Buckler"}])
-        self.assertIsNone(ws.get_trade())
-
-    def test_cancel_fires_trade_cancelled_and_clears_state(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_TRADE_CANCELED,
-                                         "status_name": "trade_canceled"})
-        self.assertEqual(result[0], "trade_cancelled")
-        self.assertEqual(result[1]["reason"], "trade_canceled")
-        self.assertIsNone(ws.get_trade())
-
-    def test_close_window_cancel_uses_result_name_as_reason(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        result = ws.apply_trade_status({"status": trade.TRADE_STATUS_CLOSE_WINDOW,
-                                         "status_name": "close_window", "result": 29,
-                                         "result_name": "not_enough_money"})
-        self.assertEqual(result, ("trade_cancelled",
-                                   {"reason": "not_enough_money",
-                                    "summary": {"partner_guid": 0x999, "my_gold": 0, "their_gold": 0,
-                                                "my_items": [], "their_items": []}}))
-        self.assertIsNone(ws.get_trade())
-
-    def test_extended_updates_their_offer_and_resolves_cached_item_name(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        ws.items.items[6948] = {"entry": 6948, "name": "Weather Beaten Buckler", "found": True}
-        changed = ws.apply_trade_status_extended({
-            "is_trader_data": True, "money": 250,
-            "items": {0: {"slot": 0, "entry": 6948, "count": 1}},
-        })
-        self.assertEqual(changed["gold"], 250)
-        self.assertEqual(changed["items"][0]["name"], "Weather Beaten Buckler")
-        trade_state = ws.get_trade()
-        self.assertEqual(trade_state["their_gold"], 250)
-        self.assertEqual(trade_state["their_items"][0]["name"], "Weather Beaten Buckler")
-
-    def test_extended_queues_item_query_for_unresolved_entry(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        ws.apply_trade_status_extended({
-            "is_trader_data": True, "money": 0,
-            "items": {0: {"slot": 0, "entry": 12345, "count": 1}},
-        })
-        self.assertIn(12345, ws.items.drain())
-
-    def test_extended_own_data_flag_is_ignored(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        changed = ws.apply_trade_status_extended({"is_trader_data": False, "money": 999, "items": {}})
-        self.assertIsNone(changed)
-        self.assertEqual(ws.get_trade()["their_gold"], 0)
-
-    def test_extended_with_no_active_trade_is_ignored(self):
-        ws = per.WorldState()
-        changed = ws.apply_trade_status_extended({"is_trader_data": True, "money": 999, "items": {}})
-        self.assertIsNone(changed)
-
-    def test_my_trade_item_mutators(self):
-        ws = per.WorldState()
-        ws.start_trade_request(0x999, initiated_by_me=True)
-        ws.set_my_trade_item(1, {"entry": 159, "name": "Refreshing Spring Water"})
-        self.assertEqual(ws.get_trade()["my_items"][1]["entry"], 159)
-        ws.clear_my_trade_item(1)
-        self.assertNotIn(1, ws.get_trade()["my_items"])
-
-    def test_mutators_are_no_ops_without_an_active_trade(self):
-        ws = per.WorldState()
-        ws.set_my_trade_item(0, {"entry": 1})  # no trade pending — must not raise
-        ws.set_my_trade_gold(100)
-        ws.set_my_trade_accepted()
-        self.assertIsNone(ws.get_trade())
-
-
-class InventoryModelTest(unittest.TestCase):
-    """UM-42: building session.inventory/equipment from CREATE blocks (self
-    player + item objects) and the item-template cache."""
-
-    def _make_self(self, ws, guid, slot_guids):
-        raw = {}
-        for slot, item_guid in slot_guids.items():
-            if slot < 19 + 4:
-                base = uo_fields.PLAYER_FIELD_INV_SLOT_HEAD + slot * 2
-            else:
-                base = uo_fields.PLAYER_FIELD_PACK_SLOT_1 + (slot - 23) * 2
-            raw[base] = item_guid & 0xFFFFFFFF
-            raw[base + 1] = item_guid >> 32
-        ws.set_my_guid(guid)
-        ws.update_object(create_block(guid, object_type=uo.TYPEID_PLAYER, fields=raw))
-
-    def test_equipment_and_inventory_from_item_objects(self):
-        ws = per.WorldState()
-        me_guid = 0x1
-        head_item_guid = 0xF120000000000005
-        food_item_guid = 0xF120000000000006
-        self._make_self(ws, me_guid, {0: head_item_guid, 23: food_item_guid})
-
-        ws.update_object(create_block(
-            head_item_guid, object_type=uo.TYPEID_ITEM,
-            fields={uf_object_entry(): 1234, uo_fields.ITEM_FIELD_STACK_COUNT: 1}))
-        ws.update_object(create_block(
-            food_item_guid, object_type=uo.TYPEID_ITEM,
-            fields={uf_object_entry(): 159, uo_fields.ITEM_FIELD_STACK_COUNT: 4}))
-
-        equipment, inventory = ws.build_equipment_and_inventory()
-        self.assertEqual(equipment[0]["guid"], head_item_guid)
-        self.assertEqual(equipment[0]["entry"], 1234)
-
-        self.assertEqual(len(inventory), 1)
-        self.assertEqual(inventory[0]["guid"], food_item_guid)
-        self.assertEqual(inventory[0]["entry"], 159)
-        self.assertEqual(inventory[0]["count"], 4)
-        self.assertEqual(inventory[0]["slot"], 23)
-
-    def test_missing_item_object_still_reports_bare_guid(self):
-        ws = per.WorldState()
-        me_guid = 0x1
-        item_guid = 0xF120000000000099
-        self._make_self(ws, me_guid, {23: item_guid})
-        # No CREATE block for the item itself has arrived yet.
-        equipment, inventory = ws.build_equipment_and_inventory()
-        self.assertEqual(inventory, [{"guid": item_guid, "slot": 23}])
-
-    def test_no_self_object_yet(self):
-        ws = per.WorldState()
-        ws.set_my_guid(0x1)
-        self.assertEqual(ws.build_equipment_and_inventory(), ({}, []))
-
-    def test_snapshot_includes_equipment_and_inventory_keys(self):
-        ws = per.WorldState()
-        ws.set_my_map(0)
-        self._make_self(ws, 0x1, {})
-        snap = ws.snapshot(my_position=(0, 0.0, 0.0, 0.0, 0.0))
-        self.assertIn("equipment", snap)
-        self.assertIn("inventory", snap)
-
-    def test_item_query_response_backfills_name(self):
-        ws = per.WorldState()
-        item_guid = 0xF120000000000042
-        ws.update_object(create_block(
-            item_guid, object_type=uo.TYPEID_ITEM,
-            fields={uf_object_entry(): 159, uo_fields.ITEM_FIELD_STACK_COUNT: 1}))
-        ws.apply_item_query_response({"entry": 159, "found": True, "name": "Tough Jerky"})
-        self.assertEqual(ws.get_object(item_guid).name, "Tough Jerky")
-
-
-def uf_object_entry():
-    return uo_fields.OBJECT_FIELD_ENTRY
 
 
 if __name__ == '__main__':

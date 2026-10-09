@@ -11,16 +11,15 @@ import json
 import os
 import tempfile
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from agent import actions as ac
 from agent import known_targets as kt
-from agent import lines
 from agent import perception as per
 from agent import update_fields as uf
 from agent.reflexes import rest as restmod
 from agent.tools import probe
+from agent.tests import builders
 
 ME = 0xF130000000000001
 ERONA = 0xF130000000000010
@@ -69,7 +68,7 @@ def make_env(units=(), position=(MAP, 0.0, 0.0, 0.0, 0.0), health=100, max_healt
     world.objects[ME] = me
     for u in units:
         world.objects[u.guid] = u
-    session = SimpleNamespace(player_position=position, player_guid=ME, events=[], world_state=world,
+    session = builders.FakeSession(player_position=position, player_guid=ME, events=[], world_state=world,
                               sent=[], _send_packet=lambda op, payload=b"": None, race=10)
     clk = Clock()
     env_kw.setdefault("actions", {})
@@ -544,12 +543,12 @@ class RestStepTest(unittest.TestCase):
     def env(self, health, regen_per_s=5, **kw):
         env = make_env(health=health, max_health=100, **kw)
         env.actions = {"rest": ac.REGISTRY["rest"]}
-        env.session._rest_reflex = None  # fresh reflex
+        env.session.rest_reflex = None  # fresh reflex
         env.session.sent = []
         env.session._send_packet = lambda op, payload=b"": env.session.sent.append(op)
 
         def regen(now):
-            reflex = getattr(env.session, "_rest_reflex", None)
+            reflex = env.session.rest_reflex
             me = env.world.objects[ME]
             if reflex is not None and reflex.active:
                 me.health = min(me.max_health, me.health + regen_per_s * env.timeouts.poll_s)

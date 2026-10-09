@@ -27,7 +27,8 @@ import time
 
 from . import actions
 from . import movement
-from .perception import PLAYER_FLAGS_GHOST, UNIT_NPC_FLAG_SPIRITHEALER
+from .rules import SPIRIT_HEALER_SEARCH_RANGE_YD
+from .perception import UNIT_NPC_FLAG_SPIRITHEALER
 
 from .opcodes import (
     CMSG_REPOP_REQUEST,
@@ -43,8 +44,6 @@ CORPSE_OBJECT_MATCH_RADIUS_YD = 5.0  # how close a "corpse" object must be to
                                      # QUERY's response, only a position, so
                                      # this is a best-effort match against
                                      # whatever corpse object perception has
-SPIRIT_HEALER_SEARCH_RANGE_YD = 200.0  # ghosts can see much further than 50yd
-                                       # in the real client; generous on purpose
 SPIRIT_HEALER_STOP_DISTANCE_YD = 5.0
 
 MAX_DETOUR_ATTEMPTS = 3

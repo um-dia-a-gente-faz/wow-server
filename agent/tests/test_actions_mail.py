@@ -192,8 +192,8 @@ class SendMailActionTest(unittest.TestCase):
         self.assertIsNone(ac.SendMailAction().check(sess, world, to="Rubens", subject="Hi", body="Body",
                                                       bag=255, slot=23))
         world.remove_guids([item_guid])  # simulate the item being moved/consumed between check() and execute()
-        result = ac.SendMailAction().execute(sess, world, to="Rubens", subject="Hi", body="Body",
-                                              bag=255, slot=23)
+        ac.SendMailAction().execute(sess, world, to="Rubens", subject="Hi", body="Body",
+                                    bag=255, slot=23)
 
 
 class TakeMailActionTest(unittest.TestCase):

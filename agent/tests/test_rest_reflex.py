@@ -3,20 +3,17 @@ session/world only, no network, no real sleeping."""
 
 import struct
 import unittest
-from types import SimpleNamespace
 
 from agent import actions as ac
 from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.reflexes import rest as rf
+from agent.tests.builders import FakeSession
 
 
 def fake_session(guid=0xF130000000000099):
-    sent = []
-    sess = SimpleNamespace(player_guid=guid, events=[])
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
+    sess = FakeSession(player_guid=guid, events=[])
     return sess
 
 

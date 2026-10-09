@@ -7,16 +7,12 @@ bottom replays bytes captured off the live realm instead.
 """
 
 import json
-import os
 import pathlib
 import struct
-import tempfile
 import unittest
-import uuid
 from types import SimpleNamespace
 
 from agent import chat_relay as cr
-from agent import session as se
 from agent.handlers import chat as hchat
 from agent.tests.builders import make_session
 

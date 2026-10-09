@@ -8,7 +8,7 @@ exposed is re-exported here, so `from agent import actions` is unchanged.
 """
 
 from .base import *  # noqa: F401,F403
-from .base import _record_event, _wait_for, _wait_for_value, _pause_follow_reflex, _find_item_guid  # noqa: F401
+from .base import _wait_for, _wait_for_value, _pause_follow_reflex, _find_item_guid  # noqa: F401
 from .movement import *  # noqa: F401,F403
 from .combat import *  # noqa: F401,F403
 from .vendor import *  # noqa: F401,F403

@@ -32,6 +32,7 @@ generated() {
     python3 -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f" >&2; rc=1; }
   done
   for f in scripts/wow-agents/*.sh; do bash -n "$f" || rc=1; done
+  python3 scripts/gen_protocol_tables.py --check || rc=1   # opcode + update-field tables, #290
   return $rc
 }
 suite() {

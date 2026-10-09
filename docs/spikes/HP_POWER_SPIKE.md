@@ -1,9 +1,11 @@
 # Max health / max power spike
 
+> **Archived spike.** Outcome: no-go on RA/GM commands, go on a config-only alternative. Issue: UM-46. Superseded by: nothing.
+
 This note investigates ROADMAP "Operator dashboard panel", Phase B option 2:
 can the RA console (`:3443`) or GM commands (via `scripts/wow_console.py`)
 report **max** health and power for an arbitrary online character, so the
-wowmap inspect drawer can draw bars? (Linear UM-46.)
+wowmap inspect drawer can draw bars? (UM-46.)
 
 **Verdict: no-go on RA/GM commands, go on a config-only alternative.** No
 stock command usable from a console prints a player's max health or power.
