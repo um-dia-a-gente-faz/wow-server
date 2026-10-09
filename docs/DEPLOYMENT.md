@@ -167,6 +167,44 @@ first boot, and the write API rejects basic auth; the file path needs no auth at
 Validate every panel expression against Prometheus (`/api/v1/query_range`) before
 committing a dashboard — an empty result almost always means a wrong label matcher.
 
+## Database backups
+
+`auth` and `characters` hold the owner's and every agent character and are the only
+irreplaceable state (`world` is rebuilt from the TDB). `scripts/backup-db.sh` runs
+`mysqldump --single-transaction` inside `trinitycore-db` (the password stays in the
+container) and writes `<db>-<timestamp>.sql.gz` to `/opt/wow-server-backups`, deleting
+files older than `KEEP_DAYS` (14) only when every dump succeeded, so a failing backup never
+ages out the last good dumps. Override with `BACKUP_DIR`, `KEEP_DAYS`, `DBS`.
+
+Install once on the VM, as root (idempotent, overwrites the same file):
+
+```bash
+echo '30 4 * * * root /opt/wow-server/scripts/backup-db.sh >> /var/log/wow-backup.log 2>&1' \
+  > /etc/cron.d/wow-backup
+```
+
+Check it: `ls -l /opt/wow-server-backups`. Off-VM copy (optional), from the Proxmox host:
+`rsync -a root@192.168.1.64:/opt/wow-server-backups/ /var/backups/wow/`.
+
+**Restore drill** (never restore over the live DB for a drill; do not restart the worldserver):
+
+```bash
+docker run -d --name wow-scratch --memory 512m -e MYSQL_ROOT_PASSWORD=scratch mysql:8.4
+until docker exec wow-scratch mysqladmin ping -h127.0.0.1 -uroot -pscratch --silent; do sleep 2; done  # TCP: the init-time temp server is socket-only
+f=$(ls -t /opt/wow-server-backups/characters-*.sql.gz | head -1)
+scripts/restore-db.sh --dry-run "$f"                  # validates the archive only
+DB_CONTAINER=wow-scratch scripts/restore-db.sh "$f"
+for c in trinitycore-db wow-scratch; do               # row counts must match
+  docker exec $c sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SELECT COUNT(*) FROM characters.characters"'
+done
+docker rm -f wow-scratch
+```
+
+Same for `auth` / `auth.account`. A real restore into the live DB needs `CONFIRM_LIVE=1`
+and the worldserver stopped by the owner. `scripts/tests/test_backup_restore.py` covers
+the scripts with a fake `docker` (CI has no MySQL). Not done yet: backup-age metric in
+`wow-exporter` + Grafana stale alert.
+
 ## Updating
 
 `/opt/wow-server` on the VM is a real clone of this repo (not a copy) and both
