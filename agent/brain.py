@@ -101,6 +101,7 @@ class Decision:
     overridden: str | None = None       # candidate id Jev chose before the safe substitution
     usage: dict = field(default_factory=dict)
     jev_status: str | None = None
+    prompt_id: str | None = None        # agent.prompts ids of the LLM prompt, None if no LLM request
     history_notes: list | None = None   # candidates dropped/demoted because of history, with why
 
 
@@ -339,6 +340,7 @@ class Brain:
         d.prompt_tokens = usage.get("prompt_tokens")
         d.completion_tokens = usage.get("completion_tokens")
         d.latency_ms = getattr(self.llm, "last_latency_ms", None)
+        d.prompt_id = getattr(self.llm, "last_prompt_id", None)
         # UM-94: the model that actually answered (None on a failed call);
         # clients without `last_model` keep the configured `model`.
         if hasattr(self.llm, "last_model"):
