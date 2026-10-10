@@ -565,6 +565,16 @@ class FakeDockerTest(RunnerCase):
         self.assertEqual([c[1:] for c in self.docker.calls if c[0] == "compose"],
                          [(["up", "-d"], "agent-bravo"), (["stop"], "agent-bravo")])
 
+    def test_fleet_refuses_names_outside_the_roster_before_docker(self):
+        # the allow-list Fleet passes must be the roster, not the names it was asked about
+        with self.assertRaises(runner.RunnerError) as cm:
+            self.fleet._compose(["stop"], "../x", 5)
+        self.assertEqual(cm.exception.status, 400)
+        with self.assertRaises(runner.RunnerError) as cm:
+            self.fleet.containers([{"container": "-f"}])
+        self.assertEqual(cm.exception.status, 400)
+        self.assertEqual([c for c in self.docker.calls if c[0] in ("compose", "inspect")], [])
+
     def test_retire_stops_through_the_backend_and_records_it(self):
         self.fleet.retire("Charlie")
         self.assertIn(("compose", ["stop"], "agent-charlie"), self.docker.calls)
