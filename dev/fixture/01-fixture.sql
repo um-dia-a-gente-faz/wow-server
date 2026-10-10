@@ -1,5 +1,11 @@
--- Minimal characters/auth/world rows for the dev stack (#389). Made-up data; only the
--- tables and columns tools/wowmap reads. Refresh: see docs/DEV-STACK.md.
+-- Minimal rows for the dev stack (#389). Made-up data. Covers the character row, the
+-- players list, the account lookup (repo/characters.py, repo/players.py) and the activity
+-- snapshot poller (activity.py: characters, character_inventory, item_instance(guid,
+-- itemEntry, count), character_queststatus_rewarded, item_template(entry, name, SellPrice),
+-- quest_template). NOT covered: the inspect drawer's inventory, talents, reputation, stats
+-- and achievements (detail() needs more item columns and the character_talent/_reputation/
+-- _stats/_achievement tables); they come back empty with best_effort warnings in wowmap's log.
+-- Refresh: see docs/DEV-STACK.md.
 CREATE DATABASE IF NOT EXISTS auth;
 CREATE DATABASE IF NOT EXISTS characters;
 CREATE DATABASE IF NOT EXISTS world;

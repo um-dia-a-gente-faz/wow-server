@@ -35,11 +35,20 @@ one scripted scenario (see `tools/world-mock/README.md`), so the agent mostly id
 
 ## Refreshing the fixture
 
-`dev/fixture/01-fixture.sql` creates only the tables and columns `tools/wowmap`
-queries, with one character row. When wowmap reads a new column, add it to the matching
-`CREATE TABLE` (column names from TrinityCore `sql/base/characters_database.sql`) and
-re-run `dev/dev.sh down && dev/dev.sh up`. Init scripts run only on an empty database,
-which `down` guarantees by deleting the volumes.
+`dev/fixture/01-fixture.sql` covers the character row, the players list, the account
+lookup and the activity snapshot poller (so it holds `auth.account`, `characters.characters`,
+`character_inventory`, `item_instance(guid, itemEntry, count)`,
+`character_queststatus_rewarded`, `world.item_template(entry, name, SellPrice)` and
+`world.quest_template`; each is read by `tools/wowmap/activity.py` or `repo/*.py`).
+
+It does **not** cover the inspect drawer's inventory, talents, reputation, stats and
+achievements: those need more `item_instance`/`item_template` columns and the
+`character_talent`, `character_reputation`, `character_stats` and `character_achievement`
+tables. They come back empty and wowmap logs `best_effort` warnings; that is expected.
+
+To widen it, add the table or column to the `CREATE TABLE` (names from TrinityCore
+`sql/base/characters_database.sql`) and re-run `dev/dev.sh down && dev/dev.sh up`. Init
+scripts run only on an empty database, which `down` guarantees by deleting the volumes.
 
 Ports and variable names come from `agent/config.py::SETTINGS` and each tool's README;
 the compose file sets only the values that differ from the defaults.
