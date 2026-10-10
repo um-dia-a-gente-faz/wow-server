@@ -9,3 +9,10 @@ groups:
         annotations:
           summary: "{{ $labels.agent }} keeps swallowing errors at {{ $labels.where }}"
           description: "An exception is caught and logged, not raised, at this call site for 10m. Read the agent log for the traceback."
+      - alert: AgentMetricsScrapeDown
+        expr: absent(up{job="wow_agent_http"} == 1)
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "No agent /metrics target is up"
+          description: "Job wow_agent_http has no healthy target for 15m: wrong host or port in prometheus-agents-scrape.yml, or the whole fleet is stopped."

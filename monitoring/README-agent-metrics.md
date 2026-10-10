@@ -69,7 +69,9 @@ On the wow-server VM (192.168.1.64), run the exporter script periodically
 `wow_agent_swallowed_errors_total{agent,where}` is not audit-derived: Prometheus scrapes it
 from each agent's `GET /metrics` (job `wow_agent_http`, `prometheus-agents-scrape.yml`),
 shown on the Jev decision-usage dashboard and alerted by `prometheus-agent-alerts.yml`.
-Both files are merged by hand into the Prometheus config on VM201.
+Both files are merged by hand into the Prometheus config on VM201. `AgentMetricsScrapeDown`
+fires when no agent target is up for 15m (wrong host/port, or the fleet is stopped); individual
+stopped agents do not page. The scrape host `wow-agents.lan` is unconfirmed: set the real address.
 
 The **Jev — decision usage** dashboard is in
 `monitoring/grafana-dashboard-jev-decision-usage.json`. Metrics are rebuilt

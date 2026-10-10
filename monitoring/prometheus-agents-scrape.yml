@@ -1,3 +1,6 @@
+# UNCONFIRMED HOST: the repo never records the wow-agents address (docs/WOW-AGENTS-PROVISIONING.md
+# picks a free 192.168.1.NN at provisioning). `wow-agents.lan` is a placeholder; confirm or replace
+# it in the live step (AgentMetricsScrapeDown fires if it is wrong).
 # Prometheus scrape job for each agent's GET /metrics (wow_agent_swallowed_errors_total, #306).
 # Merge under `scrape_configs:` in /opt/pandora/prometheus/prometheus.yml on VM201.
 # Agent N (1-based, agents/roster.json order) serves on 9600+N (docker-compose.agents.yml)
