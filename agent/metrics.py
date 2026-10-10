@@ -3,7 +3,7 @@
 (agent.audit) — no dependency on prometheus_client (agent/ is stdlib-only,
 per CONTRIBUTING.md), so this builds the exposition-format text itself.
 
-Used by tools.agent_dev.metrics_textfile (a textfile-collector script; see that
+Used by monitoring/agent_metrics_textfile.py (a textfile-collector script; see that
 module's docstring for why textfile over an HTTP /metrics server) and
 unit-tested directly (agent/tests/test_metrics.py) without touching the
 filesystem beyond the fixtures it's given.

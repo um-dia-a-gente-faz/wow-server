@@ -40,10 +40,6 @@ BASELINE = {
     "agent.session",
     "agent.spells",
     "agent.state",
-    "tools.agent_dev.ab",
-    "tools.agent_dev.cache_probe",
-    "tools.agent_dev.dump_update",
-    "tools.agent_dev.probe",
     "agent.transport",
     "agent.update_fields",
 }

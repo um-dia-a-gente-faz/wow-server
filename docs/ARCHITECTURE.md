@@ -178,7 +178,6 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 | Acting | `ports.py` (the typed contract: the `typing.Protocol` ports `PacketSink`, `EventLog`, `PlayerView`, `Inbox`, `ReflexSlots` that actions and reflexes may use of a session; `WoWSession` and the test fake `agent.tests.builders.FakeSession` both satisfy them), `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
 | Deciding | `think.py`, `brain.py`, `jev.py`, `llm.py` | one brain decision per think cycle: Jev over candidates or the LLM (ADRs 0001, 0003, 0004). |
 | Observing | `http_api.py`, `audit.py`, `metrics.py`, `chat_relay.py` | read-only HTTP API (:9601..9625), decision audit log, Prometheus-style counters, relay of heard chat to `tools/chat-feed`. |
-| Dev tools | `tools/` (`ab.py`, `cache_probe.py`, `dump_update.py`, `probe.py`, `replay.py`) | not run by the agent itself. |
 | Tests | `tests/` | `python3 -m unittest discover -s agent/tests`. |
 
 The import rules for `agent/` are enforced by `agent/tests/test_architecture.py`: its `LAYERS`
@@ -198,6 +197,7 @@ and `mpyq`.
 | `tools/jev-mock` | local stand-in for the Jev Decisions API | dev / tests |
 | `tools/world-mock` | scripted fake auth + world server for end-to-end tests of the agent client (#253) | CI / tests |
 | `tools/dbc` | WDBC reader and name/spell-text helpers shared by wowmap | library |
+| `tools/agent_dev` | developer CLIs that import agent as a library: probe (manual live capability probe), replay, ab, cache_probe, dump_update; run as `python3 -m tools.agent_dev.<name>` from the repo root | dev machine / VM shell |
 
 ### Other top-level directories
 

@@ -6,7 +6,7 @@ One JSONL record per think cycle, written to
 `/data/audit`). Doubles as `docs/AI-AGENT-SPEC.md`'s Safety-section audit
 log and as prompt-iteration data (see `docs/ROADMAP.md` Phase 3, item 3),
 and is what `tools.agent_dev.replay` and the metrics exporter
-(`tools.agent_dev.metrics_textfile`) both read.
+(`monitoring/agent_metrics_textfile.py`) both read.
 
 Record shape (one JSON object per line, `schema` first) is `AuditRecord` in
 `agent/audit_schema.py`, with the meaning of each field in its comments. Write

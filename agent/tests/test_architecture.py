@@ -201,6 +201,12 @@ class AgentArchitectureTests(unittest.TestCase):
                for m in _imports(path, package) if m.split(".")[0] == "tools"]
         self.assertEqual(bad, [], "agent/ runtime must not import from tools/")
 
+    def test_image_ships_no_tests_or_dev_tools(self):
+        # #397: the image COPYs agent/; .dockerignore must keep tests out, dev CLIs live in tools/.
+        ignored = (ROOT / ".dockerignore").read_text().splitlines()
+        self.assertIn("agent/tests/", ignored)
+        self.assertFalse((AGENT / "tools").exists(), "dev tools belong in tools/agent_dev")
+
     def test_nothing_imports_main(self):
         offenders = [u for u, edges in self.graph.items() if "__main__" in edges]
         self.assertEqual(offenders, [])
