@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 # name|command  (the command runs from the repo root)
 SUITES=(
-  "agent|python3 -m unittest discover -s agent/tests"
+  "agent|python3 -m unittest discover -t . -s agent/tests"
   "chat-feed|python3 -m unittest discover -s tools/chat-feed/tests"
   "dbc|python3 -m unittest discover -s tools/dbc/tests"
   "world-mock|python3 -m unittest discover -s tools/world-mock/tests"
