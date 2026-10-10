@@ -41,7 +41,7 @@ actions wait for one of those instead.
 
 import struct
 
-from . import packets as pk
+from .wire import Reader
 
 # Opcodes (Opcodes.h)
 from .opcodes import (  # noqa: F401  (re-exported: callers use trade.CMSG_*/SMSG_*)
@@ -166,52 +166,51 @@ def parse_trade_status(payload: bytes) -> dict:
     """SMSG_TRADE_STATUS (0x120): WorldSession::SendTradeStatus. uint32
     status always; then a status-specific tail, per the switch in
     SendTradeStatus — everything else has no tail at all."""
-    status = pk.u32(payload, 0)
-    off = 4
+    r = Reader(payload, SMSG_TRADE_STATUS)
+    status = r.u32()
     info = {"status": status, "status_name": TRADE_STATUS_NAMES.get(status, f"status_{status}")}
     if status == TRADE_STATUS_BEGIN_TRADE:
-        info["trader_guid"] = pk.u64(payload, off)
+        info["trader_guid"] = r.u64()
     elif status == TRADE_STATUS_OPEN_WINDOW:
         pass  # trailing uint32, always 0 ("trade ID") — nothing worth decoding
     elif status == TRADE_STATUS_CLOSE_WINDOW:
-        result = pk.u32(payload, off); off += 4
-        is_target_result = bool(payload[off]); off += 1
-        item_limit_category_id = pk.u32(payload, off)
+        result = r.u32()
+        is_target_result = bool(r.u8())
+        item_limit_category_id = r.u32()
         info["result"] = result
         info["result_name"] = EQUIP_RESULT_NAMES.get(result, f"result_{result}")
         info["is_target_result"] = is_target_result
         info["item_limit_category_id"] = item_limit_category_id
     elif status in (TRADE_STATUS_WRONG_REALM, TRADE_STATUS_NOT_ON_TAPLIST):
-        info["slot"] = payload[off]
+        info["slot"] = r.u8()
     return info
 
 
-def _parse_trade_slot(payload: bytes, off: int) -> tuple[dict | None, int]:
+def _parse_trade_slot(r: Reader) -> dict | None:
     """One TRADE_SLOT_COUNT entry from SMSG_TRADE_STATUS_EXTENDED
     (WorldSession::SendUpdateTrade): uint8 slot index, then either a real
     item's 17 fields or 18 zero uint32s for an empty slot (see this
     function's field count below, which matches either shape byte-for-byte
     since a GUID field takes 2 words) — an entry of all zeros (entry == 0)
-    means the slot is empty; returns (None, new_off) for that case."""
-    slot = payload[off]; off += 1
-    entry = pk.u32(payload, off); off += 4
-    display_id = pk.u32(payload, off); off += 4
-    stack_count = pk.u32(payload, off); off += 4
-    wrapped = pk.u32(payload, off); off += 4
-    gift_creator = pk.u64(payload, off); off += 8
-    enchant_id = pk.u32(payload, off); off += 4
-    socket_enchants = list(struct.unpack_from(f'<{MAX_GEM_SOCKETS}I', payload, off))
-    off += 4 * MAX_GEM_SOCKETS
-    creator = pk.u64(payload, off); off += 8
-    charges = pk.u32(payload, off); off += 4
-    suffix_factor = pk.u32(payload, off); off += 4
-    random_property_id = pk.u32(payload, off); off += 4
-    lock_id = pk.u32(payload, off); off += 4
-    max_durability = pk.u32(payload, off); off += 4
-    durability = pk.u32(payload, off); off += 4
+    means the slot is empty; returns None for that case."""
+    slot = r.u8()
+    entry = r.u32()
+    display_id = r.u32()
+    stack_count = r.u32()
+    wrapped = r.u32()
+    gift_creator = r.u64()
+    enchant_id = r.u32()
+    socket_enchants = [r.u32() for _ in range(MAX_GEM_SOCKETS)]
+    creator = r.u64()
+    charges = r.u32()
+    suffix_factor = r.u32()
+    random_property_id = r.u32()
+    lock_id = r.u32()
+    max_durability = r.u32()
+    durability = r.u32()
     if entry == 0:
-        return None, off
-    item = {
+        return None
+    return {
         "slot": slot, "entry": entry, "display_id": display_id, "count": stack_count,
         "wrapped": bool(wrapped), "gift_creator_guid": gift_creator or None,
         "enchant_id": enchant_id, "socket_enchants": socket_enchants,
@@ -219,7 +218,6 @@ def _parse_trade_slot(payload: bytes, off: int) -> tuple[dict | None, int]:
         "suffix_factor": suffix_factor, "random_property_id": random_property_id,
         "lock_id": lock_id, "max_durability": max_durability, "durability": durability,
     }
-    return item, off
 
 
 def parse_trade_status_extended(payload: bytes) -> dict:
@@ -230,16 +228,16 @@ def parse_trade_status_extended(payload: bytes) -> dict:
     (always 0), uint32 x2 slot counts (both always TRADE_SLOT_COUNT),
     uint32 money, uint32 spell (enchant spell cast on slot 6, 0 = none),
     then TRADE_SLOT_COUNT fixed slot entries (see _parse_trade_slot)."""
-    off = 0
-    trader_data = bool(payload[off]); off += 1
-    trade_id = pk.u32(payload, off); off += 4
-    slot_count_a = pk.u32(payload, off); off += 4
-    slot_count_b = pk.u32(payload, off); off += 4
-    money = pk.u32(payload, off); off += 4
-    spell = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_TRADE_STATUS_EXTENDED)
+    trader_data = bool(r.u8())
+    trade_id = r.u32()
+    slot_count_a = r.u32()
+    slot_count_b = r.u32()
+    money = r.u32()
+    spell = r.u32()
     items = {}
     for _ in range(TRADE_SLOT_COUNT):
-        item, off = _parse_trade_slot(payload, off)
+        item = _parse_trade_slot(r)
         if item is not None:
             items[item["slot"]] = item
     return {
