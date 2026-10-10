@@ -194,6 +194,47 @@ def _recvn(sock, n: int) -> bytes:
     return buf
 
 
+def _unit_movement(x, y, z, o) -> bytes:
+    """What Object::BuildMovementUpdate writes for a unit (TrinityCore 3.3.5,
+    src/server/game/Entities/Object/Object.cpp; Unit::Unit sets m_updateFlag to
+    UPDATEFLAG_LIVING | UPDATEFLAG_STATIONARY_POSITION, Unit.cpp:314): uint16 update flags, then
+    Unit::BuildMovementPacket (Unit.cpp:12745): u32 movement flags, u16 extra flags, u32 time,
+    x y z o, [no transport/pitch/jump/elevation flags set], u32 fallTime; then 9 speed floats.
+    The 4 stationary floats are written only for non-unit WorldObjects, never for a unit."""
+    flags = uo.UPDATEFLAG_LIVING | uo.UPDATEFLAG_STATIONARY_POSITION
+    return (struct.pack('<HIHI4fI', flags, 0, 0, 1000, x, y, z, o, 0)
+            + struct.pack('<9f', 2.5, 7.0, 4.5, 4.72, 2.5, 7.0, 4.5, 3.14, 3.14))
+
+
+def stream_packets(n: int) -> list:
+    """(opcode, payload) of stream tick n: a CREATE of a unit (guid cycles through STREAM_POOL, so
+    the world does not grow without bound by construction), a stop-move of it, and a say from a
+    cycling player guid. Layouts, all from TrinityCore 3.3.5 src/server/game/:
+      update   Entities/Object/Object.cpp BuildCreateUpdateBlockForPlayer + BuildMovementUpdate;
+               Entities/Object/Updates/UpdateData.cpp BuildPacket: a payload over 100 bytes (with
+               its uint32 block count) is zlib-compressed into SMSG_COMPRESSED_UPDATE_OBJECT.
+      move     Server/Packets/MovementPackets.cpp MonsterMove::Write: packed guid, u8 vehicle exit,
+               xyz, u32 spline id, u8 Face (MONSTER_MOVE_STOP = 1: nothing follows).
+      chat     Server/Packets/ChatPackets.cpp Chat::Write, CHAT_MSG_SAY default branch: u8 type,
+               i32 language, u64 sender, u32 0, u64 target, u32 len + text + NUL, u8 chat tag.
+    A real create also carries more fields than the few set here (OBJECT_FIELD_GUID etc.)."""
+    x, y, z, o = SELF_POS
+    guid = STREAM_UNIT_BASE + n % STREAM_POOL
+    create = bd.update_object(bd.object_block(
+        uo.UPDATETYPE_CREATE_OBJECT2, guid, uo.TYPEID_UNIT, _unit_movement(x + n % 7, y, z, o),
+        bd.values_body({uf.OBJECT_FIELD_TYPE: 9, uf.OBJECT_FIELD_ENTRY: STREAM_UNIT_ENTRY + n % STREAM_POOL,
+                        uf.OBJECT_FIELD_SCALE_X: 0x3F800000, uf.UNIT_FIELD_LEVEL: 5,
+                        uf.UNIT_FIELD_HEALTH: 50, uf.UNIT_FIELD_MAXHEALTH: 50,
+                        uf.UNIT_FIELD_FACTIONTEMPLATE: 7, uf.UNIT_FIELD_DISPLAYID: 100})))
+    update = ((op.SMSG_COMPRESSED_UPDATE_OBJECT, bd.compressed(create)) if len(create) > 100
+              else (op.SMSG_UPDATE_OBJECT, create))
+    move = pk.pack_packed_guid(guid) + b'\0' + struct.pack('<3fIB', x, y, z, n, uo.MONSTER_MOVE_STOP)
+    text = f"stream {n}".encode() + b'\0'
+    chat = (struct.pack('<BiQIQI', 1, 0, STREAM_PLAYER_BASE + n % STREAM_POOL, 0, 0, len(text))
+            + text + b'\0')
+    return [update, (op.SMSG_MONSTER_MOVE, move), (op.SMSG_MESSAGECHAT, chat)]
+
+
 class WorldMock:
     def __init__(self, host="127.0.0.1", auth_port=0, world_port=0,
                  account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD, faults=(), stream_hz=0.0):
@@ -418,23 +459,8 @@ class WorldMock:
             send(op.SMSG_LOGOUT_COMPLETE)
 
     def _stream(self, send, n: int):
-        """One stream tick: a CREATE of a unit (guid cycles through STREAM_POOL, so the
-        world does not grow without bound by construction), a stop-move of it, and a say
-        from a cycling player guid. Layouts: update_object / SMSG_MONSTER_MOVE / SMSG_MESSAGECHAT
-        in docs/PROTOCOL-NOTES.md (TrinityCore 3.3.5 MovementPackets.cpp, ChatPackets.cpp)."""
-        x, y, z, o = SELF_POS
-        guid = STREAM_UNIT_BASE + n % STREAM_POOL
-        send(op.SMSG_UPDATE_OBJECT, bd.update_object(bd.object_block(
-            uo.UPDATETYPE_CREATE_OBJECT2, guid, uo.TYPEID_UNIT,
-            bd.stationary_movement(x + n % 7, y, z, o),
-            bd.values_body({uf.OBJECT_FIELD_ENTRY: STREAM_UNIT_ENTRY + n % STREAM_POOL,
-                            uf.UNIT_FIELD_LEVEL: 5, uf.UNIT_FIELD_HEALTH: 50, uf.UNIT_FIELD_MAXHEALTH: 50}))))
-        # MonsterMove::Write: packed guid, vehicle byte, start xyz, spline id, MONSTER_MOVE_STOP.
-        send(op.SMSG_MONSTER_MOVE, pk.pack_packed_guid(guid) + b'\0' + struct.pack('<3fIB', x, y, z, n, uo.MONSTER_MOVE_STOP))
-        # Chat::Write, CHAT_MSG_SAY: type, i32 lang, sender guid, u32 0, target guid, u32 len + text, tag.
-        text = f"stream {n}".encode() + b'\0'
-        send(op.SMSG_MESSAGECHAT, struct.pack('<BiQIQI', 1, 0, STREAM_PLAYER_BASE + n % STREAM_POOL, 0, 0, len(text))
-             + text + b'\0')
+        for opcode, payload in stream_packets(n):
+            send(opcode, payload)
 
     def _enter_world(self, send):
         send(op.SMSG_LOGIN_VERIFY_WORLD, struct.pack('<I4f', MAP_ID, *SELF_POS))

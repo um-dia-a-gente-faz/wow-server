@@ -83,10 +83,12 @@ class SoakTest(unittest.TestCase):
         self.assertIsNone(soak.packet_rate(5, 0))
 
     def test_stream_run_reports_the_recv_packet_rate(self):
-        rep = soak.run_soak(2, 4, think_interval=0.05, sample_every=0.5, stream_hz=20)
+        rep = soak.run_soak(2, 6, think_interval=0.05, sample_every=0.5, stream_hz=20)
         self.assertEqual(rep["stream_hz"], 20)
-        # 3 packets per tick at 20 Hz = 60/s per agent, minus the login and start-up gap
-        self.assertGreater(rep["recv_packets_per_s_per_agent"], 30)
+        # 3 packets per tick at 20 Hz = 60/s per agent; a login gap costs a few percent. A half-rate
+        # (10 Hz = 30/s) or double-rate stream falls outside +-15 %.
+        for rate in rep["recv_packets_per_agent"].values():
+            self.assertTrue(51 <= rate <= 69, rate)
         self.assertEqual(rep["dropped_packets"], 0)
         self.assertGreater(rep["recv_packets_total"], 0)
 
