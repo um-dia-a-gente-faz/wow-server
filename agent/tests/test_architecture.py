@@ -79,8 +79,8 @@ LAYERS = {
     # deciding
     "llm": set(),
     "jev": {"llm"},
-    "deciders": {"jev"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain":{"actions", "candidates", "jev", "llm", "metrics", "model"},
+    "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
+    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
     "think": {"actions", "brain", "handles", "llm", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",

@@ -12,19 +12,28 @@ It backs the tests and live smoke runs that must not spend tokens.
 """
 
 from collections.abc import Callable, Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .jev import JevError
 
+if TYPE_CHECKING:
+    from .jev import JevClient
+    from .llm import LLMClient
+
 
 class Decider(Protocol):
-    """Structural type of a decision model as Brain uses it. The readouts
-    are the optional `last_*` attributes Brain reads with getattr()."""
+    """Structural type of a decision model as Brain uses it. `last_confidence`
+    (jev slot only) and `skipped_single_candidate` are further optional
+    readouts Brain reads with getattr(), so they are not members here."""
 
-    model: str | None
-    last_usage: dict
-    last_latency_ms: float | None
-    last_confidence: float | None
+    @property
+    def model(self) -> str | None: ...
+
+    @property
+    def last_usage(self) -> dict: ...
+
+    @property
+    def last_latency_ms(self) -> float | None: ...
 
     def choose_action(self, snapshot: dict, candidates_or_catalog: list[dict], *,
                       persona: str = "", history: list | None = None) -> tuple[str, dict]: ...
@@ -64,3 +73,8 @@ class ScriptedDecider:
         action, params = self._script[min(self._next, len(self._script) - 1)]
         self._next += 1
         return action, dict(params)
+
+
+if TYPE_CHECKING:  # mypy proves every Brain client satisfies Decider
+    def _conforms(jev: "JevClient", llm: "LLMClient", scripted: ScriptedDecider) -> list[Decider]:
+        return [jev, llm, scripted]
