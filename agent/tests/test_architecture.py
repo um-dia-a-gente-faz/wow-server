@@ -33,6 +33,7 @@ LAYERS = {
     "packets": set(),
     "opcodes": set(),
     "crypt": set(),
+    "changes": set(),   # the process-wide "perception changed" wake-up for action confirmation (#305)
     "transport": {"packets"},
     "config": set(),
     "handles": set(),
@@ -61,15 +62,15 @@ LAYERS = {
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
-    "perception": {"group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
+    "perception": {"changes", "group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
-    "state": {"perception"},
+    "state": {"changes", "perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
     "router": {"packets"},
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
-    "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
+    "actions": {"changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
     "control": {"actions", "metrics", "movement"},
