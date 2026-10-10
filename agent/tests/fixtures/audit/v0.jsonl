@@ -1,0 +1,2 @@
+{"ts": 1700000000.0, "agent": "Old", "cycle": 7, "snapshot_hash": "h7", "prompt_tokens": 100, "completion_tokens": 9, "model": "old-model", "latency_ms": 210.5, "tool_call": {"name": "face", "args": {"guid": 3}}, "valid": true, "result": {"ok": true, "error": null}, "reflex": {}, "goal": null, "usage": {}}
+{"ts": 1700000003.0, "agent": "Old", "cycle": 8, "snapshot_hash": "h8", "tool_call": {"name": null, "args": {}}, "valid": false, "result": {"ok": false, "error": "no tool call"}, "reflex": {"follow": true}, "legacy_field": "kept"}

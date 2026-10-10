@@ -38,9 +38,10 @@ LAYERS = {
     "handles": set(),
     "lines": set(),
     "known_targets": set(),
-    "metrics": {"transport"},   # swallowed() reuses transport's log throttle (#306)
+    "metrics": {"audit_schema", "transport"},   # swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
     "api_contract": set(),
     "model": set(),
+    "audit_schema": {"model"},   # the audit record's versioned on-disk shape (#277)
     "auth": {"packets"},
     "rules": set(),
     "ports": set(),
@@ -83,7 +84,7 @@ LAYERS = {
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport"},
-    "audit": {"config", "metrics", "model"},
+    "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
     "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "http_api",

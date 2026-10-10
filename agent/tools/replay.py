@@ -15,6 +15,8 @@ import json
 import sys
 import time
 
+from agent.audit_schema import AuditRecord
+
 
 def _fmt_ts(ts) -> str:
     try:
@@ -34,9 +36,11 @@ def load_records(path: str):
             if not line:
                 continue
             try:
-                yield json.loads(line)
+                raw = json.loads(line)
             except json.JSONDecodeError as e:
                 print(f"warning: {path}:{lineno}: skipping malformed line: {e}", file=sys.stderr)
+                continue
+            yield AuditRecord.from_json(raw).to_json()
 
 
 def is_failure(rec: dict) -> bool:
@@ -46,7 +50,7 @@ def is_failure(rec: dict) -> bool:
 def format_record(rec: dict) -> str:
     cycle = rec.get("cycle")
     ts = _fmt_ts(rec.get("ts"))
-    agent = rec.get("agent", "?")
+    agent = rec.get("agent") or "?"
     tool_call = rec.get("tool_call") or {}
     name = tool_call.get("name") or "(none)"
     args = tool_call.get("args") or {}
