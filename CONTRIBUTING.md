@@ -196,6 +196,11 @@ gate landed, each with its size then. Same ratchet as ruff and mypy:
 - Passwords and keys live in environment variables, `.env` files (gitignored), or Docker secrets.
 - If a secret accidentally lands in a commit, rotate it immediately and force-push a cleaned history.
 
+## Local dev stack
+
+`dev/dev.sh up` runs the mocks, one agent, chat-feed and wowmap on a fixture DB with no
+credentials; see `docs/DEV-STACK.md`. Prefer it to the live VM for anything a mock covers.
+
 ## Testing on the live VM
 
 Most changes affect the running services on `wow-server` (192.168.1.64) or `docker-stack` (192.168.1.60).

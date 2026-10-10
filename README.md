@@ -90,6 +90,7 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/DEPLOYMENT.md` | Actual deployment, redeploying via `scripts/deploy.sh`, gotchas, debugging, troubleshooting table |
 | `docs/CLIENT-SETUP.md` | Client configuration and troubleshooting |
 | `docs/ARCHITECTURE.md` | Components, compose projects, module map, volumes and the full port table |
+| `docs/DEV-STACK.md` | One-command local stack on mocks and a fixture DB (`dev/dev.sh up`), no live server needed |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
 | `docs/LIVE-MAP.md` | Live map: how it was built, DBC field order, extraction, alignment notes |
 | `docs/ROADMAP.md` | What shipped, the agent perception dev plan, the operator dashboard plan |
