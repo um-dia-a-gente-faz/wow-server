@@ -23,7 +23,7 @@ the session.
 | `agent/transport.py` (`Transport`) | the socket, RC4 framing, `_send_packet` / `_recv_packet` / `_dump_packet`, the send lock, the per-opcode handler-error throttle. No game state. |
 | `agent/state.py` (`GameState`) | per-character state: identity, position, level/xp, `world_state`, `chat_inbox`, `events`, spellbook, loot, corpse/death fields, the reconnect flags. |
 | `agent/router.py` | `PacketRouter` and `Context`, see ADR 0006. |
-| `agent/handlers/*.py` | one module per domain (`chat`, `death`, `loot`, `mail`, `npc`, `quests`, `spells`, `trade`, `world`); each registers its opcodes on the shared router at import time. |
+| `agent/handlers/*.py` | one module per domain (`chat`, `death`, `loot`, `mail`, `npc`, `quests`, `spells`, `trade`, `world`); each exposes `register(router)`; `build_router()` in `agent/handlers/__init__.py` registers them in a declared order (ADR 0006). |
 | `agent/session.py` | the login flow, the recv loop, keepalive, `logout`, `join_channels`, and the four connection-lifecycle handlers (time sync, pong, stand state, logout complete). |
 
 The packet builders and parsers (`agent/npc.py`, `quests.py`, `loot.py`, ...)
