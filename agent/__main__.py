@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import json
 import logging
+import signal
 import sys
 import threading
 import time
@@ -37,6 +38,16 @@ def _setup_logging(level: str):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+
+
+def _install_stop_signals(stop: threading.Event | None = None) -> threading.Event:
+    """#401: SIGTERM (docker stop) and SIGINT set the returned event; the loops unwind
+    through the supervisor's finally: session.logout() instead of dying with the
+    character in world."""
+    stop = stop or threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    return stop
 
 
 def main():
@@ -116,16 +127,16 @@ def main():
 
     observer, http_server = _start_observer(cfg, audit_logger, log, brain=brain)
 
-    log.info("entering agent loop (ctrl+c to stop) ...")
+    stop = _install_stop_signals()
+    log.info("entering agent loop (SIGTERM or ctrl+c to stop) ...")
     try:
         _supervise_connection(
             build_session=lambda: _connect_and_login(cfg, log, chat_relay),
             run_session=lambda sess: _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
-                                               brain=brain, audit_logger=audit_logger, observer=observer),
-            log=log,
+                                               brain=brain, audit_logger=audit_logger, observer=observer,
+                                               stop=stop),
+            log=log, stop=stop,
         )
-    except KeyboardInterrupt:
-        log.info("interrupted")
     except AuthRejected: sys.exit(1)  # #430: the supervisor already logged the one line
     finally:
         chat_relay.stop()
@@ -244,7 +255,7 @@ MAX_RECONNECT_BACKOFF_S = 300.0
 
 
 def _supervise_connection(build_session, run_session, log,
-                           sleep=time.sleep,
+                           sleep=None, stop: threading.Event | None = None,
                            initial_backoff: float = INITIAL_RECONNECT_BACKOFF_S,
                            max_backoff: float = MAX_RECONNECT_BACKOFF_S):
     """Reconnect supervisor (UM-43). `build_session()` does auth+connect+
@@ -264,7 +275,11 @@ def _supervise_connection(build_session, run_session, log,
     that Ctrl+C means "stop for good".
 
     `sleep` is injectable so tests can assert on backoff timing without
-    actually waiting (see agent/tests/test_reconnect.py)."""
+    actually waiting (see agent/tests/test_reconnect.py). By default the backoff
+    waits on `stop` (#401): once it is set (SIGTERM) the supervisor logs out the
+    current session and returns instead of reconnecting."""
+    stop = stop or threading.Event()
+    sleep = sleep or stop.wait
     backoff = initial_backoff
     attempt = 0
     while True:
@@ -282,6 +297,8 @@ def _supervise_connection(build_session, run_session, log,
                 swallowed("main.connect", log, f"attempt {attempt}")
                 log.warning("retrying in %.0fs", backoff)
             sleep(backoff)
+            if stop.is_set():
+                return
             backoff = min(backoff * 2, max_backoff)
             continue
 
@@ -294,10 +311,12 @@ def _supervise_connection(build_session, run_session, log,
             except Exception:
                 swallowed("main.logout", log, "after this session attempt")
 
-        if not disconnected:
+        if not disconnected or stop.is_set():
             return
         log.warning("connection lost unexpectedly — reconnecting in %.0fs", backoff)
         sleep(backoff)
+        if stop.is_set():
+            return
         backoff = min(backoff * 2, max_backoff)
 
 
@@ -337,7 +356,7 @@ def _run_rest_reflex_loop(sess, stop_event: threading.Event,
 
 
 def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, brain=None,
-              audit_logger=None, observer=None) -> bool:
+              audit_logger=None, observer=None, stop: threading.Event | None = None) -> bool:
     start = time.monotonic()
 
     reflex_stop = threading.Event()
@@ -349,7 +368,7 @@ def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, 
         t.start()
     try:
         return _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump,
-                                brain=brain, audit_logger=audit_logger, observer=observer)
+                                brain=brain, audit_logger=audit_logger, observer=observer, stop=stop)
     finally:
         if observer is not None:
             observer.detach()
@@ -382,8 +401,10 @@ def _remaining_sleep(cycle_start: float, interval: float, now: float) -> float:
 
 
 def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
-                     brain=None, audit_logger=None, observer=None) -> bool:
-    """Returns True if the loop ended because of an unexpected disconnect
+                     brain=None, audit_logger=None, observer=None,
+                     stop: threading.Event | None = None) -> bool:
+    """`stop` (#401) ends the loop at once, mid-sleep, as a clean stop (False).
+    Returns True if the loop ended because of an unexpected disconnect
     (agent.session.WoWSession.unexpected_disconnect, UM-43 — the reconnect
     supervisor should retry), False for a normal end (duration elapsed)."""
     log = logging.getLogger("agent")
@@ -391,7 +412,7 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
     think_state = ThinkState()  # UM-90: recent-action history + loop guard, per session attempt
     if observer is not None:
         observer.attach(sess, think_state, _reflex_state)  # UM-50: read-only HTTP view
-    while duration is None or time.monotonic() - start < duration:
+    while (duration is None or time.monotonic() - start < duration) and not (stop and stop.is_set()):
         cycle_start = time.monotonic()
         if sess.unexpected_disconnect:
             log.warning("world connection dropped unexpectedly — ending this session attempt")
@@ -434,7 +455,8 @@ def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_
                 log.info("think cycle: no action taken (%s)", result.error)
 
         # #215: sleep to a deadline so the period is the interval, not interval + cycle time.
-        time.sleep(_remaining_sleep(cycle_start, cfg.think_interval, time.monotonic()))
+        wait = _remaining_sleep(cycle_start, cfg.think_interval, time.monotonic())
+        stop.wait(wait) if stop else time.sleep(wait)
 
     return False
 

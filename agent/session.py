@@ -75,6 +75,10 @@ LOGIN_POLL_S = 3.0
 LOGIN_TIMEOUT_S = 60.0
 
 
+# #401: logout() must finish inside Docker's 10 s stop grace: join (<= this) + wait (<= this).
+LOGOUT_WAIT_S = 3.0
+
+
 class WoWSession(Transport, GameState):
     """Manages a single character's World of Warcraft session."""
 
@@ -273,15 +277,16 @@ class WoWSession(Transport, GameState):
             return
         self._running = False
         if self._recv_thread:
-            self._recv_thread.join(timeout=5)
+            self._recv_thread.join(timeout=LOGOUT_WAIT_S)
         # #406: after an unexpected disconnect (drop, desync, dead socket, server-forced
         # logout) nobody is there to answer a request, so just close.
         if self._in_world and not self.unexpected_disconnect:
             self._in_world = False
             try:
                 self._send_packet(CMSG_LOGOUT_REQUEST)
-                self.sock.settimeout(5)
-                while True:
+                self.sock.settimeout(LOGOUT_WAIT_S)
+                deadline = time.monotonic() + LOGOUT_WAIT_S  # #401: a chatty server can't stretch the wait
+                while time.monotonic() < deadline:
                     opcode, payload = self._recv_packet()
                     if opcode == SMSG_LOGOUT_COMPLETE:
                         break
