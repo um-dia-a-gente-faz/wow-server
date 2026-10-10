@@ -20,7 +20,7 @@ def panel(t, title, x, y, w, h, targets=None, **kw):
 
 
 # --- link to the actual live map app
-panel("text", "Mapa ao vivo", 0, 0, 24, 3, options={"mode": "markdown", "content": f"""
+panel("text", "Mapa ao vivo", 0, 0, 24, 3, options={"mode": "markdown", "content": """
 # [Abrir console ao vivo →](http://192.168.1.64:9400)
 
 O console mostra, numa só página: mapa interativo com cada jogador online

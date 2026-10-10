@@ -20,6 +20,7 @@ backticked repo path in the docs (archived spikes: links only), `README.md`, `CL
 | [CLIENT-SETUP.md](CLIENT-SETUP.md) | Game client configuration |
 | [GM-COMMANDS.md](GM-COMMANDS.md) | Useful GM commands |
 | [MODEL-SERVING.md](MODEL-SERVING.md) | Running the local model server for the agents' think step |
+| [loadtest-baseline.md](loadtest-baseline.md) | First load-test numbers from `tools.loadtest`, the baseline for the agent pool and event bus (#299) |
 
 ## Decisions
 

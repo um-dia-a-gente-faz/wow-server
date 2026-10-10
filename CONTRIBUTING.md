@@ -78,7 +78,7 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
   `gh api -X PATCH repos/um-dia-a-gente-faz/wow-server/pulls/N -F body=@file`, then
   re-check the issue's board status: adding a closing keyword can reset it.
 - Moves the issue on the board (org project *wow-server*, 7): *In progress* when the
-  branch starts, *In Review* once the PR is open with CI green. *Done* is the reviewer's,
+  branch starts, *In Review* once the PR is open with CI green. *Done* is set by the author
   on merge.
 - Is a single logical change.
 - Has CI green (`.github/workflows/ci.yml`: py_compile, unit tests, compose
