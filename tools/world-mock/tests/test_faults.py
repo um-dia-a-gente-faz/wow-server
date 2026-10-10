@@ -146,11 +146,28 @@ class FaultInjectionTest(unittest.TestCase):
                 self.assertFalse(self.sessions[-1].unexpected_disconnect)
 
     def test_backoff_grows_on_failed_logins_and_resets_after_a_good_one(self):
-        sleeps = self.supervise(FaultPlan(auth_reject=3), FaultPlan(auth_reject=3),
+        # 6 = already online (transient, #430): the supervisor backs off and retries
+        sleeps = self.supervise(FaultPlan(auth_reject=6), FaultPlan(auth_reject=6),
                                 FaultPlan(drop_after=8))
         # two rejected logins back off 1x, 2x; the drop after a good login is back at 1x
         self.assertEqual(sleeps, [BACKOFF_S, 2 * BACKOFF_S, BACKOFF_S])
         self.assertEqual((self.mock.auth_connections, self.mock.world_connections), (4, 2))
+
+    def test_permanent_auth_reject_stops_the_supervisor_after_one_attempt(self):
+        # 3 = banned, 5 = incorrect password (#430): retrying either only feeds the auth
+        # server's WrongPass counter, so the supervisor raises instead of backing off.
+        for code in (3, 5):
+            with self.subTest(code=code):
+                self.start(FaultPlan(auth_reject=code))
+                sleeps = []
+                with self.assertRaises(AuthRejected) as cm:
+                    _supervise_connection(lambda: _connect_and_login(self.cfg, self.log),
+                                          lambda s: False, self.log,
+                                          sleep=sleeps.append, initial_backoff=BACKOFF_S)
+                self.assertEqual(cm.exception.code, code)
+                self.assertEqual(sleeps, [])
+                self.assertEqual(self.mock.auth_connections, 1)
+                self.assertEqual(self.mock.world_connections, 0)
 
     # ── stall ────────────────────────────────────────────────────────────
 

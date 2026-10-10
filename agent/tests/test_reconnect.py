@@ -6,16 +6,20 @@ timing (5s -> 5min cap) is asserted without the test taking minutes."""
 import unittest
 
 from agent import __main__ as main_mod
+from agent.auth import AuthRejected
 
 
 class FakeSleep:
     """Records requested sleep durations instead of blocking."""
 
-    def __init__(self):
+    def __init__(self, limit=None):
         self.calls = []
+        self.limit = limit
 
     def __call__(self, seconds):
         self.calls.append(seconds)
+        if self.limit is not None and len(self.calls) > self.limit:
+            raise AssertionError(f"supervisor kept retrying: sleeps {self.calls}")
 
 
 class SupervisorConnectFailureTest(unittest.TestCase):
@@ -56,6 +60,81 @@ class SupervisorConnectFailureTest(unittest.TestCase):
 
         # 5, 10, 15(capped), 15, 15
         self.assertEqual(sleep.calls, [5.0, 10.0, 15.0, 15.0, 15.0])
+
+
+class SupervisorAuthRejectTest(unittest.TestCase):
+    """#430: a permanent AuthResult stops the supervisor after one line; a transient one backs off."""
+
+    def run_with_rejects(self, code, rejects):
+        """Login is refused with `code` for the first `rejects` attempts, then succeeds."""
+        attempts, sleep, log = [], FakeSleep(), _RecordingLog()
+
+        def build_session():
+            attempts.append(1)
+            if len(attempts) <= rejects:
+                raise AuthRejected("logon proof", code)
+            return _FakeSession()
+
+        main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+                                       initial_backoff=5.0, max_backoff=300.0)
+        return attempts, sleep, log
+
+    def test_permanent_code_raises_after_one_error_line_and_no_traceback(self):
+        for code in (0x03, 0x04, 0x05, 0x09, 0x0A, 0x0D):
+            with self.subTest(code=code):
+                attempts, log = [], _RecordingLog()
+                # a bounded sleep: a supervisor that retries a permanent reject fails here, not by hanging
+                with self.assertRaises(AuthRejected) as cm:
+                    main_mod._supervise_connection(self.always_refused(code, attempts),
+                                                   lambda s: False, log=log,
+                                                   sleep=FakeSleep(limit=3), initial_backoff=5.0,
+                                                   max_backoff=300.0)
+                self.assertEqual(cm.exception.code, code)
+                self.assertEqual(len(attempts), 1)
+                self.assertEqual([level for level, _ in log.lines], ["error"])
+                self.assertIn(f"0x{code:02X}", log.lines[0][1])
+
+    @staticmethod
+    def always_refused(code, attempts):
+        def build_session():
+            attempts.append(1)
+            raise AuthRejected("logon proof", code)
+        return build_session
+
+    def test_transient_code_backs_off_with_one_warning_and_no_traceback(self):
+        for code in (0x06, 0x08, 0x0C, 0x10, 0x19):
+            with self.subTest(code=code):
+                attempts, sleep, log = self.run_with_rejects(code, rejects=1)
+                self.assertEqual(len(attempts), 2)
+                self.assertEqual(sleep.calls, [5.0])
+                self.assertEqual([level for level, _ in log.lines], ["warning"])
+
+
+class _FakeSession:
+    def logout(self):
+        pass
+
+
+class _RecordingLog:
+    """Records (level, rendered message) for the auth-reject tests; no traceback is kept."""
+
+    def __init__(self):
+        self.lines = []
+
+    def _record(self, level, fmt, *args):
+        self.lines.append((level, fmt % args))
+
+    def info(self, *a):
+        pass
+
+    def warning(self, *a):
+        self._record("warning", *a)
+
+    def error(self, *a):
+        self._record("error", *a)
+
+    def exception(self, *a):
+        self._record("exception", *a)
 
 
 class SupervisorDisconnectTest(unittest.TestCase):
