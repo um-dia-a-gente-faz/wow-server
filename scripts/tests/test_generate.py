@@ -10,7 +10,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import generate  # noqa: E402
 import genlib  # noqa: E402
-import gen_protocol_tables  # noqa: E402
 
 
 class GenerateTest(unittest.TestCase):
@@ -49,6 +48,7 @@ class GenerateTest(unittest.TestCase):
         try:
             # Introduce a drift in the generated section by editing a value
             edited = good.replace("= 0x10A", "= 0x0A8")
+            self.assertNotEqual(edited, good, "drift anchor '= 0x10A' not found in agent/opcodes.py")
             opcodes.write_text(edited)
             # Verify that generate --check detects the drift
             err = io.StringIO()
