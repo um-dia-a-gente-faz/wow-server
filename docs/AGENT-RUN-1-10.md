@@ -240,7 +240,7 @@ audit log (`agent.tools.replay`) for the whole run should also show:
 - [ ] Every cycle has a `tool_call` the agent chose itself — no cycles where
       the LLM call failed and the reflex/idle path carried the run
       (`valid: false` or `tool_call.name: null` should be rare, not the norm;
-      see `docs/AI-AGENT-SPEC.md`'s >= 90% valid-tool-call bar from UM-61).
+      see `docs/AGENT-DIRECTION.md` §3's >= 90% valid-tool-call bar from UM-61).
 - [ ] `goal`/`persona` and the tool calls made are plausibly connected to
       quest/XP progress — not looping the same no-op action for many cycles
       in a row (goal drift).

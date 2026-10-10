@@ -1,5 +1,7 @@
 # Roadmap
 
+> **Archived plan (2026-10-10, #365).** Not maintained. Superseded by [AGENT-DIRECTION.md](../AGENT-DIRECTION.md), which overrides the agent plan below, and by the GitHub issues (project 7) for scope and status. The text below is as it was at archive time and was not re-verified against the code.
+
 > **GitHub issues and the org project *wow-server* (project 7) are the tracker of
 > record.** `UM-*` refs are the historical Linear mirror. This file holds background
 > and design notes; scope and status live on the issues, not here.

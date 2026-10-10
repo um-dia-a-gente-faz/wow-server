@@ -92,8 +92,8 @@ never shows the real error — see `docs/DEPLOYMENT.md` → "Debugging the boots
 | `docs/ARCHITECTURE.md` | Components, compose projects, module map, volumes and the full port table |
 | `docs/GM-COMMANDS.md` | Useful in-game GM commands |
 | `docs/LIVE-MAP.md` | Live map: how it was built, DBC field order, extraction, alignment notes |
-| `docs/ROADMAP.md` | What shipped, the agent perception dev plan, the operator dashboard plan |
-| `docs/AI-AGENT-SPEC.md` | Spec for autonomous AI agents playing on the server |
+| `docs/spikes/ROADMAP.md` | Archived plan (#365): what shipped, the agent perception dev plan, the operator dashboard plan |
+| `docs/spikes/AI-AGENT-SPEC.md` | Archived spec (#365) for autonomous AI agents playing on the server; `docs/AGENT-DIRECTION.md` overrides it |
 | `CLAUDE.md` / `AGENTS.md` | Entry point for coding agents: hard rules, where things are, what to read. Skills live in `.claude/skills/` |
 | `docs/AGENT-DIRECTION.md` | Owner decisions for the agents (autonomy, free models, in-game-only chat, milestones); overrides the spec where they differ |
 | `docs/adr/` | Architecture decision records (Jev, agent host, session split, router, config schema, wowmap split, threading model) |
@@ -214,8 +214,7 @@ pv1 (Proxmox @ 192.168.1.75)
   container per agent character. Agents are outbound clients of :3724/:8085 and
   publish only a read-only observability API. They run on the `wow-agents` VM,
   not on the wow-server VM, and aren't part of `scripts/deploy.sh`. See
-  `docs/adr/0002-agent-host-topology.md`, `docs/AI-AGENT-SPEC.md` and
-  `docs/ROADMAP.md`.
+  `docs/adr/0002-agent-host-topology.md` and `docs/AGENT-DIRECTION.md`.
 
 Full component and port reference: `docs/ARCHITECTURE.md`.
 
