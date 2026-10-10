@@ -43,8 +43,8 @@ jobs:
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
             echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
-            echo "tools=$(hit "$all|^tools/" && echo true || echo false)"
-            echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/" && echo true || echo false)"
+            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
+            echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
 
   # The single required check (#399). Skipped by the path filter counts as passing;
