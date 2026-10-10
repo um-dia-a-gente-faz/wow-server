@@ -1,4 +1,4 @@
-"""Fuzz every packet handler on the ROUTER with truncated, bit-flipped and
+"""Fuzz every packet handler on the session router with truncated, bit-flipped and
 extreme-count variants of fixture packets (seeded, stdlib only, #307).
 
 A handler may raise (WoWSession._dispatch_guarded drops the packet) but only
@@ -19,13 +19,13 @@ from unittest import mock
 
 from agent import opcodes as op
 from agent import update_object as uo
-from agent import session as _session  # noqa: F401  (registers every handler)
+from agent.session import build_session_router
 from agent.packets import ProtocolError
-from agent.router import ROUTER
 from agent.tests import builders as b
 from agent.tests.builders import make_session
 from agent.tests.test_perception_golden import build_world
 
+_router = build_session_router()
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 ITERATIONS = int(os.environ.get("FUZZ_ITERATIONS", "20"))  # per seed; nightly raises it
 MAX_SECONDS = 1.0
@@ -195,7 +195,7 @@ class ParserFuzzTest(unittest.TestCase):
     def test_every_handler_survives_malformed_payloads(self):
         tracemalloc.start()
         self.addCleanup(tracemalloc.stop)
-        for opcode in sorted(ROUTER._handlers):
+        for opcode in sorted(_router._handlers):
             rng = random.Random(opcode)
             for s, seed in enumerate(seeds_for(opcode)):
                 for i, payload in enumerate(variants(seed, rng)):
@@ -208,7 +208,7 @@ class ParserFuzzTest(unittest.TestCase):
                         t0 = time.monotonic()
                         ok = False
                         try:
-                            ROUTER.dispatch(sess.ctx, opcode, payload)
+                            _router.dispatch(sess.ctx, opcode, payload)
                             ok = True
                         except ProtocolError:
                             # A handler that fails must not have changed state. (One snapshot

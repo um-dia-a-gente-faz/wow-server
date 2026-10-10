@@ -1,7 +1,8 @@
 """Table-driven packet routing.
 
-Domain modules under agent/handlers register `opcode -> handler(ctx, payload)`
-on the shared ROUTER at import time; WoWSession only calls ROUTER.dispatch().
+Domain modules under agent/handlers expose `register(router)`; build_router()
+in agent/handlers lists them and returns a fresh PacketRouter, which a WoWSession
+owns and calls .dispatch() on.
 Unknown opcodes return False. Handlers get a Context (game state + send/dump),
 not the whole session."""
 
@@ -68,5 +69,3 @@ class PacketRouter:
         for fn in self._ticks:
             fn(ctx)
 
-
-ROUTER = PacketRouter()

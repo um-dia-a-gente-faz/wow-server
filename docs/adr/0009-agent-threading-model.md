@@ -17,7 +17,7 @@ wrong. This ADR writes the current rules down so a change can be judged against 
 | Thread | Started in | Does |
 |---|---|---|
 | main / think loop | `agent/__main__.py::_run_think_loop` | perceive, one brain decision and action per cycle (`think_and_act`), then sleeps to the cycle deadline (`AGENT_THINK_INTERVAL_S`) |
-| recv thread | `WoWSession.login_character` (`agent/session.py`), daemon | `_recv_loop`: read a packet, `ROUTER.dispatch` via `_dispatch_guarded`, `ROUTER.tick`; sends `CMSG_KEEP_ALIVE` after 15 s of silence; on a dead socket sets `unexpected_disconnect` |
+| recv thread | `WoWSession.login_character` (`agent/session.py`), daemon | `_recv_loop`: read a packet, `router.dispatch` via `_dispatch_guarded`, `router.tick`; sends `CMSG_KEEP_ALIVE` after 15 s of silence; on a dead socket sets `unexpected_disconnect` |
 | follow and rest reflexes | `_run_loop` in `__main__.py`, two daemon threads | tick `FollowReflex` / `RestReflex` every 0.3 s on `sess.world_state`; exceptions are logged and swallowed per tick |
 | observer HTTP | `agent/http_api.py::start_server`, daemon `ThreadingHTTPServer` (one thread per request), only when `AGENT_HTTP_PORT` is set | read-only GETs; `POST /control/walk` only with `AGENT_CONTROL_TOKEN` |
 | movement worker | `movement.Mover._run` | a short-lived thread that simulates a walk; the caller `join()`s it, so a move is synchronous for its caller |
@@ -84,5 +84,5 @@ These are not answered here and may be the subject of #251.
    movement), given `action_lock` does not cover them?
 3. Is relying on the GIL for unlocked fields and deques acceptable, or should reads
    go through a snapshot like `WorldState.snapshot()`?
-4. `ROUTER` is process-global (ADR 0006); does any plan to run several sessions in
+4. (Resolved in #371: the router is per session, ADR 0006.) Does any plan to run several sessions in
    one process need it per session?
