@@ -85,7 +85,8 @@ LAYERS = {
     "jev": {"llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
-    "think": {"actions", "brain", "handles", "llm", "model", "spells", "trade", "update_fields"},
+    "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
+    "think": {"actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport"},
