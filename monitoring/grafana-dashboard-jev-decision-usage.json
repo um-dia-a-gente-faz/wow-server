@@ -656,6 +656,50 @@
         "graphMode": "none",
         "justifyMode": "auto"
       }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Swallowed errors / sec (agent /metrics)",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent, where) (rate(wow_agent_swallowed_errors_total[5m]))",
+          "legendFormat": "{{agent}} {{where}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "description": "Rate of exceptions an agent caught and logged instead of raising, by call site (wow_agent_swallowed_errors_total, scraped from each agent's GET /metrics). Non-zero for 10m fires AgentSwallowedErrors."
     }
   ],
   "annotations": {
