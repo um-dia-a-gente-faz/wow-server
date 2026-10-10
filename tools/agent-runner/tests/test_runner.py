@@ -22,6 +22,7 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(REPO))
 import runner  # noqa: E402
+from docker_backend import FakeDockerBackend  # noqa: E402
 from agent import api_contract  # noqa: E402  (#264: fixtures come from the shared agent API schema)
 
 _EP = api_contract.load()["endpoints"]
@@ -534,6 +535,41 @@ class RuntimeStateTest(RunnerCase):
         names = [e["name"] for e in self.fleet.roster()]
         self.assertEqual(names, ["Alpha", "Bravo", "Charlie", "Delta"])
         self.assertEqual(self.fleet.roster()[1]["planned"]["race"], 2)
+
+
+class FakeDockerTest(RunnerCase):
+    """#279: the fleet's logic runs against FakeDockerBackend. subprocess.run raises here,
+    so any path that still shelled out would fail the test."""
+
+    def setUp(self):
+        super().setUp()
+        self.docker = FakeDockerBackend(
+            containers={"wow-agent-alpha": container("running"),
+                        "wow-agent-charlie": container("exited", 137, finished="2026-09-19T08:30:00.5Z")},
+            image_created="2025-01-01T00:00:00Z")
+        self.fleet = runner.Fleet(self.config, gen=self.fleet.gen, backend=self.docker)
+        patch = mock.patch.object(subprocess, "run", side_effect=AssertionError("docker must not run"))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_status_comes_from_the_backend(self):
+        by_name = {a["name"]: a for a in self.fleet.status()["agents"]}
+        self.assertEqual(by_name["Alpha"]["container"]["state"], "running")
+        self.assertEqual(by_name["Bravo"]["container"]["state"], "absent")
+        self.assertEqual(by_name["Charlie"]["container"]["exit_code"], 137)
+        self.assertTrue(self.fleet.status()["image"]["present"])
+
+    def test_start_and_stop_ask_the_backend_for_that_service_only(self):
+        self.fleet.start("Bravo")
+        self.fleet.stop("Bravo")
+        self.assertEqual([c[1:] for c in self.docker.calls if c[0] == "compose"],
+                         [(["up", "-d"], "agent-bravo"), (["stop"], "agent-bravo")])
+
+    def test_retire_stops_through_the_backend_and_records_it(self):
+        self.fleet.retire("Charlie")
+        self.assertIn(("compose", ["stop"], "agent-charlie"), self.docker.calls)
+        state = json.loads((self.runtime / "state.json").read_text())
+        self.assertEqual([a for a in state["agents"] if a["character"] == "Charlie"][0]["retired"], True)
 
 
 class ConfigTest(unittest.TestCase):
