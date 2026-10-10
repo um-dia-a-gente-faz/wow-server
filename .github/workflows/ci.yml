@@ -26,6 +26,7 @@ jobs:
       agent: ${{ steps.f.outputs.agent }}
       tools: ${{ steps.f.outputs.tools }}
       compose: ${{ steps.f.outputs.compose }}
+      backup: ${{ steps.f.outputs.backup }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,6 +46,7 @@ jobs:
             echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
             echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
             echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
+            echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
 
   # The single required check (#399). Skipped by the path filter counts as passing;
@@ -53,7 +55,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, agent, tools, lint-typing, compose, secrets, docker-build]
+    needs: [changes, agent, tools, lint-typing, compose, secrets, docker-build, backup-restore]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -234,3 +236,46 @@ jobs:
           tags: wow-agent:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  backup-restore:
+    name: backup/restore (real mysql)
+    needs: changes
+    if: needs.changes.outputs.backup == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # backup-db.sh / restore-db.sh run unmodified; they docker-exec into DB_CONTAINER.
+    services:
+      mysql:
+        image: mysql:8.4.4  # same as the VM (docker-compose.yml)
+        env:
+          MYSQL_ROOT_PASSWORD: ci-backup-test
+        # -h127.0.0.1: the entrypoint's temporary init server has no TCP, so only the real one is "healthy"
+        options: >-
+          --health-cmd "mysqladmin ping -h127.0.0.1 -uroot -pci-backup-test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Backup then restore, row counts must match
+        run: |
+          set -euo pipefail
+          export DB_CONTAINER=$(docker ps --filter name=mysql --format '{{.ID}}' | head -1)
+          [ -n "$DB_CONTAINER" ]
+          sql() { docker exec -i "$DB_CONTAINER" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N'; }
+          sql <<'SQL'
+          CREATE DATABASE auth; CREATE DATABASE characters;
+          CREATE TABLE auth.account (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(32) NOT NULL);
+          CREATE TABLE characters.characters (guid INT PRIMARY KEY AUTO_INCREMENT, name VARCHAR(12) NOT NULL);
+          INSERT INTO auth.account (username) VALUES ('a'),('b'),('c');
+          INSERT INTO characters.characters (name) VALUES ('x'),('y'),('z'),('w'),('v');
+          SQL
+          count() { echo "SELECT COUNT(*) FROM $1" | sql; }
+          a=$(count auth.account); c=$(count characters.characters)
+          [ "$a" = 3 ]
+          [ "$c" = 5 ]
+          export BACKUP_DIR="$RUNNER_TEMP/backups"
+          scripts/backup-db.sh
+          echo "DROP DATABASE auth; DROP DATABASE characters;" | sql
+          for db in auth characters; do scripts/restore-db.sh "$BACKUP_DIR"/$db-*.sql.gz; done
+          [ "$(count auth.account)" = "$a" ]
+          [ "$(count characters.characters)" = "$c" ]
+          echo "restored: auth.account=$a characters.characters=$c"
