@@ -1,0 +1,573 @@
+{
+ "audit": [
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 0,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": null,
+    "ok": true
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {
+     "value": 7
+    },
+    "name": "test_action"
+   },
+   "usage": {},
+   "valid": true
+  },
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 1,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": "unknown action: 'nope'",
+    "ok": false
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {
+     "x": 1
+    },
+    "name": "nope"
+   },
+   "usage": {},
+   "valid": false
+  },
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 2,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": "llm call failed: down",
+    "ok": false
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {},
+    "name": null
+   },
+   "usage": {},
+   "valid": false
+  },
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 3,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": "nope",
+    "ok": false
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {
+     "a": 1
+    },
+    "name": "bad"
+   },
+   "usage": {},
+   "valid": true
+  },
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 4,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": "nope",
+    "ok": false
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {
+     "a": 1
+    },
+    "name": "bad"
+   },
+   "usage": {},
+   "valid": true
+  },
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 5,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": "nope",
+    "ok": false
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {
+     "a": 1
+    },
+    "name": "bad"
+   },
+   "usage": {},
+   "valid": true
+  },
+  {
+   "brain": "llm",
+   "candidates": null,
+   "completion_tokens": null,
+   "confidence": null,
+   "confidence_rule": null,
+   "confidence_threshold": null,
+   "cycle": 6,
+   "fallback": null,
+   "goal": "goal",
+   "history_notes": null,
+   "jev_status": null,
+   "latency_ms": null,
+   "model": null,
+   "overridden": null,
+   "prompt_tokens": null,
+   "reflex": {
+    "r": 1
+   },
+   "result": {
+    "error": "loop guard: bad with these exact args already failed or changed nothing 3 times in a row; not executed. Try something different.",
+    "ok": false
+   },
+   "snapshot": {
+    "channels": [],
+    "chat_inbox": [],
+    "corpse_position": null,
+    "equipment": {},
+    "group": null,
+    "has_new_mail": false,
+    "inventory": [],
+    "is_dead": false,
+    "is_ghost": false,
+    "mailbox": null,
+    "me": {
+     "class_id": 0,
+     "level": null
+    },
+    "nearby_objects": [],
+    "nearby_players": [],
+    "nearby_units": [],
+    "pending_invite": null,
+    "position": {
+     "map": 0,
+     "x": 0.0,
+     "y": 0.0,
+     "z": 0.0
+    },
+    "quest_log": [],
+    "trade": null,
+    "window": null
+   },
+   "substituted": false,
+   "tool_call": {
+    "args": {
+     "a": 1
+    },
+    "name": "bad"
+   },
+   "usage": {},
+   "valid": false
+  }
+ ],
+ "history": [
+  {
+   "action": "test_action",
+   "args": {
+    "value": 7
+   },
+   "changed": false,
+   "detail": {
+    "ran": true,
+    "value": 7
+   },
+   "error": null,
+   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
+   "ok": true
+  },
+  {
+   "action": "nope",
+   "args": {
+    "x": 1
+   },
+   "changed": false,
+   "detail": null,
+   "error": "unknown action: 'nope'",
+   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
+   "ok": false
+  },
+  {
+   "action": "bad",
+   "args": {
+    "a": 1
+   },
+   "changed": false,
+   "detail": null,
+   "error": "nope",
+   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
+   "ok": false
+  },
+  {
+   "action": "bad",
+   "args": {
+    "a": 1
+   },
+   "changed": false,
+   "detail": null,
+   "error": "nope",
+   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
+   "ok": false
+  },
+  {
+   "action": "bad",
+   "args": {
+    "a": 1
+   },
+   "changed": false,
+   "detail": null,
+   "error": "nope",
+   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
+   "ok": false
+  },
+  {
+   "action": "bad",
+   "args": {
+    "a": 1
+   },
+   "changed": null,
+   "detail": null,
+   "error": "loop guard: bad with these exact args already failed or changed nothing 3 times in a row; not executed. Try something different.",
+   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
+   "ok": false
+  }
+ ],
+ "results": [
+  [
+   true,
+   "test_action",
+   {
+    "value": 7
+   },
+   null,
+   {
+    "ran": true,
+    "value": 7
+   }
+  ],
+  [
+   false,
+   "nope",
+   {
+    "x": 1
+   },
+   "unknown action: 'nope'",
+   {}
+  ],
+  [
+   false,
+   null,
+   {},
+   "llm call failed: down",
+   {}
+  ],
+  [
+   false,
+   "bad",
+   {
+    "a": 1
+   },
+   "nope",
+   {}
+  ],
+  [
+   false,
+   "bad",
+   {
+    "a": 1
+   },
+   "nope",
+   {}
+  ],
+  [
+   false,
+   "bad",
+   {
+    "a": 1
+   },
+   "nope",
+   {}
+  ],
+  [
+   false,
+   "bad",
+   {
+    "a": 1
+   },
+   "loop guard: bad with these exact args already failed or changed nothing 3 times in a row; not executed. Try something different.",
+   {}
+  ]
+ ]
+}

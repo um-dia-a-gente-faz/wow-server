@@ -35,7 +35,6 @@ BASELINE = {
     "agent/metrics.py::derive_metrics": 101,
     "agent/metrics.py::render_prometheus_text": 87,
     "agent/movement.py::_simulate": 125,
-    "agent/think.py::think_and_act": 166,
     "agent/tools/ab.py::run": 101,
     "agent/update_object.py::parse_monster_move": 88,
     "tools/dbc/names.py::GameNames.__init__": 147,
