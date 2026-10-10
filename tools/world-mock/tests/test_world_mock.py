@@ -18,7 +18,7 @@ from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
 from agent import quests as qu  # noqa: E402
 from agent.__main__ import _authenticate_and_login  # noqa: E402
-from agent.auth import auth_logon  # noqa: E402
+from agent.auth import AuthRejected, auth_logon  # noqa: E402
 
 
 def wait_for(pred, timeout=5.0):
@@ -39,8 +39,15 @@ class WorldMockTest(unittest.TestCase):
                                    verbose_packets=False, dump_packets_dir="")
 
     def test_wrong_password_is_rejected(self):
-        account, key, realms = auth_logon("127.0.0.1", self.mock.auth_port, server.DEFAULT_ACCOUNT, "wrong")
-        self.assertIsNone(account)
+        with self.assertRaises(AuthRejected) as cm:
+            auth_logon("127.0.0.1", self.mock.auth_port, server.DEFAULT_ACCOUNT, "hunter2x")
+        self.assertEqual(cm.exception.code, 4)
+        self.assertNotIn("hunter2x", str(cm.exception))
+
+    def test_unknown_account_is_rejected_with_the_challenge_result(self):
+        with self.assertRaises(AuthRejected) as cm:
+            auth_logon("127.0.0.1", self.mock.auth_port, "NOSUCH", "x")
+        self.assertEqual(cm.exception.code, 4)
 
     def test_login_then_quest_turn_in(self):
         sess, chars = _authenticate_and_login(self.cfg, logging.getLogger("test"))

@@ -62,15 +62,16 @@ World packets are numbered from 1 after the unencrypted `SMSG_AUTH_CHALLENGE`:
 | `corrupt_opcode=OP` | that opcode's payload becomes `0xFF` bytes | `dropped_packets` counts it, session and framing survive |
 | `bad_crypt_from=N` | headers unencrypted from packet N (RC4 desync) | mid-packet timeout ends the session, one reconnect, no busy loop |
 | `slow_auth=S` | auth server answers the challenge after S seconds | login still succeeds |
-| `auth_reject=CODE` | logon challenge fails with that `AuthResult` | login raises, world server never contacted, backoff doubles |
+| `auth_reject=CODE` | logon challenge fails with that `AuthResult`: 3 bytes, socket left open as TrinityCore does | login raises `AuthRejected` naming the code in well under a second, world server never contacted, backoff doubles |
+| `login_silence=S` | S seconds between `CMSG_PLAYER_LOGIN` and `SMSG_LOGIN_VERIFY_WORLD`, mock still reading | login waits without pinging (#426); `mock.ping_times` has every ping arrival |
+| `overspeed_s=T` | TrinityCore `HandlePing` rule: pings closer than T s count, the 3rd one hangs up (T = 27 in TrinityCore, tests scale it down) | no two pings closer than T, no kick |
 
 Every test also asserts that the password is in no log record and that the thread
 count is back to where it started.
 
 Fields compose (`FaultPlan(split_write=3, drop_after=8, truncate=True)`). Known limits:
 
-- `auth_reject` hangs up after the 3-byte failure; TrinityCore leaves the socket open,
-  which the agent does not handle yet (#405).
+- An unknown account and a wrong password are rejected like `auth_reject=4`: the failure bytes, then the socket stays open until the client hangs up.
 - The mock answers `CMSG_PING` with `SMSG_PONG` (echoing the id) and sends nothing periodically, so a
   stall longer than `session.DEAD_SOCKET_TIMEOUT_S` ends the session (#404). Tests shorten the
   keepalive, ping and deadline constants with `mock.patch.object`.

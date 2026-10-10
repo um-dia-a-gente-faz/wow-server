@@ -11,8 +11,8 @@ Linear (`UM-*`) is the older mirror and is no longer kept up to date.
   auto-deploys the VM within 5 minutes, which disconnects everyone playing.
 - **Never use GM commands on agent characters** (`.go`, `.die`, `.modify`, …) and never
   modify accounts or the owner's character (Rubens). Relog or walk instead.
-- **Never merge a PR** unless it is your own, another agent has reviewed it, CI is green
-  and no change request is open (see *Working model*). Never force-push a shared
+- **Never merge a PR** unless it is your own, CI is green, it has no conflicts and no
+  change request is open (see *Working model*). Never force-push a shared
   branch or push to `main`.
 - **Never print, log or commit credentials.** They live in `.env` on the VM.
 - **Never claim something works because the code looks right.** Verify against the
@@ -42,29 +42,29 @@ Linear (`UM-*`) is the older mirror and is no longer kept up to date.
 
 ## Working model
 
-Two roles, kept apart. Every PR is opened and merged under the same GitHub account
-(`Cividati`), so the role decides who may merge, not the account.
+Every PR is opened and merged under the same GitHub account (`Cividati`), so the role
+decides who may merge, not the account.
 
 - **Author agent (default, you):** writes the code, runs the tests, opens the PR to
   `main`, keeps CI green, rebases when it conflicts, and answers review comments.
-  It never approves a PR and never merges one it did not open. It merges **its own**
-  PR only once a reviewer agent has reviewed it, the review's fixes are applied, CI is
-  green, there are no conflicts and no open change requests (the `milestone-loop`
-  skill does this end to end).
-- **Reviewer agent:** a separate session the owner starts. It reviews, checks
-  mergeability, and may merge with `gh pr merge --squash --delete-branch` when the PR
-  is well tested: CI green, no conflicts, tests pass after merging main into it,
-  the template is followed, no open change requests, and wire formats checked
-  against the TrinityCore source. The author never reviews its own PR.
+  It never merges a PR it did not open. Once the code is ready it merges **its own**
+  PR with `gh pr merge --squash --delete-branch`: `scripts/check.sh all` passes, CI is
+  green, there are no conflicts, no open change requests, no "shelving" comment, the
+  template is followed and wire formats are checked against the TrinityCore source.
+  No reviewer is required.
+- **Reviewer agent (optional):** a separate session the owner starts for a second
+  opinion. Its open change request blocks the merge until answered. The author never
+  approves its own PR.
 - **Every merge is a deploy** that disconnects players, so merges happen one at a
-  time and only on purpose.
+  time and only on purpose. A PR touching `docker-compose.yml`, `scripts/`, worldserver
+  config or the deploy workflow waits for the owner's go-ahead.
 - **PRs can depend on each other.** When one changes a signature another PR also
   uses, say so in both PR bodies. The PR that merges second carries the follow-up.
 - **Shelved PRs stay open** until the owner decides. A coordinator comment saying
   "shelving" means don't extend or merge it.
 - **The board is the operating picture** (org project *wow-server*, project 7): the
   author moves the issue to *In progress* when the branch starts and to *In Review* when
-  the PR is open with CI green; *Done* is set by whoever merges, which closes the
+  the PR is open with CI green; *Done* is set on merge, which closes the
   issue through `Closes #<n>`.
 
 ### Milestones and board naming
@@ -124,7 +124,7 @@ Two roles, kept apart. Every PR is opened and merged under the same GitHub accou
 
 `live-agent-test` (test on the live server) · `trinity-protocol` (wire formats) ·
 `pr-workflow` (ship a change) · `milestone-loop` (work a milestone end to end, merge
-after another agent's review) · `wowmap-dev` (the observability site).
+when its gates pass) · `wowmap-dev` (the observability site).
 
 ## Agent skills
 

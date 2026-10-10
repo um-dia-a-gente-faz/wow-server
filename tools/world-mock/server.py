@@ -47,6 +47,7 @@ import itertools
 import logging
 import os
 import pathlib
+import select
 import socket
 import struct
 import sys
@@ -142,6 +143,8 @@ class FaultPlan:
     corrupt_opcode: int = 0  # this opcode keeps its header, the payload becomes 0xFF bytes
     bad_crypt_from: int = 0  # from this world packet on, headers are sent unencrypted
     slow_auth: float = 0.0   # seconds before the auth server answers the logon challenge
+    login_silence: float = 0.0  # seconds after CMSG_PLAYER_LOGIN before SMSG_LOGIN_VERIFY_WORLD (still reading, unlike stall)
+    overspeed_s: float = 0.0    # TrinityCore HandlePing: pings closer than this count, more than 2 of them kick (27 in TC, 0 = off)
     auth_reject: int = 0     # logon challenge fails with this AuthResult (AuthCodes.h), e.g. 3 banned
 
     @classmethod
@@ -196,6 +199,7 @@ class WorldMock:
         self.world_connections = 0
         self.accounts = {account.upper(): password}
         self.session_keys = {}     # account -> K of the last successful auth
+        self.ping_times = []       # monotonic arrival time of every CMSG_PING
         self.received = []         # (opcode, payload) of every post-login client packet
         self._lock = threading.Lock()
         self._auth = self._listen(auth_port, self._serve_auth)
@@ -252,15 +256,15 @@ class WorldMock:
         body = _recvn(sock, pk.u16(head, 2))
         username = body[30:30 + body[29]].decode('ascii').upper()
         time.sleep(plan.slow_auth)
-        if plan.auth_reject:
-            # AuthSession::LogonChallengeCallback failure: cmd, 0x00, AuthResult. TrinityCore
-            # leaves the socket open afterwards; the mock hangs up (see README, #405).
-            _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, plan.auth_reject]), plan)
+        password = self.accounts.get(username)
+        reject = plan.auth_reject or (0 if password else 4)    # 4 = WOW_FAIL_UNKNOWN_ACCOUNT
+        if reject:
+            # AuthSession::LogonChallengeCallback failure: cmd, 0x00, AuthResult (3 bytes), then
+            # SendPacket and return with the socket left open: the client must hang up (#405).
+            _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, reject]), plan)
+            sock.recv(1)
             return
         self._plans[username] = plan
-        password = self.accounts.get(username)
-        if password is None:
-            return                                  # unknown account: just hang up
         srp = _Srp6Server(username, password)
         # AuthSession::HandleLogonChallenge success layout (AuthSession.cpp).
         _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, 0]) + srp.B + bytes([1, SRP_G, 32])
@@ -270,6 +274,7 @@ class WorldMock:
         res = srp.verify(proof[1:33], proof[33:53])
         if res is None:
             _write(sock, bytes([au.AUTH_CMD_LOGON_PROOF, 4]) + struct.pack('<H', 0), plan)
+            sock.recv(1)                             # wrong password: 4 bytes, socket left open
             return
         K, m2 = res
         self.session_keys[username] = K
@@ -333,13 +338,35 @@ class WorldMock:
         send(op.SMSG_TIME_SYNC_REQ, struct.pack('<I', 0))
         send(op.SMSG_TUTORIAL_FLAGS, b'\0' * 32)          # payload content is not read by the agent
 
+        login_at = None             # monotonic time the delayed SMSG_LOGIN_VERIFY_WORLD is due
+        last_ping, fast_pings = None, 0
         while True:
+            if login_at is not None:
+                wait = login_at - time.monotonic()
+                if wait <= 0:
+                    login_at = None
+                    self._enter_world(send)
+                elif not select.select([sock], [], [], wait)[0]:
+                    continue
             h = dec(_recvn(sock, 6))
             size, opcode = struct.unpack('>H', h[:2])[0], struct.unpack('<I', h[2:])[0]
             payload = _recvn(sock, size - 4)
             with self._lock:
                 self.received.append((opcode, payload))
-            self._on_packet(send, opcode, payload)
+            if opcode == op.CMSG_PING:
+                now = time.monotonic()
+                self.ping_times.append(now)
+                if last_ping is not None and now - last_ping < plan.overspeed_s:
+                    fast_pings += 1
+                    if fast_pings > 2:      # MaxOverspeedPings; WorldSocket::HandlePing returns false
+                        raise ConnectionAbortedError("over-speed pings")
+                elif last_ping is not None:
+                    fast_pings = 0
+                last_ping = now
+            if opcode == op.CMSG_PLAYER_LOGIN and plan.login_silence:
+                login_at = time.monotonic() + plan.login_silence
+            else:
+                self._on_packet(send, opcode, payload)
 
     def _on_packet(self, send, opcode: int, payload: bytes):
         if opcode == op.CMSG_CHAR_ENUM:

@@ -180,10 +180,11 @@ class Realm:
 
     def open(self, account: str, password: str):
         """Returns a connected WoWSession, or None if the account/password is rejected."""
-        from agent.auth import auth_logon
+        from agent.auth import AuthRejected, auth_logon
         from agent.session import WoWSession
-        acc, key, realms = auth_logon(self.host, self.auth_port, account, password)
-        if not acc:
+        try:
+            acc, key, realms = auth_logon(self.host, self.auth_port, account, password)
+        except AuthRejected:
             return None
         realm = list(realms.values())[0]
         world_host, port = realm["address"].rsplit(":", 1)

@@ -67,6 +67,12 @@ CHAR_CREATE_NAME_IN_USE = 50  # 0x32
 KEEPALIVE_INTERVAL_S = 15.0
 PING_INTERVAL_S = 30.0
 DEAD_SOCKET_TIMEOUT_S = 45.0
+# Login (#426): CMSG_PLAYER_LOGIN is answered by SMSG_LOGIN_VERIFY_WORLD once the server has
+# loaded the character, nothing the client sends speeds that up. The wait therefore sends no
+# CMSG_PING: the in-world ping above is the only one, so no two are ever < 27 s apart. A
+# silent poll just sends a keepalive and waits again.
+LOGIN_POLL_S = 3.0
+LOGIN_TIMEOUT_S = 60.0
 
 
 class WoWSession(Transport, GameState):
@@ -229,13 +235,12 @@ class WoWSession(Transport, GameState):
         self._send_packet(CMSG_PLAYER_LOGIN, struct.pack('<Q', guid))
 
         t0 = time.monotonic()
-        while time.monotonic() - t0 < 60:
-            self.sock.settimeout(3)
+        while time.monotonic() - t0 < LOGIN_TIMEOUT_S:
+            self.sock.settimeout(LOGIN_POLL_S)
             try:
                 opcode, payload = self._recv_packet()
             except (socket.timeout, TimeoutError):
                 self._send_packet(CMSG_KEEP_ALIVE)
-                self._send_packet(CMSG_PING, struct.pack('<II', 0, 0))
                 continue
 
             if opcode == SMSG_LOGIN_VERIFY_WORLD:

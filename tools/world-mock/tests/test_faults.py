@@ -20,6 +20,7 @@ from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
 from agent import session as session_mod  # noqa: E402
 from agent import transport  # noqa: E402
+from agent.auth import AuthRejected  # noqa: E402
 from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_connection  # noqa: E402
 
 BACKOFF_S = 1.0     # handed to an injected sleep, never really slept
@@ -197,6 +198,45 @@ class FaultInjectionTest(unittest.TestCase):
         self.assertGreaterEqual(len(self.mock.packets_received(op.CMSG_PING)), 3)
         self.assertEqual(self.mock.world_connections, 1)
 
+    # ── ping spacing (#426) ──────────────────────────────────────────────
+
+    OVERSPEED_S = 0.5     # stands for TrinityCore's 27 s, scaled with the constants below
+
+    def scaled_ping_rules(self):
+        for name, value in (("LOGIN_POLL_S", 0.05), ("PING_INTERVAL_S", 0.6), ("KEEPALIVE_INTERVAL_S", 0.1),
+                            ("DEAD_SOCKET_TIMEOUT_S", 5.0)):
+            self.enterContext(mock.patch.object(session_mod, name, value))
+
+    def test_silent_login_and_the_session_after_it_never_ping_over_speed(self):
+        # Login silent for 12 polls (the old code pinged on each, a kick on the 4th fast one),
+        # then the in-world pings: every CMSG_PING of the whole session at least OVERSPEED_S apart.
+        self.scaled_ping_rules()
+        self.start(FaultPlan(login_silence=0.6, overspeed_s=self.OVERSPEED_S))
+        sess = self.login()
+        self.assertTrue(wait_for(lambda: burst_applied(sess)))
+        self.assertTrue(wait_for(lambda: len(self.mock.ping_times) >= 2, 5.0), "no periodic ping")
+        gaps = [b - a for a, b in zip(self.mock.ping_times, self.mock.ping_times[1:], strict=False)]
+        self.assertGreaterEqual(min(gaps), self.OVERSPEED_S)
+        self.assertEqual(self.mock.world_connections, 1)
+        self.assertTrue(sess.recv_thread_alive())
+
+    def test_login_that_never_completes_still_times_out(self):
+        self.scaled_ping_rules()
+        self.enterContext(mock.patch.object(session_mod, "LOGIN_TIMEOUT_S", 0.3))
+        self.start(FaultPlan(login_silence=30.0, overspeed_s=self.OVERSPEED_S))
+        sessions = []
+        real_login = session_mod.WoWSession.login_character
+
+        def login_character(sess, guid):
+            sessions.append(sess)
+            return real_login(sess, guid)
+
+        self.enterContext(mock.patch.object(session_mod.WoWSession, "login_character", login_character))
+        with self.assertRaisesRegex(TimeoutError, "Login timed out"):
+            self.login()
+        sessions[0].logout()     # closes the socket, so the mock's handler thread ends
+        self.assertEqual(self.mock.ping_times, [])
+
     # ── split writes ─────────────────────────────────────────────────────
 
     def test_split_write_is_reassembled(self):
@@ -261,13 +301,19 @@ class FaultInjectionTest(unittest.TestCase):
         self.assertGreaterEqual(time.monotonic() - t0, 0.3)
         self.assertTrue(wait_for(lambda: burst_applied(sess)))
 
-    def test_auth_reject_raises_without_reaching_the_world_server(self):
-        self.start(FaultPlan(auth_reject=3))
-        # ConnectionError today: the agent waits for a full 119-byte challenge (#405).
-        with self.assertRaises((RuntimeError, ConnectionError)):
-            _connect_and_login(self.cfg, self.log)
-        self.assertEqual(self.mock.world_connections, 0)
-
+    def test_auth_reject_fails_fast_naming_the_code(self):
+        # TrinityCore sends 3 bytes and leaves the socket open (#405): the agent must not wait for 119.
+        for code, name in ((3, "banned"), (4, "unknown account"), (9, "version invalid")):
+            with self.subTest(code=code):
+                self.start(FaultPlan(auth_reject=code))
+                t0 = time.monotonic()
+                with self.assertRaises(AuthRejected) as cm:
+                    _connect_and_login(self.cfg, self.log)
+                self.assertLess(time.monotonic() - t0, 1.0)
+                self.assertEqual(cm.exception.code, code)
+                self.assertIn(name, str(cm.exception))
+                self.assertIn(f"0x{code:02X}", str(cm.exception))
+                self.assertEqual(self.mock.world_connections, 0)
 
 if __name__ == "__main__":
     unittest.main()

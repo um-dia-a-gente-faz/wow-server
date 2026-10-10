@@ -169,14 +169,12 @@ def _authenticate_and_login(cfg, log) -> tuple:
     """Auth against the auth server, connect to the world server, and list
     characters. Returns (session, chars) with the session logged in only as
     far as the world connection — no character selected yet. Raises on any
-    failure (auth_logon returning no account, a socket error, ...) —
+    failure (AuthRejected, a socket error, ...) —
     callers decide how to react (main()'s --list-chars path exits;
     _connect_and_login()/the reconnect supervisor propagate it up)."""
     log.info("authenticating to %s:%d as %s", cfg.wow_host, cfg.wow_auth_port, cfg.account)
     account, session_key, realms = auth_logon(cfg.wow_host, cfg.wow_auth_port,
                                                cfg.account, cfg.password)
-    if not account:
-        raise RuntimeError("auth failed — check WOW_ACCOUNT and WOW_PASSWORD")
 
     r = list(realms.values())[0]
     world_host, port_s = r['address'].rsplit(':', 1)
