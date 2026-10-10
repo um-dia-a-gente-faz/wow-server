@@ -4,7 +4,6 @@ import struct
 
 from .. import loot as lo
 from .. import perception as per
-from ..router import ROUTER
 
 
 def handle_loot_response(ctx, payload: bytes):
@@ -74,14 +73,15 @@ def send_item_queries(ctx):
         ctx.send(lo.CMSG_ITEM_QUERY_SINGLE, lo.build_item_query(entry))
 
 
-ROUTER.register_all({
-    lo.SMSG_LOOT_RESPONSE: handle_loot_response,
-    lo.SMSG_LOOT_RELEASE_RESPONSE: handle_loot_release_response,
-    lo.SMSG_LOOT_REMOVED: handle_loot_removed,
-    lo.SMSG_LOOT_MONEY_NOTIFY: handle_loot_money_notify,
-    lo.SMSG_ITEM_PUSH_RESULT: handle_item_push_result,
-    lo.SMSG_INVENTORY_CHANGE_FAILURE: handle_inventory_change_failure,
-    lo.SMSG_ITEM_QUERY_SINGLE_RESPONSE: handle_item_query_response,
-})
+def register(router):
+    router.register_all({
+        lo.SMSG_LOOT_RESPONSE: handle_loot_response,
+        lo.SMSG_LOOT_RELEASE_RESPONSE: handle_loot_release_response,
+        lo.SMSG_LOOT_REMOVED: handle_loot_removed,
+        lo.SMSG_LOOT_MONEY_NOTIFY: handle_loot_money_notify,
+        lo.SMSG_ITEM_PUSH_RESULT: handle_item_push_result,
+        lo.SMSG_INVENTORY_CHANGE_FAILURE: handle_inventory_change_failure,
+        lo.SMSG_ITEM_QUERY_SINGLE_RESPONSE: handle_item_query_response,
+    })
 
-ROUTER.on_tick(send_item_queries)
+    router.on_tick(send_item_queries)
