@@ -20,7 +20,7 @@ import time
 from .channels import parse_channel_spec
 from .chat_relay import ChatRelay
 from .config import ConfigError, load_config
-from .auth import auth_logon
+from .auth import PERMANENT_AUTH_CODES, AuthRejected, auth_logon
 from .session import WoWSession
 from .brain import Brain
 from .think import ThinkState, think_and_act
@@ -121,12 +121,12 @@ def main():
         _supervise_connection(
             build_session=lambda: _connect_and_login(cfg, log, chat_relay),
             run_session=lambda sess: _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
-                                                brain=brain, audit_logger=audit_logger,
-                                                observer=observer),
+                                               brain=brain, audit_logger=audit_logger, observer=observer),
             log=log,
         )
     except KeyboardInterrupt:
         log.info("interrupted")
+    except AuthRejected: sys.exit(1)  # #430: the supervisor already logged the one line
     finally:
         chat_relay.stop()
         if http_server is not None:
@@ -271,9 +271,16 @@ def _supervise_connection(build_session, run_session, log,
         attempt += 1
         try:
             session = build_session()
-        except Exception:
-            swallowed("main.connect", log, f"attempt {attempt}")
-            log.warning("retrying in %.0fs", backoff)
+        except Exception as e:
+            if isinstance(e, AuthRejected):
+                # #430: a refusal is one readable line, never a traceback
+                if e.code in PERMANENT_AUTH_CODES:
+                    log.error("%s — not retrying", e)
+                    raise
+                log.warning("%s — retrying in %.0fs", e, backoff)
+            else:
+                swallowed("main.connect", log, f"attempt {attempt}")
+                log.warning("retrying in %.0fs", backoff)
             sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
             continue

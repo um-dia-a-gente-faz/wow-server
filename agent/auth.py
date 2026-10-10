@@ -79,6 +79,10 @@ AUTH_RESULT_NAMES = {
     0x10: "account locked to another IP", 0x19: "account locked to another country",
 }
 
+# #430: refusals a retry cannot fix (banned, unknown account or wrong password, bad client
+# version, no access). Every other AuthResult is transient and the supervisor retries it.
+PERMANENT_AUTH_CODES = frozenset({0x03, 0x04, 0x05, 0x09, 0x0A, 0x0D})
+
 
 class AuthRejected(RuntimeError):
     """The auth server answered a logon step with a non-zero AuthResult. `code` is that
