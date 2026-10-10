@@ -22,6 +22,7 @@ by file:
 import struct
 
 from . import packets as pk
+from .wire import Reader
 
 # Opcodes (Opcodes.h)
 from .opcodes import (  # noqa: F401  (re-exported: callers use loot.CMSG_*/SMSG_*)
@@ -114,23 +115,23 @@ def parse_loot_response(payload: bytes) -> dict:
         random_properties_id, uint8 ui_type (LootSlotType).
       failure (acquire_reason == 0): uint8 failure_reason (LootError).
     """
-    off = 0
-    owner = pk.u64(payload, off); off += 8
-    acquire_reason = payload[off]; off += 1
+    r = Reader(payload, SMSG_LOOT_RESPONSE)
+    owner = r.u64()
+    acquire_reason = r.u8()
     info = {"guid": owner, "loot_type": acquire_reason, "success": acquire_reason != 0}
 
     if acquire_reason:
-        coins = pk.u32(payload, off); off += 4
-        item_count = payload[off]; off += 1
+        coins = r.u32()
+        item_count = r.u8()
         items = []
         for _ in range(item_count):
-            slot = payload[off]; off += 1
-            item_id = pk.u32(payload, off); off += 4
-            quantity = pk.u32(payload, off); off += 4
-            display_info_id = pk.u32(payload, off); off += 4
-            random_suffix = struct.unpack_from('<i', payload, off)[0]; off += 4
-            random_property = struct.unpack_from('<i', payload, off)[0]; off += 4
-            ui_type = payload[off]; off += 1
+            slot = r.u8()
+            item_id = r.u32()
+            quantity = r.u32()
+            display_info_id = r.u32()
+            random_suffix = r.i32()
+            random_property = r.i32()
+            ui_type = r.u8()
             items.append({
                 "slot": slot, "entry": item_id, "count": quantity,
                 "display_id": display_info_id, "random_suffix": random_suffix,
@@ -139,12 +140,12 @@ def parse_loot_response(payload: bytes) -> dict:
         info["coins"] = coins
         info["items"] = items
     else:
-        failure_reason = payload[off]; off += 1
+        failure_reason = r.u8()
         info["failure_reason"] = failure_reason
         info["failure_reason_name"] = LOOT_ERROR_NAMES.get(failure_reason, f"error_{failure_reason}")
 
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    if r.remaining():
+        raise ValueError(f"parsed {r.offset} of {len(payload)} bytes ({r.remaining()} leftover)")
     return info
 
 
@@ -152,21 +153,21 @@ def parse_loot_release_response(payload: bytes) -> dict:
     """SMSG_LOOT_RELEASE_RESPONSE (0x161): Player::SendLootRelease
     (Player.cpp) — uint64 guid (raw), uint8 (always 1 in this build; not
     otherwise meaningful to callers)."""
-    guid = pk.u64(payload, 0)
-    return {"guid": guid}
+    return {"guid": Reader(payload, SMSG_LOOT_RELEASE_RESPONSE).guid()}
 
 
 def parse_loot_removed(payload: bytes) -> dict:
     """SMSG_LOOT_REMOVED (0x162): WorldPackets::Loot::LootRemoved::Write — a
     single uint8 LootListID (the slot that was just looted/rolled away)."""
-    return {"slot": payload[0]}
+    return {"slot": Reader(payload, SMSG_LOOT_REMOVED).u8()}
 
 
 def parse_loot_money_notify(payload: bytes) -> dict:
     """SMSG_LOOT_MONEY_NOTIFY (0x163): WorldPackets::Loot::LootMoneyNotify::Write
     — uint32 money, uint8 sole_looter (bool)."""
-    money = pk.u32(payload, 0)
-    sole_looter = bool(payload[4])
+    r = Reader(payload, SMSG_LOOT_MONEY_NOTIFY)
+    money = r.u32()
+    sole_looter = bool(r.u8())
     return {"money": money, "sole_looter": sole_looter}
 
 
@@ -180,18 +181,18 @@ def parse_item_push_result(payload: bytes) -> dict:
       uint32 suffix_factor, int32 random_property_id, uint32 count, uint32
       total_count_in_inventory.
     """
-    off = 0
-    player_guid = pk.u64(payload, off); off += 8
-    received = pk.u32(payload, off); off += 4
-    created = pk.u32(payload, off); off += 4
-    _send_chat_message = pk.u32(payload, off); off += 4
-    bag_slot = payload[off]; off += 1
-    slot = pk.u32(payload, off); off += 4
-    entry = pk.u32(payload, off); off += 4
-    suffix_factor = pk.u32(payload, off); off += 4
-    random_property_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    count = pk.u32(payload, off); off += 4
-    total_count = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_ITEM_PUSH_RESULT)
+    player_guid = r.u64()
+    received = r.u32()
+    created = r.u32()
+    r.u32()  # send_chat_message (bool), not surfaced
+    bag_slot = r.u8()
+    slot = r.u32()
+    entry = r.u32()
+    suffix_factor = r.u32()
+    random_property_id = r.i32()
+    count = r.u32()
+    total_count = r.u32()
     return {
         "player_guid": player_guid,
         "received": bool(received),
@@ -217,14 +218,15 @@ def parse_inventory_change_failure(payload: bytes) -> dict:
     category id) this parser does not decode — the three fields above are
     enough to recognize "inventory full" and similar loot-blocking errors,
     and nothing follows them in the packet that callers need yet."""
-    result = payload[0]
+    r = Reader(payload, SMSG_INVENTORY_CHANGE_FAILURE)
+    result = r.u8()
     info = {"result": result, "ok": result == EQUIP_ERR_OK}
     if result != EQUIP_ERR_OK:
         info["reason_name"] = EQUIP_ERR_NAMES.get(result, f"error_{result}")
-    if result != EQUIP_ERR_OK and len(payload) >= 1 + 8 + 8 + 1:
-        item0 = pk.u64(payload, 1)
-        item1 = pk.u64(payload, 9)
-        container_bag_slot = payload[17]
+    if result != EQUIP_ERR_OK and r.remaining() >= 8 + 8 + 1:
+        item0 = r.u64()
+        item1 = r.u64()
+        container_bag_slot = r.u8()
         info["item_guids"] = [g for g in (item0, item1) if g]
         info["container_bag_slot"] = container_bag_slot
     return info
@@ -347,92 +349,89 @@ def parse_item_query_response(payload: bytes) -> dict:
       socket_bonus, gem_properties, required_disenchant_skill,
       armor_damage_modifier(f32), duration, item_limit_category, holiday_id.
     """
-    off = 0
-    raw_entry = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_ITEM_QUERY_SINGLE_RESPONSE)
+    raw_entry = r.u32()
     found = not (raw_entry & 0x80000000)
     entry = raw_entry & 0x7FFFFFFF
     info = {"entry": entry, "found": found}
     if not found:
         return info
 
-    item_class = pk.u32(payload, off); off += 4
-    subclass = pk.u32(payload, off); off += 4
-    off += 4  # sound_override_subclass (int32) — not needed by callers yet
-    name, off = pk.cstring(payload, off)
-    off += 3  # name2, name3, name4 — always empty
-    display_info_id = pk.u32(payload, off); off += 4
-    quality = pk.u32(payload, off); off += 4
-    off += 4 * 2  # Flags[MAX_ITEM_PROTO_FLAGS=2]
-    off += 4  # buy_price (int32)
-    off += 4  # sell_price
-    inventory_type = pk.u32(payload, off); off += 4
-    allowable_class = struct.unpack_from('<i', payload, off)[0]; off += 4
-    off += 4  # allowable_race
-    item_level = pk.u32(payload, off); off += 4
-    required_level = pk.u32(payload, off); off += 4
-    off += 4 * 4  # required_skill, required_skill_rank, required_spell, required_honor_rank
-    off += 4 * 2  # required_city_rank, required_reputation_faction
-    off += 4  # required_reputation_rank
-    off += 4  # max_count (int32)
-    stackable = struct.unpack_from('<i', payload, off)[0]; off += 4
-    off += 4  # container_slots
+    item_class = r.u32()
+    subclass = r.u32()
+    r.skip(4)  # sound_override_subclass (int32) — not needed by callers yet
+    name = r.cstring()
+    r.skip(3)  # name2, name3, name4 — always empty
+    display_info_id = r.u32()
+    quality = r.u32()
+    r.skip(4 * 2)  # Flags[MAX_ITEM_PROTO_FLAGS=2]
+    r.skip(4)  # buy_price (int32)
+    r.skip(4)  # sell_price
+    inventory_type = r.u32()
+    allowable_class = r.i32()
+    r.skip(4)  # allowable_race
+    item_level = r.u32()
+    required_level = r.u32()
+    r.skip(4 * 4)  # required_skill, required_skill_rank, required_spell, required_honor_rank
+    r.skip(4 * 2)  # required_city_rank, required_reputation_faction
+    r.skip(4)  # required_reputation_rank
+    r.skip(4)  # max_count (int32)
+    stackable = r.i32()
+    r.skip(4)  # container_slots
 
-    stats_count = pk.u32(payload, off); off += 4
+    stats_count = r.u32()
     stats = []
     for _ in range(min(stats_count, MAX_ITEM_PROTO_STATS)):
-        stat_type = pk.u32(payload, off); off += 4
-        stat_value = struct.unpack_from('<i', payload, off)[0]; off += 4
+        stat_type = r.u32()
+        stat_value = r.i32()
         if stat_value != 0:
             stats.append({"type": stat_type, "value": stat_value})
 
-    off += 4 * 2  # scaling_stat_distribution, scaling_stat_value
+    r.skip(4 * 2)  # scaling_stat_distribution, scaling_stat_value
 
     damages = []
     for _ in range(MAX_ITEM_PROTO_DAMAGES):
-        dmg_min = struct.unpack_from('<f', payload, off)[0]; off += 4
-        dmg_max = struct.unpack_from('<f', payload, off)[0]; off += 4
-        dmg_type = pk.u32(payload, off); off += 4
+        dmg_min = r.f32()
+        dmg_max = r.f32()
+        dmg_type = r.u32()
         if dmg_min or dmg_max:
             damages.append({"min": dmg_min, "max": dmg_max, "type": dmg_type})
 
-    armor = pk.u32(payload, off); off += 4
-    off += 4 * 6  # holy_res, fire_res, nature_res, frost_res, shadow_res, arcane_res
-    off += 4  # delay
-    off += 4  # ammo_type
-    off += 4  # ranged_mod_range (float)
+    armor = r.u32()
+    r.skip(4 * 6)  # holy_res, fire_res, nature_res, frost_res, shadow_res, arcane_res
+    r.skip(4)  # delay
+    r.skip(4)  # ammo_type
+    r.skip(4)  # ranged_mod_range (float)
 
     spells = []
     for _ in range(MAX_ITEM_PROTO_SPELLS):
-        spell_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-        trigger = pk.u32(payload, off); off += 4
-        off += 4  # spell_charges (int32)
-        off += 4  # spell_cooldown (uint32, per Write()'s explicit cast)
-        off += 4  # spell_category
-        off += 4  # spell_category_cooldown
+        spell_id = r.i32()
+        trigger = r.u32()
+        r.skip(4 * 4)  # spell_charges, spell_cooldown, spell_category, spell_category_cooldown
         if spell_id > 0:
             spells.append({"spell_id": spell_id, "trigger": trigger})
 
-    off += 4  # bonding
-    _, off = pk.cstring(payload, off)  # description — not needed by callers yet
-    off += 4 * 6  # page_text, language_id, page_material, start_quest, lock_id, material(int32)
-    off += 4  # sheath
-    off += 4 * 2  # random_property, random_suffix
-    off += 4  # block
-    off += 4  # item_set
-    max_durability = pk.u32(payload, off); off += 4
-    off += 4 * 2  # area, map
-    off += 4 * 2  # bag_family, totem_category
-    off += 8 * MAX_ITEM_PROTO_SOCKETS  # Socket[i]: uint32 color, uint32 content
-    off += 4  # socket_bonus
-    off += 4  # gem_properties
-    off += 4  # required_disenchant_skill
-    off += 4  # armor_damage_modifier (float)
-    off += 4  # duration
-    off += 4  # item_limit_category
-    off += 4  # holiday_id
+    r.skip(4)  # bonding
+    r.cstring()  # description — not needed by callers yet
+    r.skip(4 * 6)  # page_text, language_id, page_material, start_quest, lock_id, material(int32)
+    r.skip(4)  # sheath
+    r.skip(4 * 2)  # random_property, random_suffix
+    r.skip(4)  # block
+    r.skip(4)  # item_set
+    max_durability = r.u32()
+    r.skip(4 * 2)  # area, map
+    r.skip(4 * 2)  # bag_family, totem_category
+    r.skip(8 * MAX_ITEM_PROTO_SOCKETS)  # Socket[i]: uint32 color, uint32 content
+    r.skip(4)  # socket_bonus
+    r.skip(4)  # gem_properties
+    r.skip(4)  # required_disenchant_skill
+    r.skip(4)  # armor_damage_modifier (float)
+    r.skip(4)  # duration
+    r.skip(4)  # item_limit_category
+    r.skip(4)  # holiday_id
 
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    if r.remaining():
+        raise ValueError(f"parsed {r.offset} of {len(payload)} bytes ({r.remaining()} leftover)")
 
     info.update({
         "class_": item_class, "subclass": subclass, "name": name,

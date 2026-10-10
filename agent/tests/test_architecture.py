@@ -31,6 +31,7 @@ UNLAYERED = {"tools", "tests"}
 #   entry and observing: session, http_api, audit, __main__
 LAYERS = {
     "packets": set(),
+    "wire": {"packets"},   # cursor Reader/Writer over packets' helpers, PacketTruncated is a ProtocolError (#274)
     "opcodes": set(),
     "crypt": set(),
     "transport": {"packets"},
@@ -48,9 +49,9 @@ LAYERS = {
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "packets"},
     "quests": {"opcodes", "packets"},
-    "loot": {"opcodes", "packets"},
-    "mail": {"opcodes", "packets"},
-    "trade": {"opcodes", "packets"},
+    "loot": {"opcodes", "packets", "wire"},
+    "mail": {"opcodes", "packets", "wire"},
+    "trade": {"opcodes", "packets", "wire"},
     "spells": {"packets"},
     "channels": {"opcodes", "packets"},
     "names": {"packets"},

@@ -40,7 +40,7 @@ CMSG_GET_MAIL_LIST *is* "opening the mailbox".
 
 import struct
 
-from . import packets as pk
+from .wire import Reader
 
 # Opcodes (Opcodes.h)
 from .opcodes import (  # noqa: F401  (re-exported: callers use mail.CMSG_*/SMSG_*)
@@ -166,10 +166,10 @@ def parse_send_mail_result(payload: bytes) -> dict:
     (1): uint32 bagResult; if command == MAIL_ITEM_TAKEN (2) and errorCode in
     (MAIL_OK, MAIL_ERR_ITEM_HAS_EXPIRED): uint32 attachId, uint32
     qtyInInventory."""
-    off = 0
-    mail_id = pk.u32(payload, off); off += 4
-    command = pk.u32(payload, off); off += 4
-    error_code = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_SEND_MAIL_RESULT)
+    mail_id = r.u32()
+    command = r.u32()
+    error_code = r.u32()
     info = {
         "mail_id": mail_id, "command": command,
         "command_name": MAIL_RESPONSE_NAMES.get(command, f"command_{command}"),
@@ -177,64 +177,60 @@ def parse_send_mail_result(payload: bytes) -> dict:
         "error_name": MAIL_RESULT_NAMES.get(error_code, f"error_{error_code}"),
     }
     if error_code == MAIL_ERR_EQUIP_ERROR:
-        info["bag_result"] = pk.u32(payload, off); off += 4
+        info["bag_result"] = r.u32()
     if command == MAIL_ITEM_TAKEN and error_code in (MAIL_OK, 21):
-        info["attach_id"] = pk.u32(payload, off); off += 4
-        info["qty_in_inventory"] = pk.u32(payload, off); off += 4
+        info["attach_id"] = r.u32()
+        info["qty_in_inventory"] = r.u32()
     return info
 
 
-def _parse_mail_attached_item(payload: bytes, off: int) -> tuple[dict, int]:
-    position = payload[off]; off += 1
-    attach_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    item_entry = struct.unpack_from('<i', payload, off)[0]; off += 4
+def _parse_mail_attached_item(r: Reader) -> dict:
+    position = r.u8()
+    attach_id = r.i32()
+    item_entry = r.i32()
     enchant_ids = []
     for _ in range(MAX_INSPECTED_ENCHANTMENT_SLOT):
-        enchant_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-        off += 8  # duration, charges — not surfaced, rarely meaningful on a mailed item
-        enchant_ids.append(enchant_id)
-    random_property_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    random_property_seed = struct.unpack_from('<i', payload, off)[0]; off += 4
-    count = struct.unpack_from('<i', payload, off)[0]; off += 4
-    charges = struct.unpack_from('<i', payload, off)[0]; off += 4
-    max_durability = pk.u32(payload, off); off += 4
-    durability = struct.unpack_from('<i', payload, off)[0]; off += 4
-    unlocked = bool(payload[off]); off += 1
-    item = {
+        enchant_ids.append(r.i32())
+        r.skip(8)  # duration, charges — not surfaced, rarely meaningful on a mailed item
+    random_property_id = r.i32()
+    random_property_seed = r.i32()
+    count = r.i32()
+    charges = r.i32()
+    max_durability = r.u32()
+    durability = r.i32()
+    unlocked = bool(r.u8())
+    return {
         "position": position, "attach_id": attach_id, "entry": item_entry,
         "enchant_ids": enchant_ids, "random_property_id": random_property_id,
         "random_property_seed": random_property_seed, "count": count,
         "charges": charges, "max_durability": max_durability,
         "durability": durability, "unlocked": unlocked,
     }
-    return item, off
 
 
-def _parse_mail_list_entry(payload: bytes, off: int) -> tuple[dict, int]:
-    _entry_size = pk.u16(payload, off); off += 2  # byte size of everything below, not needed to parse it
-    mail_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    sender_type = payload[off]; off += 1
+def _parse_mail_list_entry(r: Reader) -> dict:
+    r.u16()  # byte size of everything below, not needed to parse it
+    mail_id = r.i32()
+    sender_type = r.u8()
     sender_guid = None
     alt_sender_id = None
     if sender_type == MAIL_NORMAL:
-        sender_guid = pk.u64(payload, off); off += 8
+        sender_guid = r.u64()
     else:
-        alt_sender_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    cod = pk.u32(payload, off); off += 4
-    package_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    stationery_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    money = pk.u32(payload, off); off += 4
-    flags = struct.unpack_from('<i', payload, off)[0]; off += 4
-    days_left = pk.f32(payload, off); off += 4
-    mail_template_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    subject, off = pk.cstring(payload, off)
-    body, off = pk.cstring(payload, off)
-    attachment_count = payload[off]; off += 1
+        alt_sender_id = r.i32()
+    cod = r.u32()
+    package_id = r.i32()
+    stationery_id = r.i32()
+    money = r.u32()
+    flags = r.i32()
+    days_left = r.f32()
+    mail_template_id = r.i32()
+    subject = r.cstring()
+    body = r.cstring()
     attachments = []
-    for _ in range(attachment_count):
-        item, off = _parse_mail_attached_item(payload, off)
-        attachments.append(item)
-    entry = {
+    for _ in range(r.u8()):
+        attachments.append(_parse_mail_attached_item(r))
+    return {
         "mail_id": mail_id, "sender_type": sender_type, "sender_guid": sender_guid,
         "alt_sender_id": alt_sender_id, "cod": cod, "package_id": package_id,
         "stationery_id": stationery_id, "money": money, "flags": flags,
@@ -242,7 +238,6 @@ def _parse_mail_list_entry(payload: bytes, off: int) -> tuple[dict, int]:
         "days_left": days_left, "mail_template_id": mail_template_id,
         "subject": subject, "body": body, "attachments": attachments,
     }
-    return entry, off
 
 
 def parse_mail_list_result(payload: bytes) -> dict:
@@ -253,13 +248,10 @@ def parse_mail_list_result(payload: bytes) -> dict:
     _parse_mail_list_entry — each starts with its own uint16 byte-size
     header, which this parser doesn't need since every field is fixed or
     null-terminated)."""
-    off = 0
-    total = struct.unpack_from('<i', payload, off)[0]; off += 4
-    count = payload[off]; off += 1
-    mails = []
-    for _ in range(count):
-        entry, off = _parse_mail_list_entry(payload, off)
-        mails.append(entry)
+    r = Reader(payload, SMSG_MAIL_LIST_RESULT)
+    total = r.i32()
+    count = r.u8()
+    mails = [_parse_mail_list_entry(r) for _ in range(count)]
     return {"total_records": total, "mails": mails}
 
 
@@ -267,4 +259,4 @@ def parse_received_mail(payload: bytes) -> dict:
     """SMSG_RECEIVED_MAIL (0x285): NotifyReceivedMail::Write — a single
     float `Delay` (seconds until the client should re-check, always 0 from
     a live delivery notification; not otherwise meaningful here)."""
-    return {"delay": pk.f32(payload, 0)}
+    return {"delay": Reader(payload, SMSG_RECEIVED_MAIL).f32()}
