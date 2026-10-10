@@ -1,9 +1,22 @@
 """WorldState's name/template resolution: fills object names from the caches and queues queries (UM-35)."""
 
+import threading
+
+from .. import items as it
+from .. import names as nm
 from .objects import ObjectInfo
 
 
 class ResolutionMixin:
+    # Attributes WorldState.__init__ creates; declared so the mixin type-checks.
+    _lock: threading.Lock
+    objects: dict[int, ObjectInfo]
+    my_guid: int
+    names: nm.NameCache
+    items: it.ItemCache
+    _quest_status_pending: list
+    _quest_status_in_flight: set
+
     def _maybe_resolve_name(self, obj: ObjectInfo):
         """UM-35: fill obj.name (etc.) from the cache if already known,
         otherwise enqueue a query. Called with self._lock already held.

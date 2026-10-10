@@ -27,12 +27,14 @@ UNLAYERED = {"tools", "tests"}
 #   pure parsers and builders: npc, quests, loot, mail, trade, spells, channels, names,
 #       items, item_compare, update_object, update_fields, movement
 #   state: perception, state;  routing: router, handlers (ADR 0005, 0006)
-#   acting: actions, reflexes, control, death, candidates;  deciding: jev, llm, brain, think
+#   acting: actions, reflexes, control, death, candidates;  deciding: jev, llm, deciders, brain, think
 #   entry and observing: session, http_api, audit, __main__
 LAYERS = {
     "packets": set(),
+    "wire": {"packets"},   # cursor Reader/Writer over packets' helpers, PacketTruncated is a ProtocolError (#274)
     "opcodes": set(),
     "crypt": set(),
+    "changes": set(),   # the process-wide "perception changed" wake-up for action confirmation (#305)
     "transport": {"packets"},
     "config": set(),
     "handles": set(),
@@ -40,6 +42,7 @@ LAYERS = {
     "known_targets": set(),
     "metrics": {"audit_schema", "transport"},   # swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
     "api_contract": set(),
+    "memory": set(),   # durable agent memory store (#276); stdlib sqlite3 only
     "model": set(),
     "audit_schema": {"model"},   # the audit record's versioned on-disk shape (#277)
     "auth": {"packets"},
@@ -48,9 +51,9 @@ LAYERS = {
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "packets"},
     "quests": {"opcodes", "packets"},
-    "loot": {"opcodes", "packets"},
-    "mail": {"opcodes", "packets"},
-    "trade": {"opcodes", "packets"},
+    "loot": {"opcodes", "packets", "wire"},
+    "mail": {"opcodes", "packets", "wire"},
+    "trade": {"opcodes", "packets", "wire"},
     "spells": {"packets"},
     "channels": {"opcodes", "packets"},
     "names": {"packets"},
@@ -61,15 +64,15 @@ LAYERS = {
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
-    "perception": {"group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
+    "perception": {"changes", "group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
-    "state": {"perception"},
+    "state": {"changes", "perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
     "router": {"packets"},
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
-    "actions": {"channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
+    "actions": {"changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
     "control": {"actions", "metrics", "movement"},
@@ -77,8 +80,10 @@ LAYERS = {
     "action_names": set(),
     "candidates": {"action_names", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
-    "llm": set(),
+    "prompts": set(),   # versioned prompt text assets (#395)
+    "llm": {"prompts"},
     "jev": {"llm"},
+    "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},

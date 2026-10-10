@@ -167,3 +167,18 @@ agents**, using the measured p50 prompt size of 3,565 input tokens and the
 conservative assumption that every agent makes one billed Jev call every 3
 seconds. This ceiling is a planning bound at the published rate, not a spending
 cap enforced by the software. Revisit before scaling (UM-63/UM-102).
+
+## Decider interface (GH-278)
+
+`agent/deciders.py` names what `Brain` calls on its two decision models. The
+`Decider` protocol has three read-only members, `model`, `last_usage` and
+`last_latency_ms`, and `choose_action(snapshot, second, *, persona="",
+history=None) -> (action, params)`. The second argument is the candidate list
+for the jev slot and the action catalog for the llm slot; the llm call omits
+`history` when it is None, so every decider accepts both shapes. `last_confidence`
+is an optional jev-slot readout that Brain reads with `getattr`, so it is not a
+protocol member. mypy checks `JevClient`, `LLMClient` and `ScriptedDecider`
+against the protocol (`_conforms` in `deciders.py`). `ScriptedDecider` (replay a
+list, or call a rule) implements it without network for tests and smoke runs.
+Provider adapters, the shared HTTP helper and the budget move are a follow-up;
+`Brain` is unchanged.

@@ -1,7 +1,6 @@
 """Combat/spell/XP packets (UM-39): spellbook state and combat events."""
 
 from .. import spells as sp
-from ..router import ROUTER
 
 # Combat / spells (UM-39)
 from ..opcodes import (
@@ -77,18 +76,19 @@ def handle_levelup_info(ctx, payload: bytes):
     ctx.state.record_event("levelup", **sp.parse_levelup_info(payload))
 
 
-ROUTER.register_all({
-    SMSG_INITIAL_SPELLS: handle_initial_spells,
-    SMSG_LEARNED_SPELL: handle_learned_spell,
-    SMSG_REMOVED_SPELL: handle_removed_spell,
-    SMSG_CAST_FAILED: handle_cast_failed,
-    SMSG_SPELL_START: handle_spell_start,
-    SMSG_SPELL_GO: handle_spell_go,
-    SMSG_ATTACK_START: handle_attack_start,
-    SMSG_ATTACK_STOP: handle_attack_stop,
-    SMSG_ATTACKERSTATEUPDATE: handle_attacker_state_update,
-    SMSG_SPELLNONMELEEDAMAGELOG: handle_spell_non_melee_damage_log,
-    SMSG_PARTYKILLLOG: handle_party_kill_log,
-    SMSG_LOG_XPGAIN: handle_log_xp_gain,
-    SMSG_LEVELUP_INFO: handle_levelup_info,
-})
+def register(router):
+    router.register_all({
+        SMSG_INITIAL_SPELLS: handle_initial_spells,
+        SMSG_LEARNED_SPELL: handle_learned_spell,
+        SMSG_REMOVED_SPELL: handle_removed_spell,
+        SMSG_CAST_FAILED: handle_cast_failed,
+        SMSG_SPELL_START: handle_spell_start,
+        SMSG_SPELL_GO: handle_spell_go,
+        SMSG_ATTACK_START: handle_attack_start,
+        SMSG_ATTACK_STOP: handle_attack_stop,
+        SMSG_ATTACKERSTATEUPDATE: handle_attacker_state_update,
+        SMSG_SPELLNONMELEEDAMAGELOG: handle_spell_non_melee_damage_log,
+        SMSG_PARTYKILLLOG: handle_party_kill_log,
+        SMSG_LOG_XPGAIN: handle_log_xp_gain,
+        SMSG_LEVELUP_INFO: handle_levelup_info,
+    })

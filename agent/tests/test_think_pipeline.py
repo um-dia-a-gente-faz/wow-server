@@ -14,7 +14,7 @@ from agent.tests.builders import FakeSession
 from agent.tests.test_think import FakeLLMClient, RecordingAction, _world_with_self
 
 
-# Recorded from the pre-split think_and_act (origin/main at 08a2555).
+# Recorded from the pre-split think_and_act (origin/main; regenerated after #472 added prompt_id).
 GOLDEN = pathlib.Path(__file__).parent / "fixtures" / "think_pipeline" / "golden.json"
 
 

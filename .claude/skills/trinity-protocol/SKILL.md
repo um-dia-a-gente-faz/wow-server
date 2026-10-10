@@ -38,6 +38,9 @@ Rules of thumb:
 
 - **Packed GUIDs are little-endian**: bit *i* of the mask means byte *i*. Use
   `packets.unpack_packed_guid`, never a hand-rolled shift loop.
+- **Parse with `agent/wire.py`'s `Reader`, not `packets.u32(data, off)` offset threading.**
+  It raises `PacketTruncated` (a `ProtocolError`) on a short read and keeps the cursor where it was;
+  `Writer` builds payloads with the same packers.
 - **VALUES_UPDATE writes all mask words first, then all values.** Not interleaved.
 - **Fields worth 0 are not sent at all**, so absent ≠ zero. Decode into something that
   distinguishes "unknown" from 0, and merge per field instead of replacing a whole list

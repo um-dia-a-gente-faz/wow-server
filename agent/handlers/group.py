@@ -11,7 +11,6 @@ from ..opcodes import (
     SMSG_GROUP_LIST,
     SMSG_GROUP_UNINVITE,
 )
-from ..router import ROUTER
 
 log = logging.getLogger("agent.session")
 
@@ -45,9 +44,10 @@ def handle_group_decline(ctx, payload: bytes):
     ctx.state.record_event("group_invite_declined", target_name=name)
 
 
-ROUTER.register_all({
-    SMSG_GROUP_LIST: handle_group_list,
-    SMSG_GROUP_UNINVITE: handle_group_gone,
-    SMSG_GROUP_DESTROYED: handle_group_gone,
-    SMSG_GROUP_DECLINE: handle_group_decline,
-})
+def register(router):
+    router.register_all({
+        SMSG_GROUP_LIST: handle_group_list,
+        SMSG_GROUP_UNINVITE: handle_group_gone,
+        SMSG_GROUP_DESTROYED: handle_group_gone,
+        SMSG_GROUP_DECLINE: handle_group_decline,
+    })

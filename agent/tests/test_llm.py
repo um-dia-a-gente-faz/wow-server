@@ -6,7 +6,7 @@ import json
 import unittest
 from unittest import mock
 
-from agent import llm
+from agent import llm, prompts
 
 
 def chat_response(name="set_target", arguments=None, arguments_json=None, extra_calls=None):
@@ -373,6 +373,19 @@ class FallbackTest(unittest.TestCase):
         self.assertEqual(client.last_model, "gemini-3.1-flash-lite")
         self.assertEqual(client.last_usage["prompt_tokens"], 10)
         self.assertIsNotNone(client.last_latency_ms)
+
+    def test_prompt_id_recorded_per_call_and_cleared_when_none_sent(self):
+        client, _ = self.make("a")
+        self.run_script(client, {"a": [chat_response()]})
+        self.assertEqual(client.last_prompt_id, prompts.prompt_id())
+        with mock.patch.object(client, "_post", ScriptedPost({"a": [chat_response()]})):
+            client.choose_action({}, [], persona="p")
+        self.assertEqual(client.last_prompt_id, prompts.prompt_id("p"))
+        self.run_script(client, {"a": [unavailable(502)]})  # a failed call still sent this prompt
+        self.assertEqual(client.last_prompt_id, prompts.prompt_id())
+        client.models = []
+        self.run_script(client, {})  # no request built: stale id cleared
+        self.assertIsNone(client.last_prompt_id)
 
     def test_failed_call_clears_stale_usage(self):
         client, _ = self.make("a")

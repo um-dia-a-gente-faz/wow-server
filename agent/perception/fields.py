@@ -1,5 +1,6 @@
 """WorldState's decoding of update-object movement and field blocks onto an ObjectInfo."""
 
+import threading
 import time
 
 from .. import update_fields as uf
@@ -7,6 +8,12 @@ from .objects import ObjectInfo
 
 
 class FieldsMixin:
+    # Attributes WorldState.__init__ creates; declared so the mixin type-checks.
+    _lock: threading.Lock
+    objects: dict[int, ObjectInfo]
+    my_guid: int
+    my_map: int | None
+
     def _apply_movement(self, obj: ObjectInfo, movement: dict | None):
         if not movement:
             return

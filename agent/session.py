@@ -4,7 +4,7 @@ Wraps the low-level world protocol in a background recv loop.
 
 Layout: transport.py (framing/crypto/socket), state.py (game state),
 router.py (opcode -> handler table), handlers/ (one module per domain,
-registering on the router at import). This module is the login flow and
+each exposing register(router); build_router() lists them). This module is the login flow and
 the recv loop that ties them together."""
 
 import logging
@@ -16,16 +16,13 @@ import time
 from . import channels as ch_mod
 from . import crypt as cr
 from . import packets as pk
-from .router import Context, ROUTER
+from .router import Context, PacketRouter
 from .metrics import swallowed
 from .state import GameState
 from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
 
-# Importing a handler module registers its opcodes (and per-tick query
-# senders) on ROUTER. Tick order = import order: names, npc text, items, quests.
+from .handlers import build_router
 from .handlers import world as _world
-from .handlers import chat, death, group, mail, npc, spells, trade  # noqa: F401
-from .handlers import loot, quests  # noqa: F401
 
 log = logging.getLogger("agent.session")
 
@@ -80,7 +77,8 @@ class WoWSession(Transport, GameState):
 
     def __init__(self, host: str, port: int, account_name: str,
                  session_key: bytes, realm_id: int, verbose_packets: bool = False,
-                 dump_packets_dir: str = ""):
+                 dump_packets_dir: str = "",
+                 router: PacketRouter | None = None):
         Transport.__init__(self, dump_packets_dir)
         GameState.__init__(self)
         self.host = host
@@ -90,6 +88,7 @@ class WoWSession(Transport, GameState):
         self.realm_id = realm_id
         self.verbose_packets = verbose_packets
         self.ctx = Context(self, self)
+        self.router = router if router is not None else build_session_router()
         self._recv_thread = None
 
     def connect(self):
@@ -342,7 +341,7 @@ class WoWSession(Transport, GameState):
 
     def _dispatch(self, opcode: int, payload: bytes) -> bool:
         """Handle one packet. Returns False if the opcode isn't handled."""
-        return ROUTER.dispatch(self.ctx, opcode, payload)
+        return self.router.dispatch(self.ctx, opcode, payload)
 
     def _dispatch_guarded(self, opcode: int, payload: bytes) -> bool:
         """_dispatch, but a handler error drops only this packet, never the
@@ -392,14 +391,14 @@ class WoWSession(Transport, GameState):
                     ping_id += 1
                     self._send_packet(CMSG_PING, struct.pack('<II', ping_id, 0))
                     last_ping = now
-                ROUTER.tick(self.ctx)
+                self.router.tick(self.ctx)
                 continue
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
                 return
             last_rx = time.monotonic()
             self._dispatch_guarded(opcode, payload)
-            ROUTER.tick(self.ctx)
+            self.router.tick(self.ctx)
 
 
 # ── Connection-lifecycle packets (the only handlers that live here) ─────────
@@ -421,9 +420,17 @@ def handle_logout_complete(ctx, payload):
     st._running = False
 
 
-ROUTER.register_all({
-    SMSG_TIME_SYNC_REQ: handle_time_sync,
-    SMSG_PONG: lambda ctx, payload: None,
-    SMSG_STANDSTATE_UPDATE: lambda ctx, payload: None,
-    SMSG_LOGOUT_COMPLETE: handle_logout_complete,
-})
+def register(router):
+    router.register_all({
+        SMSG_TIME_SYNC_REQ: handle_time_sync,
+        SMSG_PONG: lambda ctx, payload: None,
+        SMSG_STANDSTATE_UPDATE: lambda ctx, payload: None,
+        SMSG_LOGOUT_COMPLETE: handle_logout_complete,
+    })
+
+
+def build_session_router() -> PacketRouter:
+    """Every domain handler, then the connection-lifecycle ones that live here."""
+    router = build_router()
+    register(router)
+    return router
