@@ -254,7 +254,7 @@ class OfferGoldAction(Action):
             return "no trade window is open"
         if amount < 0:
             return "amount must be >= 0"
-        have = getattr(session, "coinage", 0) or 0
+        have = session.coinage or 0
         if amount > have:
             return f"not enough gold (have {have}, tried to offer {amount})"
         return None

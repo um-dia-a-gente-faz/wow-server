@@ -13,7 +13,7 @@ Repository: `um-dia-a-gente-faz/wow-server` — TrinityCore 3.3.5a server, `agen
 
 1. Read the issue in full: `gh issue view <n> --json title,body,comments`. The body is the spec. Every comment starting `Decision:` is part of the spec; a later Decision wins over an earlier one and over the body. Read `docs/AGENT-DIRECTION.md` for the area and `GLOSSARY.md` for names.
 2. `git fetch origin`, then `git checkout -b <branch> origin/main`. Branch is `feature/gh-<n>-<slug>` or `bugfix/gh-<n>-<slug>`, never stacked. Read the files the issue touches before writing and match their style.
-3. Work test-first (`tdd` skill). Write each test, see it fail, then write the code. A test a wrong implementation would still pass is not done.
+3. Develop the issue with the `implement` skill (it drives `tdd`; if it cannot be invoked from an agent, read `.claude/skills/implement/SKILL.md` and follow it). Write each test, see it fail, then write the code. A test a wrong implementation would still pass is not done. Its self-review does not replace the separate reviewer.
 4. Build exactly what the issue's **Done when** list and Decisions ask, with the least code. Touch only files the issue names. A problem outside the issue goes in your report, not the diff. Use `trinity-protocol` for any packet and `wowmap-dev` for `tools/wowmap`.
 5. Run `scripts/check.sh all`. It must pass.
 6. Commit in Conventional Commits. Push the branch.

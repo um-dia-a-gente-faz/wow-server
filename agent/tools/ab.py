@@ -8,9 +8,6 @@ omit most snapshots, retaining just their hash.
 import argparse
 import hashlib
 import json
-import os
-import statistics
-import sys
 import time
 
 from agent import actions, candidates

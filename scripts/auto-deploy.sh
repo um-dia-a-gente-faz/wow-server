@@ -20,11 +20,20 @@ fi
 git fetch origin -q
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/main)
-if [ "$LOCAL" = "$REMOTE" ]; then
+# A deferred game stack (deploy.sh exit 75) leaves refs/deployed/game behind HEAD: keep polling.
+GAME=$(git rev-parse -q --verify refs/deployed/game || echo "$LOCAL")
+if [ "$LOCAL" = "$REMOTE" ] && [ "$GAME" = "$REMOTE" ]; then
   echo "$(date -Is) up to date (${LOCAL:0:7})"
   exit 0
 fi
 
 echo "$(date -Is) deploying ${LOCAL:0:7} -> ${REMOTE:0:7}"
-./scripts/deploy.sh
-echo "$(date -Is) deploy done"
+rc=0
+./scripts/deploy.sh || rc=$?
+if [ "$rc" = 75 ]; then
+  echo "$(date -Is) game stack deferred (players online), will retry"
+elif [ "$rc" != 0 ]; then
+  exit "$rc"
+else
+  echo "$(date -Is) deploy done"
+fi

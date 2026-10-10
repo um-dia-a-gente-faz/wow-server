@@ -57,7 +57,7 @@ def _racial_language(session) -> int:
     same function). Send the character's own racial language instead; every
     account on this realm today is Horde, so default there when race is
     unknown."""
-    race = getattr(session, "race", 0)
+    race = session.race
     if race in _ALLIANCE_RACES:
         return LANG_COMMON
     return LANG_ORCISH
@@ -206,7 +206,7 @@ def player_name_error(name, field: str = "name") -> str | None:
 
 def _known_player_name(session, world, target_name: str) -> bool:
     """A whisper target is "resolvable" if its name has shown up either as a
-    currently-perceived object (agent/perception.py's ObjectInfo.name,
+    currently-perceived object (agent/perception/objects.py's ObjectInfo.name,
     filled in via agent/names.py's CMSG_NAME_QUERY cache) or as the sender
     of a recent chat message (session.chat_inbox) — either is enough
     evidence the name is real and spelled correctly, without requiring the
@@ -216,7 +216,7 @@ def _known_player_name(session, world, target_name: str) -> bool:
     for obj in world.get_objects().values():
         if obj.name and obj.name.lower() == lname:
             return True
-    for entry in getattr(session, "chat_inbox", ()):
+    for entry in session.chat_inbox:
         if entry.get("sender_name", "").lower() == lname:
             return True
     return False
@@ -335,7 +335,7 @@ class InviteToGroupAction(Action):
 
         # HandleGroupInviteOpcode (GroupHandler.cpp) answers with
         # SMSG_PARTY_COMMAND_RESULT on both success and failure, but
-        # session._handle_party_command_result only records an event for a
+        # the party-command-result handler only records an event for a
         # non-OK result (see its docstring) — so, like whisper/sell_item,
         # only a failure event is worth waiting for; a timeout (or a
         # silently-successful OK) means the invite went through.
@@ -362,7 +362,7 @@ class AcceptGroupAction(Action):
     required = ()
 
     def check(self, session, world, **_) -> str | None:
-        if not getattr(session, "pending_invite", None):
+        if not session.pending_invite:
             return "no pending group invite to accept"
         return None
 
@@ -380,7 +380,7 @@ class DeclineGroupAction(Action):
     required = ()
 
     def check(self, session, world, **_) -> str | None:
-        if not getattr(session, "pending_invite", None):
+        if not session.pending_invite:
             return "no pending group invite to decline"
         return None
 
@@ -400,7 +400,7 @@ class LeaveGroupAction(Action):
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
     def check(self, session, world, **_) -> str | None:
-        if not getattr(session, "group", None):
+        if not session.group:
             return "not in a group"
         return None
 
@@ -408,7 +408,7 @@ class LeaveGroupAction(Action):
         leave_group(session)
         # The server answers with SMSG_GROUP_LIST (leave form) or SMSG_GROUP_DESTROYED,
         # both of which clear session.group. Wait for that instead of assuming.
-        left = _wait_for(lambda: getattr(session, "group", None) is None,
+        left = _wait_for(lambda: session.group is None,
                          timeout=self.confirm_timeout, interval=self.confirm_interval)
         if not left:
             return ActionResult(ok=False, error="server did not confirm leaving the group")
@@ -428,14 +428,14 @@ class PromoteLeaderAction(Action):
 
     @staticmethod
     def _member(session, name: str):
-        group = getattr(session, "group", None) or {}
+        group = session.group or {}
         return next((m for m in group.get("members", ()) if m["name"].lower() == name.lower()), None)
 
     def check(self, session, world, name: str, **_) -> str | None:
         err = player_name_error(name)
         if err:
             return err
-        group = getattr(session, "group", None)
+        group = session.group
         if not group:
             return "not in a group"
         if group["leader_guid"] != session.player_guid:
@@ -449,7 +449,7 @@ class PromoteLeaderAction(Action):
         promote_leader(session, member["guid"])
         # The server ignores a bad request silently; success is the next
         # SMSG_GROUP_LIST naming the new leader.
-        changed = _wait_for(lambda: (getattr(session, "group", None) or {}).get("leader_guid") == member["guid"],
+        changed = _wait_for(lambda: (session.group or {}).get("leader_guid") == member["guid"],
                             timeout=self.confirm_timeout, interval=self.confirm_interval)
         if not changed:
             return ActionResult(ok=False, error="server did not confirm the leader change",
@@ -531,7 +531,7 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
             return f"not in channel {channel!r}; joined channels: {sorted(joined) or 'none'}"
         if not message or not message.strip():
             return "message is empty"
-        history = getattr(session, "channel_say_history", None) or []
+        history = session.channel_say_history
         if history:
             wait = self.min_interval - (time.monotonic() - history[-1][0])
             if wait > 0:
@@ -544,14 +544,11 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
     def execute(self, session, world, channel: str, message: str, **_) -> ActionResult:
         full = chmod.find_joined(world.get_channels(), channel)
         text = _encode_message(message).decode("utf-8")
-        inbox = getattr(session, "chat_inbox", None)
-        seen = {id(e) for e in inbox} if inbox is not None else set()
+        inbox = session.chat_inbox
+        seen = {id(e) for e in inbox}
         sent_at = time.monotonic()
         channel_say(session, full, message)
-        history = getattr(session, "channel_say_history", None)
-        if history is None:
-            history = []
-            session.channel_say_history = history
+        history = session.channel_say_history
         history.append((sent_at, _normalise_chat(message)))
         del history[:-CHANNEL_RECENT_MAX]
 
@@ -560,7 +557,7 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
         # refusal comes back as SMSG_CHANNEL_NOTIFY (not_member, muted,
         # throttled, ...), which the session records as a channel_error event.
         def find_outcome():
-            for e in list(inbox or ()):
+            for e in list(inbox):
                 if (id(e) not in seen and e.get("kind") == "channel"
                         and e.get("sender_guid") == session.player_guid and e.get("text") == text):
                     return {"echo": e}

@@ -125,6 +125,16 @@ in `CLAUDE.md`, *Milestones and board naming*.
 - Prometheus: exporter metrics use a custom `Collector`, not module-level `Gauge`. This keeps series from going stale when a label value disappears.
 - Grafana dashboards: raw JSON (no `{dashboard:..., overwrite:...}` wrapper), file-provisioned. Validate every panel expression against Prometheus before committing.
 
+## Generated files
+
+Committed files built from a source of truth (`docker-compose.agents.yml`, the
+`monitoring/grafana-dashboard-*` the `scripts/gen-*` scripts produce, `docs/AGENT-API.md`)
+are listed in `GENERATORS` in `scripts/generate.py`. Never hand-edit one: change the
+generator or its source, then `python3 scripts/generate.py`. CI runs
+`scripts/generate.py --check` (inside `scripts/check.sh generated`) and fails naming the
+generator to run. A new generator is one line in `GENERATORS`; it must rewrite its outputs
+and, given `--check`, exit non-zero on drift (`scripts/genlib.py` has the helper).
+
 ## Lint and types
 
 CI job `lint + types` runs `ruff` and `mypy`. They are dev tools only (`agent/` stays
@@ -136,12 +146,49 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/mypy           # typed allowlist in mypy.ini
 ```
 
+- **Ruff rules land in stages (#386),** one small PR per stage, each with a baseline of
+  the files that violate it that day. Enabled: `E9`, `F` (baseline cleared, keep it empty),
+  `B` (bugbear), `E722` (bare `except`, no violations). Still to come: `BLE001`, `UP`,
+  `SIM`, `C901`. To add a stage: add the rule to `select` in `ruff.toml`, run
+  `ruff check . --fix` and review what it changed, then list each remaining
+  `ruff check . --output-format concise` hit as `"<file>" = ["<rule>"]`.
+- **The baseline is keyed by path.** A file you move keeps its debt: move its line with
+  it. A file that is new must be clean, and gets no line.
+- **An import other modules reach through this one** (`npc.CMSG_BUY_ITEM`) is a re-export,
+  not an unused import: mark it `# noqa: F401` with the reason. `ruff --fix` deletes it
+  otherwise, and nothing fails until the caller runs.
+
 - **Ratchet, never loosen.** `ruff.toml` `per-file-ignores` lists files that already
   violated a rule when the gate landed; fix a file's violations and delete its line.
   New code must be clean.
-- **Typing allowlist:** add a file to `files =` in `mypy.ini` (one line) once it
-  type-checks. mypy was chosen over pyright because it is pip-only (no Node download in
-  CI) and its gradual mode matches the allowlist model.
+- **Typing tiers (#350):** `mypy` checks all of `agent/` (tests excluded). A module is
+  `strict` (`[mypy-<module>]` with `disallow_untyped_defs`), `checked` (no section, the
+  default: a new `agent/*.py` lands here and must pass) or `legacy` (`[mypy-<module>]
+  ignore_errors = True`, a baseline that may only shrink). To move a module up: fix its
+  errors, delete its legacy section in `mypy.ini` and its line in `BASELINE` in
+  `scripts/tests/test_mypy_ratchet.py`; to make it `strict`, replace the section with
+  `disallow_untyped_defs = True`. Count the legacy modules in the PR description. Never
+  add a module to legacy. mypy was chosen over pyright because it is pip-only (no Node
+  download in CI) and its gradual mode matches the tiers.
+
+## Size budget
+
+`agent/tests/test_size_budget.py` (part of `scripts/check.sh test-agent`) measures the
+non-test code under `agent/` and `tools/` with `ast`:
+
+- a **function** is at most **80 lines** (`def` line to its last line);
+- a **module** is at most **600 lines**.
+
+`BASELINE` in that file lists the functions and modules that were already over when the
+gate landed, each with its size then. Same ratchet as ruff and mypy:
+
+- **New code never gets an entry.** Over budget means split it.
+- **An entry is a ceiling.** A baselined function or module that grows past its entry
+  fails the test.
+- **Entries only go down.** When you shrink or split a baselined offender, lower its entry
+  to the new size, or delete it once it is within budget or gone. The test reports such
+  stale entries as a skip with the list, rather than failing, so two PRs that touch the
+  same offender cannot turn `main` red in merge order (#407 makes it a failure).
 
 ## Secrets
 

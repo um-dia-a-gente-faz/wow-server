@@ -167,6 +167,44 @@ first boot, and the write API rejects basic auth; the file path needs no auth at
 Validate every panel expression against Prometheus (`/api/v1/query_range`) before
 committing a dashboard — an empty result almost always means a wrong label matcher.
 
+## Database backups
+
+`auth` and `characters` hold the owner's and every agent character and are the only
+irreplaceable state (`world` is rebuilt from the TDB). `scripts/backup-db.sh` runs
+`mysqldump --single-transaction` inside `trinitycore-db` (the password stays in the
+container) and writes `<db>-<timestamp>.sql.gz` to `/opt/wow-server-backups`, deleting
+files older than `KEEP_DAYS` (14) only when every dump succeeded, so a failing backup never
+ages out the last good dumps. Override with `BACKUP_DIR`, `KEEP_DAYS`, `DBS`.
+
+Install once on the VM, as root (idempotent, overwrites the same file):
+
+```bash
+echo '30 4 * * * root /opt/wow-server/scripts/backup-db.sh >> /var/log/wow-backup.log 2>&1' \
+  > /etc/cron.d/wow-backup
+```
+
+Check it: `ls -l /opt/wow-server-backups`. Off-VM copy (optional), from the Proxmox host:
+`rsync -a root@192.168.1.64:/opt/wow-server-backups/ /var/backups/wow/`.
+
+**Restore drill** (never restore over the live DB for a drill; do not restart the worldserver):
+
+```bash
+docker run -d --name wow-scratch --memory 512m -e MYSQL_ROOT_PASSWORD=scratch mysql:8.4
+until docker exec wow-scratch mysqladmin ping -h127.0.0.1 -uroot -pscratch --silent; do sleep 2; done  # TCP: the init-time temp server is socket-only
+f=$(ls -t /opt/wow-server-backups/characters-*.sql.gz | head -1)
+scripts/restore-db.sh --dry-run "$f"                  # validates the archive only
+DB_CONTAINER=wow-scratch scripts/restore-db.sh "$f"
+for c in trinitycore-db wow-scratch; do               # row counts must match
+  docker exec $c sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "SELECT COUNT(*) FROM characters.characters"'
+done
+docker rm -f wow-scratch
+```
+
+Same for `auth` / `auth.account`. A real restore into the live DB needs `CONFIRM_LIVE=1`
+and the worldserver stopped by the owner. `scripts/tests/test_backup_restore.py` covers
+the scripts with a fake `docker` (CI has no MySQL). Not done yet: backup-age metric in
+`wow-exporter` + Grafana stale alert.
+
 ## Updating
 
 `/opt/wow-server` on the VM is a real clone of this repo (not a copy) and both
@@ -182,9 +220,9 @@ ssh root@192.168.1.64 '/opt/wow-server/scripts/deploy.sh'
 ### Automatic deploys (cron poller)
 
 The VM redeploys itself: a cron job runs `scripts/auto-deploy.sh` every 5
-minutes, which fetches `origin/main` and calls `deploy.sh` only when the
-remote moved (polling, because GitHub webhooks cannot reach a LAN IP; flock
-prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
+minutes, which fetches `origin/main` and calls `deploy.sh` when the remote
+moved or while a deferred game-stack change is still pending (polling, because
+GitHub webhooks cannot reach a LAN IP; flock prevents overlapping runs). Installed as `/etc/cron.d/wow-auto-deploy`:
 
 ```
 */5 * * * * root /opt/wow-server/scripts/auto-deploy.sh >> /var/log/wow-auto-deploy.log 2>&1
@@ -195,8 +233,9 @@ up within 5 minutes. Watch `/var/log/wow-auto-deploy.log` on the VM for
 history.
 
 This fast-forwards the checkout to `origin/main` and runs `docker compose up -d
---build` for both projects, which only recreates containers whose image, build
-context, or compose file actually changed. Env-only changes to
+--build` only for the projects whose files changed (see "Path-aware deploys"
+below), which in turn only recreates containers whose image, build context, or
+compose file actually changed. Env-only changes to
 `TC_WORLD__*` still require the `trinitycore-wowserver` container to be
 recreated (not just restarted) for `ConfigurationWriter.js` to regenerate
 `worldserver.conf` — `up -d` does this automatically when the compose file
@@ -208,6 +247,43 @@ on the *separate* docker-stack VM (192.168.1.60), not this one:
 ```bash
 ./scripts/deploy-dashboards.sh   # run from a machine with SSH to 192.168.1.60
 ```
+
+### Path-aware deploys and the players-online guard
+
+`deploy.sh` compares, per stack, the commit that stack was last deployed at
+(`refs/deployed/<stack>` in the VM's checkout) with `origin/main`, and only touches the stacks
+whose files changed:
+
+| Changed path | Stack redeployed |
+|---|---|
+| `docker-compose.yml`, `tdb/`, `tools/chat-feed/` | game |
+| `monitoring/`, `exporters/`, `tools/wowmap/`, `tools/dbc/` | monitoring |
+| anything else (docs, `agent/`, `scripts/`, tests, the root `Dockerfile`, which is the agent image) | none, the checkout just advances |
+
+Before the game stack, it counts online characters (`characters.characters WHERE online = 1`,
+the same source as `wow_players_online`). If anyone is online, or the query fails, the game
+stack is **deferred**: it logs `DEFERRED game <sha>` (also to `deploy.log`) and the script exits
+75. Other stacks still deploy; the game stack stays pending (each stack is diffed from
+`refs/deployed/<stack>`, which a deferral does not move), and `auto-deploy.sh` keeps polling
+until it goes through. Later merges therefore do not queue behind a deferral.
+Each real deploy appends `<time> deployed <sha>, stacks: <list>` to
+`/opt/wow-server-metrics/deploy.log` (`METRICS_DIR` overrides).
+
+Two consequences to know (owner decision pending, see the PR for #266):
+
+- **Agent characters count as players.** The headless agents are normally online, so
+  without `FORCE=1` a game-stack change defers until they are all logged out.
+- **A missing or broken `trinitycore-db` container also defers**, indefinitely, because
+  the count cannot be read. Use `FORCE=1` to deploy the fix.
+
+| Env | Effect |
+|---|---|
+| `FORCE=1` | deploy the game stack even with players online |
+| `ALL=1` | deploy both stacks regardless of the diff (the old behaviour) |
+| `DRY_RUN=1` | print the plan and the guard result, change nothing |
+
+To check a merge left the worldserver alone, compare
+`docker inspect -f '{{.State.StartedAt}}' trinitycore-wowserver` before and after.
 
 ### Required: `/opt/wow-server/.env`
 

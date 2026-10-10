@@ -36,28 +36,16 @@ Reflex tick, per the card:
 """
 
 import logging
-import time
 
 from .. import actions
 from .. import movement
+from ..ports import ActionSession, PacketSink, ReflexSlots
 
 log = logging.getLogger("agent.reflexes.follow")
 
 DEFAULT_DISTANCE_YD = 3.0
 RANGE_MARGIN_YD = 1.0  # start walking once farther than distance + this
-UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask perception.py uses for in_combat
-
-
-def _record_event(session, kind: str, **fields):
-    """Same shape as WoWSession._record_event ({"kind", "t", **fields}
-    appended to session.events), duplicated here instead of calling that
-    method directly so this module also works against the plain
-    `events: list` fake sessions used in unit tests (no `_record_event`
-    method there, just the list itself)."""
-    events = getattr(session, "events", None)
-    if events is None:
-        return
-    events.append({"kind": kind, "t": time.monotonic(), **fields})
+UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask agent/perception/nearby.py uses for in_combat
 
 
 class FollowReflex:
@@ -96,11 +84,11 @@ class FollowReflex:
         if session is not None and world is not None:
             movement.get_mover(session, world).stop()
             if was_enabled and self._assist_target_guid is not None:
-                session._send_packet(actions.CMSG_ATTACKSTOP)
+                session.send_packet(actions.CMSG_ATTACKSTOP)
         self.leader_guid = None
         self._assist_target_guid = None
         if session is not None and was_enabled:
-            _record_event(session, "follow_stopped", reason=reason)
+            session.record_event("follow_stopped", reason=reason)
 
     def status(self) -> dict:
         return {
@@ -112,7 +100,7 @@ class FollowReflex:
         }
 
     # ── the reflex tick ───────────────────────────────────────────────────
-    def tick(self, session, world):
+    def tick(self, session: ActionSession, world):
         """One reflex step. Safe to call repeatedly — production:
         agent/__main__.py's loop, between LLM think cycles; tests: call
         directly with a fake session/world. No-op if not enabled."""
@@ -147,18 +135,18 @@ class FollowReflex:
         if self.assist:
             self._tick_assist(session, world, leader)
 
-    def _lost(self, session, world, reason: str):
+    def _lost(self, session: ActionSession, world, reason: str):
         self.stop(session, world, reason="leader_lost")
-        _record_event(session, "leader_lost", reason=reason)
+        session.record_event("leader_lost", reason=reason)
 
-    def _tick_assist(self, session, world, leader):
+    def _tick_assist(self, session: ActionSession, world, leader):
         target_guid = leader.target_guid or 0
         if not target_guid:
             self._stop_assist_attack(session)
             return
 
         if target_guid != self._assist_target_guid:
-            _record_event(session, "leader_changed_target", target_guid=target_guid)
+            session.record_event("leader_changed_target", target_guid=target_guid)
 
         target = world.get_object(target_guid)
         if target is None or target.is_dead():
@@ -179,30 +167,28 @@ class FollowReflex:
             actions.send_attack(session, target_guid)
             self._assist_target_guid = target_guid
 
-    def _stop_assist_attack(self, session):
+    def _stop_assist_attack(self, session: PacketSink):
         if self._assist_target_guid is not None:
-            session._send_packet(actions.CMSG_ATTACKSTOP)
+            session.send_packet(actions.CMSG_ATTACKSTOP)
             self._assist_target_guid = None
 
 
-def get_follow_reflex(session) -> FollowReflex:
+def get_follow_reflex(session: ReflexSlots) -> FollowReflex:
     """One FollowReflex per session, created lazily and cached on it —
     mirrors agent.movement.get_mover()."""
-    reflex = getattr(session, "_follow_reflex", None)
-    if reflex is None:
-        reflex = FollowReflex()
-        session._follow_reflex = reflex
-    return reflex
+    if session.follow_reflex is None:
+        session.follow_reflex = FollowReflex()
+    return session.follow_reflex
 
 
-def pause_for_llm_override(session, world, reason: str = "llm_override"):
+def pause_for_llm_override(session: ActionSession, world, reason: str = "llm_override"):
     """Called by move_to/move_towards/stop_movement (agent/actions/movement.py) before
     they act: an explicit conflicting movement action from the LLM outranks
     the reflex (docs/AI-AGENT-SPEC.md's reflex priority: survival > follow/
     assist > idle), so following pauses and reports why via a
     `follow_stopped` event instead of fighting the next move command. A
     no-op if nothing is currently following."""
-    reflex = getattr(session, "_follow_reflex", None)
+    reflex = session.follow_reflex
     if reflex is not None and reflex.enabled:
         reflex.stop(session, world, reason=reason)
 

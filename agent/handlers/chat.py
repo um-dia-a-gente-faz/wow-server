@@ -7,6 +7,7 @@ from .. import channels as ch_mod
 from .. import packets as pk
 from .. import perception as per
 from ..router import ROUTER
+from ..metrics import swallowed
 
 log = logging.getLogger("agent.session")
 
@@ -264,7 +265,7 @@ def relay_chat(ctx, entry: dict):
     try:
         relay.submit(entry, resolve_name=ctx.state.world_state.resolve_player_name)
     except Exception:  # noqa: BLE001 — chat must keep flowing to the agent itself
-        log.debug("chat relay submit failed", exc_info=True)
+        swallowed("chat.relay_submit", log, level=logging.DEBUG)
 
 
 def handle_group_invite(ctx, payload: bytes):
@@ -319,7 +320,7 @@ def handle_party_command_result(ctx, payload: bytes):
     InviteToGroupAction's timeout-is-success default still applies to
     the OK case without special-casing it."""
     off = 0
-    operation = pk.u32(payload, off); off += 4
+    _operation = pk.u32(payload, off); off += 4
     member_name, off = pk.cstring(payload, off)
     result = pk.u32(payload, off); off += 4
     if result == ERR_PARTY_RESULT_OK:

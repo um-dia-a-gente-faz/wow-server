@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """NPC interaction (UM-40): gossip/vendor/trainer/gameobject request
 builders + response parsers (pure, no I/O — see agent/session.py for the
-opcodes' dispatch, agent/perception.py for the ui_state ('window') this
+opcodes' dispatch, agent/perception/windows.py for the ui_state ('window') this
 feeds), plus a small NpcTextCache mirroring agent.names.NameCache's shape
 for gossip body text (SMSG_NPC_TEXT_UPDATE), keyed by text id.
 
@@ -31,7 +31,7 @@ import time
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use npc.CMSG_*/SMSG_*)
     CMSG_GAMEOBJ_USE,
     CMSG_GOSSIP_HELLO,
     CMSG_GOSSIP_SELECT_OPTION,
@@ -56,9 +56,6 @@ from .opcodes import (
 
 MAX_NPC_TEXT_OPTIONS = 8  # MAX_GOSSIP_TEXT_OPTIONS, GossipDef.h
 MAX_NPC_TEXT_EMOTES = 3   # MAX_GOSSIP_TEXT_EMOTES, GossipDef.h
-
-INTERACT_RANGE_YD = 5.0  # matches actions.MELEE_RANGE_YD — "in range" for interact()
-
 
 # ── Request builders ──────────────────────────────────────────────────────
 

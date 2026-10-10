@@ -11,6 +11,7 @@ SUITES=(
   "chat-feed|python3 -m unittest discover -s tools/chat-feed/tests"
   "dbc|python3 -m unittest discover -s tools/dbc/tests"
   "world-mock|python3 -m unittest discover -s tools/world-mock/tests"
+  "loadtest|python3 -m unittest discover -s tools/loadtest/tests"
   "jev-mock|python3 -m unittest discover -s tools/jev-mock/tests"
   "agent-runner|python3 -m unittest discover -s tools/agent-runner/tests"
   "wow-agents|python3 -m unittest discover -s scripts/wow-agents/tests"
@@ -27,10 +28,12 @@ lint()      { ruff check .; }
 types()     { mypy; }
 generated() {
   local rc=0 f
+  python3 scripts/generate.py --check || rc=1   # every generated file, #297
   for f in monitoring/grafana-dashboard-*.json; do
     python3 -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f" >&2; rc=1; }
   done
   for f in scripts/wow-agents/*.sh; do bash -n "$f" || rc=1; done
+  python3 scripts/gen_protocol_tables.py --check || rc=1   # opcode + update-field tables, #290
   return $rc
 }
 suite() {

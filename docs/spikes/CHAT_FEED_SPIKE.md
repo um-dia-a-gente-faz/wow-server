@@ -1,5 +1,7 @@
 # Global chat feed spike
 
+> **Archived spike.** Outcome: tail-the-log recommendation, since superseded in part (see the note below). Issue: roadmap item 4. Superseded by: UM-47 and `agent/chat_relay.py`.
+
 > **Superseded in part by UM-47 (2026-09-25).** The conclusion below — tail
 > `Server.log` — does not work on the build this project runs. The deployed
 > worldserver (3.3.5a, build 12340) writes **no player chat to any log**, so

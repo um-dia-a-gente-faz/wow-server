@@ -19,10 +19,10 @@ from ..router import ROUTER
 #   src/server/game/Entities/Player/Player.h (enum PlayerFlags —
 #     PLAYER_FLAGS_GHOST = 0x10; CORPSE_RECLAIM_RADIUS = 39)
 from ..opcodes import (
-    CMSG_REPOP_REQUEST,
-    CMSG_RECLAIM_CORPSE,
+    CMSG_REPOP_REQUEST,  # noqa: F401  (tests reach it through this module)
+    CMSG_RECLAIM_CORPSE,  # noqa: F401  (tests reach it through this module)
     MSG_CORPSE_QUERY,
-    CMSG_SPIRIT_HEALER_ACTIVATE,
+    CMSG_SPIRIT_HEALER_ACTIVATE,  # noqa: F401  (tests reach it through this module)
     SMSG_CORPSE_RECLAIM_DELAY,
     SMSG_DEATH_RELEASE_LOC,
 )

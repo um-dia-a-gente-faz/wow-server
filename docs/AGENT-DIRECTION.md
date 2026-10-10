@@ -2,7 +2,7 @@
 
 Decisions the owner made in a design review on 2026-09-16. They set the goal
 for the `agent/` work and override older docs where they disagree
-(`docs/AI-AGENT-SPEC.md`, `docs/ROADMAP.md` Phase 3). Linear holds the issues;
+(`docs/AI-AGENT-SPEC.md`, `docs/ROADMAP.md` Phase 3). GitHub issues hold the work;
 this file holds the reasons.
 
 ## The goal
@@ -146,7 +146,7 @@ The first milestone replaced the roadmap's original order (one agent levels
   *into their base branch*, not into `main`, because that base branch had
   already been separately squash-merged into `main` moments earlier
   (squash-merge creates a new commit, severing the ancestry link back to
-  the original branch). Linear and GitHub both showed the tickets as done;
+  the original branch). The issue tracker and GitHub both showed the tickets as done;
   `main` silently had neither `agent/movement.py`'s v1 actions nor
   `agent/spells.py` at all. Caught only because a later PR stacked on top
   of the same chain started showing merge conflicts against `main`.

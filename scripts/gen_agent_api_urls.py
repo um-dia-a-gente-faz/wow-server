@@ -46,9 +46,21 @@ def render(agents: list[dict], host: str) -> str:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--check", action="store_true",
+                   help="exit 1 if the names/ports differ from docker-compose.agents.yml (needs no host)")
     p.add_argument("--host", default=os.environ.get("AGENT_HOST"),
                    help="host the agent containers run on (or set AGENT_HOST); required, no default")
     args = p.parse_args(argv)
+    if args.check:
+        services = gen.COMPOSE_PATH.read_text().split("\n  agent-")  # one block per service
+        for pair in render(gen.load_roster(), "check.invalid").split(","):
+            name, url = pair.split("=")
+            port = url.rsplit(":", 1)[1]
+            if not any(f"WOW_CHARACTER: {name}\n" in s and f"AGENT_HTTP_PORT: {port}\n" in s for s in services):
+                print(f"{pair} disagrees with docker-compose.agents.yml: it is generated; "
+                      "run python3 scripts/generate.py", file=sys.stderr)
+                return 1
+        return 0
     if not args.host:
         p.error("the agent host is required: pass --host or set AGENT_HOST "
                 "(it is not 192.168.1.64 once the fleet moves to the wow-agents VM)")

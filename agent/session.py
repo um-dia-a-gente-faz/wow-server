@@ -17,6 +17,7 @@ from . import channels as ch_mod
 from . import crypt as cr
 from . import packets as pk
 from .router import Context, ROUTER
+from .metrics import swallowed
 from .state import GameState
 from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
 
@@ -47,7 +48,6 @@ from .opcodes import (
     SMSG_LOGIN_VERIFY_WORLD,
     CMSG_SET_ACTIVE_MOVER,
     SMSG_STANDSTATE_UPDATE,
-    SMSG_ADDON_INFO,
     SMSG_TIME_SYNC_REQ,
     CMSG_TIME_SYNC_RESP,
     CMSG_KEEP_ALIVE,
@@ -55,6 +55,24 @@ from .opcodes import (
 CHAR_CREATE_SUCCESS     = 47  # SharedDefines.h ResponseCodes (0x2F)
 CHAR_CREATE_MAX_SKIPPED_PACKETS = 32
 CHAR_CREATE_NAME_IN_USE = 50  # 0x32
+
+
+# Liveness of the world socket (#404), checked against TrinityCore 3.3.5 WorldSocket.cpp /
+# WorldSession.cpp / worldserver.conf.dist. CMSG_KEEP_ALIVE gets no reply but resets the
+# server's idle timer (SocketTimeOutTimeActive, 60 s). CMSG_PING gets SMSG_PONG, but pings
+# less than 27 s apart count as over-speed and kick past MaxOverspeedPings (2), so the ping
+# period stays above 27 s (the real client uses 30 s). The deadline is the longest silence
+# (no packet of any kind) tolerated before the socket is declared dead and the reconnect
+# supervisor takes over; it must exceed PING_INTERVAL_S plus a round trip.
+KEEPALIVE_INTERVAL_S = 15.0
+PING_INTERVAL_S = 30.0
+DEAD_SOCKET_TIMEOUT_S = 45.0
+# Login (#426): CMSG_PLAYER_LOGIN is answered by SMSG_LOGIN_VERIFY_WORLD once the server has
+# loaded the character, nothing the client sends speeds that up. The wait therefore sends no
+# CMSG_PING: the in-world ping above is the only one, so no two are ever < 27 s apart. A
+# silent poll just sends a keepalive and waits again.
+LOGIN_POLL_S = 3.0
+LOGIN_TIMEOUT_S = 60.0
 
 
 class WoWSession(Transport, GameState):
@@ -88,7 +106,7 @@ class WoWSession(Transport, GameState):
         server_challenge = payload[4:8]
 
         # Build CMSG_AUTH_SESSION
-        import os, hashlib, hmac
+        import os
         local_challenge = os.urandom(4)
         digest = pk.sha1(self.account_name.encode(), b'\x00'*4, local_challenge,
                           server_challenge, self.session_key)
@@ -183,7 +201,7 @@ class WoWSession(Transport, GameState):
             y = struct.unpack_from('<f', payload, off)[0]; off += 4
             z = struct.unpack_from('<f', payload, off)[0]; off += 4
             off += 4  # guild
-            char_flags = struct.unpack_from('<I', payload, off)[0]; off += 4
+            _char_flags = struct.unpack_from('<I', payload, off)[0]; off += 4
             # Everything after the flags, exactly as TrinityCore 3.3.5's
             # Player::BuildEnumData() writes it (Player.cpp, branch 3.3.5):
             # a uint32 customizeFlags that is ALWAYS present (the old
@@ -217,13 +235,12 @@ class WoWSession(Transport, GameState):
         self._send_packet(CMSG_PLAYER_LOGIN, struct.pack('<Q', guid))
 
         t0 = time.monotonic()
-        while time.monotonic() - t0 < 60:
-            self.sock.settimeout(3)
+        while time.monotonic() - t0 < LOGIN_TIMEOUT_S:
+            self.sock.settimeout(LOGIN_POLL_S)
             try:
                 opcode, payload = self._recv_packet()
             except (socket.timeout, TimeoutError):
                 self._send_packet(CMSG_KEEP_ALIVE)
-                self._send_packet(CMSG_PING, struct.pack('<II', 0, 0))
                 continue
 
             if opcode == SMSG_LOGIN_VERIFY_WORLD:
@@ -257,7 +274,9 @@ class WoWSession(Transport, GameState):
         self._running = False
         if self._recv_thread:
             self._recv_thread.join(timeout=5)
-        if self._in_world:
+        # #406: after an unexpected disconnect (drop, desync, dead socket, server-forced
+        # logout) nobody is there to answer a request, so just close.
+        if self._in_world and not self.unexpected_disconnect:
             self._in_world = False
             try:
                 self._send_packet(CMSG_LOGOUT_REQUEST)
@@ -267,7 +286,7 @@ class WoWSession(Transport, GameState):
                     if opcode == SMSG_LOGOUT_COMPLETE:
                         break
             except Exception:
-                pass
+                swallowed("session.logout_wait", log, level=logging.DEBUG)  # a dead socket is expected here
         self.sock.close()
         self.sock = None
 
@@ -332,11 +351,8 @@ class WoWSession(Transport, GameState):
             return self._dispatch(opcode, payload)
         except Exception:
             self.dropped_packets += 1
-            should_log, suppressed = self._error_throttle.check(opcode)
-            if should_log:
-                log.warning("dropped %#05x packet (%d B) after handler error "
-                            "(%d more on this opcode suppressed since last report)",
-                            opcode, len(payload), suppressed, exc_info=True)
+            swallowed("session.dispatch", log, f"dropped {opcode:#05x} packet, {len(payload)} B",
+                      key=opcode, throttle=self._error_throttle, level=logging.WARNING)
             return True
 
     def _recv_loop(self):
@@ -344,7 +360,7 @@ class WoWSession(Transport, GameState):
         try:
             self._recv_until_stopped()
         except Exception:
-            log.exception("recv thread crashed")
+            swallowed("session.recv_thread", log)
         finally:
             if self._running:
                 log.warning("recv thread exited while the session was still running")
@@ -356,21 +372,32 @@ class WoWSession(Transport, GameState):
                 self.unexpected_disconnect = True
 
     def _recv_until_stopped(self):
-        last_keepalive = time.monotonic()
+        now = time.monotonic()
+        last_rx = last_keepalive = last_ping = now
+        ping_id = 0
         while self._running:
             self.sock.settimeout(0.5)
             try:
                 opcode, payload = self._recv_packet()
             except (socket.timeout, TimeoutError):
                 now = time.monotonic()
-                if now - last_keepalive > 15:
+                if now - last_rx > DEAD_SOCKET_TIMEOUT_S:
+                    # #404: connection open, nothing arrives, not even SMSG_PONG.
+                    log.warning("world socket silent for %.0f s, treating it as dead", now - last_rx)
+                    return
+                if now - last_keepalive > KEEPALIVE_INTERVAL_S:
                     self._send_packet(CMSG_KEEP_ALIVE)
                     last_keepalive = now
+                if now - last_ping > PING_INTERVAL_S:
+                    ping_id += 1
+                    self._send_packet(CMSG_PING, struct.pack('<II', ping_id, 0))
+                    last_ping = now
                 ROUTER.tick(self.ctx)
                 continue
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
                 return
+            last_rx = time.monotonic()
             self._dispatch_guarded(opcode, payload)
             ROUTER.tick(self.ctx)
 

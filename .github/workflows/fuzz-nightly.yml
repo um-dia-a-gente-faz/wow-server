@@ -1,0 +1,22 @@
+name: fuzz-nightly
+# The parser fuzz test with a large iteration count (#307). The default CI run uses 20.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python3 -m unittest agent.tests.test_parser_fuzz
+        env:
+          FUZZ_ITERATIONS: "2000"

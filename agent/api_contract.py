@@ -7,6 +7,7 @@ Only the integer API_VERSION is needed at runtime, so no image has to ship the J
 """
 import json
 import pathlib
+import sys
 
 SCHEMA_PATH = pathlib.Path(__file__).with_name("api_schema.json")
 
@@ -91,4 +92,12 @@ def render_markdown(contract: dict | None = None) -> str:
 
 
 if __name__ == "__main__":
-    print(render_markdown(), end="")
+    doc = SCHEMA_PATH.parents[1] / "docs/AGENT-API.md"
+    if "--check" in sys.argv:  # scripts/generate.py --check
+        if doc.read_text() != render_markdown():
+            sys.exit("docs/AGENT-API.md is out of date: it is generated, do not edit it; "
+                     "run python3 scripts/generate.py (generator: python -m agent.api_contract --write)")
+    elif "--write" in sys.argv:  # scripts/generate.py
+        doc.write_text(render_markdown())
+    else:
+        print(render_markdown(), end="")

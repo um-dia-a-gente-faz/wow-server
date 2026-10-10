@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mailbox (UM-60): opcode builders + response parsers (pure, no I/O — same
 split as agent/npc.py and agent/trade.py), for agent/session.py's dispatch
-and agent/perception.py's `world.mailbox` state.
+and agent/perception/windows.py's `world.mailbox` state.
 
 Every wire layout below is copied from TrinityCore branch `3.3.5`:
   src/server/game/Server/Protocol/Opcodes.h (opcode values)
@@ -31,7 +31,7 @@ update-object format.
 A mailbox is found in perception the same way a vendor/trainer NPC is: a
 gameobject whose queried template `type == GAMEOBJECT_TYPE_MAILBOX` (19), or
 (rarer, some custom mailbox NPCs) a unit/player with `UNIT_NPC_FLAG_MAILBOX`
-(`0x04000000`) set — `agent/perception.py::ObjectInfo.is_mailbox()`.
+(`0x04000000`) set — `agent/perception/objects.py::ObjectInfo.is_mailbox()`.
 CMSG_GET_MAIL_LIST/CMSG_SEND_MAIL/etc. all validate range and mailbox-ness
 server-side via `CanOpenMailBox` — there's no separate "use" opcode to open
 the mailbox window first, unlike an NPC's gossip/vendor window; sending
@@ -43,7 +43,7 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use mail.CMSG_*/SMSG_*)
     CMSG_SEND_MAIL,
     SMSG_SEND_MAIL_RESULT,
     CMSG_GET_MAIL_LIST,
@@ -60,7 +60,6 @@ MAX_MAIL_ITEMS = 12                    # Mail.h
 MAX_INSPECTED_ENCHANTMENT_SLOT = 7     # ItemDefines.h
 GAMEOBJECT_TYPE_MAILBOX = 19           # SharedDefines.h
 UNIT_NPC_FLAG_MAILBOX = 0x04000000     # UnitDefines.h
-MAILBOX_INTERACT_RANGE_YD = 5.0        # same GetGameObjectIfCanInteractWith-style range as npc.INTERACT_RANGE_YD
 MAIL_POSTAGE_COPPER = 30               # HandleSendMail: cost = 30 * attachments.size() if any, else 30 flat
 ITEM_FIELD_FLAG_SOULBOUND = 0x00000001  # ItemTemplate.h — Item::CanBeTraded() rejects a soulbound attachment the same as a trade offer
 
@@ -212,7 +211,7 @@ def _parse_mail_attached_item(payload: bytes, off: int) -> tuple[dict, int]:
 
 
 def _parse_mail_list_entry(payload: bytes, off: int) -> tuple[dict, int]:
-    entry_size = pk.u16(payload, off); off += 2  # byte size of everything below, not needed to parse it
+    _entry_size = pk.u16(payload, off); off += 2  # byte size of everything below, not needed to parse it
     mail_id = struct.unpack_from('<i', payload, off)[0]; off += 4
     sender_type = payload[off]; off += 1
     sender_guid = None
