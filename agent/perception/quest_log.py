@@ -2,9 +2,10 @@
 
 from .. import quests as qu
 from .. import update_fields as uf
+from ..model import QuestEntry
 
 
-def build_quest_log(me, quest_texts, names) -> list:
+def build_quest_log(me, quest_texts, names) -> list[QuestEntry]:
     """UM-41: the self player's quest log (agent.update_fields.
     decode_quest_log) enriched with cached quest text/rewards (title,
     objectives) and a best-effort human-readable progress string per
@@ -16,13 +17,13 @@ def build_quest_log(me, quest_texts, names) -> list:
     Caller holds the WorldState lock."""
     if me is None:
         return []
-    out = []
+    out: list[QuestEntry] = []
     for slot in uf.decode_quest_log(me.raw_fields):
         quest_id = slot["quest_id"]
         cached = quest_texts.quests.get(quest_id)
         if cached is None:
             quest_texts.want(quest_id)
-        entry = {
+        entry: QuestEntry = {
             "slot": slot["slot"], "quest_id": quest_id, "state": slot["state"],
             "state_name": qu.quest_slot_state_name(slot["state"]),
             "counters": slot["counters"], "time": slot["time"],

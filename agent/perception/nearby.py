@@ -1,26 +1,28 @@
 """The `nearby_units` / `nearby_players` / `nearby_objects` sections of the snapshot."""
 
+from ..model import Position, Unit
 from .objects import ObjectInfo
 
 
-def position_dict(pos):
+def position_dict(pos) -> Position | None:
     if pos is None:
         return None
     map_id, x, y, z, *_o = pos
     return {"map": map_id, "x": x, "y": y, "z": z}
 
 
-def object_dict(obj: ObjectInfo, distance: float) -> dict:
-    d = {
+def object_dict(obj: ObjectInfo, distance: float) -> Unit:
+    # in_combat is set below, after the optional keys, to keep the emitted key order.
+    d: Unit = {  # type: ignore[typeddict-item]
         "guid": obj.guid,
         "entry": obj.entry,
         "name": obj.name or None,
         "type": obj.object_type or None,
         "distance": round(distance, 1),
     }
-    current_position = obj.current_position()
+    current_position = position_dict(obj.current_position())
     if current_position is not None:
-        d["position"] = position_dict(current_position)
+        d["position"] = current_position
     if obj.faction is not None:
         d["faction"] = obj.faction
     if obj.level is not None:
@@ -42,11 +44,11 @@ def object_dict(obj: ObjectInfo, distance: float) -> dict:
     return d
 
 
-def nearby_sections(objects, my_guid, pos, max_range, limit, group_guids) -> dict:
+def nearby_sections(objects, my_guid, pos, max_range, limit, group_guids) -> dict[str, list[Unit]]:
     """Perceived objects within `max_range` of `pos`, nearest first, split by
     kind and capped at `limit` each. A nearby player is marked `in_group` when
     their guid is in `group_guids`."""
-    out = {"nearby_units": [], "nearby_players": [], "nearby_objects": []}
+    out: dict[str, list[Unit]] = {"nearby_units": [], "nearby_players": [], "nearby_objects": []}
     scored = []
     for obj in objects:
         if obj.guid == my_guid:

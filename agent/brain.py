@@ -39,6 +39,7 @@ from . import actions as ac
 from . import candidates as cand
 from .jev import JevClient, JevError
 from .llm import LLMClient, LLMError
+from .model import ActionRecord, Candidate, Snapshot
 
 log = logging.getLogger("agent.brain")
 
@@ -133,7 +134,7 @@ class Brain:
         self.min_confidence = min_confidence
         self._clock = clock
         self._jev_cooldown_until = 0.0
-        self._jev_cooldown_reason = None
+        self._jev_cooldown_reason: str | None = None
         self.max_tokens_per_hour = max(0, int(max_tokens_per_hour or 0))
         self._jev_spend: deque = deque()  # (clock time, tokens) per billed Jev call
 
@@ -174,7 +175,8 @@ class Brain:
         client = self.jev or self.llm
         return getattr(client, "model", None)
 
-    def decide(self, snapshot: dict, *, persona: str = "", history: list | None = None,
+    def decide(self, snapshot: Snapshot, *, persona: str = "",
+               history: list[ActionRecord] | None = None,
                my_guid: int | None = None, reflex_state: dict | None = None,
                blocked=None, handles=None) -> Decision:
         """Pick one `(action, params)` for this cycle. Raises BrainError when
@@ -197,7 +199,7 @@ class Brain:
                     log.warning("%s", fallback)
             if fallback is None:
                 try:
-                    notes = []
+                    notes: list[dict] = []
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
                                             handles=handles, history=history, notes=notes)
                     d.history_notes = notes or None
@@ -296,13 +298,13 @@ class Brain:
             self._jev_spend.append((self._clock(), tokens))
 
     def _maybe_cool_down(self, e: JevError):
-        seconds = _COOLDOWNS.get(getattr(e, "status", None))
+        seconds = _COOLDOWNS.get(getattr(e, "status", None) or 0)
         if seconds:
             self._jev_cooldown_until = self._clock() + seconds
             self._jev_cooldown_reason = f"HTTP {e.status}"
             log.warning("jev returned HTTP %d — not calling it for %.0fs", e.status, seconds)
 
-    def _apply_confidence_policy(self, d: Decision, options: list[dict]):
+    def _apply_confidence_policy(self, d: Decision, options: list[Candidate]):
         """The confidence rule. `confidence >= threshold` acts as chosen;
         below it the generator's safe candidate (`idle`, always offered)
         replaces the choice; no reported confidence is its own audited

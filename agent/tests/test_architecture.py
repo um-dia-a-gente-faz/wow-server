@@ -22,7 +22,8 @@ UNLAYERED = {"tools", "tests"}
 # unit -> units it may import. A unit missing here may import nothing from agent/.
 # Groups (see docs/ARCHITECTURE.md, `agent/` table):
 #   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines, action_names,
-#       known_targets, metrics, api_contract, ports (the typed session contract, #304)
+#       known_targets, metrics, api_contract, ports (the typed session contract, #304),
+#       model (the snapshot contract, #288)
 #   pure parsers and builders: npc, quests, loot, mail, trade, spells, channels, names,
 #       items, item_compare, update_object, update_fields, movement
 #   state: perception, state;  routing: router, handlers (ADR 0005, 0006)
@@ -39,6 +40,7 @@ LAYERS = {
     "known_targets": set(),
     "metrics": {"transport"},   # swallowed() reuses transport's log throttle (#306)
     "api_contract": set(),
+    "model": set(),
     "auth": {"packets"},
     "rules": set(),
     "ports": set(),
@@ -58,7 +60,7 @@ LAYERS = {
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
-    "perception": {"group", "handles", "items", "names", "npc", "packets", "quests", "trade",
+    "perception": {"group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
     "state": {"perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
@@ -72,16 +74,16 @@ LAYERS = {
     "control": {"actions", "metrics", "movement"},
     "death": {"actions", "movement", "opcodes", "perception", "rules"},
     "action_names": set(),
-    "candidates": {"action_names", "handles", "item_compare", "metrics", "rules"},
+    "candidates": {"action_names", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
     "llm": set(),
     "jev": {"llm"},
-    "brain": {"actions", "candidates", "jev", "llm", "metrics"},
-    "think": {"actions", "brain", "handles", "llm", "spells", "trade", "update_fields"},
+    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
+    "think": {"actions", "brain", "handles", "llm", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport"},
-    "audit": {"config", "metrics"},
+    "audit": {"config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
     "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "http_api",

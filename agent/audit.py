@@ -67,6 +67,7 @@ from dataclasses import dataclass, field
 
 from . import config
 from .metrics import swallowed
+from .model import Snapshot
 
 log = logging.getLogger("agent.audit")
 
@@ -140,7 +141,8 @@ class AuditRecord:
     usage: dict = field(default_factory=dict)
     jev_status: str | None = None
     history_notes: list | None = None
-    snapshot: dict | None = None  # only set when this cycle carries the full snapshot
+    # Only set when this cycle carries the full snapshot ({} when the cycle had none).
+    snapshot: Snapshot | dict | None = None
 
     def to_dict(self) -> dict:
         d = {
@@ -197,7 +199,7 @@ class AuditLogger:
         self.full_snapshot_every = max(1, full_snapshot_every)
         self.max_bytes = max_bytes
         self.agent_dir = os.path.join(self.base_dir, agent_name)
-        self._last_cleaned_date = None
+        self._last_cleaned_date: str | None = None
         # UM-50: optional callback(record_dict) run for every record, before
         # the file write — agent.http_api.AgentObserver.record_decision.
         self.on_record = None
@@ -210,7 +212,7 @@ class AuditLogger:
         return os.path.join(self.agent_dir, f"{self._date_str(ts)}.jsonl")
 
     # ── writing ──────────────────────────────────────────────────────
-    def record(self, cycle: int, snapshot: dict, tool_call: dict, valid: bool,
+    def record(self, cycle: int, snapshot: Snapshot | None, tool_call: dict, valid: bool,
                result: dict, reflex: dict | None = None, goal: str | None = None,
                prompt_tokens: int | None = None, completion_tokens: int | None = None,
                model: str | None = None, latency_ms: float | None = None,
@@ -223,8 +225,8 @@ class AuditLogger:
                history_notes: list | None = None,
                substituted: bool = False, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
-        snapshot = snapshot or {}
-        compact = _compact_json(snapshot)
+        snap: Snapshot | dict = snapshot or {}
+        compact = _compact_json(snap)
         snapshot_hash = hashlib.sha256(compact.encode("utf-8")).hexdigest()
 
         include_full = (cycle % self.full_snapshot_every == 0) or not valid or not result.get("ok", False)
@@ -242,7 +244,7 @@ class AuditLogger:
             usage={k: usage[k] for k in ("input_tokens", "output_tokens", "cost")
                    if isinstance(usage, dict) and isinstance(usage.get(k), (int, float))},
             jev_status=jev_status, history_notes=history_notes, substituted=substituted,
-            snapshot=snapshot if include_full else None,
+            snapshot=snap if include_full else None,
         )
 
         if self.on_record is not None:
@@ -294,7 +296,7 @@ class AuditLogger:
         is older than `retention_days`. Returns the list of deleted paths."""
         now = now if now is not None else time.time()
         cutoff = now - self.retention_days * 86400
-        deleted = []
+        deleted: list[str] = []
         if not os.path.isdir(self.agent_dir):
             return deleted
         for name in os.listdir(self.agent_dir):

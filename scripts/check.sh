@@ -25,7 +25,12 @@ STDLIB_SUITES="agent"
 
 compile()   { find agent tools exporters scripts -name '*.py' -print0 | xargs -0 python3 -m py_compile; }
 lint()      { ruff check .; }
-types()     { mypy; }
+# #288: the snapshot-contract modules. Listed here, not in mypy.ini, because #375 is
+# rewriting that file into tiers; drop this list once #375 checks them by default.
+SNAPSHOT_TYPED="agent/model.py agent/candidates.py agent/brain.py agent/think.py agent/audit.py
+  agent/perception/snapshot.py agent/perception/nearby.py agent/perception/inventory.py
+  agent/perception/quest_log.py"
+types()     { mypy && mypy $SNAPSHOT_TYPED; }
 generated() {
   local rc=0 f
   python3 scripts/generate.py --check || rc=1   # every generated file, #297
