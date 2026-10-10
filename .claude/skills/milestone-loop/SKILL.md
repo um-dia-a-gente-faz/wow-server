@@ -203,17 +203,21 @@ Merge when all hold:
 5. The PR was opened by this loop (marker `<!-- milestone-loop -->`), follows
    `.github/PULL_REQUEST_TEMPLATE.md`, has `Closes #<n>`, and carries no "shelving" or
    "hold" comment or open change request.
-6. **No game-stack deploy path.** The diff does not touch `docker-compose.yml`, `tdb/*` or
-   `tools/chat-feed/*`. These are the paths for which `scripts/deploy.sh` (`stacks_for`,
-   line 38) recreates the game stack, and with it the worldserver (`docker compose up -d
-   --build`, line 99). `docker-compose.yml` also holds the worldserver config: no
-   `worldserver.conf` is tracked, the `TC_WORLD__*` entries are the config. Every merge
-   reaches the VM through the cron poller `scripts/auto-deploy.sh` (`docs/DEPLOYMENT.md`
-   "Automatic deploys"); there is no deploy job in `.github/workflows/`, which holds CI
-   only. A merge on these paths disconnects players: park the PR. Other paths are not
-   gated: `scripts/` by itself triggers no recreate, the monitoring paths (`monitoring/`,
-   `exporters/`, `tools/wowmap/`, `tools/dbc/`) recreate only the monitoring stack (line 39,
-   103), and the root `Dockerfile` is the agent image, in neither stack.
+6. **No deploy path.** The diff does not touch `docker-compose.yml`, `tdb/*`,
+   `tools/chat-feed/*`, `scripts/*` (all of it) or `.github/workflows/*`. The first three
+   are the paths for which `scripts/deploy.sh` (`stacks_for`, line 38) recreates the game
+   stack, and with it the worldserver (`docker compose up -d --build`, line 99).
+   `docker-compose.yml` also holds the worldserver config: no `worldserver.conf` is
+   tracked, the `TC_WORLD__*` entries are the config. `scripts/deploy.sh` and
+   `scripts/auto-deploy.sh` run on the VM at every poll (`docs/DEPLOYMENT.md`, "Automatic
+   deploys"), and the next deploy of any commit runs the edited copy. So an edit there can
+   change `stacks_for`, the players-online deferral or the `ALL`/`FORCE` defaults. A
+   workflow under `.github/workflows/` is the deploy workflow if one is added; today the
+   directory holds CI only. `CLAUDE.md` says a PR touching `scripts/` waits for the owner.
+   A merge on any of these paths disconnects players or waits on the owner: park the PR.
+   Not gated: the monitoring paths (`monitoring/`, `exporters/`, `tools/wowmap/`,
+   `tools/dbc/`), which recreate only the monitoring stack (`deploy.sh` lines 39, 103), and
+   the root `Dockerfile`, the agent image, in neither stack.
 7. **Spacing.** `origin/main` has no commit from the last 10 minutes (another merge may be
    deploying). Otherwise wait.
 
