@@ -39,6 +39,20 @@ runner refuses to start without a token. Locally:
 | `AGENT_RUNNER_REALM_PORT` | `3724` | its auth port |
 | `AGENT_PASSWORD` | required for characters | shared account password; handed to the realm and the worldserver console only |
 
+## Modules (#279)
+
+| File | What it holds |
+|---|---|
+| `runner.py` | entry point: `Config`, `make_server`, `main`; re-exports the names the tests and launch use |
+| `handler.py` | HTTP routing, token check, one audit line per action (named so it does not shadow the stdlib `http`) |
+| `fleet.py` | roster, per-agent signals, start/stop/retire, walk, character create |
+| `docker_backend.py` | the only code that runs `docker` or `git`; `FakeDockerBackend` is the test double |
+| `core.py` | `RunnerError`, `scrub`, `iso`, shared by the above |
+| `characters.py` | the realm side of character create and list (#138) |
+
+The Docker allow-list is `check_names` in `docker_backend.py`: every name handed to docker
+must be a roster service or container. `inspect` and `compose` call it before anything runs.
+
 ## API
 
 | | |
@@ -169,4 +183,5 @@ python3 -m unittest discover -s tools/agent-runner/tests
 ```
 
 No real containers: `docker` is a fake script on `PATH`, and the agents' APIs
-and wowmap are local HTTP servers.
+and wowmap are local HTTP servers. `test_docker_backend.py` and the `FakeDockerTest` class
+run the fleet against `FakeDockerBackend` with `subprocess.run` patched to raise.

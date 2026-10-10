@@ -4,7 +4,6 @@ import struct
 
 from .. import perception as per
 from .. import quests as qu
-from ..router import ROUTER
 
 
 def handle_quest_query_response(ctx, payload: bytes):
@@ -106,18 +105,19 @@ def send_quest_queries(ctx):
         ctx.send(qu.CMSG_QUESTGIVER_STATUS_QUERY, qu.build_questgiver_status_query(guid))
 
 
-ROUTER.register_all({
-    qu.SMSG_QUEST_QUERY_RESPONSE: handle_quest_query_response,
-    qu.SMSG_QUESTGIVER_STATUS: handle_questgiver_status,
-    qu.SMSG_QUESTGIVER_QUEST_LIST: handle_questgiver_quest_list,
-    qu.SMSG_QUESTGIVER_QUEST_DETAILS: handle_questgiver_quest_details,
-    qu.SMSG_QUESTGIVER_REQUEST_ITEMS: handle_questgiver_request_items,
-    qu.SMSG_QUESTGIVER_OFFER_REWARD: handle_questgiver_offer_reward,
-    qu.SMSG_QUESTGIVER_QUEST_COMPLETE: handle_questgiver_quest_complete,
-    qu.SMSG_QUESTGIVER_QUEST_FAILED: handle_questgiver_quest_failed,
-    qu.SMSG_QUESTUPDATE_ADD_KILL: handle_questupdate_add_kill,
-    qu.SMSG_QUESTUPDATE_ADD_ITEM: handle_questupdate_add_item,
-    qu.SMSG_QUESTUPDATE_COMPLETE: handle_questupdate_complete,
-})
+def register(router):
+    router.register_all({
+        qu.SMSG_QUEST_QUERY_RESPONSE: handle_quest_query_response,
+        qu.SMSG_QUESTGIVER_STATUS: handle_questgiver_status,
+        qu.SMSG_QUESTGIVER_QUEST_LIST: handle_questgiver_quest_list,
+        qu.SMSG_QUESTGIVER_QUEST_DETAILS: handle_questgiver_quest_details,
+        qu.SMSG_QUESTGIVER_REQUEST_ITEMS: handle_questgiver_request_items,
+        qu.SMSG_QUESTGIVER_OFFER_REWARD: handle_questgiver_offer_reward,
+        qu.SMSG_QUESTGIVER_QUEST_COMPLETE: handle_questgiver_quest_complete,
+        qu.SMSG_QUESTGIVER_QUEST_FAILED: handle_questgiver_quest_failed,
+        qu.SMSG_QUESTUPDATE_ADD_KILL: handle_questupdate_add_kill,
+        qu.SMSG_QUESTUPDATE_ADD_ITEM: handle_questupdate_add_item,
+        qu.SMSG_QUESTUPDATE_COMPLETE: handle_questupdate_complete,
+    })
 
-ROUTER.on_tick(send_quest_queries)
+    router.on_tick(send_quest_queries)

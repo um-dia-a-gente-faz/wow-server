@@ -91,19 +91,19 @@ class ObjectInfo:
         return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_SPIRITHEALER))
 
     def is_lootable(self) -> bool:
-        return bool(self.dynamic_flags) and bool(self.dynamic_flags & UNIT_DYNFLAG_LOOTABLE)
+        return bool(self.dynamic_flags and (self.dynamic_flags & UNIT_DYNFLAG_LOOTABLE))
 
     def is_quest_giver(self) -> bool:
-        return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_QUESTGIVER)
+        return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_QUESTGIVER))
 
     def is_vendor(self) -> bool:
-        return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_VENDOR)
+        return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_VENDOR))
 
     def is_gossip(self) -> bool:
-        return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_GOSSIP)
+        return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_GOSSIP))
 
     def is_trainer(self) -> bool:
-        return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_TRAINER)
+        return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_TRAINER))
 
     def is_mailbox(self) -> bool:
         """UM-60: a gameobject whose queried template type is
@@ -112,7 +112,7 @@ class ObjectInfo:
         name), or a unit/player with the rare UNIT_NPC_FLAG_MAILBOX set."""
         if self.gameobject_type == GAMEOBJECT_TYPE_MAILBOX:
             return True
-        return bool(self.npc_flags) and bool(self.npc_flags & UNIT_NPC_FLAG_MAILBOX)
+        return bool(self.npc_flags and (self.npc_flags & UNIT_NPC_FLAG_MAILBOX))
 
     def set_spline(self, start_pos: tuple, destination: tuple, start_time: float, duration: float):
         """Start (or replace) this object's spline-interpolation state.

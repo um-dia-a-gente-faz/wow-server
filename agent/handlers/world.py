@@ -8,7 +8,6 @@ from .. import packets as pk
 from .. import perception as per
 from .. import update_fields as uo_fields
 from .. import update_object as uo
-from ..router import ROUTER
 from ..update_object import (
     UPDATETYPE_OUT_OF_RANGE_OBJECTS,
     UPDATETYPE_NEAR_OBJECTS,
@@ -236,14 +235,15 @@ def _move_broadcast_for(opcode):
     return handler
 
 
-ROUTER.register_all({
-    SMSG_UPDATE_OBJECT: _update_object_for(SMSG_UPDATE_OBJECT),
-    SMSG_COMPRESSED_UPDATE_OBJECT: _update_object_for(SMSG_COMPRESSED_UPDATE_OBJECT),
-    SMSG_DESTROY_OBJECT: handle_destroy_object,
-    SMSG_NAME_QUERY_RESPONSE: handle_name_query_response,
-    SMSG_CREATURE_QUERY_RESPONSE: handle_creature_query_response,
-    SMSG_GAMEOBJECT_QUERY_RESPONSE: handle_gameobject_query_response,
-    SMSG_MONSTER_MOVE: handle_monster_move,
-})
-ROUTER.register_all({op: _move_broadcast_for(op) for op in MSG_MOVE_OPCODES})
-ROUTER.on_tick(send_name_queries)
+def register(router):
+    router.register_all({
+        SMSG_UPDATE_OBJECT: _update_object_for(SMSG_UPDATE_OBJECT),
+        SMSG_COMPRESSED_UPDATE_OBJECT: _update_object_for(SMSG_COMPRESSED_UPDATE_OBJECT),
+        SMSG_DESTROY_OBJECT: handle_destroy_object,
+        SMSG_NAME_QUERY_RESPONSE: handle_name_query_response,
+        SMSG_CREATURE_QUERY_RESPONSE: handle_creature_query_response,
+        SMSG_GAMEOBJECT_QUERY_RESPONSE: handle_gameobject_query_response,
+        SMSG_MONSTER_MOVE: handle_monster_move,
+    })
+    router.register_all({op: _move_broadcast_for(op) for op in MSG_MOVE_OPCODES})
+    router.on_tick(send_name_queries)

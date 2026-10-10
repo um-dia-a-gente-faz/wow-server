@@ -415,7 +415,7 @@ Verified against TrinityCore branch `3.3.5`:
 
 `agent/spells.py` holds every pure parser/builder (no opcodes, no I/O — same
 split as `agent/names.py`); opcodes and the thirteen thin handlers live in
-`agent/handlers/spells.py` (registered on `agent.router.ROUTER`), which call
+`agent/handlers/spells.py` (registered by `register(router)`), which call
 `GameState.record_event()`. `agent/actions/combat.py` adds `auto_attack`,
 `stop_attack`, `cast_spell` to the Action registry, all reading confirmation
 off `session.events` (a bounded deque) rather than blocking on a single

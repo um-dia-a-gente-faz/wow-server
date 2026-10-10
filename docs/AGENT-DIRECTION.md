@@ -2,7 +2,7 @@
 
 Decisions the owner made in a design review on 2026-09-16. They set the goal
 for the `agent/` work and override older docs where they disagree
-(`docs/AI-AGENT-SPEC.md`, `docs/ROADMAP.md` Phase 3). GitHub issues hold the work;
+(the archived `docs/spikes/AI-AGENT-SPEC.md`, `docs/spikes/ROADMAP.md` Phase 3). GitHub issues hold the work;
 this file holds the reasons.
 
 ## The goal

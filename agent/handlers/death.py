@@ -4,7 +4,6 @@ import struct
 import time
 
 from .. import packets as pk
-from ..router import ROUTER
 
 # Death/resurrection (UM-43). Verified against TrinityCore branch `3.3.5`:
 #   src/server/game/Server/Protocol/Opcodes.h
@@ -100,8 +99,9 @@ def handle_corpse_query_response(ctx, payload: bytes):
     ctx.state.corpse_position = (actual_map_id, x, y, z)
 
 
-ROUTER.register_all({
-    SMSG_CORPSE_RECLAIM_DELAY: handle_corpse_reclaim_delay,
-    SMSG_DEATH_RELEASE_LOC: handle_death_release_loc,
-    MSG_CORPSE_QUERY: handle_corpse_query_response,
-})
+def register(router):
+    router.register_all({
+        SMSG_CORPSE_RECLAIM_DELAY: handle_corpse_reclaim_delay,
+        SMSG_DEATH_RELEASE_LOC: handle_death_release_loc,
+        MSG_CORPSE_QUERY: handle_corpse_query_response,
+    })

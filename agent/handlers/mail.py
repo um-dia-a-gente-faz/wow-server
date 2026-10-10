@@ -4,7 +4,6 @@ import struct
 
 from .. import mail as mail_mod
 from .. import perception as per
-from ..router import ROUTER
 
 
 def handle_send_mail_result(ctx, payload: bytes):
@@ -41,8 +40,9 @@ def handle_received_mail(ctx, payload: bytes):
     ctx.state.record_event("mail_received", **data)
 
 
-ROUTER.register_all({
-    mail_mod.SMSG_SEND_MAIL_RESULT: handle_send_mail_result,
-    mail_mod.SMSG_MAIL_LIST_RESULT: handle_mail_list_result,
-    mail_mod.SMSG_RECEIVED_MAIL: handle_received_mail,
-})
+def register(router):
+    router.register_all({
+        mail_mod.SMSG_SEND_MAIL_RESULT: handle_send_mail_result,
+        mail_mod.SMSG_MAIL_LIST_RESULT: handle_mail_list_result,
+        mail_mod.SMSG_RECEIVED_MAIL: handle_received_mail,
+    })

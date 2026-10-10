@@ -4,7 +4,6 @@ import struct
 
 from .. import perception as per
 from .. import trade as trade_mod
-from ..router import ROUTER
 
 
 def handle_trade_status(ctx, payload: bytes):
@@ -36,7 +35,8 @@ def handle_trade_status_extended(ctx, payload: bytes):
         ctx.state.record_event("trade_offer_changed", **changed)
 
 
-ROUTER.register_all({
-    trade_mod.SMSG_TRADE_STATUS: handle_trade_status,
-    trade_mod.SMSG_TRADE_STATUS_EXTENDED: handle_trade_status_extended,
-})
+def register(router):
+    router.register_all({
+        trade_mod.SMSG_TRADE_STATUS: handle_trade_status,
+        trade_mod.SMSG_TRADE_STATUS_EXTENDED: handle_trade_status_extended,
+    })
