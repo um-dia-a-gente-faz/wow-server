@@ -235,3 +235,4 @@ Full component and port reference: `docs/ARCHITECTURE.md`.
 - [TrinityCore 3.3.5 Docs](https://335.trinitycore.net/)
 - [GM Commands](https://trinitycore.atlassian.net/wiki/spaces/tc/pages/2130065/gm+commands)
 - [valcriss/trinitycore-docker](https://github.com/valcriss/trinitycore-docker) — upstream image source
+<!-- tmp 399 -->
