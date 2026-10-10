@@ -165,3 +165,41 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build (no push)
         run: docker build -t wow-agent:ci .
+
+  backup-restore:
+    name: backup/restore (real mysql)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # backup-db.sh / restore-db.sh run unmodified; they docker-exec into DB_CONTAINER.
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-backup-test
+        options: >-
+          --health-cmd "mysqladmin ping -uroot -pci-backup-test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Backup then restore, row counts must match
+        run: |
+          set -euo pipefail
+          export DB_CONTAINER=$(docker ps --filter ancestor=mysql:8.0 --format '{{.ID}}' | head -1)
+          [ -n "$DB_CONTAINER" ]
+          sql() { docker exec -i "$DB_CONTAINER" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N'; }
+          sql <<'SQL'
+          CREATE DATABASE auth; CREATE DATABASE characters;
+          CREATE TABLE auth.account (id INT PRIMARY KEY AUTO_INCREMENT, username VARCHAR(32) NOT NULL);
+          CREATE TABLE characters.characters (guid INT PRIMARY KEY AUTO_INCREMENT, name VARCHAR(12) NOT NULL);
+          INSERT INTO auth.account (username) VALUES ('a'),('b'),('c');
+          INSERT INTO characters.characters (name) VALUES ('x'),('y'),('z'),('w'),('v');
+          SQL
+          count() { echo "SELECT COUNT(*) FROM $1" | sql; }
+          a=$(count auth.account); c=$(count characters.characters)
+          [ "$a" = 3 ] && [ "$c" = 5 ]
+          export BACKUP_DIR="$RUNNER_TEMP/backups"
+          scripts/backup-db.sh
+          echo "DROP DATABASE auth; DROP DATABASE characters;" | sql
+          for db in auth characters; do scripts/restore-db.sh "$BACKUP_DIR"/$db-*.sql.gz; done
+          [ "$(count auth.account)" = "$a" ] && [ "$(count characters.characters)" = "$c" ]
+          echo "restored: auth.account=$a characters.characters=$c"
