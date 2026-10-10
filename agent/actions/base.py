@@ -39,13 +39,14 @@ def _wait_for_value(get_value, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
     polled."""
     deadline = time.monotonic() + timeout
     while True:
+        seen = changes.generation()
         value = get_value()
         if value is not None:
             return value
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None
-        changes.wait(min(interval, remaining))
+        changes.wait(seen, min(interval, remaining))
 
 
 def _wait_for(predicate, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,

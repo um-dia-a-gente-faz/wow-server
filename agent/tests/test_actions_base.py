@@ -1,9 +1,14 @@
 """Tests for agent.actions.base (split out of test_actions.py, issue #248).
 """
 
+import threading
+import time
 import unittest
 
 from agent import actions as ac
+from agent import perception as per
+from agent import update_object as uo
+from agent.state import GameState
 
 
 class ActionFrameworkTest(unittest.TestCase):
@@ -53,3 +58,53 @@ class ActionFrameworkTest(unittest.TestCase):
 
     def test_wait_for_times_out(self):
         self.assertFalse(ac._wait_for(lambda: False, timeout=0.05, interval=0.01))
+
+
+class WaitWakeupTest(unittest.TestCase):
+    """A confirmation is seen when it lands, not at the next poll tick (#305).
+    The 5 s interval would make a sleep-polling wait take 5 s."""
+
+    def _later(self, fn):
+        t = threading.Timer(0.02, fn)
+        t.start()
+        self.addCleanup(t.join)
+
+    def test_recorded_event_wakes_wait_for_value(self):
+        state = GameState()
+        self._later(lambda: state.record_event("cast_start"))
+        start = time.monotonic()
+        got = ac._wait_for_value(lambda: next(iter(state.events), None), timeout=5.0, interval=5.0)
+        self.assertEqual(got["kind"], "cast_start")
+        self.assertLess(time.monotonic() - start, 1.0)
+
+    def test_applied_update_block_wakes_wait_for(self):
+        world = per.WorldState()
+        block = uo.UpdateBlock(update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=7,
+                               object_type=uo.TYPEID_UNIT, movement={}, fields={})
+        self._later(lambda: world.update_object(block))
+        start = time.monotonic()
+        self.assertTrue(ac._wait_for(lambda: 7 in world.objects, timeout=5.0, interval=5.0))
+        self.assertLess(time.monotonic() - start, 1.0)
+
+    def test_signal_between_predicate_and_wait_is_not_lost(self):
+        state = GameState()
+        calls = []
+
+        def predicate():
+            if calls:
+                return next(iter(state.events), None)
+            calls.append(1)
+            t = threading.Thread(target=lambda: state.record_event("late"))
+            t.start()
+            t.join()  # the signal has landed before this returns None
+            return None
+
+        start = time.monotonic()
+        got = ac._wait_for_value(predicate, timeout=5.0, interval=5.0)
+        self.assertEqual(got["kind"], "late")
+        self.assertLess(time.monotonic() - start, 1.0)
+
+    def test_unsignalled_state_is_still_polled_at_interval(self):
+        flag = []
+        self._later(lambda: flag.append(1))
+        self.assertTrue(ac._wait_for(lambda: bool(flag), timeout=1.0, interval=0.01))
