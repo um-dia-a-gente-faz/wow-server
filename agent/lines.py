@@ -4,7 +4,7 @@
 Why a closed list: a model once put a bare `}` into public chat (UM-92), and a
 brain that cannot generate text (Jev, docs/adr/0001) still has to say
 something sane. Anything that wants to post a "standard" line - the capability
-probe (agent/tools/probe.py), the fleet panel's "say something" button - picks
+probe (tools/agent_dev/probe.py), the fleet panel's "say something" button - picks
 an id from here and gets the text from here; it never supplies the text.
 
 `resolve_line()` is the gate: it accepts a line id, or text that is *exactly*

@@ -77,7 +77,7 @@ SETTINGS: tuple[Setting, ...] = (
     _s("AGENT_HTTP_BIND", str, "127.0.0.1", "observability API bind address"),
     _s("AGENT_CONTROL_TOKEN", str, "", "bearer token for POST /control/walk; empty = read-only "
        "(compose passes AGENT_RUNNER_TOKEN)", secret=True),
-    _s("CHAT_FEED_TOKEN", str, "", "tools/chat-feed token used by agent/tools/probe.py, run from a shell",
+    _s("CHAT_FEED_TOKEN", str, "", "tools/chat-feed token used by tools/agent_dev/probe.py, run from a shell",
        secret=True, compose=False),
 )
 _BY_NAME = {s.name: s for s in SETTINGS}
@@ -188,7 +188,7 @@ class Config:
         get("JEV_BASE_URL") or (
             _lower("JEV_PROVIDER") == "openrouter"
             and (get("JEV_API_KEY") or get("OPENROUTER_API_KEY")))))
-    # agent/tools/probe.py, run from a shell; not passed to containers.
+    # tools/agent_dev/probe.py, run from a shell; not passed to containers.
     chat_feed_token: str = _f("CHAT_FEED_TOKEN")
 
     # ── Logging ───────────────────────────────────────────────

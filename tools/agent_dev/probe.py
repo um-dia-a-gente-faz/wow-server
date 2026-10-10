@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Agent capability probe (#139): does this agent actually work, step by step?
 
-Usage: python3 -m agent.tools.probe --confirm-manual-run [options]
+Usage: python3 -m tools.agent_dev.probe --confirm-manual-run [options]
 
 MANUAL ONLY. Never schedule it, never call it from CI or an agent loop, never
 run it against a character while a counted run is in progress. The probe walks,
@@ -44,12 +44,12 @@ import time
 import urllib.request
 from dataclasses import dataclass, field
 
-from .. import actions as ac
-from .. import rules
-from .. import known_targets as kt
-from .. import lines
-from ..reflexes import follow as _follow  # noqa: F401 -- importing registers follow/assist
-from ..reflexes import rest as restmod
+from agent import actions as ac
+from agent import rules
+from agent import known_targets as kt
+from agent import lines
+from agent.reflexes import follow as _follow  # noqa: F401 -- importing registers follow/assist
+from agent.reflexes import rest as restmod
 
 REPORT_SCHEMA = 1
 STEP_NAMES = ("chat", "move", "quest", "combat", "loot", "rest")
@@ -596,7 +596,7 @@ def build_report(*, character: str, host: str, started_at: float, duration: floa
     summary = {s: sum(1 for st in steps if st["status"] == s) for s in ("ok", "fail", "skipped")}
     return {
         "schema": REPORT_SCHEMA,
-        "tool": "agent.tools.probe",
+        "tool": "tools.agent_dev.probe",
         "manual_only": True,
         "counts_as_human_intervention": True,
         "character": character,
@@ -698,7 +698,7 @@ def load_last_report(path: str) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python3 -m agent.tools.probe",
+        prog="python3 -m tools.agent_dev.probe",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.fill(MANUAL_ONLY_NOTICE, 78) + "\n\n" + textwrap.fill(
@@ -736,7 +736,7 @@ def main(argv=None, *, connect=None) -> int:
         print(lines.line_error(args.line), file=sys.stderr)
         return 2
 
-    from ..config import load_config
+    from agent.config import load_config
     cfg = load_config()
     problems = cfg.validate()
     if problems:
@@ -746,7 +746,7 @@ def main(argv=None, *, connect=None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     if connect is None:
-        from .. import __main__ as agent_main
+        from agent import __main__ as agent_main
         log = logging.getLogger("agent.probe")
 
         def connect():

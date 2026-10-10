@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Would a Jev decision cache pay off? (#167, docs/adr/0003-jev-decision-cache.md)
 
-Usage: python3 -m agent.tools.cache_probe <audit.jsonl|dir> [...] [--json]
+Usage: python3 -m tools.agent_dev.cache_probe <audit.jsonl|dir> [...] [--json]
 
 Measurement only, nothing is cached. For every audit record that carries a
 full snapshot (agent.audit writes one every FULL_SNAPSHOT_EVERY'th cycle and
@@ -27,7 +27,7 @@ import sys
 from collections import Counter
 
 from agent import candidates as cand
-from agent.tools.replay import load_records
+from tools.agent_dev.replay import load_records
 
 # Health/mana bands: the edges are where the "obvious" behaviour changes
 # (rest, heal, flee), not arbitrary buckets.

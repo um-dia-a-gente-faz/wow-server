@@ -1,4 +1,4 @@
-"""Unit tests for agent.tools.probe (#139). Fakes only: no network, no server.
+"""Unit tests for tools.agent_dev.probe (#139). Fakes only: no network, no server.
 
 The probe's job is to report what the action layer and the chat-feed say, so
 these tests script those answers and check the report and the safety rules
@@ -18,7 +18,7 @@ from agent import known_targets as kt
 from agent import perception as per
 from agent import update_fields as uf
 from agent.reflexes import rest as restmod
-from agent.tools import probe
+from tools.agent_dev import probe
 from agent.tests import builders
 
 ME = 0xF130000000000001

@@ -24,7 +24,7 @@ MODULE_MAX = 600
 
 BASELINE = {
     # modules
-    "agent/tools/probe.py": 769,
+    "tools/agent_dev/probe.py": 769,
     "tools/wowmap/activity.py": 639,
     # functions
     "agent/__main__.py::main": 93,
@@ -35,7 +35,7 @@ BASELINE = {
     "agent/metrics.py::render_prometheus_text": 87,
     "agent/movement.py::_simulate": 125,
     "agent/think.py::think_and_act": 166,
-    "agent/tools/ab.py::run": 101,
+    "tools/agent_dev/ab.py::run": 101,
     "agent/update_object.py::parse_monster_move": 88,
     "tools/dbc/names.py::GameNames.__init__": 147,
     "tools/dbc/spelltext.py::render": 82,

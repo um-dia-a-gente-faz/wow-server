@@ -26,3 +26,5 @@ docker-compose*.yml
 # Misc / OS
 .DS_Store
 Thumbs.db
+# Tests and fixtures are not runtime code
+agent/tests/

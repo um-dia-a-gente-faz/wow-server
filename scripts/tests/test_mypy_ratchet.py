@@ -34,10 +34,6 @@ BASELINE = {
     "agent.session",
     "agent.spells",
     "agent.state",
-    "agent.tools.ab",
-    "agent.tools.cache_probe",
-    "agent.tools.dump_update",
-    "agent.tools.probe",
     "agent.transport",
     "agent.update_fields",
     # tools/ (#379); wowmap modules are top-level names

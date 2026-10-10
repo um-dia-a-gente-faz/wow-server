@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Replay viewer for the decision audit log (UM-51, agent.audit).
 
-Usage: python3 -m agent.tools.replay <file.jsonl> [--from CYCLE] [--failures]
+Usage: python3 -m tools.agent_dev.replay <file.jsonl> [--from CYCLE] [--failures]
 
 Prints a readable, one-line-per-cycle timeline from a JSONL audit log
 written by agent.audit.AuditLogger — stdlib only, no new dependencies.
@@ -83,7 +83,7 @@ def format_record(rec: dict) -> str:
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="python3 -m agent.tools.replay")
+    p = argparse.ArgumentParser(prog="python3 -m tools.agent_dev.replay")
     p.add_argument("file", help="JSONL audit log file")
     p.add_argument("--from", dest="from_cycle", type=int, default=None,
                    help="only show cycles >= this cycle number")

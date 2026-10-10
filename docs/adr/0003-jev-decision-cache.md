@@ -51,7 +51,7 @@ Facts about the current code the design rests on:
   key. `me.level` is not in the key (it invalidates, see 4).
 
 The reference implementation is `situation_key()` / `normalise()` in
-`agent/tools/cache_probe.py`, with tests: nearby positions, a same-band health
+`tools/agent_dev/cache_probe.py`, with tests: nearby positions, a same-band health
 change and a respawned mob with a new GUID all give the same key; a health band
 change gives a different one.
 
@@ -124,7 +124,7 @@ precedent for SQLite here.
 Run on a real audit directory (needs the VM; `snapshot` records only, i.e. 1
 cycle in 20 until `situation_key` is logged every cycle):
 
-    python3 -m agent.tools.cache_probe /opt/wow-server-metrics/audit/<agent> --json
+    python3 -m tools.agent_dev.cache_probe /opt/wow-server-metrics/audit/<agent> --json
 
 It reports `repeat_rate` (cycles whose key occurred earlier in the run),
 `agreement` (of those, how often the earlier choice equals the later one),
@@ -157,7 +157,7 @@ implementation ticket with sections 1-7 as its acceptance criteria, plus the
 
 ## Consequences
 
-- No behaviour change today. Adds `agent/tools/cache_probe.py` (measurement
+- No behaviour change today. Adds `tools/agent_dev/cache_probe.py` (measurement
   only) and its tests.
 - Recommended small follow-up regardless of the verdict: log `situation_key`
   on every audit record so the numbers stop being sampled.
