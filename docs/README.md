@@ -14,8 +14,6 @@ backticked repo path in the docs (archived spikes: links only), `README.md`, `CL
 | [DEPLOYMENT.md](DEPLOYMENT.md) | How the VM is deployed and updated, gotchas, troubleshooting |
 | [PROTOCOL-NOTES.md](PROTOCOL-NOTES.md) | 3.3.5a wire formats, each checked against TrinityCore source |
 | [AGENT-API.md](AGENT-API.md) | Agent observability API (generated from `agent/api_schema.json`) |
-| [AI-AGENT-SPEC.md](AI-AGENT-SPEC.md) | Original spec for the playing agents; `AGENT-DIRECTION.md` overrides it |
-| [ROADMAP.md](ROADMAP.md) | Background and design notes; the tracker is the source for scope and status |
 | [LIVE-MAP.md](LIVE-MAP.md) | Live map: how it was built, DBC layout, alignment |
 | [CLIENT-SETUP.md](CLIENT-SETUP.md) | Game client configuration |
 | [GM-COMMANDS.md](GM-COMMANDS.md) | Useful GM commands |
@@ -48,3 +46,5 @@ Finished investigations in [spikes/](spikes/). Each starts with a status line: o
 | [spikes/HP_POWER_SPIKE.md](spikes/HP_POWER_SPIKE.md) | no-go on RA/GM commands for max HP and power (UM-46) |
 | [spikes/LLM_SPIKE.md](spikes/LLM_SPIKE.md) | which free LLM decides actions (UM-61) |
 | [spikes/MAP_ENGINE_SPIKE.md](spikes/MAP_ENGINE_SPIKE.md) | stay on Leaflet (UM-77); prototype in `spikes/map-engine-spike/` |
+| [spikes/AI-AGENT-SPEC.md](spikes/AI-AGENT-SPEC.md) | archived plan (#365): original spec for the playing agents; `AGENT-DIRECTION.md` overrides it |
+| [spikes/ROADMAP.md](spikes/ROADMAP.md) | archived plan (#365): background and design notes; the tracker is the source for scope and status |
