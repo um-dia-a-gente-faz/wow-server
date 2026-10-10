@@ -60,7 +60,7 @@ def run(paths, brains, from_cycle=None, limit=None, max_calls=100, estimated_cos
     records = []
     for path in paths:
         records.extend((path, r) for r in load_records(path))
-    records = [(p, r) for p, r in records if (from_cycle is None or r.get("cycle", 0) >= from_cycle)]
+    records = [(p, r) for p, r in records if (from_cycle is None or (r.get("cycle") or 0) >= from_cycle)]
     if limit is not None:
         records = records[:limit]
     replayable = [(p, r) for p, r in records if isinstance(r.get("snapshot"), dict)]

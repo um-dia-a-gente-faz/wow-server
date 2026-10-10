@@ -8,48 +8,9 @@ log and as prompt-iteration data (see `docs/ROADMAP.md` Phase 3, item 3),
 and is what `agent.tools.replay` and the metrics exporter
 (`agent.tools.metrics_textfile`) both read.
 
-Record shape (one JSON object per line):
-    ts               float, unix epoch seconds
-    agent            str, agent name (AGENT_NAME)
-    cycle            int, monotonically increasing think-cycle counter
-    snapshot_hash    str, sha256 of the compact-JSON snapshot
-    snapshot         the full snapshot dict on every FULL_SNAPSHOT_EVERY'th
-                      cycle or when the cycle was invalid/failed; otherwise
-                      omitted (hash + this cycle's own record are enough to
-                      tell "did perception change" without repeating ~40
-                      nearby objects every 3s)
-    prompt_tokens    int or None (only known LLM providers report usage;
-                      Jev's usage.input_tokens)
-    completion_tokens int or None
-    model            str or None
-    latency_ms       float or None (LLM/Jev call latency)
-    tool_call        {"name": str or None, "args": dict}
-    valid            bool — the tool call resolved to a registered action
-                      with all required params (mirrors ThinkResult.ok up
-                      to, but not including, in-game execution failures)
-    result           {"ok": bool, "error": str or None}
-    reflex           free-form dict describing reflex state (e.g. follow
-                      reflex enabled/leader), or {} if none is active
-    goal             str or None — the agent's current persona/goal, if any
-    brain            "jev", "llm" or None (UM-101): the brain that decided this
-                      cycle, or the last one tried when none did
-    confidence       float or None: Jev's confidence in its choice (Jev only)
-    fallback         str or None: why Jev did not decide (call failed or
-                      cooling down, or its AGENT_MAX_TOKENS_PER_HOUR
-                      budget spent: jev_status "budget_exhausted"), whether the cycle was then skipped or
-                      (AGENT_BRAIN_FALLBACK=llm) handed to the LLM
-    substituted      bool: true only when the LLM decided in Jev's place
-                      (explicit AGENT_BRAIN_FALLBACK=llm); brain is "llm"
-    candidates       int or None: how many candidates Jev was offered
-    confidence_threshold  float or None: JEV_MIN_CONFIDENCE applied (Jev only)
-    confidence_rule  "acted", "low_confidence_safe_fallback" (the safe
-                      candidate replaced Jev's choice) or "confidence_unknown"
-                      (Jev reported none; acted as chosen); None off Jev
-    overridden       str or None: candidate id Jev chose before the safe
-                      substitution
-    usage            bounded Jev token/cost fields only; no response payload
-    history_notes    list or None: candidates dropped/demoted because of the
-                      recent action history ({"id", "effect", "reason"})
+Record shape (one JSON object per line, `schema` first) is `AuditRecord` in
+`agent/audit_schema.py`, with the meaning of each field in its comments. Write
+through `AuditRecord.to_json()`; read with `AuditRecord.from_json()`.
 
 Never writes the LLM API key or account password — nothing in this module
 ever touches `Config.llm_api_key`/`password`; only `Config.redacted()`-safe
@@ -63,9 +24,9 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass, field
 
 from . import config
+from .audit_schema import AuditRecord
 from .metrics import swallowed
 from .model import Snapshot
 
@@ -113,67 +74,6 @@ def env_retention_days() -> int:
         return config.get("AGENT_AUDIT_RETENTION_DAYS")
     except config.ConfigError:  # the audit log must not take the agent down over a typo
         return DEFAULT_RETENTION_DAYS
-
-
-@dataclass
-class AuditRecord:
-    ts: float
-    agent: str
-    cycle: int
-    snapshot_hash: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    model: str | None = None
-    latency_ms: float | None = None
-    tool_call: dict = field(default_factory=lambda: {"name": None, "args": {}})
-    valid: bool = False
-    result: dict = field(default_factory=lambda: {"ok": False, "error": None})
-    reflex: dict = field(default_factory=dict)
-    goal: str | None = None
-    brain: str | None = None
-    confidence: float | None = None
-    fallback: str | None = None
-    substituted: bool = False
-    candidates: int | None = None
-    confidence_threshold: float | None = None
-    confidence_rule: str | None = None
-    overridden: str | None = None
-    usage: dict = field(default_factory=dict)
-    jev_status: str | None = None
-    history_notes: list | None = None
-    # Only set when this cycle carries the full snapshot ({} when the cycle had none).
-    snapshot: Snapshot | dict | None = None
-
-    def to_dict(self) -> dict:
-        d = {
-            "ts": self.ts,
-            "agent": self.agent,
-            "cycle": self.cycle,
-            "snapshot_hash": self.snapshot_hash,
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "model": self.model,
-            "latency_ms": self.latency_ms,
-            "tool_call": self.tool_call,
-            "valid": self.valid,
-            "result": self.result,
-            "reflex": self.reflex,
-            "goal": self.goal,
-            "brain": self.brain,
-            "confidence": self.confidence,
-            "fallback": self.fallback,
-            "substituted": self.substituted,
-            "candidates": self.candidates,
-            "confidence_threshold": self.confidence_threshold,
-            "confidence_rule": self.confidence_rule,
-            "overridden": self.overridden,
-            "usage": self.usage,
-            "jev_status": self.jev_status,
-            "history_notes": self.history_notes,
-        }
-        if self.snapshot is not None:
-            d["snapshot"] = self.snapshot
-        return _redact(d)
 
 
 class AuditLogger:
@@ -247,15 +147,16 @@ class AuditLogger:
             snapshot=snap if include_full else None,
         )
 
+        d = _redact(rec.to_json())
         if self.on_record is not None:
             try:
-                self.on_record(rec.to_dict())
+                self.on_record(d)
             except Exception:  # an observer must never break auditing
                 swallowed("audit.on_record", log)
 
         self._maybe_clean_retention(ts)
         os.makedirs(self.agent_dir, exist_ok=True)
-        line = json.dumps(rec.to_dict(), default=str) + "\n"
+        line = json.dumps(d, default=str) + "\n"
         path = self._current_path(ts)
         self._rotate_if_needed(path, len(line.encode("utf-8")))
         with open(path, "a", encoding="utf-8") as f:

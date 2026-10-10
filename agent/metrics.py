@@ -18,6 +18,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from .audit_schema import AuditRecord
 from .transport import ERROR_LOG_INTERVAL_S, _ErrorThrottle
 
 # Bucket upper bounds (ms) for the LLM latency histogram. Chosen to span
@@ -76,9 +77,10 @@ def iter_records(path: str):
             if not line:
                 continue
             try:
-                yield json.loads(line)
+                raw = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            yield AuditRecord.from_json(raw).to_json()
 
 
 def find_audit_files(base_dir: str, agent: str | None = None) -> list[str]:
@@ -103,7 +105,7 @@ def derive_metrics(records) -> dict:
     now = time.time()
 
     for rec in records:
-        agent = rec.get("agent", "unknown")
+        agent = rec.get("agent") or "unknown"
         m = by_agent.setdefault(agent, AgentMetrics(agent=agent))
 
         m.cycles_total += 1
