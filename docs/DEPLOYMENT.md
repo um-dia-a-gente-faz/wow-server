@@ -297,6 +297,7 @@ to run without the file, and `git reset --hard` leaves it alone (it's ignored).
 | `MYSQL_ROOT_PASSWORD` | `database` (+ healthcheck), `wow-exporter`, `wowmap` | Only applied when `db_data` is first initialised. On the existing VM, set it to the password the DB **already** uses — changing it here does not change MySQL. |
 | `ACCESS_PASSWORD` | `trinitycore-wowserver` web UI (:3000) | Username stays `admin`. |
 | `AGENT_PASSWORD` | `docker-compose.agents.yml` | Shared password of AGENT01..AGENT25 (also read by `scripts/create_agent_roster.py`). |
+| `WOW_AGENT_TAG` | `docker-compose.agents.yml` | Git SHA of the `wow-agent` image the agents run (#291). Printed by `scripts/build-agent-image.sh`. |
 | `LLM_API_KEY` | agents (future LLM layer) | Router key from the FreeLLMAPI instance at `192.168.1.72:3001` (the old docker-stack one is gone); never paste it into docs. |
 
 One-time setup on the VM:
@@ -406,6 +407,35 @@ docker compose -f docker-compose.agents.yml --profile raid down     # stop them
 Plain `up -d` with no profile and no service name starts nothing. The first 5
 agents are in both profiles, so `--profile raid` includes the party. Agent N
 publishes its read-only API on port `9600+N` (9601..9625).
+
+### Pinned images, agent image tag and rollback (#291)
+
+Every `image:` and `FROM` is `name:<version>@sha256:<digest>`; CI fails on
+`:latest`. Tool dependencies (`tools/wowmap`, `exporters/wow-exporter`
+`requirements.txt`) are hash-locked, so pip refuses a changed file.
+
+**Agent image.** `scripts/build-agent-image.sh` builds `wow-agent:<git-sha>`
+(and `wow-agent:latest`, a convenience only). The compose file reads the tag
+from `WOW_AGENT_TAG` in `.env`, the one setting.
+
+```bash
+scripts/build-agent-image.sh                       # prints the new SHA
+# set WOW_AGENT_TAG=<new sha> in .env, then recreate:
+docker compose -f docker-compose.agents.yml --profile raid up -d
+# rollback: set WOW_AGENT_TAG back to the previous SHA (the old image is still
+# on the host unless pruned; otherwise check out that commit and rebuild), up -d again.
+```
+
+**Bumping pins.** Look up the new tag's multi-arch digest in the registry
+(Docker Hub `.../tags/<tag>` `digest`, or `gcr.io/v2/<repo>/tags/list`), change
+the tag and digest together, never the tag alone. For `requirements.txt`, take
+the sha256 of every file listed on PyPI for the new version (`/pypi/<name>/<version>/json`),
+including transitive dependencies. Merging a compose change recreates the affected
+containers, so follow the usual deploy rules.
+
+**Not done here.** `danielsilvestre37/trinitycore-docker:3.3.5` is pinned to the digest
+the registry served on 2026-10-10; confirm it is what the VM runs (`docker image inspect`)
+before merging. Mirroring it or building from source is a separate spike and ADR.
 
 ### wowmap's `AGENT_API_URLS`
 

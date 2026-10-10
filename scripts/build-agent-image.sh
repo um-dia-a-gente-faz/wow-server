@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild wow-agent:latest from the current checkout, or check that it is fresh.
+# Rebuild wow-agent:<git-sha> (and wow-agent:latest) from the current checkout, or check that it is fresh.
 #
 #   scripts/build-agent-image.sh           rebuild the image and print what to do next
 #   scripts/build-agent-image.sh --check   build nothing; exit 1 if the image is missing
@@ -17,6 +17,11 @@ cd "$(dirname "$0")/.."
 # The compose file requires AGENT_PASSWORD to parse; a build never uses it.
 export AGENT_PASSWORD="${AGENT_PASSWORD:-build-only}"
 COMPOSE=(docker compose -f docker-compose.agents.yml)
+# The build is tagged with the commit (#291) so a rollback is one value,
+# WOW_AGENT_TAG in .env. `latest` is only a convenience for --check below; compose
+# never reads it.
+SHA=$(git rev-parse --short=12 HEAD)
+export WOW_AGENT_TAG="$SHA"
 IMAGE=wow-agent:latest
 
 image_created() { docker image inspect -f '{{.Created}}' "$IMAGE" 2>/dev/null; }
@@ -49,11 +54,13 @@ svc=$("${COMPOSE[@]}" --profile raid config --services | grep -m1 '^agent-')
 
 echo "Building $IMAGE from $(git rev-parse --short HEAD) (service $svc) ..."
 "${COMPOSE[@]}" build "$svc"
+docker tag "wow-agent:$SHA" "$IMAGE"
 
 echo
-echo "Built: $(docker image inspect -f '{{.Id}} created {{.Created}}' "$IMAGE")"
+echo "Built: $(docker image inspect -f '{{.Id}} created {{.Created}}' "wow-agent:$SHA") as wow-agent:$SHA"
 echo "Source: $(git log -1 --format='%h %cI %s' -- agent Dockerfile)"
 echo
+echo "Set WOW_AGENT_TAG=$SHA in .env (the previous value is the rollback), then recreate."
 echo "Running containers keep the OLD image until they are recreated. For each agent:"
 echo "  docker compose -f docker-compose.agents.yml up -d agent-<name>"
 echo "Then confirm the observability API is bound (expect {\"ok\": true}):"
