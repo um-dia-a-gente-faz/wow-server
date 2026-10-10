@@ -100,6 +100,19 @@ SCENARIOS = {
         snapshot=snap([unit(10, 3, **CORPSE)]),
         history=[failed("loot", {"guid": 10}, "too far")] * 2,
         offered=not_offering_guid(10), chosen=first_is("idle")),
+    "no_effect_repeat_is_demoted_not_removed": dict(
+        snapshot=snap([unit(10, 3, **CORPSE), unit(11, 4, **CORPSE)]),
+        history=[{"action": "loot", "args": {"guid": 10}, "ok": True, "changed": False}] * 2,
+        offered=lambda cs: [c["id"] for c in cs if c["action"] == "loot"] == ["loot:guid=11", "loot:guid=10"],
+        chosen=first_is("loot", guid=11)),
+    "far_loot_is_approached": dict(
+        snapshot=snap([unit(10, 20, **CORPSE)]),
+        offered=never("loot"), chosen=first_is("move_towards", guid=10)),
+    "old_rejection_expires": dict(
+        snapshot=snap([unit(10, 3, **CORPSE)]),
+        history=[failed("loot", {"guid": 10}, "bad params: guid")]
+        + [{"action": "idle", "args": {}, "ok": True, "changed": True}] * 4,
+        chosen=first_is("loot", guid=10)),
     # Gap found writing this suite: nothing stops an unprovoked pull at 20% HP
     # when no consumable is on hand. Drop known_gap when candidates.py fixes it.
     "low_health_does_not_pull_a_mob": dict(
