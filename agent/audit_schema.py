@@ -1,7 +1,7 @@
 """Versioned on-disk shape of one decision-audit record (#277).
 
 Every line `agent.audit` writes is `AuditRecord.to_json()`. Every reader
-(`agent.tools.replay`, `agent.metrics`) loads lines with `AuditRecord.from_json()`,
+(`tools.agent_dev.replay`, `agent.metrics`) loads lines with `AuditRecord.from_json()`,
 which upgrades older lines: a line with no `schema` key is version 0 and takes the
 field defaults below. Keys this version does not know are kept in `extra` and
 written back, so a newer writer's fields survive a round trip through this code.

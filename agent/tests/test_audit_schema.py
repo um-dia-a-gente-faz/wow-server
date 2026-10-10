@@ -13,7 +13,7 @@ from dataclasses import fields
 from agent import metrics
 from agent.audit import AuditLogger
 from agent.audit_schema import SCHEMA_VERSION, AuditRecord
-from agent.tools import replay
+from tools.agent_dev import replay
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "audit")
 FIELD_NAMES = {f.name for f in fields(AuditRecord)} - {"extra"}

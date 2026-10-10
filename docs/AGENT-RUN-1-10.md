@@ -92,7 +92,7 @@ After the agent has run a few cycles, the newest ones must show no 503/429
 and a valid tool call:
 
 ```sh
-python3 -m agent.tools.replay /opt/wow-server-metrics/audit/<agent>/<YYYY-MM-DD>.jsonl --failures
+python3 -m tools.agent_dev.replay /opt/wow-server-metrics/audit/<agent>/<YYYY-MM-DD>.jsonl --failures
 ```
 
 Working model id (a human fills this in after the preflight and one agent
@@ -147,7 +147,7 @@ All of these already exist; no new tooling needed for this issue.
 - **`wow-exporter` metrics** — `level`, `wow_character_quests_completed_total`.
 - **Audit log replay** — tail failures live or review after the fact:
   ```sh
-  python3 -m agent.tools.replay /opt/wow-server-metrics/audit/<agent>-<date>.jsonl --failures
+  python3 -m tools.agent_dev.replay /opt/wow-server-metrics/audit/<agent>-<date>.jsonl --failures
   ```
 
 ## How to stop a run
@@ -176,10 +176,10 @@ run:
 - Manually sending any packet or chat command on the agent's behalf.
 
 Watching dashboards, tailing logs, or replaying the audit log with
-`agent.tools.replay` is **not** an intervention — read-only observation
+`tools.agent_dev.replay` is **not** an intervention — read-only observation
 doesn't touch the character.
 
-**The capability probe is an intervention.** `python3 -m agent.tools.probe`
+**The capability probe is an intervention.** `python3 -m tools.agent_dev.probe`
 (#139) logs in as the character, then talks, walks, accepts a quest, fights,
 loots and rests, which is "manually sending packets and chat on the agent's
 behalf". So it is **manual-only**: never scheduled, never triggered by CI or
@@ -197,8 +197,8 @@ agent can be logged in and unable to move, or able to move and unable to fight.
 
 ```sh
 # Credentials as in .claude/skills/live-agent-test (WOW_ACCOUNT / WOW_PASSWORD / WOW_CHARACTER)
-python3 -m agent.tools.probe --help
-python3 -m agent.tools.probe --confirm-manual-run --out /tmp/probe-Farstrider.json
+python3 -m tools.agent_dev.probe --help
+python3 -m tools.agent_dev.probe --confirm-manual-run --out /tmp/probe-Farstrider.json
 ```
 
 Steps, in order, each `ok` / `fail` / `skipped` with its raw action result and
@@ -235,7 +235,7 @@ A run counts as successful only if **all** of:
       rate recorded from the audit log.
 
 **"Fully autonomous" is more than just reaching the level.** Skimming the
-audit log (`agent.tools.replay`) for the whole run should also show:
+audit log (`tools.agent_dev.replay`) for the whole run should also show:
 
 - [ ] Every cycle has a `tool_call` the agent chose itself — no cycles where
       the LLM call failed and the reflex/idle path carried the run
@@ -250,7 +250,7 @@ audit log (`agent.tools.replay`) for the whole run should also show:
 ## Failure catalog
 
 One row per failed run. `Cycle range` is the audit log's cycle numbers
-(`agent.tools.replay --from <cycle>` to jump straight there). `Fix card` is
+(`tools.agent_dev.replay --from <cycle>` to jump straight there). `Fix card` is
 the GitHub issue filed once the root cause is understood — file it with label
 `agent` in milestone M3, with the audit-log evidence
 attached.

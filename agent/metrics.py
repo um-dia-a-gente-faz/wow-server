@@ -3,7 +3,7 @@
 (agent.audit) — no dependency on prometheus_client (agent/ is stdlib-only,
 per CONTRIBUTING.md), so this builds the exposition-format text itself.
 
-Used by agent.tools.metrics_textfile (a textfile-collector script; see that
+Used by tools.agent_dev.metrics_textfile (a textfile-collector script; see that
 module's docstring for why textfile over an HTTP /metrics server) and
 unit-tested directly (agent/tests/test_metrics.py) without touching the
 filesystem beyond the fixtures it's given.
@@ -70,7 +70,7 @@ def _bucket_for(latency_ms: float) -> int | None:
 
 def iter_records(path: str):
     """Yield parsed JSON records from one JSONL file, skipping malformed
-    lines (see agent.tools.replay.load_records — same rationale)."""
+    lines (see tools.agent_dev.replay.load_records — same rationale)."""
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()

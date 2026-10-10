@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline A/B replay for recorded agent snapshots (stdlib only).
 
-Run with ``python3 -m agent.tools.ab audit.jsonl --brains llm,jev``. Only
+Run with ``python3 -m tools.agent_dev.ab audit.jsonl --brains llm,jev``. Only
 records carrying a full snapshot can be replayed; audit logs intentionally
 omit most snapshots, retaining just their hash.
 """
@@ -14,7 +14,7 @@ from agent import actions, candidates
 from agent.config import Config
 from agent.jev import JevClient
 from agent.llm import LLMClient, LLMError
-from agent.tools.replay import load_records
+from tools.agent_dev.replay import load_records
 
 
 class FixtureJev:

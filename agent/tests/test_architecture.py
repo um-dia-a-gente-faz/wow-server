@@ -17,7 +17,7 @@ TOOLS = ROOT / "tools"
 STDLIB = sys.stdlib_module_names
 
 # Units that are not layered: dev tools are run by hand, tests are not shipped.
-UNLAYERED = {"tools", "tests"}
+UNLAYERED = {"tests"}
 
 # unit -> units it may import. A unit missing here may import nothing from agent/.
 # Groups (see docs/ARCHITECTURE.md, `agent/` table):
@@ -91,15 +91,6 @@ LAYERS = {
                  "metrics", "reflexes", "session", "think"},
 }
 
-# Files whose broad `except Exception` sites may stay as they are (#306), each with the reason.
-SWALLOW_ALLOWLIST = {
-    # One-shot live-test CLI run by hand: every failure is put in the report/stdout it prints
-    # (run_step, login) or is best-effort cleanup of its own connection (stream close, logout).
-    "agent/tools/probe.py",
-    # Offline A/B replay CLI: the error text is stored in the result row it prints (item["error"]).
-    "agent/tools/ab.py",
-}
-
 ADR = {
     "handlers": "ADR 0005/0006 (handlers parse and update state, they do not act)",
     "actions": "docs/ARCHITECTURE.md (actions never import reflexes)",
@@ -165,12 +156,8 @@ class AgentArchitectureTests(unittest.TestCase):
         cls.graph, cls.third = agent_graph()
 
     def test_agent_is_stdlib_only(self):
-        # CLAUDE.md: `agent/` is stdlib-only. Dev tools under agent/tools/ are included.
+        # CLAUDE.md: `agent/` is stdlib-only.
         third = [(f, m) for f, m in self.third if "/tests/" not in f]
-        for path, _, package in _agent_files():
-            if path.parts[-2] == "tools":
-                third += [(str(path.relative_to(ROOT)), m) for m in _imports(path, package)
-                          if m.split(".")[0] not in STDLIB | {"agent"}]
         self.assertEqual(sorted(set(third)), [], "third-party import in agent/ (stdlib-only rule)")
 
     def test_every_unit_is_in_the_layer_table(self):
@@ -207,18 +194,25 @@ class AgentArchitectureTests(unittest.TestCase):
             if unit not in state:
                 visit(unit)
 
+    def test_runtime_does_not_import_tools(self):
+        # #397: tools/ (incl. tools/agent_dev) may import agent, never the reverse.
+        bad = [f"{path.relative_to(ROOT)} imports {m}" for path, _, package in _agent_files()
+               if "tests" not in path.relative_to(AGENT).parts
+               for m in _imports(path, package) if m.split(".")[0] == "tools"]
+        self.assertEqual(bad, [], "agent/ runtime must not import from tools/")
+
     def test_nothing_imports_main(self):
         offenders = [u for u, edges in self.graph.items() if "__main__" in edges]
         self.assertEqual(offenders, [])
 
     def test_broad_except_calls_swallowed(self):
         """#306: a broad `except Exception` in agent/ must call metrics.swallowed (log with
-        context + count it), re-raise, or sit in SWALLOW_ALLOWLIST with a reason. Narrow it
+        context + count it), or re-raise. Narrow it
         instead if you can; a bare `except:` is never allowed."""
         bad = []
         for path, _, _ in _agent_files():
             rel = str(path.relative_to(ROOT))
-            if "/tests/" in rel or rel in SWALLOW_ALLOWLIST:
+            if "/tests/" in rel:
                 continue
             for node in ast.walk(ast.parse(path.read_text(), rel)):
                 if not isinstance(node, ast.ExceptHandler):
@@ -275,7 +269,7 @@ class ToolsArchitectureTests(unittest.TestCase):
             for mod in _imports(path, [tool]):
                 top = (mod or "").split(".")[0]
                 if top and top not in STDLIB and top not in allowed and top not in local \
-                        and top != "agent":
+                        and top not in {"agent", "tools"}:
                     bad.append(f"{path.relative_to(ROOT)} imports {mod}")
         self.assertEqual(bad, [])
 

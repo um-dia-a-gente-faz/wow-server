@@ -1,4 +1,4 @@
-"""Unit tests for agent.tools.replay: reads a synthetic audit-log fixture
+"""Unit tests for tools.agent_dev.replay: reads a synthetic audit-log fixture
 (agent/tests/fixtures/audit/luaprata_sample.jsonl) and checks the timeline
 it prints, plus --from and --failures filtering. No network/game state."""
 
@@ -7,7 +7,7 @@ import os
 import unittest
 from contextlib import redirect_stdout
 
-from agent.tools import replay
+from tools.agent_dev import replay
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "audit", "luaprata_sample.jsonl")
 

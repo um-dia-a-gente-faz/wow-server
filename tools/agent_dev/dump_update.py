@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pretty-print a captured SMSG_UPDATE_OBJECT payload.
 
-Usage: python3 -m agent.tools.dump_update <file.bin> [<file.bin> ...]
+Usage: python3 -m tools.agent_dev.dump_update <file.bin> [<file.bin> ...]
 
 Files are raw, already-decompressed update-object payloads (uint32
 block_count, then blocks) — exactly what agent/tests/fixtures/update_object/
@@ -17,7 +17,7 @@ at an offset it can't yet compute correctly.
 
 import sys
 
-from .. import packets as pk
+from agent import packets as pk
 
 UPDATETYPE_NAMES = {
     0: "VALUES",
@@ -31,7 +31,7 @@ UPDATETYPE_NAMES = {
 
 def _dump_with_real_parser(data: bytes, parse_update_object) -> None:
     try:
-        from .. import update_fields as uf  # UM-33+
+        from agent import update_fields as uf  # UM-33+
     except ImportError:
         uf = None
 
@@ -83,7 +83,7 @@ def dump(path: str) -> None:
         print("  ! too short to contain a block_count")
         return
     try:
-        from .. import update_object as uo  # UM-32+
+        from agent import update_object as uo  # UM-32+
     except ImportError:
         _dump_best_effort(data)
     else:
