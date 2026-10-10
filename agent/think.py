@@ -168,19 +168,19 @@ def decide(c: Cycle) -> None:
 
 
 def validate(c: Cycle) -> None:
-    name, params = c.action_name, c.params or {}
+    name, params = c.action_name, c.params
     c.action = c.registry.get(name) if name is not None else None
     if c.action is None or name is None:
         log.warning("model chose unknown action %r (params=%r)", name, params)
         return c.fail(f"unknown action: {name!r}")
-    missing = [p for p in c.action.required if p not in params]
+    missing = [p for p in c.action.required if p not in params]  # type: ignore[operator]  # None params raise TypeError, as on main
     if missing:
         log.warning("action %s missing required params %r (got %r)", name, missing, params)
         return c.fail(f"missing required params: {missing}")
     # UM-89: the model sees and sends short handles ("u3"), never raw GUIDs;
     # map them back here. `params` (handles) stays what the audit log records.
     handles = getattr(c.world, "handles", None)
-    c.run_params = params
+    c.run_params = params  # type: ignore[assignment]
     if handles is not None:
         try:
             c.run_params = handles.resolve_params(params)
