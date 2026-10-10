@@ -116,6 +116,7 @@ class WriterContractTests(unittest.TestCase):
             (path,) = glob.glob(os.path.join(tmp, "Jev1", "*.jsonl"))
             with open(path, encoding="utf-8") as f:
                 line = f.readline()
+        self.assertEqual(json.loads(line)["prompt_id"], "system@abcd1234")
         keys = set(json.loads(line))
         self.assertLessEqual(keys, FIELD_NAMES | {"schema"})
         self.assertEqual(keys, FIELD_NAMES | {"schema"})
