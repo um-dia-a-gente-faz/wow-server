@@ -15,10 +15,11 @@ PASSWORD = "hunter2"
 
 def challenge(flags):
     """A 119-byte success challenge (cmd, error, result, B, g, N, s, crc, flags) followed by
-    the extra bytes TrinityCore appends for each set flag: PIN 20, matrix 8, token 1."""
+    the extra bytes TrinityCore appends for each set flag: PIN 20, matrix 12 (4 x uint8 +
+    uint64), token 1 (AuthSession.cpp LogonChallengeCallback)."""
     body = (bytes([0x00, 0x00, 0x00]) + bytes(32) + bytes([1, 7]) + bytes([32]) + bytes(32)
             + bytes(32) + bytes(16) + bytes([flags]))
-    extra = 20 * (flags & 0x01) + 8 * ((flags >> 1) & 0x01) + 1 * ((flags >> 2) & 0x01)
+    extra = 20 * (flags & 0x01) + 12 * ((flags >> 1) & 0x01) + 1 * ((flags >> 2) & 0x01)
     return body + bytes(extra)
 
 
@@ -43,6 +44,12 @@ def no_srp6(*_args):
 
 
 class SecurityFlagsTest(unittest.TestCase):
+    def test_challenge_helper_matrix_flag_adds_12_extra_bytes(self):
+        self.assertEqual(len(challenge(0x00)), 119)
+        self.assertEqual(len(challenge(0x02)), 119 + 12)
+        self.assertEqual(len(challenge(0x01)), 119 + 20)
+        self.assertEqual(len(challenge(0x04)), 119 + 1)
+
     def test_flags_are_refused_before_any_proof_bytes_or_srp6(self):
         for flags in (0x01, 0x02, 0x04, 0x05, 0x07):
             with self.subTest(flags=flags):
