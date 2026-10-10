@@ -19,6 +19,7 @@ GENERATORS = [
     ["scripts/gen-live-map-dash.py"],          # monitoring/grafana-dashboard-wow-live-map.json
     ["scripts/gen-wow-dashboard.py"],          # monitoring/grafana-dashboard-wow-server-host.json
     ["scripts/gen-wow-game-dashboards.py"],    # ...-wow-players.json, ...-wow-realm-health.json
+    ["scripts/gen_protocol_tables.py"],        # agent/opcodes.py and agent/update_fields.py <- scripts/trinitycore-excerpt/
     ["-m", "agent.api_contract"],              # docs/AGENT-API.md <- agent/api_schema.json
 ]
 
