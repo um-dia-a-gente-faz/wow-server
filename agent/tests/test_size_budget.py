@@ -29,7 +29,6 @@ BASELINE = {
     "tools/wowmap/activity.py": 639,
     # functions
     "agent/__main__.py::main": 93,
-    "agent/auth.py::auth_logon": 85,
     "agent/candidates.py::generate": 176,
     "agent/handlers/chat.py::handle_messagechat": 84,
     "agent/loot.py::parse_item_query_response": 131,
