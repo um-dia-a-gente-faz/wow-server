@@ -1,14 +1,19 @@
 """Golden and writer-contract tests for the versioned audit record (#277)."""
 
+import contextlib
 import glob
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from dataclasses import fields
 
+from agent import metrics
 from agent.audit import AuditLogger
 from agent.audit_schema import SCHEMA_VERSION, AuditRecord
+from agent.tools import replay
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "audit")
 FIELD_NAMES = {f.name for f in fields(AuditRecord)} - {"extra"}
@@ -45,6 +50,43 @@ class GoldenUpgradeTests(unittest.TestCase):
     def test_to_json_puts_schema_first(self):
         out = AuditRecord(ts=1.0, agent="a", cycle=1, snapshot_hash="h").to_json()
         self.assertEqual(next(iter(out)), "schema")
+
+
+def _write_tmp(testcase, lines):
+    tmp = tempfile.TemporaryDirectory()
+    testcase.addCleanup(tmp.cleanup)
+    path = os.path.join(tmp.name, "2024-11-07.jsonl")
+    with open(path, "w", encoding="utf-8") as f:
+        for line in lines:
+            f.write(json.dumps(line) + "\n")
+    return path
+
+
+class SchemalessReaderTests(unittest.TestCase):
+    def test_replay_from_skips_a_line_without_cycle_as_cycle_zero(self):
+        path = _write_tmp(self, [
+            {"ts": 1700000000.0, "agent": "Old", "valid": True, "result": {"ok": True}},
+            {"ts": 1700000001.0, "agent": "Old", "cycle": 9, "valid": True, "result": {"ok": True}},
+        ])
+        out = io.StringIO()
+        with redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(replay.main([path, "--from", "5"]), 0)
+        shown = out.getvalue().splitlines()
+        self.assertEqual(len(shown), 1)
+        self.assertIn("cycle=9", shown[0])
+
+    def test_replay_formats_a_schemaless_line_without_agent_as_question_mark(self):
+        path = _write_tmp(self, [{"ts": 1700000000.0, "cycle": 3, "valid": True,
+                                  "result": {"ok": True}}])
+        (rec,) = list(replay.load_records(path))
+        self.assertRegex(replay.format_record(rec), r"cycle=3\s+\?\s+OK")
+
+    def test_metrics_lands_a_schemaless_line_without_agent_under_unknown(self):
+        path = _write_tmp(self, [{"ts": 1700000000.0, "cycle": 3, "valid": True,
+                                  "result": {"ok": True}}])
+        by_agent = metrics.derive_metrics(metrics.iter_records(path))
+        self.assertEqual(set(by_agent), {"unknown"})
+        self.assertEqual(by_agent["unknown"].cycles_total, 1)
 
 
 class WriterContractTests(unittest.TestCase):

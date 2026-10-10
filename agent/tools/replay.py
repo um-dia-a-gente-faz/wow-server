@@ -98,7 +98,7 @@ def main(argv=None):
         total += 1
         if is_failure(rec):
             failures += 1
-        if args.from_cycle is not None and rec.get("cycle", 0) < args.from_cycle:
+        if args.from_cycle is not None and (rec.get("cycle") or 0) < args.from_cycle:
             continue
         if args.failures and not is_failure(rec):
             continue
