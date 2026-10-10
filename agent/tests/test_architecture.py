@@ -42,6 +42,7 @@ LAYERS = {
     "known_targets": set(),
     "metrics": {"audit_schema", "transport"},   # swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
     "api_contract": set(),
+    "memory": set(),   # durable agent memory store (#276); stdlib sqlite3 only
     "model": set(),
     "audit_schema": {"model"},   # the audit record's versioned on-disk shape (#277)
     "auth": {"packets"},
