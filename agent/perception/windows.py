@@ -1,6 +1,26 @@
 """WorldState's quest-giver, NPC-window, mailbox and chat-channel state (UM-40, UM-41, UM-60, UM-93)."""
 
+import threading
+
+from .. import items as it
+from .. import npc as npc_mod
+from .. import quests as qu
+from .objects import ObjectInfo
+
+
 class WindowsMixin:
+    # Attributes WorldState.__init__ creates; declared so the mixin type-checks.
+    _lock: threading.Lock
+    objects: dict[int, ObjectInfo]
+    _quest_status_in_flight: set
+    channels: dict[str, dict]
+    items: it.ItemCache
+    npc_texts: npc_mod.NpcTextCache
+    quest_texts: qu.QuestCache
+    ui_state: dict | None
+    mailbox: dict | None
+    has_new_mail: bool
+
     # ── Quests (UM-41) ─────────────────────────────────────────────────────
 
     def apply_questgiver_status(self, data: dict):

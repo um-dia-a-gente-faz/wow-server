@@ -94,6 +94,23 @@ class AuthRejected(RuntimeError):
         super().__init__(f"auth server rejected the {step}: {name} (AuthResult 0x{code:02X})")
 
 
+# #431: challenge security flags (TrinityCore AuthSession.cpp LogonChallengeCallback).
+SECURITY_FLAG_NAMES = ((0x01, "PIN"), (0x02, "matrix card"), (0x04, "authenticator token"))
+
+
+class AuthSecurityUnsupported(AuthRejected):
+    """The account needs a PIN, matrix card or authenticator token. The agent supports none of
+    them, so it refuses before any proof byte or SRP6 work. `code` is 0x04 (reads as a reject to
+    existing callers) and `flags` is the challenge's security flags byte."""
+
+    def __init__(self, flags: int):
+        self.flags = flags
+        self.code = 0x04
+        names = " or ".join(name for bit, name in SECURITY_FLAG_NAMES if flags & bit)
+        RuntimeError.__init__(self, f"auth server needs a {names} (security flags 0x{flags:02X}); "
+                                    "the agent supports none of them")
+
+
 def _reply(sock: socket.socket, cmd: int, error_at: int, rest: int, step: str) -> bytes:
     """One auth reply. TrinityCore (AuthSession.cpp) sends only the bytes up to and including
     the AuthResult when it fails (challenge: cmd, 0, result = 3; proof: cmd, result, ...) and
@@ -141,6 +158,8 @@ def _handshake(sock: socket.socket, username: str, password: str):
     s = resp[off:off+32]; off += 32
     _crc_srv = resp[off:off+16]; off += 16
     security_flags = pk.u8(resp, off); off += 1
+    if security_flags:  # #431: PIN/matrix/token extra bytes follow; refuse before any proof byte
+        raise AuthSecurityUnsupported(security_flags)
 
     A, M1, crc_hash, session_key = compute_srp6(username, password, s, B, N)
 

@@ -6,8 +6,7 @@ import pathlib
 import unittest
 
 from agent import opcodes
-from agent import session  # noqa: F401  (importing registers every handler on ROUTER)
-from agent.router import ROUTER
+from agent.session import build_session_router
 
 AGENT = pathlib.Path(opcodes.__file__).parent
 PREFIXES = ("SMSG_", "CMSG_", "MSG_")
@@ -36,7 +35,7 @@ class OpcodeTableTest(unittest.TestCase):
 
     def test_every_routed_opcode_is_defined(self):
         known = set(_table().values())
-        self.assertEqual(sorted(hex(o) for o in ROUTER._handlers if o not in known), [])
+        self.assertEqual(sorted(hex(o) for o in build_session_router()._handlers if o not in known), [])
 
     def test_no_opcode_defined_outside_opcodes_py(self):
         stray = []

@@ -6,7 +6,6 @@ import struct
 from .. import channels as ch_mod
 from .. import packets as pk
 from .. import perception as per
-from ..router import ROUTER
 from ..metrics import swallowed
 
 log = logging.getLogger("agent.session")
@@ -336,11 +335,12 @@ def _messagechat_for(opcode):
     return handler
 
 
-ROUTER.register_all({
-    SMSG_MESSAGECHAT: _messagechat_for(SMSG_MESSAGECHAT),
-    SMSG_GM_MESSAGECHAT: _messagechat_for(SMSG_GM_MESSAGECHAT),
-    SMSG_GROUP_INVITE: handle_group_invite,
-    SMSG_CHAT_PLAYER_NOT_FOUND: handle_chat_player_not_found,
-    ch_mod.SMSG_CHANNEL_NOTIFY: handle_channel_notify,
-    SMSG_PARTY_COMMAND_RESULT: handle_party_command_result,
-})
+def register(router):
+    router.register_all({
+        SMSG_MESSAGECHAT: _messagechat_for(SMSG_MESSAGECHAT),
+        SMSG_GM_MESSAGECHAT: _messagechat_for(SMSG_GM_MESSAGECHAT),
+        SMSG_GROUP_INVITE: handle_group_invite,
+        SMSG_CHAT_PLAYER_NOT_FOUND: handle_chat_player_not_found,
+        ch_mod.SMSG_CHANNEL_NOTIFY: handle_channel_notify,
+        SMSG_PARTY_COMMAND_RESULT: handle_party_command_result,
+    })

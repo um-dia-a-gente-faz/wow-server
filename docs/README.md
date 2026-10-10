@@ -12,6 +12,7 @@ backticked repo path in the docs (archived spikes: links only), `README.md`, `CL
 | [AGENT-DIRECTION.md](AGENT-DIRECTION.md) | Owner decisions for the agents: goal, autonomy, models, chat rules |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components, compose projects, `agent/` module map, volumes, ports |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | How the VM is deployed and updated, gotchas, troubleshooting |
+| [DEV-STACK.md](DEV-STACK.md) | One-command local stack on mocks and a fixture DB (`dev/dev.sh up`), no live server |
 | [PROTOCOL-NOTES.md](PROTOCOL-NOTES.md) | 3.3.5a wire formats, each checked against TrinityCore source |
 | [AGENT-API.md](AGENT-API.md) | Agent observability API (generated from `agent/api_schema.json`) |
 | [LIVE-MAP.md](LIVE-MAP.md) | Live map: how it was built, DBC layout, alignment |

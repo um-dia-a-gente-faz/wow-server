@@ -415,7 +415,7 @@ Verified against TrinityCore branch `3.3.5`:
 
 `agent/spells.py` holds every pure parser/builder (no opcodes, no I/O — same
 split as `agent/names.py`); opcodes and the thirteen thin handlers live in
-`agent/handlers/spells.py` (registered on `agent.router.ROUTER`), which call
+`agent/handlers/spells.py` (registered by `register(router)`), which call
 `GameState.record_event()`. `agent/actions/combat.py` adds `auto_attack`,
 `stop_attack`, `cast_spell` to the Action registry, all reading confirmation
 off `session.events` (a bounded deque) rather than blocking on a single
@@ -924,7 +924,7 @@ Source: TrinityCore `3.3.5` @ `41d89b32c015`, `src/server/authserver/Server/Auth
 
 | Reply | Failure | Success |
 |---|---|---|
-| `AUTH_LOGON_CHALLENGE` (`LogonChallengeCallback`) | `cmd 0x00, 0x00, result` = **3 bytes**, socket left open | 119 bytes, plus 20 / 8 / 1 more when security flags 0x01 / 0x02 / 0x04 are set |
+| `AUTH_LOGON_CHALLENGE` (`LogonChallengeCallback`) | `cmd 0x00, 0x00, result` = **3 bytes**, socket left open | 119 bytes, plus 20 / 12 / 1 more when security flags 0x01 / 0x02 / 0x04 are set |
 | `AUTH_LOGON_PROOF` (`HandleLogonProof`) | wrong password or bad token: `cmd 0x01, 0x04, uint16 0` = 4 bytes; bad build CRC: `cmd 0x01, 0x09` = 2 bytes | 32 bytes (`sAuthLogonProof_S`) |
 | `REALM_LIST` | no failure path | `cmd, uint16 size, body` |
 

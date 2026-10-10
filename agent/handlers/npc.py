@@ -4,7 +4,6 @@ import struct
 
 from .. import npc as npc_mod
 from .. import perception as per
-from ..router import ROUTER
 
 
 def handle_gossip_message(ctx, payload: bytes):
@@ -96,17 +95,18 @@ def send_npc_text_queries(ctx):
         ctx.send(npc_mod.CMSG_NPC_TEXT_QUERY, npc_mod.build_npc_text_query(text_id, guid))
 
 
-ROUTER.register_all({
-    npc_mod.SMSG_GOSSIP_MESSAGE: handle_gossip_message,
-    npc_mod.SMSG_GOSSIP_COMPLETE: handle_gossip_complete,
-    npc_mod.SMSG_NPC_TEXT_UPDATE: handle_npc_text_update,
-    npc_mod.SMSG_LIST_INVENTORY: handle_list_inventory,
-    npc_mod.SMSG_TRAINER_LIST: handle_trainer_list,
-    npc_mod.SMSG_BUY_ITEM: handle_buy_item,
-    npc_mod.SMSG_BUY_FAILED: handle_buy_failed,
-    npc_mod.SMSG_SELL_ITEM: handle_sell_item,
-    npc_mod.SMSG_TRAINER_BUY_SUCCEEDED: handle_train_succeeded,
-    npc_mod.SMSG_TRAINER_BUY_FAILED: handle_train_failed,
-})
+def register(router):
+    router.register_all({
+        npc_mod.SMSG_GOSSIP_MESSAGE: handle_gossip_message,
+        npc_mod.SMSG_GOSSIP_COMPLETE: handle_gossip_complete,
+        npc_mod.SMSG_NPC_TEXT_UPDATE: handle_npc_text_update,
+        npc_mod.SMSG_LIST_INVENTORY: handle_list_inventory,
+        npc_mod.SMSG_TRAINER_LIST: handle_trainer_list,
+        npc_mod.SMSG_BUY_ITEM: handle_buy_item,
+        npc_mod.SMSG_BUY_FAILED: handle_buy_failed,
+        npc_mod.SMSG_SELL_ITEM: handle_sell_item,
+        npc_mod.SMSG_TRAINER_BUY_SUCCEEDED: handle_train_succeeded,
+        npc_mod.SMSG_TRAINER_BUY_FAILED: handle_train_failed,
+    })
 
-ROUTER.on_tick(send_npc_text_queries)
+    router.on_tick(send_npc_text_queries)

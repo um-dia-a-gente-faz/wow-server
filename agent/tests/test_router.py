@@ -6,7 +6,8 @@ import unittest
 
 from agent import session as se
 from agent.packets import ProtocolError
-from agent.router import Context, PacketRouter, ROUTER
+from agent import handlers
+from agent.router import Context, PacketRouter
 from agent.tests.builders import make_session
 
 
@@ -57,9 +58,31 @@ class SessionDispatchTest(unittest.TestCase):
     def test_unknown_opcode_is_not_handled(self):
         self.assertFalse(make_session()._dispatch(0xFFFF, b''))
 
-    def test_every_domain_registered_on_the_shared_router(self):
+    def test_every_domain_registered_on_the_session_router(self):
+        router = make_session().router
         for op in (se.SMSG_TIME_SYNC_REQ, se.SMSG_LOGOUT_COMPLETE, 0x0A9, 0x12A, 0x096):
-            self.assertIn(op, ROUTER._handlers)
+            self.assertIn(op, router._handlers)
+
+    def test_two_sessions_can_have_different_routers(self):
+        stub = PacketRouter()
+        stub.register(0x10, lambda ctx, payload: None)
+        a, b = make_session(router=stub), make_session()
+        self.assertIsNot(a.router, b.router)
+        self.assertTrue(a._dispatch(0x10, b''))
+        self.assertFalse(b._dispatch(0x10, b''))
+        self.assertFalse(a._dispatch(0x0A9, b''))
+
+    def test_each_session_gets_a_fresh_router(self):
+        self.assertIsNot(make_session().router, make_session().router)
+
+    def test_build_router_order_is_declared_and_pinned(self):
+        self.assertEqual([m.__name__.rpartition('.')[2] for m in handlers.MODULES],
+                         ["death", "world", "chat", "group", "mail", "npc", "spells", "trade", "loot", "quests"])
+        router = handlers.build_router()
+        self.assertEqual([f.__name__ for f in router._ticks],
+                         ["send_name_queries", "send_npc_text_queries", "send_item_queries", "send_quest_queries"])
+        ops = list(router._handlers)
+        self.assertEqual((ops[0], ops[-1]), (0x269, 0x198))  # death first, quests last; the session adds its lifecycle opcodes after
 
     def test_guarded_dispatch_isolates_handler_errors(self):
         sess = make_session()

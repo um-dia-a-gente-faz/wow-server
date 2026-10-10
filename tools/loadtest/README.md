@@ -11,6 +11,7 @@ python3 -m tools.loadtest --agents 25 --duration 60 --out run.json --compare doc
 # with faults (MOCK_FAULTS syntax, repeated for the whole run, see tools/world-mock/README.md)
 python3 -m tools.loadtest --agents 25 --duration 600 \
   --faults ';;;drop_after=8,reset;;stall=20,stall_at=6;bad_crypt_from=6'
+python3 -m tools.loadtest --agents 25 --duration 60 --stream-hz 20      # with per-client traffic (#421)
 python3 -m unittest discover -s tools/loadtest/tests                   # CI: 3 agents, 5 s smoke
 ```
 
@@ -40,8 +41,12 @@ exits unless `--allow-non-loopback` is given (the mock still runs locally).
   after an unexpected disconnect, so there is no 5 s wait on a dead stream).
 - `container_items`: total `len()` of every list/dict/set/deque held directly by the
   `WoWSession` and its `WorldState`, per sample. A number that keeps climbing in a long
-  healthy run is an unbounded collection: file a bug. The mock sends no stream after
-  login, so this only catches growth driven by the login burst and reconnects.
+  healthy run is an unbounded collection: file a bug. It also counts the collections inside
+  the nested `NameCache`, `ItemCache`, `QuestCache`, `NpcTextCache` and `HandleMap`. Without
+  `--stream-hz` the mock sends nothing after login, so only the login burst and reconnects drive it.
+- `recv_packets_per_s_per_agent`, `recv_packets_per_agent`, `recv_packets_total`: packets the
+  recv loop read (counted by wrapping each session's `_recv_packet`) over the run duration,
+  login burst and reconnects included. `stream_hz` echoes the setting.
 - `threads_end` should equal `threads_before` (no leaked threads).
 - `samples`: one row per second.
 
@@ -55,8 +60,8 @@ idle session, not the footprint of a real agent (see `docs/loadtest-baseline.md`
 
 ## Not done yet
 
-- No per-client stream of update objects, movement and chat from the mock, so the recv
-  loop's packet rate and growth under traffic are not measured.
+- Growth under traffic is measured but not yet triaged: run `--stream-hz` soaks and file
+  one bug per collection that keeps growing (#421 acceptance, last item).
 - Time is real time. An injectable clock (#351) would let faults and backoff be
   simulated instead of waited for.
 - Numbers on the VM (the 6 GB budget) have not been taken.

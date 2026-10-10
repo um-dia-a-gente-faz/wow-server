@@ -6,6 +6,7 @@ Split out of the former agent/actions.py (issue #248).
 from dataclasses import dataclass, field
 import time
 
+from .. import changes
 from .. import update_fields as uf
 from ..ports import ActionSession, PacketSink
 
@@ -25,36 +26,33 @@ class ActionResult:
     detail: dict = field(default_factory=dict)
 
 
-def _wait_for(predicate, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
-              interval: float = DEFAULT_CONFIRM_POLL_S) -> bool:
-    """Poll `predicate` (called with no args) until it's true or `timeout`
-    seconds pass. Used by an action's execute() to confirm its effect landed
-    in perception (e.g. the self target field, UNIT_FIELD_TARGET) instead of
-    just trusting the packet was sent. Blocks the calling thread — callers
-    run this from the think/act step, not the recv thread."""
-    deadline = time.monotonic() + timeout
-    while True:
-        if predicate():
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(interval)
-
-
 def _wait_for_value(get_value, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
-                     interval: float = DEFAULT_CONFIRM_POLL_S):
-    """Like _wait_for, but for confirmations that need to return *which*
-    event matched (e.g. a cast succeeding vs. failing) — polls `get_value()`
-    until it returns something other than None, or `timeout` elapses (then
-    returns None)."""
+                    interval: float = DEFAULT_CONFIRM_POLL_S):
+    """Return the first non-None `get_value()`, or None after `timeout`.
+    Used by an action's execute() to confirm its effect landed (a response
+    event, a field change) instead of trusting the packet was sent, and to
+    learn *which* outcome matched. Blocks the calling thread (think/act
+    step, never the recv thread). Sleeps on agent.changes, which the recv
+    thread signals on every recorded event and applied update-object block,
+    so a confirmation is seen at once; `interval` only caps the wait for
+    state no handler signals (plain GameState fields), so those are still
+    polled."""
     deadline = time.monotonic() + timeout
     while True:
+        seen = changes.generation()
         value = get_value()
         if value is not None:
             return value
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             return None
-        time.sleep(interval)
+        changes.wait(seen, min(interval, remaining))
+
+
+def _wait_for(predicate, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
+              interval: float = DEFAULT_CONFIRM_POLL_S) -> bool:
+    """_wait_for_value for a boolean predicate."""
+    return _wait_for_value(lambda: True if predicate() else None, timeout, interval) is True
 
 
 class Action:
