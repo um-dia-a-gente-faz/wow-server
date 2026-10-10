@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Any
 
+from .. import changes
 from .. import handles as hd
 from .. import items as it
 from .. import names as nm
@@ -129,6 +130,10 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
                 self.objects[guid] = ObjectInfo(guid=guid)
 
     def update_object(self, block: "uo.UpdateBlock"):
+        self._apply_block(block)
+        changes.notify()
+
+    def _apply_block(self, block: "uo.UpdateBlock"):
         """Apply one parsed UpdateBlock (agent/update_object.py) to world state.
 
         CREATE_OBJECT[2]: create-or-replace (a fresh object_type + movement +

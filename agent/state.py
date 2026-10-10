@@ -3,6 +3,7 @@
 import collections
 import time
 
+from . import changes
 from . import perception as per
 
 # Bounded so a chatty channel can't grow this without limit.
@@ -68,5 +69,6 @@ class GameState:
         a bounded deque (older entries can fall off the left, which would
         make plain index-based slicing wrong)."""
         self.events.append({"kind": kind, "t": time.monotonic(), **fields})
+        changes.notify()
 
     _record_event = record_event  # historical name, still used by death.py and tests
