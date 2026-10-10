@@ -8,6 +8,7 @@ trade state live in mixins.
 
 import threading
 import time
+from typing import Any
 
 from .. import handles as hd
 from .. import items as it
@@ -141,16 +142,16 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
         """
         with self._lock:
             if block.update_type in (uo.UPDATETYPE_CREATE_OBJECT, uo.UPDATETYPE_CREATE_OBJECT2):
-                obj = self.objects.get(block.guid) or ObjectInfo(guid=block.guid)
-                obj.type_id = block.object_type
-                obj.object_type = uo.OBJECT_TYPE_NAMES.get(block.object_type, "")
-                self._apply_movement(obj, block.movement)
-                self._apply_fields(obj, block.object_type, block.fields)
-                obj.last_update = time.monotonic()
-                self.objects[block.guid] = obj
-                self._maybe_resolve_name(obj)
+                new = self.objects.get(block.guid) or ObjectInfo(guid=block.guid)
+                new.type_id = block.object_type
+                new.object_type = uo.OBJECT_TYPE_NAMES.get(block.object_type, "") if block.object_type is not None else ""
+                self._apply_movement(new, block.movement)
+                self._apply_fields(new, block.object_type, block.fields)
+                new.last_update = time.monotonic()
+                self.objects[block.guid] = new
+                self._maybe_resolve_name(new)
                 if block.guid == self.my_guid and block.movement and "x" in block.movement:
-                    self.my_server_position = obj.position
+                    self.my_server_position = new.position
                 return
 
             obj = self.objects.get(block.guid)
@@ -263,7 +264,7 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
         in *our* group.
         """
         with self._lock:
-            view = {
+            view: dict[str, Any] = {
                 "objects": list(self.objects.values()),
                 "me": self.objects.get(self.my_guid),
                 "my_guid": self.my_guid,

@@ -84,6 +84,12 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Has CI green (`.github/workflows/ci.yml`: py_compile, unit tests, compose
   and dashboard validation, gitleaks, agent image build) before merging.
   CI cannot reach the LAN VMs, so it does not replace live testing.
+  CI is path-aware: a `changes` job skips the agent/tools/compose/docker jobs a PR
+  does not touch. `agent/` changes also run `tools`, because the tools suites and the
+  generated-file check use `agent/`. **`ci-ok` is the single required check**: it passes when every needed job
+  passed or was skipped by the filter and fails if any failed or was cancelled. Require only
+  it (never the individual jobs) so adding or skipping a job does not change the rules.
+  Any change to `ci.yml`, `scripts/`, `Dockerfile` or lint config runs every job.
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 
@@ -195,6 +201,11 @@ gate landed, each with its size then. Same ratchet as ruff and mypy:
 - Never commit credentials, API keys, or tokens.
 - Passwords and keys live in environment variables, `.env` files (gitignored), or Docker secrets.
 - If a secret accidentally lands in a commit, rotate it immediately and force-push a cleaned history.
+
+## Local dev stack
+
+`dev/dev.sh up` runs the mocks, one agent, chat-feed and wowmap on a fixture DB with no
+credentials; see `docs/DEV-STACK.md`. Prefer it to the live VM for anything a mock covers.
 
 ## Testing on the live VM
 

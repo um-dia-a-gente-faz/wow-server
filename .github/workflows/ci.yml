@@ -16,9 +16,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # #399: decides which jobs a PR needs. Push to main and any change to CI, scripts,
+  # lint/type config or the Dockerfile run everything. lint-typing and gitleaks always run.
+  changes:
+    name: changes (path filter)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      agent: ${{ steps.f.outputs.agent }}
+      tools: ${{ steps.f.outputs.tools }}
+      compose: ${{ steps.f.outputs.compose }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: f
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files=""
+          if [ "$EVENT" = "pull_request" ]; then files=$(git diff --name-only "$BASE...$HEAD"); fi
+          hit() { [ "$EVENT" != "pull_request" ] || grep -Eq "$1" <<<"$files"; }
+          all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
+          {
+            echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
+            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
+            echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # The single required check (#399). Skipped by the path filter counts as passing;
+  # failed or cancelled needed jobs fail it. Gate on this job only. The coverage job is
+  # informational (continue-on-error) so it is not needed here.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [changes, agent, tools, lint-typing, compose, secrets, docker-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "needed results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "::error::a needed job ended $r"; exit 1;; esac
+          done
   # agent/ is stdlib-only: this job installs nothing, so a third-party import fails here.
   agent:
     name: agent (compile + stdlib-only tests)
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -32,6 +82,8 @@ jobs:
   # cryptography (its requirements.txt) and Pillow; node is preinstalled on ubuntu-latest.
   tools:
     name: tools (unit tests, generated files)
+    needs: changes
+    if: needs.changes.outputs.tools == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -39,6 +91,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/wowmap/requirements.txt
       - run: pip install -r tools/wowmap/requirements.txt Pillow
       - run: scripts/check.sh generated test
 
@@ -63,6 +117,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
       # Dev tools live only here; agent/ stays stdlib-only at runtime.
       - run: pip install -r requirements-dev.txt
       # Config + baseline in ruff.toml; fails on any violation not in per-file-ignores.
@@ -76,6 +132,8 @@ jobs:
   # is installed here on the runner and is not a dependency of agent/ (stdlib only).
   coverage:
     name: coverage report (informational)
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -100,6 +158,8 @@ jobs:
 
   compose:
     name: compose config
+    needs: changes
+    if: needs.changes.outputs.compose == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -159,9 +219,18 @@ jobs:
 
   docker-build:
     name: docker build (agent image)
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
       - name: Build (no push)
-        run: docker build -t wow-agent:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: wow-agent:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

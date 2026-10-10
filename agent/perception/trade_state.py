@@ -1,11 +1,18 @@
 """WorldState's player-trade state (UM-59)."""
 
+import threading
 import time
 
+from .. import items as it
 from .. import trade as trade_mod
 
 
 class TradeMixin:
+    # Attributes WorldState.__init__ creates; declared so the mixin type-checks.
+    _lock: threading.Lock
+    items: it.ItemCache
+    trade: dict | None
+
     # ── Trade (UM-59) ──────────────────────────────────────────────────────
     # Every offered item's name is resolved best-effort via self.items (the
     # same item-template cache build_equipment_and_inventory uses) — a bare

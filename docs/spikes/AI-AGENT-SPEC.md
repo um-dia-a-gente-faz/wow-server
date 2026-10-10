@@ -1,5 +1,7 @@
 # AI Agent Gameplay — World of Warcraft (3.3.5a)
 
+> **Archived spec (2026-10-10, #365).** Not maintained. Superseded by [AGENT-DIRECTION.md](../AGENT-DIRECTION.md), which overrides it where they differ, and by [ADR 0001](../adr/0001-jev-in-the-think-loop.md) for the Jev decision brain. The text below is as it was at archive time and was not re-verified against the code.
+
 Specification for enabling autonomous AI agents to play World of Warcraft on a
 TrinityCore private server. Agents perceive the game world, make decisions, and
 execute actions through a structured API layer — no screen scraping, no bot

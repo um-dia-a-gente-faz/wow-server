@@ -1,0 +1,91 @@
+# Local dev stack (#389): world-mock + jev-mock + one agent + chat-feed + wowmap on a
+# fixture DB. No live server, no credentials: every value below is made up.
+#   dev/dev.sh up | down | logs | smoke        (run from anywhere)
+# Ports published on 127.0.0.1 only: wowmap 9400, chat-feed 9500, agent API 9601.
+name: wow-dev
+
+x-py: &py
+  image: python:3.12-slim
+  working_dir: /repo
+  volumes: ["..:/repo:ro"]
+  environment: &py-env
+    PYTHONUNBUFFERED: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+
+services:
+  world-mock:
+    <<: *py
+    command: python3 tools/world-mock/server.py
+    environment:
+      <<: *py-env
+      HOST: world-mock          # advertised in the realm list, so it must resolve for the agent
+      AUTH_PORT: "13724"
+      WORLD_PORT: "18085"
+
+  jev-mock:
+    <<: *py
+    command: python3 tools/jev-mock/server.py
+    environment:
+      <<: *py-env
+      HOST: 0.0.0.0
+      PORT: "8090"
+      JEV_MOCK_SEED: "1"
+
+  agent:
+    <<: *py
+    command: python3 -m agent
+    depends_on: [world-mock, jev-mock]
+    restart: on-failure
+    volumes: ["..:/repo:ro", "audit:/data/audit"]
+    ports: ["127.0.0.1:9601:9601"]
+    environment:
+      <<: *py-env
+      WOW_HOST: world-mock
+      WOW_AUTH_PORT: "13724"
+      WOW_ACCOUNT: MOCKUSER      # world-mock defaults (tools/world-mock/server.py)
+      WOW_PASSWORD: mockpass
+      WOW_CHARACTER: Luaprata
+      AGENT_NAME: Luaprata
+      AGENT_BRAIN: jev
+      JEV_BASE_URL: http://jev-mock:8090/api/alpha
+      AGENT_THINK_INTERVAL_S: "2"
+      AGENT_HTTP_PORT: "9601"
+      AGENT_HTTP_BIND: 0.0.0.0
+      AGENT_AUDIT_DIR: /data/audit
+
+  chat-feed:
+    <<: *py
+    command: sh -c "touch /tmp/Server.log && python3 -u tools/chat-feed/app.py"
+    ports: ["127.0.0.1:9500:9500"]
+    environment:
+      <<: *py-env
+      LOG_PATH: /tmp/Server.log
+
+  database:
+    image: mysql:8.4.4
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"   # throwaway fixture DB, not published
+    volumes: ["./fixture:/docker-entrypoint-initdb.d:ro"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot"]
+      interval: 5s
+      retries: 30
+
+  wowmap:
+    build: {context: ../tools, dockerfile: wowmap/Dockerfile}
+    depends_on:
+      database: {condition: service_healthy}
+    ports: ["127.0.0.1:9400:9400"]
+    volumes: ["audit:/audit:ro"]
+    environment:
+      MYSQL_HOST: database
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ""
+      ACTIVITY_DB: /tmp/activity.sqlite3
+      ACTIVITY_CHAT_FEED_URL: http://chat-feed:9500
+      CHAT_FEED_URL: http://chat-feed:9500
+      AUDIT_DIR: /audit
+      AGENT_API_URLS: Luaprata=http://agent:9601
+
+volumes:
+  audit:

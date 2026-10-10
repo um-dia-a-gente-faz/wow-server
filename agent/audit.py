@@ -122,7 +122,7 @@ class AuditLogger:
                confidence_rule: str | None = None, overridden: str | None = None,
                usage: dict | None = None,
                jev_status: str | None = None,
-               history_notes: list | None = None,
+               history_notes: list | None = None, prompt_id: str | None = None,
                substituted: bool = False, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snap: Snapshot | dict = snapshot or {}
@@ -144,6 +144,7 @@ class AuditLogger:
             usage={k: usage[k] for k in ("input_tokens", "output_tokens", "cost")
                    if isinstance(usage, dict) and isinstance(usage.get(k), (int, float))},
             jev_status=jev_status, history_notes=history_notes, substituted=substituted,
+            prompt_id=prompt_id,
             snapshot=snap if include_full else None,
         )
 

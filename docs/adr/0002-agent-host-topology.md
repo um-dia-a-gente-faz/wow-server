@@ -105,6 +105,24 @@ about the fleet means `wow-agents`.
 - **Runner writes into the git checkout.** Rejected: a dirty tracked file
   breaks the fast-forward auto-update silently.
 
+## Code layout (#279)
+
+The runner is split by job, not by feature, and the Docker socket is confined to one module:
+
+- `docker_backend.py` is the only code that runs `docker` or `git`. Its allow-list,
+  `check_names`, is the one place that decides which names may reach docker: the
+  roster's service and container names, nothing else. `inspect` and `compose` enforce it
+  before `subprocess` runs; `tests/test_docker_backend.py` proves it with `subprocess.run`
+  patched to raise.
+- `fleet.py` takes a backend in its constructor, so the fleet logic runs against
+  `FakeDockerBackend` in tests.
+- `handler.py` (HTTP) and `runner.py` (entry point, `Config`, `make_server`) sit above them;
+  `core.py` holds the shared error and scrubbing.
+
+The split changes no endpoint. Per-token labels and a read endpoint for the action log
+are not in it: they change the control-plane auth model (D2), so they wait for an owner
+decision and their own issue.
+
 ## Related tickets
 
 Milestone *console-v3-agent-control*: #134 (this ADR), #135 (provision

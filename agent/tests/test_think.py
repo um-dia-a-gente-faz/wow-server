@@ -496,6 +496,12 @@ class BrainSeamTest(unittest.TestCase):
         self.assertIsNone(rec["confidence"])
         self.assertIsNone(rec["fallback"])
 
+    def test_llm_prompt_id_reaches_the_audit_record(self):
+        llm = FakeLLMClient(action_name="test_action", params={"value": 7})
+        llm.last_prompt_id = "system@aaaaaaaa+goal.level_up@bbbbbbbb"
+        self._think(brain.Brain(llm=llm))
+        self.assertEqual(self.audit.records[-1]["prompt_id"], "system@aaaaaaaa+goal.level_up@bbbbbbbb")
+
     def test_bare_llm_client_is_wrapped_as_llm_brain(self):
         llm = FakeLLMClient(action_name="test_action", params={"value": 3})
         self.assertTrue(self._think(llm).ok)
