@@ -149,6 +149,47 @@ class MemoryTests(unittest.TestCase):
         m.flush()
         self.assertEqual(m.recall("goal", "x"), "y")
 
+    def test_in_memory_store_keeps_every_write_under_concurrent_reads(self):
+        # The shared-cache in-memory DB used to drop rows here ("database table is locked").
+        n = 10000
+        for _trial in range(3):
+            m = Memory(None, now=self.clock)
+            self.addCleanup(m.close)
+            stop = threading.Event()
+            errors = []
+
+            def reader(m=m, stop=stop, errors=errors):
+                try:
+                    while not stop.is_set():
+                        m.recall("action", "k5")
+                        m.recent("action", 10)
+                except Exception as e:   # the reader must never raise either
+                    errors.append(e)
+
+            r = threading.Thread(target=reader, daemon=True)
+            r.start()
+            for i in range(n):
+                m.remember("action", f"k{i}", i)
+            stop.set()
+            r.join(10)
+            m.flush()
+            self.assertEqual(errors, [])
+            self.assertEqual(len(m.recent("action", n + 10)), n)
+            self.assertEqual(m.recall("action", f"k{n - 1}"), n - 1)
+
+    def test_writes_queued_before_close_reach_the_file_without_flush(self):
+        m = self._open()
+        for i in range(500):
+            m.remember("action", f"k{i}", i)
+        m.close()                              # no flush(): close must drain the queue itself
+        again = self._open()
+        self.assertEqual(len(again.recent("action", 1000)), 500)
+        self.assertEqual(again.recall("action", "k499"), 499)
+
+    def test_writer_thread_is_a_daemon(self):
+        m = self._open()
+        self.assertTrue(m._thread.daemon)
+
 
 if __name__ == "__main__":
     unittest.main()

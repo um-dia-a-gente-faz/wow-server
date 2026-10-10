@@ -44,8 +44,10 @@ class Memory:
         self._warned = False
         self._ops: queue.SimpleQueue = queue.SimpleQueue()
         self._io = threading.Lock()         # the writer holds it per operation
-        self._read_lock = threading.Lock()  # one reader connection, used by one thread at a time
         self._writer, self._reader = _open(path, self._warn)
+        # Shared-cache in-memory mode has one connection; readers and the writer must take turns on it.
+        # Two connections there hit "database table is locked" and drop writes.
+        self._read_lock = self._io if self._reader is self._writer else threading.Lock()
         self._thread = threading.Thread(target=self._run, name="agent-memory-writer", daemon=True)
         self._thread.start()
 
@@ -136,7 +138,9 @@ class Memory:
 
 
 def _open(path: str | None, warn: Callable[[str, Exception], None]) -> tuple[sqlite3.Connection, sqlite3.Connection]:
-    """Return (writer, reader) connections to the store, migrated to SCHEMA_VERSION."""
+    """Return (writer, reader) connections to the store, migrated to SCHEMA_VERSION.
+
+    The reader is the writer itself for the in-memory store."""
     if path is not None:
         writer = None
         try:
@@ -150,11 +154,10 @@ def _open(path: str | None, warn: Callable[[str, Exception], None]) -> tuple[sql
             if writer is not None:
                 writer.close()
             warn(f"{path} unusable", e)
-    # A private shared-cache database: both connections see it, and it lives while the writer is open.
-    name = f"file:agent-memory-{uuid.uuid4().hex}?mode=memory&cache=shared"
-    writer = _connect(name, uri=True)
-    _migrate(writer)
-    return writer, _connect(name, uri=True)
+    # A private in-memory database. One connection: a second one to a shared cache would lock out the writer.
+    conn = _connect(f"file:agent-memory-{uuid.uuid4().hex}?mode=memory&cache=shared", uri=True)
+    _migrate(conn)
+    return conn, conn
 
 
 def _connect(target: str, uri: bool) -> sqlite3.Connection:
