@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from tools.loadtest import soak
@@ -64,6 +65,30 @@ class SoakTest(unittest.TestCase):
     def test_cpu_figures_total_and_steady(self):
         s = [{"t": 1.0, "cpu_s": 0.5}, {"t": 5.0, "cpu_s": 0.6}, {"t": 10.0, "cpu_s": 0.7}]
         self.assertEqual(soak.cpu_figures(s), {"cpu_pct_total": 7.0, "cpu_pct_steady": 2.0})
+
+    def test_container_items_counts_the_nested_caches(self):
+        from agent import handles, items, names, npc, quests
+        ws = SimpleNamespace(names=names.NameCache(), items=items.ItemCache(), quest_texts=quests.QuestCache(),
+                             npc_texts=npc.NpcTextCache(), handles=handles.HandleMap(), other=SimpleNamespace(x=[1]))
+        before = soak.container_items(ws)
+        ws.names.players[1] = "a"
+        ws.items.items[1] = {}
+        ws.quest_texts.quests[1] = {}
+        ws.npc_texts.texts[1] = {}
+        ws.handles.handle_for(1)       # one entry in each of _by_guid and _by_handle
+        self.assertEqual(soak.container_items(ws) - before, 6)
+
+    def test_packet_rate_is_packets_over_seconds(self):
+        self.assertEqual(soak.packet_rate(500, 10.0), 50.0)
+        self.assertIsNone(soak.packet_rate(5, 0))
+
+    def test_stream_run_reports_the_recv_packet_rate(self):
+        rep = soak.run_soak(2, 4, think_interval=0.05, sample_every=0.5, stream_hz=20)
+        self.assertEqual(rep["stream_hz"], 20)
+        # 3 packets per tick at 20 Hz = 60/s per agent, minus the login and start-up gap
+        self.assertGreater(rep["recv_packets_per_s_per_agent"], 30)
+        self.assertEqual(rep["dropped_packets"], 0)
+        self.assertGreater(rep["recv_packets_total"], 0)
 
     def test_smoke_three_agents_with_a_drop_and_a_reset(self):
         # The first two login attempts are faulted so recovery is exercised.

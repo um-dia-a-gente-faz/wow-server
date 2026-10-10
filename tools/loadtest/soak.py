@@ -22,6 +22,11 @@ for p in (ROOT, ROOT / "tools" / "world-mock"):
     sys.path.insert(0, str(p))
 import server  # noqa: E402  (tools/world-mock)
 
+from agent.handles import HandleMap  # noqa: E402
+from agent.items import ItemCache  # noqa: E402
+from agent.names import NameCache  # noqa: E402
+from agent.npc import NpcTextCache  # noqa: E402
+from agent.quests import QuestCache  # noqa: E402
 from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_connection  # noqa: E402
 
 PASSWORD = "soakpass"   # made-up, only ever registered in the throwaway mock
@@ -44,11 +49,25 @@ def read_rss_kb() -> int:
         return next(int(line.split()[1]) for line in f if line.startswith("VmRSS:"))
 
 
+NESTED = (NameCache, ItemCache, QuestCache, NpcTextCache, HandleMap)   # #421: caches hold the collections
+
+
 def container_items(*objs) -> int:
-    """Total len() of every list/dict/set/deque held directly by these objects: a crude
-    but uniform "does anything grow without bound" probe, no per-collection knowledge."""
+    """Total len() of every list/dict/set/deque held directly by these objects, and by the
+    NESTED caches they hold: a crude but uniform "does anything grow without bound" probe."""
     kinds = (list, dict, set, collections.deque)
-    return sum(len(v) for o in objs for v in getattr(o, "__dict__", {}).values() if isinstance(v, kinds))
+    total = 0
+    for o in objs:
+        for v in getattr(o, "__dict__", {}).values():
+            if isinstance(v, kinds):
+                total += len(v)
+            elif isinstance(v, NESTED):
+                total += container_items(v)
+    return total
+
+
+def packet_rate(packets: int, seconds: float):
+    return round(packets / seconds, 1) if seconds > 0 else None
 
 
 def pct(values, q):
@@ -111,6 +130,7 @@ class Agent:
             think_interval=think_interval, persona="")
         self.session = None
         self.builds = self.dropped = 0
+        self.packets = 0           # packets the recv loop read, over every session of this agent
         self.recoveries = []       # seconds from "went down" to "online again"
         self.down_since = None
         self.log = logging.getLogger("soak." + self.name)
@@ -120,6 +140,7 @@ class Agent:
         self.ticks.new_session()
         try:
             self.session = _connect_and_login(self.cfg, self.log)
+            self._count_packets(self.session)
         except Exception:
             self.down_since = self.down_since or time.monotonic()   # a failed login is still "down"
             raise
@@ -127,6 +148,17 @@ class Agent:
             self.recoveries.append(time.monotonic() - self.down_since)
             self.down_since = None
         return self.session
+
+    def _count_packets(self, sess):
+        """Count every packet the recv loop reads (its _recv_packet is looked up per call).
+        Only the recv thread calls it after login, so a plain int is enough."""
+        real = sess._recv_packet
+
+        def counted():
+            r = real()
+            self.packets += 1
+            return r
+        sess._recv_packet = counted
 
     def _run(self, sess):
         down = _run_think_loop(sess, self.cfg, self.deadline - time.monotonic(), time.monotonic())
@@ -157,12 +189,12 @@ def sample(agents, t0, cpu0):
 
 
 def run_soak(agents: int, duration: float, faults: str = "", think_interval: float = 0.1,
-             host: str = "127.0.0.1", sample_every: float = 1.0, allow_non_loopback: bool = False) -> dict:
+             host: str = "127.0.0.1", sample_every: float = 1.0, allow_non_loopback: bool = False, stream_hz: float = 0.0) -> dict:
     check_host(host, allow_non_loopback)
     plans = server.FaultPlan.parse(faults) if faults else [server.FaultPlan()]
     ticks = TickRecorder()    # allocated before rss0 is read: the measurement excludes it
     threads0, rss0 = threading.active_count(), read_rss_kb()
-    mock = server.WorldMock(host=host, faults=itertools.cycle(plans))
+    mock = server.WorldMock(host=host, faults=itertools.cycle(plans), stream_hz=stream_hz)
     mock.accounts = {f"SOAK{i}": PASSWORD for i in range(agents)}
     agent_log = logging.getLogger("agent")
     saved = (agent_log.level, agent_log.propagate, agent_log.handlers[:])
@@ -187,7 +219,7 @@ def run_soak(agents: int, duration: float, faults: str = "", think_interval: flo
         agent_log.handlers, agent_log.propagate = saved[2], saved[1]
         agent_log.setLevel(saved[0])
     time.sleep(0.5)    # let the mock's handler threads see the closed sockets and exit
-    return report(pool, mock, ticks, samples, think_interval, duration, threads0, rss0, faults)
+    return report(pool, mock, ticks, samples, think_interval, duration, threads0, rss0, faults, stream_hz)
 
 
 STEADY_FROM_S = 5.0    # skip the login burst (SRP) when taking the steady-state CPU figure
@@ -206,7 +238,7 @@ def cpu_figures(samples) -> dict:
     return {"cpu_pct_total": round(100 * last["cpu_s"] / max(last["t"], 1e-6), 1), "cpu_pct_steady": steady}
 
 
-def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, faults) -> dict:
+def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, faults, stream_hz=0.0) -> dict:
     n = len(pool)
     rec = [r for a in pool for r in a.recoveries]
     peak = max((s["rss_kb"] for s in samples), default=rss0)
@@ -227,6 +259,9 @@ def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, fault
         "recovery_s": {"count": len(rec), "p50": round(pct(rec, .5), 2) if rec else None,
                        "max": round(max(rec), 2) if rec else None},
         "dropped_packets": sum(a.dropped for a in pool),
+        "stream_hz": stream_hz, "recv_packets_total": sum(a.packets for a in pool),
+        "recv_packets_per_s_per_agent": packet_rate(sum(a.packets for a in pool), n * duration),
+        "recv_packets_per_agent": {str(i): packet_rate(a.packets, duration) for i, a in enumerate(pool)},
         "container_items": {"first": items[0] if items else None, "last": items[-1] if items else None,
                             "max": max(items, default=None)},
         "samples": samples,

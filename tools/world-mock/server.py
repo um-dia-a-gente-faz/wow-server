@@ -94,6 +94,13 @@ REALM_ID = 1
 UNIT_NPC_FLAG_QUESTGIVER = 0x2
 
 
+STREAM_POOL = 50
+STREAM_UNIT_BASE = 0xF130000000000000 | 0x10000     # HighGuid::Unit, low guid counter 0x10000..
+STREAM_UNIT_ENTRY = 9000
+STREAM_PLAYER_BASE = 0x1000
+STREAM_PACKETS_PER_TICK = 3
+
+
 def _le(n: int) -> bytes:
     return n.to_bytes(32, 'little')
 
@@ -189,10 +196,13 @@ def _recvn(sock, n: int) -> bytes:
 
 class WorldMock:
     def __init__(self, host="127.0.0.1", auth_port=0, world_port=0,
-                 account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD, faults=()):
+                 account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD, faults=(), stream_hz=0.0):
         """`faults`: an iterable of FaultPlan, one per login attempt in order; attempts
-        past its end get no faults (pass itertools.cycle(...) to repeat)."""
+        past its end get no faults (pass itertools.cycle(...) to repeat).
+        `stream_hz` (#421): after login, every client gets STREAM_PACKETS_PER_TICK packets
+        (update object, monster move, chat) stream_hz times a second; 0 sends nothing."""
         self.host = host
+        self.stream_hz = stream_hz
         self._faults = iter(faults)
         self._plans = {}           # account -> FaultPlan of its current login attempt
         self.auth_connections = 0
@@ -291,12 +301,8 @@ class WorldMock:
 
     # ── world server ─────────────────────────────────────────────────────
 
-    def _serve_world(self, sock):
-        with self._lock:
-            self.world_connections += 1
-        seed = os.urandom(4)
-        # AuthChallenge::Write: uint32 1, 4-byte challenge, 32-byte DoS challenge (unencrypted).
-        sock.sendall(bd.server_packet(op.SMSG_AUTH_CHALLENGE, struct.pack('<I', 1) + seed + os.urandom(32)))
+    def _read_auth_session(self, sock, seed: bytes):
+        """Read CMSG_AUTH_SESSION; (account, session key), key None when the digest is wrong."""
         # CMSG_AUTH_SESSION: unencrypted client header (BE16 size incl. 4 opcode bytes, LE32 opcode).
         hdr = _recvn(sock, 6)
         body = _recvn(sock, struct.unpack('>H', hdr[:2])[0] - 4)
@@ -307,6 +313,17 @@ class WorldMock:
         digest = body[end + 9 + 4 + 4 + 4 + 8:][:20]
         key = self.session_keys.get(account)
         if key is None or pk.sha1(account.encode(), b'\0' * 4, local_challenge, seed, key) != digest:
+            key = None
+        return account, key
+
+    def _serve_world(self, sock):
+        with self._lock:
+            self.world_connections += 1
+        seed = os.urandom(4)
+        # AuthChallenge::Write: uint32 1, 4-byte challenge, 32-byte DoS challenge (unencrypted).
+        sock.sendall(bd.server_packet(op.SMSG_AUTH_CHALLENGE, struct.pack('<I', 1) + seed + os.urandom(32)))
+        account, key = self._read_auth_session(sock, seed)
+        if key is None:
             sock.sendall(bd.server_packet(op.SMSG_AUTH_RESPONSE, bytes([0x0D])))    # AUTH_FAILED
             return
         crypt = cr.WorldCrypt(key)
@@ -339,15 +356,21 @@ class WorldMock:
         send(op.SMSG_TUTORIAL_FLAGS, b'\0' * 32)          # payload content is not read by the agent
 
         login_at = None             # monotonic time the delayed SMSG_LOGIN_VERIFY_WORLD is due
+        stream_at, stream_n = None, 0   # monotonic time the next stream tick is due; ticks sent
         last_ping, fast_pings = None, 0
         while True:
-            if login_at is not None:
-                wait = login_at - time.monotonic()
-                if wait <= 0:
-                    login_at = None
-                    self._enter_world(send)
-                elif not select.select([sock], [], [], wait)[0]:
-                    continue
+            now = time.monotonic()
+            if login_at is not None and login_at <= now:
+                login_at = None
+                self._enter_world(send)
+                stream_at = now if self.stream_hz else None
+            if stream_at is not None and stream_at <= now:
+                self._stream(send, stream_n)
+                stream_n += 1
+                stream_at = max(stream_at + 1 / self.stream_hz, now)   # no catch-up burst after a stall
+            due = [t for t in (login_at, stream_at) if t is not None]
+            if due and not select.select([sock], [], [], max(0.0, min(due) - now))[0]:
+                continue
             h = dec(_recvn(sock, 6))
             size, opcode = struct.unpack('>H', h[:2])[0], struct.unpack('<I', h[2:])[0]
             payload = _recvn(sock, size - 4)
@@ -367,6 +390,8 @@ class WorldMock:
                 login_at = time.monotonic() + plan.login_silence
             else:
                 self._on_packet(send, opcode, payload)
+                if opcode == op.CMSG_PLAYER_LOGIN and self.stream_hz:
+                    stream_at = time.monotonic()
 
     def _on_packet(self, send, opcode: int, payload: bytes):
         if opcode == op.CMSG_CHAR_ENUM:
@@ -392,6 +417,25 @@ class WorldMock:
         elif opcode == op.CMSG_LOGOUT_REQUEST:
             send(op.SMSG_LOGOUT_COMPLETE)
 
+    def _stream(self, send, n: int):
+        """One stream tick: a CREATE of a unit (guid cycles through STREAM_POOL, so the
+        world does not grow without bound by construction), a stop-move of it, and a say
+        from a cycling player guid. Layouts: update_object / SMSG_MONSTER_MOVE / SMSG_MESSAGECHAT
+        in docs/PROTOCOL-NOTES.md (TrinityCore 3.3.5 MovementPackets.cpp, ChatPackets.cpp)."""
+        x, y, z, o = SELF_POS
+        guid = STREAM_UNIT_BASE + n % STREAM_POOL
+        send(op.SMSG_UPDATE_OBJECT, bd.update_object(bd.object_block(
+            uo.UPDATETYPE_CREATE_OBJECT2, guid, uo.TYPEID_UNIT,
+            bd.stationary_movement(x + n % 7, y, z, o),
+            bd.values_body({uf.OBJECT_FIELD_ENTRY: STREAM_UNIT_ENTRY + n % STREAM_POOL,
+                            uf.UNIT_FIELD_LEVEL: 5, uf.UNIT_FIELD_HEALTH: 50, uf.UNIT_FIELD_MAXHEALTH: 50}))))
+        # MonsterMove::Write: packed guid, vehicle byte, start xyz, spline id, MONSTER_MOVE_STOP.
+        send(op.SMSG_MONSTER_MOVE, pk.pack_packed_guid(guid) + b'\0' + struct.pack('<3fIB', x, y, z, n, uo.MONSTER_MOVE_STOP))
+        # Chat::Write, CHAT_MSG_SAY: type, i32 lang, sender guid, u32 0, target guid, u32 len + text, tag.
+        text = f"stream {n}".encode() + b'\0'
+        send(op.SMSG_MESSAGECHAT, struct.pack('<BiQIQI', 1, 0, STREAM_PLAYER_BASE + n % STREAM_POOL, 0, 0, len(text))
+             + text + b'\0')
+
     def _enter_world(self, send):
         send(op.SMSG_LOGIN_VERIFY_WORLD, struct.pack('<I4f', MAP_ID, *SELF_POS))
         send(op.SMSG_UPDATE_OBJECT, (FIXTURES / "update_object" / "login_self_create.bin").read_bytes())
@@ -416,7 +460,8 @@ def main():
     mock = WorldMock(os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("AUTH_PORT", "13724")),
                      int(os.environ.get("WORLD_PORT", "18085")),
                      os.environ.get("MOCK_ACCOUNT", DEFAULT_ACCOUNT),
-                     os.environ.get("MOCK_PASSWORD", DEFAULT_PASSWORD), faults=faults)
+                     os.environ.get("MOCK_PASSWORD", DEFAULT_PASSWORD), faults=faults,
+                     stream_hz=float(os.environ.get("MOCK_STREAM_HZ", "0")))
     log.info("world-mock: auth %s:%d, world %s:%d", mock.host, mock.auth_port, mock.host, mock.world_port)
     threading.Event().wait()
 

@@ -13,6 +13,8 @@ def main(argv=None) -> int:
     ap.add_argument("--duration", type=float, default=60.0, help="seconds")
     ap.add_argument("--faults", default="", help="MOCK_FAULTS spec, repeated for the whole run")
     ap.add_argument("--think-interval", type=float, default=0.1)
+    ap.add_argument("--stream-hz", type=float, default=0.0,
+                    help="per-client mock stream ticks/s (3 packets each: update object, move, chat)")
     ap.add_argument("--host", default="127.0.0.1", help="loopback only")
     ap.add_argument("--allow-non-loopback", action="store_true", help="the mock still runs locally")
     ap.add_argument("--out", help="also write the JSON report here")
@@ -24,7 +26,7 @@ def main(argv=None) -> int:
         soak.check_comparable({"agents": a.agents, "duration_s": a.duration,
                                "think_interval_ms": a.think_interval * 1000}, baseline)
     rep = soak.run_soak(a.agents, a.duration, a.faults, a.think_interval, a.host,
-                        allow_non_loopback=a.allow_non_loopback)
+                        allow_non_loopback=a.allow_non_loopback, stream_hz=a.stream_hz)
     text = json.dumps(rep, indent=1)
     print(text)
     if a.out:

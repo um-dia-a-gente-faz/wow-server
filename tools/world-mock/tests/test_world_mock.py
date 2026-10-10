@@ -83,5 +83,28 @@ class WorldMockTest(unittest.TestCase):
             sess.logout()
 
 
+class StreamTest(unittest.TestCase):
+    def test_stream_sends_update_object_movement_and_chat_after_login(self):
+        mock = server.WorldMock(stream_hz=100)
+        self.addCleanup(mock.close)
+        cfg = SimpleNamespace(wow_host="127.0.0.1", wow_auth_port=mock.auth_port, account=server.DEFAULT_ACCOUNT,
+                              password=server.DEFAULT_PASSWORD, verbose_packets=False, dump_packets_dir="")
+        sess, chars = _authenticate_and_login(cfg, logging.getLogger("test"))
+        self.addCleanup(lambda: sess.sock and sess.sock.close())
+        sess.login_character(chars[0]["guid"])
+        try:
+            world = sess.world_state
+            self.assertTrue(wait_for(lambda: len(sess.chat_inbox) >= 10), "chat not streamed")
+            # CREATE blocks cycle through a bounded pool; every one of them was applied
+            self.assertTrue(wait_for(lambda: world.get_object(server.STREAM_UNIT_BASE + 5) is not None))
+            self.assertTrue(wait_for(lambda: sess.chat_inbox[-1]["text"].startswith("stream ")))
+            self.assertEqual(sess.dropped_packets, 0)   # monster move + chat parsed cleanly
+        finally:
+            sess.logout()
+
+    def test_no_stream_by_default(self):
+        self.assertEqual(server.WorldMock.__init__.__defaults__[-1], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
