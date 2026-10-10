@@ -7,6 +7,7 @@ import time
 
 from .. import npc
 from .. import quests as qu
+from ..rules import INTERACT_RANGE_YD
 from .base import (
     Action,
     ActionResult,
@@ -21,7 +22,7 @@ from .base import (
 
 # ── NPC interaction (UM-40) ───────────────────────────────────────────────
 # Depends on UM-36 (this Action framework) and UM-35 (name cache, which
-# feeds npc_flags detection via agent/perception.py — see ObjectInfo.
+# feeds npc_flags detection via agent/perception/objects.py — see ObjectInfo.
 # is_gossip/is_vendor/is_trainer/is_quest_giver). Opcodes/layouts live in
 # agent/npc.py; response parsing lands in agent.perception.WorldState's
 # ui_state, exposed to the LLM as snapshot()'s 'window' key.
@@ -32,7 +33,7 @@ class InteractAction(Action):
     description = ("Interact with a nearby NPC or gameobject by handle: opens its gossip, "
                     "vendor, or trainer window (whichever its flags indicate), or activates "
                     "it directly if it's a gameobject. Must be within "
-                    f"{npc.INTERACT_RANGE_YD} yd — use move_towards first if not.")
+                    f"{INTERACT_RANGE_YD} yd — use move_towards first if not.")
     params = {
         "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the NPC or gameobject to interact with."},
     }
@@ -45,9 +46,9 @@ class InteractAction(Action):
         if session.player_position is None:
             return "own position unknown"
         distance = target.distance_to(session.player_position)
-        if distance is not None and distance > npc.INTERACT_RANGE_YD:
+        if distance is not None and distance > INTERACT_RANGE_YD:
             return (f"guid {guid:#x} is {distance:.1f} yd away, out of interact range "
-                    f"({npc.INTERACT_RANGE_YD} yd) — try move_towards first")
+                    f"({INTERACT_RANGE_YD} yd) — try move_towards first")
         return None
 
     def execute(self, session, world, guid: int, **_) -> ActionResult:

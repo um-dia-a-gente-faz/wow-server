@@ -3,10 +3,40 @@
 Wire-format notes for the `agent/` client, **each checked against TrinityCore
 branch `3.3.5`** (paths relative to `src/server/game/`). Only add a line here if
 you checked it against that source too, and name the file it came from. The
-perception work that consumes this is tracked in Linear **UM-32** (block framing +
+perception work that consumes this is tracked in **UM-32** (block framing +
 movement block) and **UM-33** (VALUES_UPDATE mask + field mapping).
 
 All integers are little-endian.
+
+## Generated tables (`scripts/gen_protocol_tables.py`)
+
+The opcode table in `agent/opcodes.py` and the field indices in `agent/update_fields.py`
+(the text between `BEGIN GENERATED` and `END GENERATED`) are generated, never typed.
+`scripts/trinitycore-excerpt/` holds the lines of `Opcodes.h` and `UpdateFields.h` the
+agent uses, verbatim, with the TrinityCore commit they were read at; the same commit is
+written into each generated block. TrinityCore itself is not vendored.
+
+To add an opcode or a field, or to move the pin, fetch the source and regenerate:
+
+```bash
+git clone --depth 1 --branch 3.3.5 https://github.com/TrinityCore/TrinityCore /tmp/tc
+python3 scripts/gen_protocol_tables.py --source /tmp/tc \
+    --commit "$(git -C /tmp/tc rev-parse HEAD)" --add CMSG_LEARN_TALENT PLAYER_CHARACTER_POINTS1
+```
+
+- `--add` takes the names as the header spells them. `--source` may also be a directory
+  holding just the two headers. A name in neither header is an error and nothing is written.
+- A name the agent spells differently from the header goes in `OPCODE_NAMES` in the
+  script, and a one-line trailing note in `OPCODE_NOTES`. Hand-written constants and
+  comments go outside the markers.
+- `scripts/gen_protocol_tables.py` with no arguments rewrites the tables from the
+  excerpts. `--check` (run by `scripts/check.sh generated`, so by CI) fails when a
+  committed table differs from that output. It proves the tables match the excerpts;
+  only a `--source` run proves the excerpts match TrinityCore.
+- The pin is the `3.3.5` head of 2026-10-07. Between it and the commit the tables cited
+  before (`ed93932`, 2020) no value changed; four opcodes were renamed in the header
+  (`CMSG_ATTACK_SWING`, `CMSG_ATTACK_STOP`, `SMSG_QUEST_GIVER_QUEST_DETAILS`,
+  `SMSG_QUEST_GIVER_OFFER_REWARD_MESSAGE`), and the agent keeps its older names for them.
 
 ## Opcodes (`Server/Protocol/Opcodes.h`)
 
@@ -605,7 +635,7 @@ us.** `TradeData::SetItem`/`SetMoney` only ever call `Update(forTrader=true)`
 — which sends `SMSG_TRADE_STATUS_EXTENDED` to *the trade partner*, telling
 them about *our* new offer. Nothing equivalent goes back to the player who
 just changed their own offer (a real client already updated its own window
-optimistically the moment it sent the packet). So `agent/perception.py`'s
+optimistically the moment it sent the packet). So `agent/perception/`'s
 `world.trade["my_items"]`/`"my_gold"` are tracked client-side the moment
 `agent/actions/trade.py` sends `CMSG_SET_TRADE_ITEM`/`CMSG_SET_TRADE_GOLD` — only
 `their_items`/`their_gold` ever arrives from the server. What the sender

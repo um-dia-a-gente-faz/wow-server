@@ -39,6 +39,21 @@ class AuditLoggerWriteTest(unittest.TestCase):
         self.assertIsNone(recs[0]["brain"])
         self.assertIsNone(recs[0]["confidence"])
 
+    def test_failing_observer_is_counted_and_auditing_continues(self):
+        from agent import metrics
+        metrics.SWALLOWED.clear()
+        self.addCleanup(metrics.SWALLOWED.clear)
+
+        def boom(rec):
+            raise RuntimeError("observer down")
+        self.logger.on_record = boom
+        with self.assertLogs("agent.audit", level="ERROR"):
+            self.logger.record(cycle=1, snapshot={}, tool_call={"name": "face", "args": {}},
+                               valid=True, result={"ok": True})
+        self.assertEqual(metrics.SWALLOWED, {"audit.on_record": 1})
+        today = time.strftime("%Y-%m-%d")
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "TestAgent", f"{today}.jsonl")))
+
     def test_records_brain_and_jev_confidence(self):
         # UM-101: which brain decided, and Jev's confidence when it did.
         rec = self.logger.record(

@@ -17,7 +17,7 @@ def continent_position(t, cmap, zone, x, y):
 
     None in an instance, off the frame, and in the zones the game draws on another
     map's continent (Eversong, Azuremyst, ...): their coordinates are in map 530's
-    space, which that continent's rect does not cover (docs/MAP_ENGINE_SPIKE.md)."""
+    space, which that continent's rect does not cover (docs/spikes/MAP_ENGINE_SPIKE.md)."""
     if zone and t.display_map.get(zone, -1) >= 0:
         return None
     n = t.continent_normalised(cmap, x, y)

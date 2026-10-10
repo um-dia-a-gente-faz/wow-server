@@ -54,8 +54,11 @@ Brief for each author (give it the issue number, not a summary):
 
 - Read the issue in full with its comments, then `docs/AGENT-DIRECTION.md` for the area.
 - Branch `feature/gh-<n>-<slug>` or `bugfix/gh-<n>-<slug>` from `origin/main`, never stacked.
-- Build test-first with the least code (`tdd`, `ponytail`); use `trinity-protocol` for any
-  packet and `wowmap-dev` for `tools/wowmap`.
+- Develop the issue with the `/implement` skill (it drives `/tdd`; if the skill cannot be
+  invoked from an agent, read `.claude/skills/implement/SKILL.md` and follow it). Keep the
+  code minimal (`ponytail`); use `trinity-protocol` for any packet and `wowmap-dev` for
+  `tools/wowmap`. `/implement` ends with a `/code-review` self-pass and a commit: that does
+  not replace step 3, the separate reviewer still runs.
 - Run `scripts/check.sh` before opening the PR.
 - Open the PR from `.github/PULL_REQUEST_TEMPLATE.md`: title `gh-<n>: <summary>`,
   `Issue: gh-<n>`, `Closes #<n>`, and the marker `<!-- milestone-loop -->`. Watch CI to green,

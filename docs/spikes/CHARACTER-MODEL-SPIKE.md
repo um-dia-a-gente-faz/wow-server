@@ -1,5 +1,7 @@
 # Character 3D model spike (#171)
 
+> **Archived spike.** Outcome: go. Implemented as the inspect-drawer body model (`tools/wowmap/README.md`, Character model). Issue #171. Superseded by: nothing.
+
 **Result: go.** A race/gender body model renders in the inspect drawer, offline, with a
 vendored three.js and no build step. Equipment on the model is not done (out of scope for
 this issue; see *Next step*).

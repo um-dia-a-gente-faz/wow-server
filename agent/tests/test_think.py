@@ -4,7 +4,6 @@ action executed per cycle, with mocked Jev/LLM clients (no network)."""
 
 import os
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from agent import actions as ac
@@ -17,13 +16,11 @@ from agent import update_object as uo
 from agent.jev import JevError
 from agent.llm import LLMError
 from agent.think import think_and_act
+from agent.tests.builders import FakeSession
 
 
 def fake_session(race=10, player_guid=0x1, player_position=None):
-    sent = []
-    sess = SimpleNamespace(race=race, player_guid=player_guid, player_position=player_position)
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
-    sess._sent = sent
+    sess = FakeSession(race=race, player_guid=player_guid, player_position=player_position)
     return sess
 
 

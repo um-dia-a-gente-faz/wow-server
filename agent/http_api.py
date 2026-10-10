@@ -16,6 +16,7 @@ see agent/control.py). With no token configured every POST is still a 405.
     GET /brain       goal, brain (jev/llm), model, last decisions (from the audit records),
                      recent-action history, reflexes, token usage
     GET /events      Server-Sent Events: session.events + decisions
+    GET /metrics     Prometheus text: wow_agent_swallowed_errors_total{agent,where} (agent.metrics)
     POST /control/walk   operator walk, only with AGENT_CONTROL_TOKEN set (agent/control.py)
 
 Threading: the recv thread and the think loop mutate state; handlers only
@@ -41,6 +42,7 @@ from . import control
 from . import spells as sp
 from . import update_fields as uf
 from .audit import _redact
+from .metrics import render_swallowed, swallowed
 
 log = logging.getLogger("agent.http")
 
@@ -202,6 +204,7 @@ class AgentObserver:
             try:
                 reflexes = self.reflex_state_fn(self.session)
             except Exception:  # best effort, like __main__._reflex_state
+                swallowed("http.reflex_state", log, level=logging.WARNING)
                 reflexes = {}
         with self._lock:
             tokens = dict(self.tokens)
@@ -308,6 +311,14 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send_json(200, obs.brain(n))
             if path == "/events":
                 return self._stream_events()
+            if path == "/metrics":   # Prometheus text, not JSON; the swallowed-error counter (#306)
+                data = render_swallowed(obs.agent_name).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path == "/":
                 return self._send_json(200, {"endpoints": ["/healthz", "/state", "/perception",
                                                            "/brain", "/events"]})
@@ -315,7 +326,7 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except Exception:
-            log.exception("observer endpoint %s failed", path)
+            swallowed("http.endpoint", log, path)
             try:
                 self._send_json(500, {"error": "internal error"})
             except OSError:

@@ -9,7 +9,6 @@ Points: world.creature spawns for the zone + world.playercreateinfo start positi
 """
 import argparse
 import os
-import struct
 import sys
 
 from PIL import Image, ImageDraw

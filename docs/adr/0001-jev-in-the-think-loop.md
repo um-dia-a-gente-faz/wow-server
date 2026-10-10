@@ -10,7 +10,7 @@ Proposed
 (UM-44), an OpenAI-compatible tool-calling call to a free model
 (`docs/AGENT-DIRECTION.md` §3). This has been a persistent source of
 failures: `auto` routing measured ~50% valid tool-call rate
-(`docs/LLM_SPIKE.md`), and even pinned free models still fail to call tools
+(`docs/spikes/LLM_SPIKE.md`), and even pinned free models still fail to call tools
 reliably enough to clear UM-44's ≥90% bar without heavy validation
 scaffolding — UM-89 (64-bit GUIDs mangled by a float round-trip through the
 model's own text), UM-92 (unvalidated free-text chat/name arguments reaching

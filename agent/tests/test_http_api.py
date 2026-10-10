@@ -85,6 +85,15 @@ class EndpointsTest(_ServerCase):
             self.assertEqual(status, 200, path)
             self.assertIsInstance(json.loads(body), dict, path)
 
+    def test_metrics_exposes_the_swallowed_error_counter(self):
+        from agent import metrics
+        metrics.SWALLOWED["unit.http"] = 2
+        self.addCleanup(metrics.SWALLOWED.clear)
+        with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
+            self.assertTrue(r.headers.get_content_type().startswith("text/plain"))
+            text = r.read().decode("utf-8")
+        self.assertIn('wow_agent_swallowed_errors_total{agent="Luaprata",where="unit.http"} 2', text)
+
     def test_healthz(self):
         body = json.loads(self.get("/healthz")[1])
         self.assertEqual(body["agent"], "Luaprata")

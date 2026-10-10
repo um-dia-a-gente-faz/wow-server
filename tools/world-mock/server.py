@@ -33,17 +33,26 @@ payloads are built with agent/tests/builders.py (layouts cited there) because
 no live capture of those exists yet; `received` lets a test assert what the
 agent sent. The mock does not validate game rules (range, quest state).
 
+Fault injection (#339): WorldMock(faults=[FaultPlan(...), ...]) or MOCK_FAULTS makes
+a login attempt misbehave (drop, reset, truncate, stall, split writes, corrupt
+payload, bad header crypt, slow or rejected auth). See FaultPlan and the README.
+
     python3 tools/world-mock/server.py     # auth :13724, world :18085
-Environment: HOST, AUTH_PORT, WORLD_PORT, MOCK_ACCOUNT, MOCK_PASSWORD.
+Environment: HOST, AUTH_PORT, WORLD_PORT, MOCK_ACCOUNT, MOCK_PASSWORD, MOCK_FAULTS,
+MOCK_FAULTS_LOOP.
 """
 
+import dataclasses
+import itertools
 import logging
 import os
 import pathlib
+import select
 import socket
 import struct
 import sys
 import threading
+import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
@@ -116,6 +125,58 @@ class _Srp6Server:
         return K, pk.sha1(A, client_m1, K)
 
 
+@dataclasses.dataclass(frozen=True)
+class FaultPlan:
+    """What goes wrong during one login attempt: one auth connection and the world
+    connection that follows it. The default plan injects nothing. Fields compose.
+
+    World packets are numbered from 1 after the unencrypted SMSG_AUTH_CHALLENGE:
+    1 AUTH_RESPONSE, 2 TIME_SYNC_REQ, 3 TUTORIAL_FLAGS, 4 CHAR_ENUM,
+    5 LOGIN_VERIFY_WORLD, 6-8 the login burst (self, questgiver, quest log), then
+    the scripted replies."""
+    drop_after: int = 0      # hang up once this many world packets were sent (0 = never)
+    reset: bool = False      # ... with a TCP RST instead of a FIN
+    truncate: bool = False   # ... and only the first half of that last packet is sent
+    stall: float = 0.0       # seconds of silence (nothing sent or read, socket open) ...
+    stall_at: int = 1        # ... before this world packet
+    split_write: int = 0     # every write, auth and world, goes out in chunks of this many bytes
+    corrupt_opcode: int = 0  # this opcode keeps its header, the payload becomes 0xFF bytes
+    bad_crypt_from: int = 0  # from this world packet on, headers are sent unencrypted
+    slow_auth: float = 0.0   # seconds before the auth server answers the logon challenge
+    login_silence: float = 0.0  # seconds after CMSG_PLAYER_LOGIN before SMSG_LOGIN_VERIFY_WORLD (still reading, unlike stall)
+    overspeed_s: float = 0.0    # TrinityCore HandlePing: pings closer than this count, more than 2 of them kick (27 in TC, 0 = off)
+    auth_reject: int = 0     # logon challenge fails with this AuthResult (AuthCodes.h), e.g. 3 banned
+
+    @classmethod
+    def parse(cls, spec: str) -> list:
+        """MOCK_FAULTS: one plan per login attempt, ';' between plans, ',' between
+        fields, a bare flag means 1. "drop_after=8,reset;;split_write=3" resets the
+        first attempt, leaves the second alone and splits the third."""
+        types = {f.name: f.type for f in dataclasses.fields(cls)}
+        plans = []
+        for part in spec.split(';'):
+            kw = {}
+            for item in filter(None, (i.strip() for i in part.split(','))):
+                key, _, value = item.partition('=')
+                kw[key] = float(value) if types[key] is float else types[key](int(value or '1', 0))
+            plans.append(cls(**kw))
+        return plans
+
+
+NO_FAULTS = FaultPlan()
+# Pause between the chunks of a split write, so the client really sees partial reads
+# instead of the kernel handing it the coalesced packet.
+SPLIT_WRITE_PAUSE_S = 0.0005
+
+
+def _write(sock, data: bytes, plan: FaultPlan = NO_FAULTS):
+    if not plan.split_write:
+        return sock.sendall(data)
+    for i in range(0, len(data), plan.split_write):
+        sock.sendall(data[i:i + plan.split_write])
+        time.sleep(SPLIT_WRITE_PAUSE_S)
+
+
 def _recvn(sock, n: int) -> bytes:
     buf = b''
     while len(buf) < n:
@@ -128,10 +189,17 @@ def _recvn(sock, n: int) -> bytes:
 
 class WorldMock:
     def __init__(self, host="127.0.0.1", auth_port=0, world_port=0,
-                 account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD):
+                 account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD, faults=()):
+        """`faults`: an iterable of FaultPlan, one per login attempt in order; attempts
+        past its end get no faults (pass itertools.cycle(...) to repeat)."""
         self.host = host
+        self._faults = iter(faults)
+        self._plans = {}           # account -> FaultPlan of its current login attempt
+        self.auth_connections = 0
+        self.world_connections = 0
         self.accounts = {account.upper(): password}
         self.session_keys = {}     # account -> K of the last successful auth
+        self.ping_times = []       # monotonic arrival time of every CMSG_PING
         self.received = []         # (opcode, payload) of every post-login client packet
         self._lock = threading.Lock()
         self._auth = self._listen(auth_port, self._serve_auth)
@@ -169,6 +237,7 @@ class WorldMock:
 
     def close(self):
         for s in (self._auth, self._world):
+            s.shutdown(socket.SHUT_RDWR)   # wakes the accept() thread; close() alone leaves it blocked
             s.close()
 
     def packets_received(self, opcode: int) -> list:
@@ -180,26 +249,36 @@ class WorldMock:
     def _serve_auth(self, sock):
         # AUTH_LOGON_CHALLENGE: cmd, error, uint16 size, then 'WoW\0', version(3), build(2),
         # platform(4), os(4), locale(4), timezone(4), ip(4), uint8 name length, name.
+        with self._lock:
+            self.auth_connections += 1
+            plan = next(self._faults, NO_FAULTS)
         head = _recvn(sock, 4)
         body = _recvn(sock, pk.u16(head, 2))
         username = body[30:30 + body[29]].decode('ascii').upper()
+        time.sleep(plan.slow_auth)
+        if plan.auth_reject:
+            # AuthSession::LogonChallengeCallback failure: cmd, 0x00, AuthResult. TrinityCore
+            # leaves the socket open afterwards; the mock hangs up (see README, #405).
+            _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, plan.auth_reject]), plan)
+            return
+        self._plans[username] = plan
         password = self.accounts.get(username)
         if password is None:
             return                                  # unknown account: just hang up
         srp = _Srp6Server(username, password)
         # AuthSession::HandleLogonChallenge success layout (AuthSession.cpp).
-        sock.sendall(bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, 0]) + srp.B + bytes([1, SRP_G, 32])
-                     + _le(SRP_N) + srp.salt + au.VERSION_CHALLENGE + bytes([0]))
+        _write(sock, bytes([au.AUTH_CMD_LOGON_CHALLENGE, 0, 0]) + srp.B + bytes([1, SRP_G, 32])
+               + _le(SRP_N) + srp.salt + au.VERSION_CHALLENGE + bytes([0]), plan)
         # AUTH_LOGON_PROOF_C: cmd, A(32), M1(20), crc_hash(20), nKeys, securityFlags.
         proof = _recvn(sock, 75)
         res = srp.verify(proof[1:33], proof[33:53])
         if res is None:
-            sock.sendall(bytes([au.AUTH_CMD_LOGON_PROOF, 4]) + struct.pack('<H', 0))
+            _write(sock, bytes([au.AUTH_CMD_LOGON_PROOF, 4]) + struct.pack('<H', 0), plan)
             return
         K, m2 = res
         self.session_keys[username] = K
         # sAuthLogonProof_S: cmd, error, M2, AccountFlags(4), SurveyId(4), LoginFlags(2).
-        sock.sendall(bytes([au.AUTH_CMD_LOGON_PROOF, 0]) + m2 + struct.pack('<IIH', 0, 0, 0))
+        _write(sock, bytes([au.AUTH_CMD_LOGON_PROOF, 0]) + m2 + struct.pack('<IIH', 0, 0, 0), plan)
         _recvn(sock, 5)                              # REALM_LIST request: cmd + uint32
         # RealmListCallback (AuthSession.cpp): per realm type, locked, flags, name, address,
         # population, characters, timezone, id; then 0x10 0x00; header cmd + uint16 size,
@@ -207,11 +286,13 @@ class WorldMock:
         realm = (bytes([1, 0, 0]) + b"WorldMock\0" + f"{self.host}:{self.world_port}".encode() + b"\0"
                  + struct.pack('<f', 0.0) + bytes([3, 1, REALM_ID]))
         body = struct.pack('<IH', 0, 1) + realm + bytes([0x10, 0x00])
-        sock.sendall(bytes([au.AUTH_CMD_REALM_LIST]) + struct.pack('<H', len(body)) + body)
+        _write(sock, bytes([au.AUTH_CMD_REALM_LIST]) + struct.pack('<H', len(body)) + body, plan)
 
     # ── world server ─────────────────────────────────────────────────────
 
     def _serve_world(self, sock):
+        with self._lock:
+            self.world_connections += 1
         seed = os.urandom(4)
         # AuthChallenge::Write: uint32 1, 4-byte challenge, 32-byte DoS challenge (unencrypted).
         sock.sendall(bd.server_packet(op.SMSG_AUTH_CHALLENGE, struct.pack('<I', 1) + seed + os.urandom(32)))
@@ -230,23 +311,61 @@ class WorldMock:
         crypt = cr.WorldCrypt(key)
         # Server -> client uses the agent's recv stream, client -> server its send stream.
         enc, dec = crypt._recv.crypt, crypt._send.crypt
+        plan = self._plans.get(account.upper(), NO_FAULTS)
+        sent = 0
 
         def send(opcode: int, payload: bytes = b''):
-            h = enc(bd.tc_server_header(len(payload) + 2, opcode))
-            sock.sendall(h + payload)
+            nonlocal sent
+            sent += 1
+            if sent == plan.stall_at:
+                time.sleep(plan.stall)
+            if opcode == plan.corrupt_opcode:
+                payload = b'\xff' * len(payload)
+            h = bd.tc_server_header(len(payload) + 2, opcode)
+            if not 0 < plan.bad_crypt_from <= sent:
+                h = enc(h)
+            data = h + payload
+            last = sent == plan.drop_after
+            _write(sock, data[:len(data) // 2] if last and plan.truncate else data, plan)
+            if last:
+                if plan.reset:   # SO_LINGER {on, 0 s}: close() sends RST, not FIN
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                raise ConnectionAbortedError("fault plan: drop")
 
         # WorldSession::SendAuthResponse(AUTH_OK, shortForm): code, billing u32, flags u8, u32, expansion.
         send(op.SMSG_AUTH_RESPONSE, struct.pack('<BIBIB', 0x0C, 0, 0, 0, 2))
         send(op.SMSG_TIME_SYNC_REQ, struct.pack('<I', 0))
         send(op.SMSG_TUTORIAL_FLAGS, b'\0' * 32)          # payload content is not read by the agent
 
+        login_at = None             # monotonic time the delayed SMSG_LOGIN_VERIFY_WORLD is due
+        last_ping, fast_pings = None, 0
         while True:
+            if login_at is not None:
+                wait = login_at - time.monotonic()
+                if wait <= 0:
+                    login_at = None
+                    self._enter_world(send)
+                elif not select.select([sock], [], [], wait)[0]:
+                    continue
             h = dec(_recvn(sock, 6))
             size, opcode = struct.unpack('>H', h[:2])[0], struct.unpack('<I', h[2:])[0]
             payload = _recvn(sock, size - 4)
             with self._lock:
                 self.received.append((opcode, payload))
-            self._on_packet(send, opcode, payload)
+            if opcode == op.CMSG_PING:
+                now = time.monotonic()
+                self.ping_times.append(now)
+                if last_ping is not None and now - last_ping < plan.overspeed_s:
+                    fast_pings += 1
+                    if fast_pings > 2:      # MaxOverspeedPings; WorldSocket::HandlePing returns false
+                        raise ConnectionAbortedError("over-speed pings")
+                elif last_ping is not None:
+                    fast_pings = 0
+                last_ping = now
+            if opcode == op.CMSG_PLAYER_LOGIN and plan.login_silence:
+                login_at = time.monotonic() + plan.login_silence
+            else:
+                self._on_packet(send, opcode, payload)
 
     def _on_packet(self, send, opcode: int, payload: bytes):
         if opcode == op.CMSG_CHAR_ENUM:
@@ -267,6 +386,8 @@ class WorldMock:
                 slot = uf.PLAYER_QUEST_LOG_1_1
                 send(op.SMSG_UPDATE_OBJECT, bd.update_object(bd.values_block(
                     SELF_GUID, bd.values_body({slot: 0, slot + 1: 0}))))
+        elif opcode == op.CMSG_PING:
+            send(op.SMSG_PONG, payload[:4])      # HandlePing: SMSG_PONG echoes the uint32 ping id
         elif opcode == op.CMSG_LOGOUT_REQUEST:
             send(op.SMSG_LOGOUT_COMPLETE)
 
@@ -288,10 +409,13 @@ class WorldMock:
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    faults = FaultPlan.parse(os.environ.get("MOCK_FAULTS", ""))
+    if os.environ.get("MOCK_FAULTS_LOOP"):
+        faults = itertools.cycle(faults)
     mock = WorldMock(os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("AUTH_PORT", "13724")),
                      int(os.environ.get("WORLD_PORT", "18085")),
                      os.environ.get("MOCK_ACCOUNT", DEFAULT_ACCOUNT),
-                     os.environ.get("MOCK_PASSWORD", DEFAULT_PASSWORD))
+                     os.environ.get("MOCK_PASSWORD", DEFAULT_PASSWORD), faults=faults)
     log.info("world-mock: auth %s:%d, world %s:%d", mock.host, mock.auth_port, mock.host, mock.world_port)
     threading.Event().wait()
 

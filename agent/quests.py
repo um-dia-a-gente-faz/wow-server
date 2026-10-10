@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Quest system (UM-41): quest text query, questgiver flow (status/hello/
 accept/complete/turn-in) request builders + response parsers (pure, no I/O —
-see agent/session.py for opcodes' dispatch, agent/perception.py for
+see agent/session.py for opcodes' dispatch, agent/perception/windows.py for
 quest_giver_status on nearby NPCs and quest_log in snapshot()), plus a small
 QuestCache mirroring agent.names.NameCache's shape for static per-quest-id
 text (SMSG_QUEST_QUERY_RESPONSE), keyed by quest id.
@@ -22,7 +22,7 @@ import time
 from . import packets as pk
 
 # ── Opcodes ───────────────────────────────────────────────────────────────
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use quests.CMSG_*/SMSG_*)
     CMSG_QUEST_QUERY,
     SMSG_QUEST_QUERY_RESPONSE,
     CMSG_QUESTGIVER_STATUS_QUERY,
@@ -54,8 +54,6 @@ QUEST_REWARD_CHOICES_COUNT = 6
 QUEST_REWARD_ITEM_COUNT = 4
 QUEST_REWARD_REPUTATIONS_COUNT = 5
 PVP_TEAMS_COUNT = 2
-
-INTERACT_RANGE_YD = 5.0    # matches agent.npc.INTERACT_RANGE_YD
 
 # QuestGiverStatus (best-effort — SharedDefines.h `enum QuestGiverStatus` in
 # real TrinityCore mixes plain states and "reward" bit-flags; only the

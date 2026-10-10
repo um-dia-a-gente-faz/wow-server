@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Player-to-player trade (UM-59): opcode builders + response parsers (pure,
 no I/O — same split as agent/npc.py), for agent/session.py's dispatch and
-agent/perception.py's `world.trade` state.
+agent/perception/trade_state.py's `world.trade` state.
 
 Every wire layout below is copied from TrinityCore branch `3.3.5`:
   src/server/game/Server/Protocol/Opcodes.h (opcode values)
@@ -44,7 +44,7 @@ import struct
 from . import packets as pk
 
 # Opcodes (Opcodes.h)
-from .opcodes import (
+from .opcodes import (  # noqa: F401  (re-exported: callers use trade.CMSG_*/SMSG_*)
     CMSG_INITIATE_TRADE,
     CMSG_BEGIN_TRADE,
     CMSG_BUSY_TRADE,

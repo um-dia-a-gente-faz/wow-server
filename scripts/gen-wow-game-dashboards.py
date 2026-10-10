@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate the Grafana dashboards for the WoW server (game + realm health)."""
-import json
+import sys
+
+from genlib import dashboard_text, sync
 
 DS = {"type": "prometheus", "uid": "efnf4d4t8vsw0a"}
 GRID_W = 24
@@ -306,10 +308,6 @@ dash_realm = {
     "schemaVersion": 39, "version": 1, "panels": q,
 }
 
-for d in (dash_players, dash_realm):
-    fn = f"/root/{d['uid']}.json"
-    with open(fn, "w") as f:
-        json.dump(d, f, indent=2)
-    n = len([x for x in d["panels"] if x["type"] != "row"])
-    r = len([x for x in d["panels"] if x["type"] == "row"])
-    print(f"{fn}: {d['title']} — {n} painéis, {r} seções")
+sys.exit(max(sync(f"monitoring/grafana-dashboard-{d['uid']}.json", dashboard_text(d),
+                  "--check" in sys.argv, "scripts/gen-wow-game-dashboards.py")
+             for d in (dash_players, dash_realm)))

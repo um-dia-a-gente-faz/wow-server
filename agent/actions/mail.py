@@ -7,13 +7,13 @@ import time
 
 from .. import mail as mailmod
 from .. import update_fields as uf
+from ..rules import INTERACT_RANGE_YD
 from .base import (
     Action,
     ActionResult,
     DEFAULT_CONFIRM_POLL_S,
     DEFAULT_CONFIRM_TIMEOUT_S,
     _find_item_guid,
-    _record_event,
     _wait_for,
     _wait_for_value,
     register,
@@ -29,7 +29,7 @@ from .chat import (chat_text_error, player_name_error)
 
 def _find_nearby_mailbox(session, world):
     """Closest currently-perceived mailbox (ObjectInfo.is_mailbox()) within
-    MAILBOX_INTERACT_RANGE_YD, or None. A gameobject's type only becomes
+    INTERACT_RANGE_YD, or None. A gameobject's type only becomes
     known once its SMSG_GAMEOBJECT_QUERY_RESPONSE arrives (queued
     automatically the moment it's first perceived, same as its name) — a
     mailbox just perceived this instant may not be recognized yet."""
@@ -41,7 +41,7 @@ def _find_nearby_mailbox(session, world):
         if not obj.is_mailbox():
             continue
         dist = obj.distance_to(session.player_position)
-        if dist is None or dist > mailmod.MAILBOX_INTERACT_RANGE_YD:
+        if dist is None or dist > INTERACT_RANGE_YD:
             continue
         if best_dist is None or dist < best_dist:
             best, best_dist = obj, dist
@@ -68,7 +68,7 @@ def _mail_item_flags(world, bag: int, slot: int):
 @register
 class OpenMailboxAction(Action):
     name = "open_mailbox"
-    description = (f"Open the nearest mailbox within {mailmod.MAILBOX_INTERACT_RANGE_YD:.0f} yd "
+    description = (f"Open the nearest mailbox within {INTERACT_RANGE_YD:.0f} yd "
                     "and request its inbox (check the perception snapshot's `mailbox` after "
                     "calling this).")
     params = {}
@@ -147,7 +147,7 @@ class SendMailAction(Action):
             if is_soulbound:
                 return "item is soulbound and can't be mailed"
         postage = mailmod.MAIL_POSTAGE_COPPER
-        have = getattr(session, "coinage", 0) or 0
+        have = session.coinage or 0
         if postage + gold > have:
             return f"not enough gold (have {have}, need {postage + gold} including postage)"
         return None
@@ -188,14 +188,14 @@ class SendMailAction(Action):
                                    interval=self.confirm_interval)
         detail = {"to": to, "subject": subject, "gold": gold, "bag": bag, "slot": slot}
         if outcome is None:
-            _record_event(session, "mail_error", reason="no send-mail confirmation seen (timed out)", to=to)
+            session.record_event("mail_error", reason="no send-mail confirmation seen (timed out)", to=to)
             return ActionResult(ok=False, error="no send-mail confirmation seen (timed out)", detail=detail)
         detail["outcome"] = outcome
         if outcome["error_code"] != mailmod.MAIL_OK:
-            _record_event(session, "mail_error", reason=outcome["error_name"], to=to)
+            session.record_event("mail_error", reason=outcome["error_name"], to=to)
             return ActionResult(ok=False, error=outcome["error_name"], detail=detail)
         summary = {"to": to, "subject": subject, "gold": gold, "item_attached": bag is not None}
-        _record_event(session, "mail_sent", to=to, summary=summary)
+        session.record_event("mail_sent", to=to, summary=summary)
         return ActionResult(ok=True, detail=detail)
 
 
@@ -222,9 +222,9 @@ class TakeMailAction(Action):
             return f"mail_id {mail_id} is not in the open mailbox window"
         # A COD amount is charged automatically when taking the item(s) —
         # HandleMailTakeItem checks HasEnoughMoney(m->COD) server-side.
-        if mail["attachments"] and mail["cod"] > (getattr(session, "coinage", 0) or 0):
+        if mail["attachments"] and mail["cod"] > (session.coinage or 0):
             return (f"not enough gold to pay this mail's {mail['cod']} copper COD "
-                     f"(have {getattr(session, 'coinage', 0) or 0})")
+                     f"(have {session.coinage or 0})")
         return None
 
     def execute(self, session, world, mail_id: int, **_) -> ActionResult:

@@ -7,7 +7,6 @@ score each by how many real spawn points land on LAND pixels. The map art is war
 
 This is the check that settles the WorldMapArea layout empirically.
 """
-import itertools
 import os
 import struct
 import sys
