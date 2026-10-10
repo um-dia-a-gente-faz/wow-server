@@ -46,6 +46,21 @@ BASELINE = {
     "agent.tools.probe",
     "agent.transport",
     "agent.update_fields",
+    # tools/ (#379); wowmap modules are top-level names
+    "dbc.names",
+    "dbc.spelltext",
+    "loadtest.soak",
+    "activity",
+    "app",
+    "calibrate",
+    "extract_icons",
+    "extract_maps",
+    "fit_transform",
+    "fog",
+    "models",
+    "overlays",
+    "state",
+    "transform",
 }
 
 
@@ -61,13 +76,24 @@ def agent_modules():
             for p in (ROOT / "agent").rglob("*.py") if "tests" not in p.parts}
 
 
+def tools_modules():
+    """Names as mypy sees them: tools/wowmap is a base dir, other tools/<pkg> are packages."""
+    out = set()
+    for p in (ROOT / "tools").rglob("*.py"):
+        parts = p.relative_to(ROOT / "tools").with_suffix("").parts
+        if "tests" in parts or "node_modules" in parts:
+            continue
+        out.add(".".join(parts[1:] if parts[0] == "wowmap" else parts))
+    return out
+
+
 class MypyRatchet(unittest.TestCase):
     def test_legacy_never_grows(self):
         new = legacy_sections() - BASELINE
         self.assertFalse(new, f"new modules must type-check, not join legacy: {sorted(new)}")
 
     def test_legacy_entries_exist(self):
-        mods = agent_modules()
+        mods = agent_modules() | tools_modules()
         for pat in legacy_sections():
             prefix = pat[:-2] if pat.endswith(".*") else pat
             ok = any(m == prefix or m.startswith(prefix + ".") for m in mods)
@@ -76,7 +102,8 @@ class MypyRatchet(unittest.TestCase):
     def test_whole_agent_is_checked(self):
         cp = configparser.ConfigParser()
         cp.read(ROOT / "mypy.ini")
-        self.assertEqual(cp["mypy"]["files"].strip(), "agent")
+        files = {f.strip() for f in cp["mypy"]["files"].split(",")}
+        self.assertTrue({"agent", "tools/common", "tools/dbc", "tools/wowmap"} <= files)
 
 
 if __name__ == "__main__":
