@@ -269,10 +269,9 @@ def _supervise_connection(build_session, run_session, log,
 
     This is the inner layer on top of the outer `docker restart:
     unless-stopped`: it retries transient drops without the container
-    itself needing to restart. KeyboardInterrupt propagates straight out
-    (the per-attempt session.logout() below still runs first, via finally)
-    rather than being treated as a retryable failure — only main() decides
-    that Ctrl+C means "stop for good".
+    itself needing to restart. SIGTERM/SIGINT (#401) set `stop`: the per-attempt
+    session.logout() below still runs (via finally) and the supervisor returns
+    instead of reconnecting.
 
     `sleep` is injectable so tests can assert on backoff timing without
     actually waiting (see agent/tests/test_reconnect.py). By default the backoff
