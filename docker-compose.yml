@@ -18,6 +18,12 @@ services:
       # - TC_WORLD__Rate__Drop__Money=2
       # Improve movement-metric freshness for the observability stack (5 s saves).
       - TC_WORLD__PlayerSaveInterval=5000
+      # Persist max health/power to characters.character_stats on every save
+      # (Player::_SaveStats), so the wowmap inspect drawer can draw bars
+      # instead of bare numbers. Stock config writes nothing (MinLevel=0).
+      # See docs/HP_POWER_SPIKE.md section 5(d).
+      - TC_WORLD__PlayerSave__Stats__MinLevel=1
+      - TC_WORLD__PlayerSave__Stats__SaveOnlyOnLogout=0
       # - TC_WORLD__PlayerLimit=50
       # - TC_WORLD__Motd=Welcome to Pandora
       # Player chat reaches Server.log (tailed by tools/chat-feed) only through

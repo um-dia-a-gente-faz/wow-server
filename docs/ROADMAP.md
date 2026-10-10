@@ -243,6 +243,12 @@ the worldserver writes `maxhealth`/`maxpower1-7` to
 `characters.character_stats` on every 5 s save, then `LEFT JOIN` it in
 `fetch_character()`. Roughly 1 day, no core change.
 
+**Status:** the API join and drawer bars shipped (#88, UM-57), but the two
+keys were never added to `docker-compose.yml`, so `character_stats` stayed
+empty and the drawer kept falling back to numbers. The compose file now sets
+`TC_WORLD__PlayerSave__Stats__MinLevel=1` and
+`TC_WORLD__PlayerSave__Stats__SaveOnlyOnLogout=0`.
+
 ### Phase C — talent / reputation / achievement names
 
 The inspect API already returns talent spell IDs, faction IDs, and
