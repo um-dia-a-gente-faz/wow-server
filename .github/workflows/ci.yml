@@ -173,7 +173,7 @@ jobs:
     # backup-db.sh / restore-db.sh run unmodified; they docker-exec into DB_CONTAINER.
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.4.4  # same as the VM (docker-compose.yml)
         env:
           MYSQL_ROOT_PASSWORD: ci-backup-test
         options: >-
@@ -184,7 +184,7 @@ jobs:
       - name: Backup then restore, row counts must match
         run: |
           set -euo pipefail
-          export DB_CONTAINER=$(docker ps --filter ancestor=mysql:8.0 --format '{{.ID}}' | head -1)
+          export DB_CONTAINER=$(docker ps --filter name=mysql --format '{{.ID}}' | head -1)
           [ -n "$DB_CONTAINER" ]
           sql() { docker exec -i "$DB_CONTAINER" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N'; }
           sql <<'SQL'
@@ -196,10 +196,12 @@ jobs:
           SQL
           count() { echo "SELECT COUNT(*) FROM $1" | sql; }
           a=$(count auth.account); c=$(count characters.characters)
-          [ "$a" = 3 ] && [ "$c" = 5 ]
+          [ "$a" = 3 ]
+          [ "$c" = 5 ]
           export BACKUP_DIR="$RUNNER_TEMP/backups"
           scripts/backup-db.sh
           echo "DROP DATABASE auth; DROP DATABASE characters;" | sql
           for db in auth characters; do scripts/restore-db.sh "$BACKUP_DIR"/$db-*.sql.gz; done
-          [ "$(count auth.account)" = "$a" ] && [ "$(count characters.characters)" = "$c" ]
+          [ "$(count auth.account)" = "$a" ]
+          [ "$(count characters.characters)" = "$c" ]
           echo "restored: auth.account=$a characters.characters=$c"
