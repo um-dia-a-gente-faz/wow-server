@@ -7,6 +7,7 @@ import unittest
 
 from agent import actions as ac
 from agent import candidates as cand
+from agent import death  # noqa: F401  registers release_spirit/reclaim_corpse
 from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
