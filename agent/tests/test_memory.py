@@ -170,12 +170,41 @@ class MemoryTests(unittest.TestCase):
             r.start()
             for i in range(n):
                 m.remember("action", f"k{i}", i)
+            m.flush()                          # reads overlap the writes: flush before stopping the reader
             stop.set()
             r.join(10)
-            m.flush()
             self.assertEqual(errors, [])
             self.assertEqual(len(m.recent("action", n + 10)), n)
             self.assertEqual(m.recall("action", f"k{n - 1}"), n - 1)
+
+    def test_close_while_readers_run_on_the_in_memory_store_neither_crashes_nor_hangs(self):
+        # The writer used to close the shared in-memory connection without the lock the readers hold.
+        m = Memory(None, now=self.clock)
+        for i in range(2000):
+            m.remember("action", f"k{i}", i)
+        m.flush()
+        stop = threading.Event()
+        errors = []
+
+        def reader():
+            try:
+                while not stop.is_set():
+                    m.recall("action", "k5")
+                    m.recent("action", 10)
+            except Exception as e:
+                errors.append(e)
+
+        readers = [threading.Thread(target=reader, daemon=True) for _ in range(3)]
+        for r in readers:
+            r.start()
+        closer = threading.Thread(target=m.close, daemon=True)
+        closer.start()
+        closer.join(5)
+        self.assertFalse(closer.is_alive(), "close() hung while readers ran")
+        stop.set()
+        for r in readers:
+            r.join(5)
+        self.assertEqual(errors, [])
 
     def test_writes_queued_before_close_reach_the_file_without_flush(self):
         m = self._open()

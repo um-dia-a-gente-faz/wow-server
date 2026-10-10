@@ -24,8 +24,9 @@ goal. An unattended run that restarts mid-way starts blind (#98).
   `recall(kind, key)`, `recent(kind, n)` (newest write first), `flush()`, `close()`.
   `value` is stored as JSON. `ttl` is in seconds; `None` never expires.
 - Writes go through one writer thread (daemon) and a queue, so `remember` returns without
-  touching the disk. Reads use a second connection. `flush()` waits for the queue, and
-  `close()` drains it, stops the writer and closes both connections.
+  touching the disk. Reads use a second connection; in the in-memory store there is one
+  connection, shared by the readers and the writer behind one lock. `flush()` waits for the
+  queue, and `close()` drains it, stops the writer and closes the connections.
 - Schema version is `PRAGMA user_version`. Migrations are forward-only: a list of SQL
   strings in `MIGRATIONS`, each applied in its own transaction, with the version bumped in
   the same transaction. Never edit a migration that has shipped; append one.

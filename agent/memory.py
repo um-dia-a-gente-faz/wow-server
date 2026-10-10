@@ -6,8 +6,8 @@ the consumers that wire it in (and the volume) come in later PRs. Memory is advi
 validate a recalled value against live perception before acting on it.
 
 Writes go through one writer thread and a queue, so `remember` never waits on disk.
-`recall` and `recent` read through a second connection; call `flush()` first to see
-your own writes from the same process. A missing directory is created; a corrupt or
+`recall` and `recent` read through a second connection (in-memory mode: the same connection,
+behind the same lock). Call `flush()` first to see your own writes from the same process. A missing directory is created; a corrupt or
 too-new file degrades to an empty in-memory store. No public method raises.
 See docs/adr/0011-agent-memory-store.md.
 """
@@ -119,7 +119,8 @@ class Memory:
                     except sqlite3.Error as e:
                         self._warn("write failed", e)
         finally:
-            self._writer.close()
+            with self._io:   # in-memory mode shares this connection with the readers
+                self._writer.close()
 
     def _read(self, sql: str, params: tuple) -> list:
         if self._closed:
