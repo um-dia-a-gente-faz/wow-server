@@ -1,0 +1,11 @@
+# Prometheus alert rules; add to rule_files in /opt/pandora/prometheus/prometheus.yml on VM201.
+groups:
+  - name: wow-agent
+    rules:
+      - alert: AgentSwallowedErrors
+        expr: sum by (agent, where) (rate(wow_agent_swallowed_errors_total[5m])) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.agent }} keeps swallowing errors at {{ $labels.where }}"
+          description: "An exception is caught and logged, not raised, at this call site for 10m. Read the agent log for the traceback."

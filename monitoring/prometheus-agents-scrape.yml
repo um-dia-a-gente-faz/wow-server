@@ -1,0 +1,10 @@
+# Prometheus scrape job for each agent's GET /metrics (wow_agent_swallowed_errors_total, #306).
+# Merge under `scrape_configs:` in /opt/pandora/prometheus/prometheus.yml on VM201.
+# Agent N (1-based, agents/roster.json order) serves on 9600+N (docker-compose.agents.yml)
+# on the wow-agents host; the `agent` label comes from the metric itself.
+# Separate from the audit-derived wow_agent_* series (agent_metrics_textfile.py).
+- job_name: "wow_agent_http"
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["wow-agents.lan:9601", "wow-agents.lan:9602", "wow-agents.lan:9603", "wow-agents.lan:9604", "wow-agents.lan:9605", "wow-agents.lan:9606", "wow-agents.lan:9607", "wow-agents.lan:9608", "wow-agents.lan:9609", "wow-agents.lan:9610", "wow-agents.lan:9611", "wow-agents.lan:9612", "wow-agents.lan:9613", "wow-agents.lan:9614", "wow-agents.lan:9615", "wow-agents.lan:9616", "wow-agents.lan:9617", "wow-agents.lan:9618", "wow-agents.lan:9619", "wow-agents.lan:9620", "wow-agents.lan:9621", "wow-agents.lan:9622", "wow-agents.lan:9623", "wow-agents.lan:9624", "wow-agents.lan:9625"]
+      labels: {host: "wow-agents"}
