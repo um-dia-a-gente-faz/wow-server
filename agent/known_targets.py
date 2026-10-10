@@ -2,7 +2,7 @@
 """Known-good live-test targets: the Sunstrider Isle start area.
 
 One place for the NPCs and mobs a scripted check may walk to, so the
-capability probe (agent/tools/probe.py, #139) and the Phase 3 work (#98) agree
+capability probe (tools/agent_dev/probe.py, #139) and the Phase 3 work (#98) agree
 on them. Data only. Sources: .claude/skills/live-agent-test/SKILL.md ("Who is
 where") and docs/AGENT-RUN-1-10.md.
 

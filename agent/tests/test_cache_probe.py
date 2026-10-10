@@ -1,4 +1,4 @@
-"""Unit tests for agent.tools.cache_probe (#167): the situation key and the
+"""Unit tests for tools.agent_dev.cache_probe (#167): the situation key and the
 repeat/agreement arithmetic, on the candidate-generator fixtures."""
 
 import copy
@@ -7,7 +7,7 @@ import os
 import unittest
 
 from agent import candidates as cand
-from agent.tools import cache_probe as cp
+from tools.agent_dev import cache_probe as cp
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "candidates")
 

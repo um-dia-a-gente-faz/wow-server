@@ -3,7 +3,10 @@
 Covers the #253 acceptance: login, update objects, a quest turn-in action and
 the server's confirmation, all over real localhost sockets."""
 
+import collections
 import logging
+import struct
+import zlib
 import pathlib
 import sys
 import time
@@ -81,6 +84,63 @@ class WorldMockTest(unittest.TestCase):
             self.assertEqual(sess.dropped_packets, 0)
         finally:
             sess.logout()
+
+
+class StreamTest(unittest.TestCase):
+    def test_stream_sends_update_object_movement_and_chat_after_login(self):
+        mock = server.WorldMock(stream_hz=100)
+        self.addCleanup(mock.close)
+        cfg = SimpleNamespace(wow_host="127.0.0.1", wow_auth_port=mock.auth_port, account=server.DEFAULT_ACCOUNT,
+                              password=server.DEFAULT_PASSWORD, verbose_packets=False, dump_packets_dir="")
+        sess, chars = _authenticate_and_login(cfg, logging.getLogger("test"))
+        self.addCleanup(lambda: sess.sock and sess.sock.close())
+        seen = collections.Counter()
+        real = sess._dispatch
+
+        def counting(opcode, payload):
+            seen[opcode] += 1
+            return real(opcode, payload)
+        sess._dispatch = counting
+        sess.login_character(chars[0]["guid"])
+        try:
+            world = sess.world_state
+            self.assertTrue(wait_for(lambda: len(sess.chat_inbox) >= 10), "chat not streamed")
+            self.assertTrue(wait_for(lambda: seen[op.SMSG_MONSTER_MOVE] >= 10), "movement not streamed")
+            self.assertTrue(wait_for(lambda: seen[op.SMSG_COMPRESSED_UPDATE_OBJECT] >= 10))
+            # CREATE blocks cycle through a bounded pool; every one of them was applied
+            self.assertTrue(wait_for(lambda: world.get_object(server.STREAM_UNIT_BASE + 5) is not None))
+            self.assertTrue(wait_for(lambda: sess.chat_inbox[-1]["text"].startswith("stream ")))
+            self.assertEqual(sess.dropped_packets, 0)   # monster move + chat parsed cleanly
+        finally:
+            sess.logout()
+
+    def test_stream_payloads_are_byte_exact_trinitycore_layouts(self):
+        """Golden bytes for tick n=3, written from the TrinityCore 3.3.5 layouts (cited in
+        server.stream_packets), not from the agent's parsers: exact length, exact bytes."""
+        (uop, update), (mop, move), (cop, chat) = server.stream_packets(3)
+        # MonsterMove::Write: packed guid 0xF130000000010003 (mask 0xC5 + 4 bytes), u8 0, xyz, u32 id, u8 Face=1
+        x, y, z, _o = server.SELF_POS
+        self.assertEqual((mop, move), (op.SMSG_MONSTER_MOVE,
+                         bytes([0xC5, 0x03, 0x01, 0x30, 0xF1, 0]) + struct.pack('<3fIB', x, y, z, 3, 1)))
+        self.assertEqual(len(move), 23)
+        # Chat::Write CHAT_MSG_SAY: type, lang, sender, 0, target, len, "stream 3\0", tag
+        self.assertEqual((cop, chat), (op.SMSG_MESSAGECHAT,
+                         b'\x01' + struct.pack('<iQIQI', 0, 0x1003, 0, 0, 9) + b'stream 3\0' + b'\0'))
+        self.assertEqual(len(chat), 39)
+        # a unit create is > 100 bytes, so UpdateData::BuildPacket sends it compressed
+        self.assertEqual(uop, op.SMSG_COMPRESSED_UPDATE_OBJECT)
+        size = struct.unpack_from('<I', update)[0]
+        raw = zlib.decompress(update[4:])
+        self.assertEqual((len(raw), size), (124, 124))
+        movement = struct.pack('<HIHI4fI', 0x60, 0, 0, 1000, x + 3, y, z, server.SELF_POS[3], 0) \
+            + struct.pack('<9f', 2.5, 7.0, 4.5, 4.72, 2.5, 7.0, 4.5, 3.14, 3.14)
+        head = struct.pack('<IB', 1, 3) + bytes([0xC5, 0x03, 0x01, 0x30, 0xF1]) + b'\x03'   # count, CREATE_OBJECT2, guid, TYPEID_UNIT
+        self.assertEqual(raw[:len(head) + 68], head + movement)
+        # values: 1+3*4 mask bytes, then 8 uint32 (fields 2,3,4,level,health,maxhealth,faction,display)
+        self.assertEqual(len(raw), len(head) + 68 + 1 + 3 * 4 + 8 * 4)
+
+    def test_no_stream_by_default(self):
+        self.assertEqual(server.WorldMock.__init__.__defaults__[-1], 0.0)
 
 
 if __name__ == "__main__":

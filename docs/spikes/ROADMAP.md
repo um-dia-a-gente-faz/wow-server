@@ -146,7 +146,7 @@ Still open, in order:
    persists one JSONL record per think cycle (snapshot/hash, tool call,
    validity, result, tokens, latency, reflex state, goal) to
    `AGENT_AUDIT_DIR/<agent>/<YYYY-MM-DD>.jsonl` (size-rotated, retained for
-   `AGENT_AUDIT_RETENTION_DAYS`). `python3 -m agent.tools.replay` renders it
+   `AGENT_AUDIT_RETENTION_DAYS`). `python3 -m tools.agent_dev.replay` renders it
    as a timeline; `agent/metrics.py` + `monitoring/agent_metrics_textfile.py`
    derive counters/histograms (cycles, valid/invalid tool-call rate, actions
    by name/outcome, tokens, LLM latency, deaths, level-ups, XP/hour) for

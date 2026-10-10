@@ -93,3 +93,11 @@ then starts over. Packet numbers count what the mock sends on one connection: 8 
 per login and only a handful of scripted replies after that (it does not answer
 `CMSG_PING` or `CMSG_KEEP_ALIVE`), so a fault set past 8 never fires. The harness reads recovery from the agent side (reconnect count, time
 back to "online", thread count, `dropped_packets`).
+
+## Per-client stream (#421)
+
+`WorldMock(stream_hz=N)` / env `MOCK_STREAM_HZ=N`: after login each client gets N ticks a
+second of 3 packets: a CREATE_OBJECT2 unit (LIVING|STATIONARY_POSITION movement block with MovementInfo and 9 speeds, sent as SMSG_COMPRESSED_UPDATE_OBJECT as TrinityCore does above 100 bytes; guid cycles through 50 and nothing goes out of range, so `objects` cannot grow by construction), an SMSG_MONSTER_MOVE
+stop for it, and an SMSG_MESSAGECHAT say from a cycling player guid. Default 0 = nothing.
+`tools/loadtest --stream-hz` drives it. Layouts: docs/PROTOCOL-NOTES.md (TrinityCore 3.3.5).
+Stream packets count towards a fault plan's `drop_after`/`stall_at`, so those can fire with `stream_hz > 0`.

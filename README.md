@@ -144,7 +144,7 @@ This repo follows [Conventional Commits](https://www.conventionalcommits.org/) â
 
 ## Offline brain A/B replay
 
-`python3 -m agent.tools.ab` replays full snapshots in agent audit JSONL files
+`python3 -m tools.agent_dev.ab` replays full snapshots in agent audit JSONL files
 through the registered-action LLM tools and Jev candidate choices, then writes
 a comparable JSON result (default `ab-results.json`). Copy an audit file from
 the VM's `/opt/wow-server-metrics/audit/<agent>/<day>.jsonl` to this checkout;
@@ -152,7 +152,7 @@ the harness does not connect to the realm. For example:
 
 ```sh
 LLM_BASE_URL=https://your-llm-gateway/v1 LLM_MODEL=your-model \
-JEV_API_KEY="$JEV_API_KEY" python3 -m agent.tools.ab /path/to/2026-10-04.jsonl \
+JEV_API_KEY="$JEV_API_KEY" python3 -m tools.agent_dev.ab /path/to/2026-10-04.jsonl \
   --brains llm,jev --from 20 --limit 50 --max-calls 100 \
   --estimated-cost-per-call 0 --output docs/ab-run.json
 ```

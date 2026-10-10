@@ -92,7 +92,7 @@ Never trust only the agent's own view:
 
 ## Capability probe
 
-`python3 -m agent.tools.probe --help` runs login, chat, move, quest, combat, loot and
+`python3 -m tools.agent_dev.probe --help` runs login, chat, move, quest, combat, loot and
 rest as one scripted pass (#139). It is **manual-only and counts as a human
 intervention** under `docs/AGENT-RUN-1-10.md`: never during a counted run, never
 scheduled. Fixtures (`agent/known_targets.py`) are the NPCs and mobs in the table above.
