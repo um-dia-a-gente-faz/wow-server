@@ -214,7 +214,7 @@ class FaultInjectionTest(unittest.TestCase):
         sess = self.login()
         self.assertTrue(wait_for(lambda: burst_applied(sess)))
         self.assertTrue(wait_for(lambda: len(self.mock.ping_times) >= 2, 5.0), "no periodic ping")
-        gaps = [b - a for a, b in zip(self.mock.ping_times, self.mock.ping_times[1:])]
+        gaps = [b - a for a, b in zip(self.mock.ping_times, self.mock.ping_times[1:], strict=False)]
         self.assertGreaterEqual(min(gaps), self.OVERSPEED_S)
         self.assertEqual(self.mock.world_connections, 1)
         self.assertTrue(sess.recv_thread_alive())
