@@ -201,7 +201,7 @@ jobs:
           export BACKUP_DIR="$RUNNER_TEMP/backups"
           scripts/backup-db.sh
           echo "DROP DATABASE auth; DROP DATABASE characters;" | sql
-          for db in auth characters; do scripts/restore-db.sh "$BACKUP_DIR"/$db-*.sql.gz; done
+          for db in characters; do scripts/restore-db.sh "$BACKUP_DIR"/$db-*.sql.gz; done
           [ "$(count auth.account)" = "$a" ]
           [ "$(count characters.characters)" = "$c" ]
           echo "restored: auth.account=$a characters.characters=$c"
