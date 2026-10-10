@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import generate  # noqa: E402
 import genlib  # noqa: E402
+import gen_protocol_tables  # noqa: E402
 
 
 class GenerateTest(unittest.TestCase):
@@ -36,6 +37,27 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(generate.main(["--check"]), 0)
         finally:
             doc.write_text(good)
+
+    def test_protocol_tables_generator_is_registered(self):
+        """Verify that scripts/gen_protocol_tables.py is in GENERATORS (#381)."""
+        self.assertIn(["scripts/gen_protocol_tables.py"], generate.GENERATORS)
+
+    def test_protocol_table_drift_is_detected(self):
+        """Verify that generate --check fails when agent/opcodes.py is hand-edited (#381)."""
+        opcodes = ROOT / "agent" / "opcodes.py"
+        good = opcodes.read_text()
+        try:
+            # Introduce a drift in the generated section by editing a value
+            edited = good.replace("= 0x10A", "= 0x0A8")
+            opcodes.write_text(edited)
+            # Verify that generate --check detects the drift
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = generate.main(["--check"])
+            self.assertEqual(rc, 1)
+            self.assertIn("gen_protocol_tables.py", err.getvalue())
+        finally:
+            opcodes.write_text(good)
 
 
 if __name__ == "__main__":
