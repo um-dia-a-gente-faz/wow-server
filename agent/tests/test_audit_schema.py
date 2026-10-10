@@ -43,8 +43,18 @@ class GoldenUpgradeTests(unittest.TestCase):
         self.assertEqual(out["legacy_field"], "kept")
         self.assertNotIn("extra", out)
 
-    def test_v1_lines_round_trip_exactly(self):
+    def test_v1_lines_upgrade_to_v2_with_no_prompt_id(self):
         for line in _lines("v1.jsonl"):
+            up = AuditRecord.from_json(line).to_json()
+            self.assertEqual(up["schema"], 2)
+            self.assertIsNone(up["prompt_id"])
+            self.assertEqual({k: v for k, v in up.items() if k not in ("schema", "prompt_id")},
+                             {k: v for k, v in line.items() if k != "schema"})
+
+    def test_v2_lines_round_trip_exactly(self):
+        lines = _lines("v2.jsonl")
+        self.assertEqual(lines[0]["prompt_id"], "system@1a2b3c4d+goal.level_up@5e6f7a8b")
+        for line in lines:
             self.assertEqual(AuditRecord.from_json(line).to_json(), line)
 
     def test_to_json_puts_schema_first(self):
@@ -101,6 +111,7 @@ class WriterContractTests(unittest.TestCase):
                 confidence_threshold=0.5, confidence_rule="acted", overridden=None,
                 usage={"input_tokens": 1, "output_tokens": 2, "cost": 0.1},
                 jev_status="success", history_notes=[{"id": "x"}], substituted=False,
+                prompt_id="system@abcd1234",
                 ts=1731000000.0)
             (path,) = glob.glob(os.path.join(tmp, "Jev1", "*.jsonl"))
             with open(path, encoding="utf-8") as f:

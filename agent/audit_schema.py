@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, fields
 
 from .model import Snapshot
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: prompt_id (#395)
 
 
 @dataclass
@@ -49,6 +49,8 @@ class AuditRecord:
     jev_status: str | None = None            # Jev's status for the cycle, e.g. "budget_exhausted"
     history_notes: list | None = None        # candidates dropped/demoted by recent action history
                                              # ({"id", "effect", "reason"})
+    prompt_id: str | None = None             # agent.prompts ids of the prompt sent, e.g.
+                                             # "system@1a2b3c4d+goal.level_up@5e6f7a8b"; None when no LLM request
     # Full snapshot: on every FULL_SNAPSHOT_EVERY'th cycle or when the cycle was invalid/failed; otherwise
     # omitted (hash + this cycle's record are enough to tell "did perception change").
     snapshot: Snapshot | dict | None = None
@@ -82,6 +84,7 @@ class AuditRecord:
             "usage": self.usage,
             "jev_status": self.jev_status,
             "history_notes": self.history_notes,
+            "prompt_id": self.prompt_id,
         }
         if self.snapshot is not None:
             d["snapshot"] = self.snapshot

@@ -77,7 +77,8 @@ LAYERS = {
     "action_names": set(),
     "candidates": {"action_names", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
-    "llm": set(),
+    "prompts": set(),   # versioned prompt text assets (#395)
+    "llm": {"prompts"},
     "jev": {"llm"},
     "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
     "think": {"actions", "brain", "handles", "llm", "model", "spells", "trade", "update_fields"},
