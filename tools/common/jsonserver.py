@@ -21,7 +21,7 @@ class HttpError(Exception):
 
 class JsonHandler(BaseHTTPRequestHandler):
     MAX_BODY = 1 << 20  # bytes; a larger Content-Length is refused before it is read
-    timeout = 10        # seconds a silent client may hold a thread (StreamRequestHandler)
+    timeout = 10        # socket timeout (StreamRequestHandler): a silent client is dropped after 10 s, and a reply must be fully written within 10 s
 
     def log_message(self, fmt, *args):
         LOG.debug("%s - %s", self.address_string(), fmt % args)

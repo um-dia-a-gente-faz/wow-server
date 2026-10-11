@@ -278,6 +278,10 @@ class ListTest(CharCase):
         self.assertEqual(self.req("/characters")[0], 400)
         self.assertEqual(self.req("/characters?account=AGENT07", token=None)[0], 401)
 
+    def test_lower_case_account_is_refused(self):
+        # wowmap labels accounts case-insensitively; the runner hands the name to the realm as is.
+        self.assertEqual(self.req("/characters?account=agent07")[0], 400)
+
     def test_realm_down(self):
         self.world.down = True
         self.assertEqual(self.req("/characters?account=AGENT07")[0], 502)

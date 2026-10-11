@@ -4,8 +4,10 @@ real HTTPServer on an ephemeral port."""
 import http.client
 import json
 import pathlib
+import socket
 import sys
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 
@@ -158,7 +160,16 @@ class SendBody(Server):
         self.assertEqual(resp.getheader("Access-Control-Allow-Origin"), "*")
         self.assertEqual(json.loads(data), {"error": "not found"})
 
-    def test_a_stalled_request_times_out(self):
+    def test_a_silent_client_is_dropped(self):
+        class Quick(JsonHandler):
+            timeout = 0.3
+
+        self.httpd.RequestHandlerClass = Quick
+        sock = socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=5)
+        self.addCleanup(sock.close)
+        started = time.monotonic()
+        self.assertEqual(sock.recv(10), b"")     # the server closed without a reply
+        self.assertLess(time.monotonic() - started, 3)
         self.assertEqual(JsonHandler.timeout, 10)
 
 
