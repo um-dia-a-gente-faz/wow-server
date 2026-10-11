@@ -66,7 +66,7 @@ SETTINGS: tuple[Setting, ...] = (
     _s("JEV_MODEL", str, "typesafe/jev-1.13", "Jev model id"),
     _s("JEV_MIN_CONFIDENCE", float, 0.0, "below this confidence the safe candidate runs; 0 = rule off"),
     _s("OPENROUTER_API_KEY", str, "", "only read when JEV_PROVIDER=openrouter", secret=True),
-    _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "Jev token spend cap per agent per rolling hour; 0 = unlimited"),
+    _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "caps Jev tokens per agent per rolling hour (LLM brain and fallback not metered); 0 = unlimited"),
     _s("LOG_LEVEL", str, "INFO", "python logging level"),
     _s("VERBOSE_PACKETS", bool, False, "log every packet"),
     _s("AGENT_DUMP_PACKETS", str, "", "directory for raw SMSG_UPDATE_OBJECT dumps; empty = off"),

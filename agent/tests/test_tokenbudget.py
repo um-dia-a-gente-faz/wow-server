@@ -1,7 +1,12 @@
-"""agent.tokenbudget (#454): one rolling-hour budget, shared by every decider."""
+"""agent.tokenbudget (#454): one rolling-hour budget, shared by every decider.
+#505: the budget is safe to share between threads, and the window is pinned."""
+import sys
+import threading
 import unittest
 
 from agent import brain, tokenbudget
+
+THREAD_ITERATIONS = 4000   # bounded: each thread does this many calls, then stops
 
 
 class Clock:
@@ -70,6 +75,61 @@ class TokenBudgetTest(unittest.TestCase):
         one.record(10)
         self.assertIsNotNone(one.exhausted())
         self.assertIsNone(two.exhausted())
+
+    def test_window_is_one_hour(self):
+        # Pinned with literals, not WINDOW_S, so changing the constant fails here.
+        c = Clock()
+        b = tokenbudget.TokenBudget(100, c)
+        b.record(40, at=c.t)
+        c.t += 3599
+        self.assertEqual(b.used(), 40)
+        c.t += 2   # now t+3601
+        self.assertEqual(b.used(), 0)
+
+    def test_two_preloads_do_not_count_expired_spend(self):
+        # The first preload leaves an old entry; the second adds a newer one
+        # that sorts in front of it. Pruning must still drop the old entry.
+        c = Clock()
+        b = tokenbudget.TokenBudget(1000, c)
+        b.preload([(c.t - 3000, 60)])
+        b.preload([(c.t - 5, 10)])
+        c.t += 700   # cutoff is now past t-3000 and before t-5
+        self.assertEqual(b.used(), 10)
+
+    def test_record_and_check_from_two_threads(self):
+        # Without the lock, used() iterating the deque while the other thread
+        # appends raises "deque mutated during iteration".
+        b = tokenbudget.TokenBudget(10**9, Clock())   # cap far away: checks never trip
+        errors: list[BaseException] = []
+
+        def record():
+            try:
+                for _ in range(THREAD_ITERATIONS):
+                    b.record(1)
+            except BaseException as e:   # noqa: BLE001 - captured to assert on below
+                errors.append(e)
+
+        def check():
+            try:
+                for _ in range(THREAD_ITERATIONS):
+                    b.exhausted()
+                    b.used()
+            except BaseException as e:   # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=record), threading.Thread(target=check)]
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)   # switch threads often, so a race shows up
+        try:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=60)
+        finally:
+            sys.setswitchinterval(old_interval)
+        self.assertFalse(any(t.is_alive() for t in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(b.used(), THREAD_ITERATIONS)
 
 
 if __name__ == "__main__":

@@ -164,10 +164,11 @@ def post_json(url: str, body: object, *, api_key: str = "", timeout: float = 20.
 
     Raises HttpJsonError, never anything else a request can throw.
     `json_default` is json.dumps' `default`; `require_object` makes a reply that
-    is not a JSON object a "non_json" error; `error_body_limit` truncates an
-    error body to that many bytes before it is read for a retry hint. Up to
-    `retries` further attempts follow a reply whose status is in
-    `retry_statuses`, after `sleep(wait)`."""
+    is not a JSON object a "non_json" error. `error_body_limit` caps the error
+    body kept on the exception: the body is redacted in full and then cut to
+    that many bytes, and the retry hint is read from its first
+    `error_body_limit` raw bytes. Up to `retries` further attempts follow a
+    reply whose status is in `retry_statuses`, after `sleep(wait)`."""
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
