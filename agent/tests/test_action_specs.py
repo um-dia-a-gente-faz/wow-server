@@ -3,6 +3,7 @@ cap. The registered classes, the tool schema, catalog() and think.py's validatio
 spec that disagrees with its class fails here."""
 
 import dataclasses
+import inspect
 import pathlib
 import re
 import unittest
@@ -37,6 +38,27 @@ def disagreements(registry=None) -> list[str]:
     return out
 
 
+def _named(fn) -> set[str]:
+    skip = {"self", "session", "world"}
+    return {n for n, p in inspect.signature(fn).parameters.items()
+            if n not in skip and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL)}
+
+
+def signature_disagreements(registry=None) -> list[str]:
+    """The class's own code against its spec: execute() names exactly the spec's params,
+    check() names a subset of them."""
+    registry = ac.REGISTRY if registry is None else registry
+    out = []
+    for name, action in registry.items():
+        spec = specs.specs_by_name[name]
+        names = set(spec.params)
+        if _named(action.execute) != names:
+            out.append(f"{name}: execute params {sorted(_named(action.execute))} != spec {sorted(names)}")
+        if not _named(action.check) <= names:
+            out.append(f"{name}: check takes params outside the spec")
+    return out
+
+
 def _session_and_world():
     world = per.WorldState()
     world.set_my_guid(1)
@@ -45,6 +67,26 @@ def _session_and_world():
 
 
 class SpecVsRegistryTest(unittest.TestCase):
+    def test_every_action_signature_matches_its_spec(self):
+        self.assertEqual(signature_disagreements(), [])
+
+    def test_an_execute_that_gains_or_loses_a_param_fails(self):
+        class Gains(ac.SetTargetAction):
+            def execute(self, session, world, guid, mode: int = 0, **_):
+                return ac.ActionResult(ok=True)
+
+        class Loses(ac.MoveToAction):
+            def execute(self, session, world, x, y, z=None, **_):
+                return ac.ActionResult(ok=True)
+
+        class CheckExtra(ac.SetTargetAction):
+            def check(self, session, world, guid, extra=None, **_):
+                return None
+
+        for cls, name in ((Gains, "set_target"), (Loses, "move_to"), (CheckExtra, "set_target")):
+            with self.subTest(cls.__name__):
+                self.assertEqual(len(signature_disagreements({name: cls()})), 1)
+
     def test_every_spec_matches_its_registered_action(self):
         self.assertEqual(disagreements(), [])
 
@@ -82,8 +124,12 @@ class GeneratedFromSpecsTest(unittest.TestCase):
         self.assertEqual(cand.MAX_SELL, specs.cap_of("sell_item"))
         self.assertEqual(cand.MAX_EQUIP, specs.cap_of("equip_item"))
         text = (AGENT / "candidates.py").read_text()
-        for const in re.findall(r"^(MAX_[A-Z_]+) = cap_of\(", text, re.M):
-            self.assertNotRegex(text, rf"^{const} = \d", const)
+        from_specs = set(re.findall(r"^(MAX_[A-Z_]+) = cap_of\(", text, re.M))
+        hardcoded = set(re.findall(r"^(MAX_[A-Z_]+) = \d", text, re.M))
+        self.assertEqual(from_specs, {"MAX_LOOT", "MAX_QUEST_GIVERS", "MAX_FOLLOW", "MAX_GOSSIP_OPTIONS",
+                                      "MAX_ABANDON", "MAX_SPELLS", "MAX_TRAIN", "MAX_EQUIP", "MAX_USE_ITEMS",
+                                      "MAX_SELL"})
+        self.assertEqual(hardcoded, {"MAX_CANDIDATES", "MAX_THREATS", "MAX_ATTACK"})
         for path in AGENT.rglob("*.py"):
             if "tests" not in path.parts and path.name != "candidates.py":
                 self.assertNotRegex(path.read_text(), r"^MAX_(SELL|EQUIP|TRAIN|USE_ITEMS|LOOT) = ", str(path))

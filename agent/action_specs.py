@@ -2,9 +2,7 @@
 per-snapshot candidate cap are written (gh-419). Action classes take `params`/`required` from here,
 the LLM tool schema and `catalog()` are generated from it, validation in think.py reads it, and
 agent.action_names re-exports the name constants below. A test checks every spec against its
-registered class. Pure values; imports nothing from agent/ (specs sit below actions and candidates).
-
-`all_specs` is in registration order (= the order of catalog(), which the LLM sees): keep it."""
+registered class. Pure values; imports nothing from agent/ (specs sit below actions and candidates)."""
 
 from dataclasses import dataclass, field
 
