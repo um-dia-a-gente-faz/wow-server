@@ -277,10 +277,21 @@ class WoWSession(Transport, GameState):
         self._running = False
         if self._recv_thread:
             self._recv_thread.join(timeout=LOGOUT_WAIT_S)
+            if self._recv_thread.is_alive():
+                # #485: stuck inside a packet (a desynced stream that keeps sending resets the
+                # socket timeout forever). Nobody can answer a logout on that stream: cut it.
+                self._shutdown_socket()
+                self._recv_thread.join(timeout=LOGOUT_WAIT_S)
+                self.unexpected_disconnect = True
         # #406: after an unexpected disconnect (drop, desync, dead socket, server-forced
         # logout) nobody is there to answer a request, so just close.
         if self._in_world and not self.unexpected_disconnect:
             self._in_world = False
+            # #485: the socket timeout only bounds silence, so a streaming server could keep
+            # one read going past the deadline; this timer cuts the socket at the deadline.
+            cut = threading.Timer(LOGOUT_WAIT_S, self._shutdown_socket)
+            cut.daemon = True
+            cut.start()
             try:
                 self._send_packet(CMSG_LOGOUT_REQUEST)
                 self.sock.settimeout(LOGOUT_WAIT_S)
@@ -291,8 +302,21 @@ class WoWSession(Transport, GameState):
                         break
             except Exception:
                 swallowed("session.logout_wait", log, level=logging.DEBUG)  # a dead socket is expected here
+            finally:
+                cut.cancel()
+        self._shutdown_socket()
         self.sock.close()
         self.sock = None
+
+    def _shutdown_socket(self):
+        """shutdown() before close() wakes a recv() blocked in another thread; close() alone does not."""
+        sock = self.sock
+        if sock is None:
+            return
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass    # already closed or never connected
 
     def send_chat(self, message: str, channel: str = "say", target: str | None = None):
         """Send a chat message. Channel: 'say', 'yell', 'whisper' (needs

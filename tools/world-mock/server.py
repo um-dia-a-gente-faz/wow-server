@@ -171,6 +171,7 @@ class FaultPlan:
 
 
 NO_FAULTS = FaultPlan()
+CLOSE_JOIN_S = 2.0   # WorldMock.close() waits this long for each handler thread
 # Pause between the chunks of a split write, so the client really sees partial reads
 # instead of the kernel handing it the coalesced packet.
 SPLIT_WRITE_PAUSE_S = 0.0005
@@ -253,6 +254,8 @@ class WorldMock:
         self.ping_times = []       # monotonic arrival time of every CMSG_PING
         self.received = []         # (opcode, payload) of every post-login client packet
         self._lock = threading.Lock()
+        self._stop = threading.Event()   # #485: set by close(); the serve loops check it
+        self._handlers = []              # (thread, conn) of every accepted connection
         self._auth = self._listen(auth_port, self._serve_auth)
         self._world = self._listen(world_port, self._serve_world)
         self.auth_port = self._auth.getsockname()[1]
@@ -272,7 +275,11 @@ class WorldMock:
                 conn, _ = srv.accept()
             except OSError:
                 return
-            threading.Thread(target=self._guarded, args=(handler, conn), daemon=True).start()
+            t = threading.Thread(target=self._guarded, args=(handler, conn), daemon=True,
+                                 name="world-mock-handler")
+            with self._lock:
+                self._handlers.append((t, conn))
+            t.start()
 
     @staticmethod
     def _guarded(handler, conn):
@@ -287,9 +294,19 @@ class WorldMock:
             conn.close()
 
     def close(self):
+        self._stop.set()
         for s in (self._auth, self._world):
             s.shutdown(socket.SHUT_RDWR)   # wakes the accept() thread; close() alone leaves it blocked
             s.close()
+        with self._lock:
+            handlers = list(self._handlers)
+        for t, conn in handlers:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)   # wakes a handler blocked in recv/send (#485)
+            except OSError:
+                pass
+        for t, _ in handlers:
+            t.join(CLOSE_JOIN_S)
 
     def packets_received(self, opcode: int) -> list:
         with self._lock:
@@ -399,7 +416,7 @@ class WorldMock:
         login_at = None             # monotonic time the delayed SMSG_LOGIN_VERIFY_WORLD is due
         stream_at, stream_n = None, 0   # monotonic time the next stream tick is due; ticks sent
         last_ping, fast_pings = None, 0
-        while True:
+        while not self._stop.is_set():
             now = time.monotonic()
             if login_at is not None and login_at <= now:
                 login_at = None
