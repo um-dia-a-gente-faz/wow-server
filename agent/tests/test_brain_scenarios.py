@@ -19,6 +19,7 @@ import unittest
 from agent import brain as br
 from agent import candidates as cand
 from agent import death  # noqa: F401  registers release_spirit/reclaim_corpse
+from agent.handles import UnknownHandle
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
 
 ME = 1
@@ -136,10 +137,30 @@ class FirstCandidateJev:
         return options[0]["action"], options[0]["params"]
 
 
+class _Handles:
+    """Stands in for agent.handles.HandleMap: resolves the handle strings of a captured scenario
+    through its `handles` literal (handle -> GUID), as the live map resolves its own."""
+
+    def __init__(self, table):
+        self.table = table
+
+    def resolve(self, handle):
+        if handle not in self.table:
+            raise UnknownHandle(f"unknown handle {handle!r}")
+        return self.table[handle]
+
+
+def offered_for(s):
+    """The candidate list the brain is given for scenario `s` (`my_guid` and `handles` optional)."""
+    handles = _Handles(s["handles"]) if "handles" in s else None
+    return cand.generate(s["snapshot"], my_guid=s.get("my_guid", ME), history=s.get("history"), handles=handles)
+
+
 def violations(s):
     snapshot, history = s["snapshot"], s.get("history")
-    offered = cand.generate(snapshot, my_guid=ME, history=history)
-    d = br.Brain(jev=FirstCandidateJev()).decide(snapshot, my_guid=ME, history=history)
+    offered = offered_for(s)
+    d = br.Brain(jev=FirstCandidateJev()).decide(snapshot, my_guid=s.get("my_guid", ME), history=history,
+                                                 handles=_Handles(s["handles"]) if "handles" in s else None)
     out = []
     if "offered" in s and not s["offered"](offered):
         out.append(f"offered {[c['id'] for c in offered]}")
