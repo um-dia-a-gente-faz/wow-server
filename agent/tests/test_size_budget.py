@@ -4,9 +4,8 @@ MODULE_MAX lines in the non-test code of `agent/` and `tools/`.
 BASELINE lists the offenders that existed when the gate landed, with their size then.
 It is a ratchet (CONTRIBUTING.md, "Size budget"): an entry is a ceiling that may only
 go down, and new code never gets an entry. Growth past the budget or past an entry
-fails. An entry that is now too high, or whose function or file is gone, is reported as
-stale but does not fail, so a PR that splits or shrinks an offender cannot turn `main`
-red; lower or delete the entry in that PR.
+fails, and so does a stale entry (too high, within budget, or its function or file gone):
+the PR that shrinks an offender lowers or deletes its entry in the same PR.
 
 Sizes are read with `ast` (a function is `def` line to last line, decorators excluded;
 a module is its line count). Keys are `path` for a module and `path::Class.func` for a
@@ -30,7 +29,7 @@ BASELINE = {
     "agent/__main__.py::main": 93,
     "agent/candidates.py::generate": 176,
     "agent/handlers/chat.py::handle_messagechat": 84,
-    "agent/loot.py::parse_item_query_response": 131,
+    "agent/loot.py::parse_item_query_response": 128,
     "agent/metrics.py::derive_metrics": 101,
     "agent/metrics.py::render_prometheus_text": 87,
     "agent/movement.py::_simulate": 125,
@@ -99,11 +98,9 @@ class SizeBudgetTests(unittest.TestCase):
                          f"{MODULE_MAX} per module); split it, do not add a BASELINE entry")
 
     def test_baseline_has_no_stale_entries(self):
-        # Reported, not failed: see the module docstring. #407 turns this into a failure
-        # once the in-flight splits have merged.
-        if self.stale:
-            self.skipTest("stale BASELINE entries in agent/tests/test_size_budget.py: "
-                          + "; ".join(self.stale))
+        self.assertEqual(self.stale, [], "stale BASELINE entries in "
+                         "agent/tests/test_size_budget.py; delete or lower each one: "
+                         + "; ".join(self.stale))
 
 
 class CheckerTests(unittest.TestCase):

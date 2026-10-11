@@ -192,9 +192,10 @@ gate landed, each with its size then. Same ratchet as ruff and mypy:
 - **An entry is a ceiling.** A baselined function or module that grows past its entry
   fails the test.
 - **Entries only go down.** When you shrink or split a baselined offender, lower its entry
-  to the new size, or delete it once it is within budget or gone. The test reports such
-  stale entries as a skip with the list, rather than failing, so two PRs that touch the
-  same offender cannot turn `main` red in merge order (#407 makes it a failure).
+  to the new size, or delete it once it is within budget or gone. A stale entry (too high,
+  within budget, or gone) fails the test and the message says to delete or lower it, so a
+  PR that shrinks an offender must update `BASELINE` in the same PR. If another PR
+  shrinks the same offender first, rebase and lower the entry.
 
 ## Secrets
 
