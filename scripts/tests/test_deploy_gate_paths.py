@@ -12,13 +12,13 @@ SKILL = ROOT / ".claude" / "skills" / "milestone-loop" / "SKILL.md"
 
 
 def game_patterns(script):
-    """Case patterns in the body of stacks_for whose arm body sets game=1 (comment dropped)."""
+    """Case patterns in the body of stacks_for whose arm body sets game=1 (comments are not parsed, but a game=1 inside one still counts and raises)."""
     m = re.search(r"^stacks_for\(\) \{\n(.*?)^\}$", script, re.S | re.M)
     if not m:
         raise AssertionError("stacks_for not found in deploy.sh")
     patterns, arms = [], 0
     body = [line.split("#")[0] for line in m.group(1).splitlines()]  # comments do not count
-    if any(re.search(r";;\s*\S", line) for line in body):
+    if any(re.search(r";[;&]\s*\S", line) for line in body):
         raise AssertionError("two case arms on one line in stacks_for: put each arm on its own line")
     for line in body:
         arm = re.match(r"\s*([^()\s]+(?:\|[^()\s]+)*)\)(.*)$", line)
@@ -26,7 +26,7 @@ def game_patterns(script):
             patterns += arm.group(1).split("|")
             arms += 1
     # every game=1 in the body must belong to an arm the regex attached it to
-    assignments = sum(len(re.findall(r"\bgame=1\b", line)) for line in body)
+    assignments = sum(len(re.findall(r"\bgame=1\b", line)) for line in m.group(1).splitlines())
     if assignments != arms:
         raise AssertionError(f"{assignments - arms} game=1 in stacks_for is not in a parsable case arm")
     if not patterns:
@@ -86,7 +86,8 @@ class GatePathsTest(unittest.TestCase):
     def test_game_assignment_no_arm_regex_matches_fails(self):
         # the game=1 is still in stacks_for; the arm line is not one the regex can attach it to
         for arm in ("foo/*)\n      game=1 ;;", "foo/* ) game=1 ;;", "a/* | b/*) game=1 ;;",
-                    "zip/*) mon=1 ;; foo/*) game=1 ;;", "tools/common/*) mon=1 ;; foo/*) game=1 ;;"):
+                    "zip/*) mon=1 ;; foo/*) game=1 ;;", "tools/common/*) mon=1 ;; foo/*) game=1 ;;",
+                    "a/*) mon=1 ;& foo/*) game=1 ;;", '"a#b"/*) game=1 ;;'):
             with self.subTest(arm=arm):
                 script = SYNTHETIC.replace("      foo/*) game=1 ;;", "      " + arm)
                 with self.assertRaises(AssertionError):
