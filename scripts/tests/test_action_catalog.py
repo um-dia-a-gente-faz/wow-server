@@ -52,6 +52,14 @@ class DriftTest(unittest.TestCase):
         with mock.patch.object(action_specs, "all_specs", _mutated("set_target", change)):
             self.assertNotEqual(api_contract.render_markdown(), self.doc)
 
+    def test_param_type_edit_fails_the_check(self):
+        def change(s):
+            params = {**s.params, "guid": {**s.params["guid"], "type": "integer"}}
+            return dataclasses.replace(s, params=params)
+
+        with mock.patch.object(action_specs, "all_specs", _mutated("set_target", change)):
+            self.assertNotEqual(api_contract.render_markdown(), self.doc)
+
     def test_added_param_fails_the_check(self):
         def change(s):
             return dataclasses.replace(s, params={**s.params, "extra": {"type": "integer", "description": "x"}})
