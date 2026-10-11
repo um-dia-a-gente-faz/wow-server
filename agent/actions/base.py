@@ -8,6 +8,7 @@ import time
 
 from .. import changes
 from .. import update_fields as uf
+from ..action_specs import ActionSpec, specs_by_name
 from ..ports import ActionSession, PacketSink
 
 
@@ -56,14 +57,23 @@ def _wait_for(predicate, timeout: float = DEFAULT_CONFIRM_TIMEOUT_S,
 
 
 class Action:
-    """Base for every agent action. Subclasses set `name`/`description`/
-    `params` (JSON-schema `properties`, OpenAI/Anthropic-tool-compatible)
-    and implement `check`/`execute`; `run` is what callers use."""
+    """Base for every agent action. Subclasses set `name` (a constant of
+    agent.action_names) and `description` and implement `check`/`execute`;
+    `run` is what callers use. `params` (JSON-schema `properties`) and
+    `required` come from the action's spec in agent.action_specs (gh-419), the
+    one place they are written."""
 
     name: str = ""
     description: str = ""
     params: dict = {}
     required: tuple = ()  # subset of params.keys() the schema marks required
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        spec = specs_by_name.get(cls.__dict__.get("name", ""))
+        if spec is not None:
+            cls.params = cls.__dict__.get("params", spec.params)
+            cls.required = cls.__dict__.get("required", spec.required)
 
     def check(self, session: ActionSession, world, **params) -> str | None:
         """Return an error string if this action shouldn't execute right
@@ -81,15 +91,12 @@ class Action:
         return self.execute(session, world, **params)
 
     def schema(self) -> dict:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": {
-                "type": "object",
-                "properties": self.params,
-                "required": list(self.required),
-            },
-        }
+        """The LLM tool entry, generated from the action's spec; an action
+        with no spec (a test double) falls back to its own params."""
+        spec = specs_by_name.get(self.name)
+        if spec is None:
+            spec = ActionSpec(self.name, self.params, tuple(self.required))
+        return spec.schema(self.description)
 
 
 REGISTRY: dict[str, Action] = {}

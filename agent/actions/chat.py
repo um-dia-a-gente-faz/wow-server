@@ -6,6 +6,7 @@ Split out of the former agent/actions.py (issue #248).
 import struct
 import time
 
+from .. import action_names as an
 from .. import channels as chmod
 from ..opcodes import (
     CMSG_GROUP_ACCEPT,
@@ -317,12 +318,8 @@ class EmoteAction(Action):  # not registered: chat deferred (UM-98)
 
 @register
 class InviteToGroupAction(Action):
-    name = "invite_to_group"
+    name = an.INVITE_TO_GROUP
     description = "Invite a player to a party/group by name."
-    params = {
-        "name": {"type": "string", "description": "Exact player name to invite."},
-    }
-    required = ("name",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -356,10 +353,8 @@ class InviteToGroupAction(Action):
 
 @register
 class AcceptGroupAction(Action):
-    name = "accept_group"
+    name = an.ACCEPT_GROUP
     description = "Accept the currently pending party invite (see the snapshot's pending_invite)."
-    params = {}
-    required = ()
 
     def check(self, session, world, **_) -> str | None:
         if not session.pending_invite:
@@ -374,10 +369,8 @@ class AcceptGroupAction(Action):
 
 @register
 class DeclineGroupAction(Action):
-    name = "decline_group"
+    name = an.DECLINE_GROUP
     description = "Decline the currently pending party invite (see the snapshot's pending_invite)."
-    params = {}
-    required = ()
 
     def check(self, session, world, **_) -> str | None:
         if not session.pending_invite:
@@ -392,10 +385,8 @@ class DeclineGroupAction(Action):
 
 @register
 class LeaveGroupAction(Action):
-    name = "leave_group"
+    name = an.LEAVE_GROUP
     description = "Leave the party you are in (see the snapshot's group)."
-    params = {}
-    required = ()
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -417,12 +408,8 @@ class LeaveGroupAction(Action):
 
 @register
 class PromoteLeaderAction(Action):
-    name = "promote_leader"
+    name = an.PROMOTE_LEADER
     description = "Hand party leadership to a member of your group (you must be the leader)."
-    params = {
-        "name": {"type": "string", "description": "Exact name of the group member to make leader."},
-    }
-    required = ("name",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -459,10 +446,8 @@ class PromoteLeaderAction(Action):
 
 @register
 class CloseWindowAction(Action):
-    name = "close_window"
+    name = an.CLOSE_WINDOW
     description = "Close the currently open gossip/vendor/trainer window."
-    params = {}
-    required = ()
 
     def execute(self, session, world, **_) -> ActionResult:
         was_open = world.get_ui_state() is not None

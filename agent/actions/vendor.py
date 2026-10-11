@@ -5,6 +5,7 @@ Split out of the former agent/actions.py (issue #248).
 
 import time
 
+from .. import action_names as an
 from .. import npc
 from .. import quests as qu
 from ..rules import INTERACT_RANGE_YD
@@ -29,15 +30,11 @@ from .base import (
 
 @register
 class InteractAction(Action):
-    name = "interact"
+    name = an.INTERACT
     description = ("Interact with a nearby NPC or gameobject by handle: opens its gossip, "
                     "vendor, or trainer window (whichever its flags indicate), or activates "
                     "it directly if it's a gameobject. Must be within "
                     f"{INTERACT_RANGE_YD} yd — use move_towards first if not.")
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the NPC or gameobject to interact with."},
-    }
-    required = ("guid",)
 
     def check(self, session, world, guid: int, **_) -> str | None:
         target = world.get_object(guid)
@@ -84,14 +81,8 @@ class InteractAction(Action):
 
 @register
 class GossipSelectAction(Action):
-    name = "gossip_select"
+    name = an.GOSSIP_SELECT
     description = "Select an option in the currently open gossip window by its index."
-    params = {
-        "option_index": {"type": "integer", "description": "The option's `index` from the open gossip window."},
-        "code": {"type": "string", "description": "Text for options that require a text-entry box (rare; "
-                                                    "the window's option marks `coded: true` when needed)."},
-    }
-    required = ("option_index",)
 
     def check(self, session, world, option_index: int, code: str | None = None, **_) -> str | None:
         window = world.get_ui_state()
@@ -120,18 +111,11 @@ def _find_vendor_item(window: dict, slot: int | None, entry: int | None) -> dict
 
 @register
 class BuyItemAction(Action):
-    name = "buy_item"
+    name = an.BUY_ITEM
     description = ("Buy an item from the vendor window currently open for vendor_guid, "
                     "identified by vendor slot or item entry (from the window's items list). "
                     "Waits for the server's confirmation/failure response before returning, so "
                     "ok=True means the purchase actually went through.")
-    params = {
-        "vendor_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the open vendor."},
-        "slot": {"type": "integer", "description": "Vendor slot from the open window's items list."},
-        "entry": {"type": "integer", "description": "Item entry, as an alternative to slot."},
-        "count": {"type": "integer", "description": "How many to buy. Default 1."},
-    }
-    required = ("vendor_guid",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -182,18 +166,11 @@ class BuyItemAction(Action):
 
 @register
 class SellItemAction(Action):
-    name = "sell_item"
+    name = an.SELL_ITEM
     description = ("Sell an item at bag/slot to the vendor window currently open for "
                     "vendor_guid. Resolves the item's GUID from bag/slot (UM-42's inventory "
                     "model) and waits for the server's confirmation/failure response before "
                     "returning.")
-    params = {
-        "vendor_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the vendor to sell to."},
-        "bag": {"type": "integer", "description": "Bag byte of the item (255 = equipped items/backpack)."},
-        "slot": {"type": "integer", "description": "Inventory slot of the item."},
-        "count": {"type": "integer", "description": "How many to sell from the stack. Default: whole stack."},
-    }
-    required = ("vendor_guid", "bag", "slot")
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -235,15 +212,10 @@ class SellItemAction(Action):
 
 @register
 class TrainSpellAction(Action):
-    name = "train_spell"
+    name = an.TRAIN_SPELL
     description = ("Learn a spell from the trainer window currently open for trainer_guid. "
                     "Waits for the server's confirmation/failure response before returning, so "
                     "ok=True means the spell was actually learned.")
-    params = {
-        "trainer_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the open trainer."},
-        "spell_id": {"type": "integer", "description": "Spell ID from the open trainer window's spells list."},
-    }
-    required = ("trainer_guid", "spell_id")
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
