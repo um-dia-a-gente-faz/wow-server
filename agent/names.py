@@ -45,6 +45,10 @@ MAX_CREATURE_QUEST_ITEMS = 6
 MAX_GAMEOBJECT_DATA = 24
 MAX_GAMEOBJECT_QUEST_ITEMS = 6
 
+# #569: a query with no answer (dropped, or never served) must not pin its slot forever.
+QUERY_TIMEOUT_S = 30.0  # a sent query older than this is forgotten and may be asked again
+MAX_PENDING = 512       # queued (not yet sent) queries; over this the oldest is dropped
+
 
 def build_name_query(guid: int) -> bytes:
     """CMSG_NAME_QUERY (0x050): WorldPackets::Query::QueryPlayerName::Read
@@ -176,13 +180,16 @@ class NameCache:
         self.players: dict[int, str] = {}
         self.creatures: dict[int, dict | None] = {}     # entry -> parsed dict, or None if the server said "not found"
         self.gameobjects: dict[int, dict | None] = {}
-        self._in_flight: set[tuple[str, int]] = set()
+        # token -> clock time it was sent by drain(), or None while it waits in _pending
+        self._in_flight: dict[tuple[str, int], float | None] = {}
         self._pending: collections.deque = collections.deque()  # (kind, key, sample_guid)
         self._sent_times: collections.deque = collections.deque()
         self._budget_per_second = budget_per_second
         self._clock = clock
         self.cache_path = cache_path  # used by load()/save() when no path is given — tests override this
         self.duplicate_queries = 0  # debug counter: a want_*() for something already known or in-flight
+        self.expired_queries = 0  # sent queries forgotten after QUERY_TIMEOUT_S with no answer
+        self.dropped_queries = 0  # queued queries pushed out by the MAX_PENDING cap
 
     def want_player(self, guid: int):
         self._want("player", guid, guid)
@@ -201,15 +208,26 @@ class NameCache:
         if token in self._in_flight:
             self.duplicate_queries += 1
             return
-        self._in_flight.add(token)
+        if len(self._pending) >= MAX_PENDING:
+            old_kind, old_key, _ = self._pending.popleft()
+            self._in_flight.pop((old_kind, old_key), None)
+            self.dropped_queries += 1
+        self._in_flight[token] = None
         self._pending.append((kind, key, sample_guid))
 
     def drain(self, max_items: int | None = None) -> list[tuple[str, int, int]]:
         """Pop up to the current send budget's worth of pending queries.
-        Callers (agent/session.py) send one packet per returned item."""
+        Callers (agent/session.py) send one packet per returned item. Also
+        forgets every sent query older than QUERY_TIMEOUT_S (one pass, no sort)
+        so a later want_*() asks again."""
         now = self._clock()
         while self._sent_times and now - self._sent_times[0] >= 1.0:
             self._sent_times.popleft()
+        expired = [token for token, sent in self._in_flight.items()
+                   if sent is not None and now - sent >= QUERY_TIMEOUT_S]
+        for token in expired:
+            del self._in_flight[token]
+        self.expired_queries += len(expired)
         available = self._budget_per_second - len(self._sent_times)
         if max_items is not None:
             available = min(available, max_items)
@@ -217,22 +235,25 @@ class NameCache:
         while available > 0 and self._pending:
             item = self._pending.popleft()
             out.append(item)
+            token = (item[0], item[1])
+            if token in self._in_flight:  # gone already if its answer arrived before the send
+                self._in_flight[token] = now
             self._sent_times.append(now)
             available -= 1
         return out
 
     def on_name_query_response(self, data: dict):
-        self._in_flight.discard(("player", data["guid"]))
+        self._in_flight.pop(("player", data["guid"]), None)
         self.players[data["guid"]] = data["name"] if data["found"] else None
 
     def on_creature_query_response(self, data: dict):
-        self._in_flight.discard(("creature", data["entry"]))
+        self._in_flight.pop(("creature", data["entry"]), None)
         self.creatures[data["entry"]] = data if data["found"] else None
         if data["found"]:
             self.save()
 
     def on_gameobject_query_response(self, data: dict):
-        self._in_flight.discard(("gameobject", data["entry"]))
+        self._in_flight.pop(("gameobject", data["entry"]), None)
         self.gameobjects[data["entry"]] = data if data["found"] else None
         if data["found"]:
             self.save()
