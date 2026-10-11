@@ -74,16 +74,16 @@ reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
 chosen candidate is executed, so a stale candidate fails safely.
 """
 
-import logging
 from collections.abc import Callable
 from typing import Literal
 
 from .handles import UnknownHandle
 from . import action_names as A, item_compare
 from .action_specs import cap_of
+from .candidate_history import finish, history_effects
+from .candidate_history import HISTORY_DEMOTE_REPEATS, HISTORY_DROP_WINDOW  # noqa: F401 (re-exported)
 from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
 from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
-from .metrics import swallowed
 
 MAX_CANDIDATES = 15
 
@@ -514,87 +514,11 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
     for provider in DEAD_PROVIDERS if ctx.dead else ALIVE_PROVIDERS:
         provider(ctx, out)
     if ctx.dead:  # history is about the living options
-        return _finish(out, idle, limit)
+        return finish(out, idle, limit)
 
-    drop, demote = _history_effects(history)
+    drop, demote = history_effects(history, candidate)
     # Params carry the snapshot's own guid values, as do threat_guids.
     protected = {c["id"] for c in out
                  if c["params"].get("guid") in ctx.threat_guids
                  or c["params"].get("target_guid") in ctx.threat_guids}
-    return _finish(out, idle, limit, drop, demote, protected, notes)
-
-
-HISTORY_DROP_WINDOW = 4     # only the most recent entries can drop an option
-HISTORY_DEMOTE_REPEATS = 2  # consecutive no-effect successes before demotion
-# Error text (agent/think.py, agent/handles.py) that retrying the same args cannot fix.
-_DETERMINISTIC_ERRORS = ("missing required params", "bad params", "unknown handle", "unknown action")
-
-
-def _history_effects(history: list[ActionRecord] | None) -> tuple[dict, dict]:
-    """({id: reason} to drop, {id: reason} to demote) from ThinkState history.
-    Tolerates malformed entries (skipped); never raises."""
-    entries = []
-    for h in history or []:
-        if not isinstance(h, dict) or not isinstance(h.get("action"), str):
-            continue
-        args = h.get("args")
-        args = args if isinstance(args, dict) else {}
-        try:
-            cid = candidate(h["action"], args, "")["id"]
-        except Exception:
-            swallowed("candidates.history", logging.getLogger("agent.candidates"), h["action"],
-                      level=logging.WARNING)
-            continue
-        entries.append((cid, h))
-    drop, demote = {}, {}
-
-    recent = entries[-HISTORY_DROP_WINDOW:]
-    by_id: dict[str, list[ActionRecord]] = {}
-    for cid, h in recent:
-        by_id.setdefault(cid, []).append(h)
-    for cid, hs in by_id.items():
-        last = hs[-1]
-        if last.get("ok") is not False:
-            continue
-        err = str(last.get("error") or "")
-        if any(m in err.lower() for m in _DETERMINISTIC_ERRORS):
-            drop[cid] = f"rejected: {err}"
-        elif len(hs) >= 2 and hs[-2].get("ok") is False and hs[-2].get("error") == last.get("error"):
-            drop[cid] = f"failed twice in a row: {err}"
-
-    if entries:
-        tail_id = entries[-1][0]
-        run = 0
-        for cid, h in reversed(entries):
-            if cid != tail_id or h.get("ok") is not True or h.get("changed") is not False:
-                break
-            run += 1
-        if run >= HISTORY_DEMOTE_REPEATS and tail_id not in drop:
-            demote[tail_id] = f"repeated {run}x with no effect"
-    return drop, demote
-
-
-def _finish(out: list[Candidate], idle: Candidate, limit: int, drop: dict | None = None,
-            demote: dict | None = None, protected: set | frozenset = frozenset(),
-            notes: list | None = None) -> list[Candidate]:
-    """De-duplicate by id (first, highest-priority wins), apply the history
-    `drop`/`demote` maps ({id: reason}; `protected` ids are exempt), cap, end
-    with idle."""
-    drop, demote = drop or {}, demote or {}
-    seen, unique, demoted = set(), [], []
-    for c in out:
-        if c["id"] in seen:
-            continue
-        seen.add(c["id"])
-        if c["id"] not in protected:
-            if c["id"] in drop:
-                if notes is not None:
-                    notes.append({"id": c["id"], "effect": "dropped", "reason": drop[c["id"]]})
-                continue
-            if c["id"] in demote:
-                if notes is not None:
-                    notes.append({"id": c["id"], "effect": "demoted", "reason": demote[c["id"]]})
-                demoted.append(c)
-                continue
-        unique.append(c)
-    return (unique + demoted)[:limit - 1] + [idle]
+    return finish(out, idle, limit, drop, demote, protected, notes)
