@@ -81,10 +81,12 @@ LAYERS = {
     "candidates": {"action_names", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
-    "llm": {"prompts"},
-    "jev": {"llm"},
+    "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
+    "tokenbudget": set(),   # the one AGENT_MAX_TOKENS_PER_HOUR implementation (#454)
+    "llm": {"httpjson", "prompts"},
+    "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
+    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
@@ -212,6 +214,13 @@ class AgentArchitectureTests(unittest.TestCase):
         ignored = (ROOT / ".dockerignore").read_text().splitlines()
         self.assertIn("agent/tests/", ignored)
         self.assertFalse((AGENT / "tools").exists(), "dev tools belong in tools/agent_dev")
+
+    def test_brain_has_no_transport_code(self):
+        # #454: Brain talks to a Decider; urllib and http live in agent/httpjson.py only.
+        bad = [f"{path.relative_to(ROOT)} imports {m}" for path, unit, package in _agent_files()
+               if unit.startswith("brain")
+               for m in _imports(path, package) if m.split(".")[0] in {"urllib", "http"}]
+        self.assertEqual(bad, [], "agent/brain* must not import urllib or http")
 
     def test_nothing_imports_main(self):
         offenders = [u for u, edges in self.graph.items() if "__main__" in edges]

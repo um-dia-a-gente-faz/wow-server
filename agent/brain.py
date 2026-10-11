@@ -31,7 +31,6 @@ and, when Jev failed, why (and `substituted` if the LLM stood in).
 
 import logging
 import os
-from collections import deque
 import time
 from dataclasses import dataclass, field
 
@@ -40,6 +39,7 @@ from . import candidates as cand
 from .jev import JevClient, JevError
 from .llm import LLMClient, LLMError
 from .model import ActionRecord, Candidate, Snapshot
+from .tokenbudget import WINDOW_S as JEV_BUDGET_WINDOW_S, TokenBudget
 
 log = logging.getLogger("agent.brain")
 
@@ -61,8 +61,7 @@ JEV_RATE_LIMIT_COOLDOWN_S = 30.0  # 429
 _COOLDOWNS = {401: JEV_AUTH_COOLDOWN_S, 402: JEV_AUTH_COOLDOWN_S,
               403: JEV_AUTH_COOLDOWN_S, 429: JEV_RATE_LIMIT_COOLDOWN_S}
 
-# #213: Jev token budget. Rolling window, per agent, input+output tokens.
-JEV_BUDGET_WINDOW_S = 3600.0
+# #213: Jev token budget. Rolling window, per agent, input+output tokens (agent/tokenbudget.py).
 JEV_STATUS_BUDGET = "budget_exhausted"
 
 # Actions the LLM never sees as tools. `idle` (UM-97) exists so a choice-only
@@ -129,15 +128,15 @@ class Brain:
 
     def __init__(self, jev=None, llm=None, clock=time.monotonic,
                  min_confidence: float = DEFAULT_JEV_MIN_CONFIDENCE,
-                 max_tokens_per_hour: int = 0):
+                 max_tokens_per_hour: int = 0, budget: TokenBudget | None = None):
         self.jev = jev
         self.llm = llm
         self.min_confidence = min_confidence
         self._clock = clock
         self._jev_cooldown_until = 0.0
         self._jev_cooldown_reason: str | None = None
-        self.max_tokens_per_hour = max(0, int(max_tokens_per_hour or 0))
-        self._jev_spend: deque = deque()  # (clock time, tokens) per billed Jev call
+        # One budget object may be shared by several Brains (#454).
+        self.budget = budget if budget is not None else TokenBudget(max_tokens_per_hour, clock)
 
     @classmethod
     def from_config(cls, cfg) -> "Brain | None":
@@ -193,7 +192,7 @@ class Brain:
             d = Decision(brain=BRAIN_JEV, model=getattr(self.jev, "model", None))
             fallback = self._jev_skip_reason()
             if fallback is None:
-                fallback = self._jev_budget_reason()
+                fallback = self.budget.exhausted("jev")
                 if fallback is not None:
                     d.jev_status = JEV_STATUS_BUDGET
                     budget_skipped = True
@@ -258,27 +257,11 @@ class Brain:
             return None
         return f"jev cooling down {remaining:.0f}s more ({self._jev_cooldown_reason})"
 
-    def _jev_budget_reason(self) -> str | None:
-        """None while the rolling-hour token budget has room (or is off 0);
-        otherwise why Jev is not called. Skipping fails the cycle (or hands it
-        to the explicit llm fallback) and is audited as budget_exhausted, so
-        it is distinguishable from an idle choice and from a Jev error."""
-        if not self.max_tokens_per_hour:
-            return None
-        cutoff = self._clock() - JEV_BUDGET_WINDOW_S
-        while self._jev_spend and self._jev_spend[0][0] <= cutoff:
-            self._jev_spend.popleft()
-        used = sum(t for _, t in self._jev_spend)
-        if used < self.max_tokens_per_hour:
-            return None
-        return (f"jev token budget exhausted: {used} of {self.max_tokens_per_hour} "
-                f"tokens used in the last hour (AGENT_MAX_TOKENS_PER_HOUR)")
-
     def restore_jev_spend(self, audit_dir: str, agent: str, now: float | None = None):
         """Reload the last hour's Jev spend from this agent's audit log, so a
         restart does not reset the budget. The audit `usage` field holds Jev
         usage only (LLM tokens go to prompt/completion_tokens)."""
-        if not self.max_tokens_per_hour:
+        if not self.budget.max_tokens_per_hour:
             return
         from .metrics import find_audit_files, iter_records
         now = time.time() if now is None else now
@@ -291,12 +274,11 @@ class Brain:
                 tokens = sum(int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens"))
                 if ts > cutoff and tokens > 0:
                     spend.append((mono - (now - ts), tokens))
-        self._jev_spend.extendleft(sorted(spend, reverse=True))
+        self.budget.preload(spend)
 
     def _record_jev_spend(self, d: Decision):
         tokens = sum(int(d.usage.get(k, 0)) for k in ("input_tokens", "output_tokens"))
-        if tokens > 0:
-            self._jev_spend.append((self._clock(), tokens))
+        self.budget.record(tokens)
 
     def _maybe_cool_down(self, e: JevError):
         seconds = _COOLDOWNS.get(getattr(e, "status", None) or 0)
