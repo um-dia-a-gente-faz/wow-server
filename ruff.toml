@@ -2,35 +2,75 @@ target-version = "py312"
 extend-exclude = ["tdb"]
 
 [lint]
-# Staged (#261, #386): syntax errors + pyflakes, then bugbear (B) and bare except (E722).
-# Next stages are listed in CONTRIBUTING.md, "Lint and types".
-select = ["E9", "F", "B", "E722"]
+# Staged (#261, #386, #413): syntax errors + pyflakes, bugbear (B), bare except (E722), blind
+# except (BLE001), pyupgrade (UP) and simplify (SIM). C901 is decided, not enabled: see
+# CONTRIBUTING.md, "Lint and types".
+select = ["E9", "F", "B", "E722", "BLE001", "UP", "SIM"]
+# UP038 (isinstance with a tuple to `X | Y`) is not applied: the union form is slower at
+# runtime, which ruff's own docs call out for hot paths (#413).
+ignore = ["UP038"]
 
 # Baseline: files that already violated a rule when it was enabled. Ratchet only: fix a
 # file's violations, then delete its line here. Never add a line for new code.
 # F (#261) is clear: no F entry may come back. E722 had no violation, so it has no entry.
-# The entries below are B (#386), generated with ruff 0.8.6 on main at 14e9d98.
+# The B entries are #386, generated with ruff 0.8.6 on main at 14e9d98. The BLE001, UP and
+# SIM entries are #413, generated with ruff 0.8.6 on main at d0b7e78 after the UP and SIM
+# fixes of that PR. The per-rule reasons are in the PR body.
 [lint.per-file-ignores]
+"agent/__main__.py" = ["BLE001"]
+"agent/audit.py" = ["BLE001"]
 "agent/auth.py" = ["B007", "B905"]
+"agent/candidates.py" = ["BLE001"]
+"agent/http_api.py" = ["BLE001", "SIM105"]
+"agent/lines.py" = ["SIM401"]
+"agent/metrics.py" = ["UP031"]
 "agent/quests.py" = ["B905"]
+"agent/reflexes/rest.py" = ["SIM102"]
+"agent/session.py" = ["BLE001", "SIM105"]
+"agent/tests/builders.py" = ["UP041"]
 "agent/tests/test_agent_api_urls.py" = ["B905"]
-"agent/tests/test_jev.py" = ["B905"]
+"agent/tests/test_audit_schema.py" = ["UP031"]
+"agent/tests/test_auth.py" = ["SIM117"]
+"agent/tests/test_http_api.py" = ["SIM117"]
+"agent/tests/test_httpjson.py" = ["SIM117"]
+"agent/tests/test_jev.py" = ["B905", "SIM117"]
+"agent/tests/test_llm.py" = ["SIM117"]
+"agent/tests/test_memory.py" = ["BLE001", "UP031"]
+"agent/tests/test_metrics.py" = ["BLE001"]
 "agent/tests/test_movement.py" = ["B006"]
+"agent/tests/test_parser_fuzz.py" = ["BLE001"]
+"agent/tests/test_perception_caps.py" = ["SIM117"]
+"agent/tests/test_probe.py" = ["UP031"]
+"agent/tests/test_session.py" = ["SIM117"]
 "agent/tests/test_think.py" = ["B023"]
 "agent/tests/test_update_object.py" = ["B905"]
 "agent/tests/test_update_object_parser.py" = ["B905"]
-"tools/agent_dev/ab.py" = ["B023"]
+"agent/tests/test_wire.py" = ["SIM117"]
+"agent/transport.py" = ["UP041"]
+"exporters/wow-exporter/exporter.py" = ["SIM105"]
+"scripts/tests/test_backup_restore.py" = ["SIM115"]
+"tools/agent-runner/core.py" = ["UP017"]
+"tools/agent-runner/fleet.py" = ["UP017"]
+"tools/agent-runner/runner.py" = ["SIM105"]
+"tools/agent_dev/ab.py" = ["B023", "SIM115"]
 "tools/agent_dev/cache_probe.py" = ["B905"]
+"tools/agent_dev/probe.py" = ["BLE001", "SIM105", "UP031"]
 "tools/agent-runner/characters.py" = ["B904"]
+"tools/chat-feed/app.py" = ["SIM115", "UP012", "UP015", "UP017"]
+"tools/chat-feed/tests/test_parser.py" = ["SIM117"]
+"tools/common/jsonserver.py" = ["UP012"]
 "tools/jev-mock/server.py" = ["B905"]
-"tools/world-mock/server.py" = ["B905"]
+"tools/loadtest/soak.py" = ["SIM105"]
+"tools/world-mock/server.py" = ["B905", "SIM105"]
+"tools/wowmap/tests/test_agent_proxy.py" = ["B007"]
+"tools/wowmap/tests/test_item_icons.py" = ["B017"]
+"tools/wowmap/tests/test_item_tooltip.py" = ["UP031"]
+"tools/wowmap/tests/test_player_row.py" = ["B905"]
+"tools/wowmap/tests/test_position.py" = ["B905"]
 "tools/wowmap/wowmap/agents.py" = ["B904"]
 "tools/wowmap/wowmap/character.py" = ["B905"]
 "tools/wowmap/pipeline/fit_transform.py" = ["B905"]
 "tools/wowmap/wowmap/inventory.py" = ["B905"]
 "tools/wowmap/wowmap/item_tooltip.py" = ["B905"]
 "tools/wowmap/wowmap/players.py" = ["B007"]
-"tools/wowmap/tests/test_agent_proxy.py" = ["B007"]
-"tools/wowmap/tests/test_item_icons.py" = ["B017"]
-"tools/wowmap/tests/test_player_row.py" = ["B905"]
-"tools/wowmap/tests/test_position.py" = ["B905"]
+"tools/wowmap/wowmap/repo/characters.py" = ["UP031"]

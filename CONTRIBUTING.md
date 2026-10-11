@@ -154,10 +154,24 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 - **Ruff rules land in stages (#386),** one small PR per stage, each with a baseline of
   the files that violate it that day. Enabled: `E9`, `F` (baseline cleared, keep it empty),
-  `B` (bugbear), `E722` (bare `except`, no violations). Still to come: `BLE001`, `UP`,
-  `SIM`, `C901`. To add a stage: add the rule to `select` in `ruff.toml`, run
-  `ruff check . --fix` and review what it changed, then list each remaining
-  `ruff check . --output-format concise` hit as `"<file>" = ["<rule>"]`.
+  `B` (bugbear), `E722` (bare `except`, no violations), `BLE001`, `UP`, `SIM` (#413).
+  To add a stage: add the rule to `select` in `ruff.toml`, run
+  `ruff check . --fix` (safe fixes only, never `--unsafe-fixes`) and review every hunk,
+  then list each remaining `ruff check . --output-format concise` hit as
+  `"<file>" = ["<rule>"]`.
+- **`#413` decisions.** `UP038` (`isinstance` with a tuple to `X | Y`) is in `ignore`: the
+  union form is slower at runtime, and ruff's own docs say so for hot paths. `C901`
+  (complexity) is not enabled: the size budget below (80 lines per function, 600 per
+  module, `agent/tests/test_size_budget.py`) is the complexity control, and `C901` at ruff's
+  default 10 would flag 33 functions and add a second, overlapping ratchet. Revisit if the
+  size budget proves too weak. `BLE001` sites are the deliberate catch-and-log sites of the
+  swallowed-error policy (#306): narrowing them is behaviour work, not lint work. `SIM115`
+  is fixed by hand where the handle's lifetime is one read; long-lived handles are baselined.
+  A lint stage baselines, and does not edit, two groups of paths. `docker-compose.yml`,
+  `tdb/*`, `tools/chat-feed/*` and `tools/common/*`: `scripts/deploy.sh` (`stacks_for`)
+  recreates the game stack, and with it the worldserver, when one of them changes
+  (`tools/common/*` is copied into the chat-feed image, ADR 0014). `scripts/*` and
+  `.github/*`: a PR touching them waits for the owner's go-ahead (`CLAUDE.md`, *Working model*).
 - **The baseline is keyed by path.** A file you move keeps its debt: move its line with
   it. A file that is new must be clean, and gets no line.
 - **An import other modules reach through this one** (`npc.CMSG_BUY_ITEM`) is a re-export,

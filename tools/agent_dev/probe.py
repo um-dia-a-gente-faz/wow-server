@@ -574,7 +574,7 @@ assert tuple(STEPS) == STEP_NAMES
 # ── Runner and report ────────────────────────────────────────────────────
 
 def _iso(ts: float) -> str:
-    return dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.datetime.fromtimestamp(ts, dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _step_record(name: str, outcome: Outcome, duration: float) -> dict:
@@ -685,7 +685,7 @@ def load_last_report(path: str) -> dict:
     """The last saved report, or {"status": "never_probed"} when there is none
     (or it is unreadable), which is what a panel should show for that agent."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             report = json.load(f)
     except (OSError, ValueError):
         return {"status": "never_probed"}

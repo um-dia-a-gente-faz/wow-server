@@ -6,7 +6,7 @@ owns and calls .dispatch() on.
 Unknown opcodes return False. Handlers get a Context (game state + send/dump),
 not the whole session."""
 
-from typing import Callable
+from collections.abc import Callable
 
 from .wire import PacketTruncated
 

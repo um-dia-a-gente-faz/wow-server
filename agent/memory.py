@@ -20,7 +20,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
