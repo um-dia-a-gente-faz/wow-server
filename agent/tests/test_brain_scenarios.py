@@ -123,6 +123,16 @@ SCENARIOS = {
     "hurt_still_fights_back": dict(  # the rule stops pulls, not defence
         snapshot=snap([unit(10, 4, level=1, target_guid=ME, in_combat=True)], me=HURT),
         offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),
+    # #544: hurt and in combat with no attacker in view (a stuck combat flag): the pull comes back
+    "hurt_in_combat_with_no_attacker_offers_a_pull": dict(
+        snapshot=snap([unit(10, 4, level=1)], me=dict(HURT, in_combat=True)),
+        offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),
+    # #544: hurt, in combat, a real attacker on us: the idle mob is still not pulled
+    "hurt_in_a_fight_pulls_no_idle_mob": dict(
+        snapshot=snap([unit(10, 4, level=1, target_guid=ME, in_combat=True), unit(11, 4, level=1)],
+                      me=dict(HURT, in_combat=True)),
+        offered=lambda cs: offering_attack_on(10)(cs) and not_offering_guid(11)(cs),
+        chosen=first_is("auto_attack", guid=10)),
     "healthy_pulls_the_idle_mob": dict(
         snapshot=snap([unit(10, 4, level=1)]),
         offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),

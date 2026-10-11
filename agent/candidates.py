@@ -280,6 +280,7 @@ class _Context:
         if self.dead:
             return
         self.me = snapshot.get("me")
+        self.in_combat = bool(self.me and self.me.get("in_combat"))  # gh-544: absent means out of combat
         health_pct, mana_pct = _resource_pct(self.me, "health"), _resource_pct(self.me, "mana")
         self.needs_health = health_pct is not None and health_pct < 0.7
         self.needs_mana = mana_pct is not None and mana_pct < 0.5
@@ -457,8 +458,9 @@ def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
 def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
     targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
                and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
-               # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays)
-               and not (ctx.needs_health and not u.get("in_combat"))
+               # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays),
+               # unless we are in combat with no threat: a stuck combat flag, so the pull is offered again (gh-544)
+               and not (ctx.needs_health and not u.get("in_combat") and not (ctx.in_combat and not ctx.threats))
                # unprovoked pulls only when both levels are known and the mob isn't too strong
                and ctx.my_level is not None and isinstance(u.get("level"), int)
                and u["level"] <= ctx.my_level + ATTACK_LEVEL_MARGIN
