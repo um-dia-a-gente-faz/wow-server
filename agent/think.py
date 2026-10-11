@@ -9,11 +9,8 @@ own module (not inlined in __main__.py) so it can be unit-tested against a
 fake LLM client without booting a real WoWSession.
 """
 
-import hashlib
-import json
 import logging
 import time
-from collections import deque
 
 from . import actions as ac
 from . import spells as sp
@@ -21,7 +18,10 @@ from . import trade as tr
 from . import update_fields as uf
 from .brain import Brain, BrainError, Decision
 from .handles import UnknownHandle
-from .model import ActionRecord, KnownSpell, Me, Snapshot
+from .actions.base import send
+from .loopguard import (HISTORY_LEN, LOOP_GUARD_REPEATS, ThinkState, _DETAIL_MAX_CHARS,  # noqa: F401 (re-exported)
+                        progress_fingerprint)
+from .model import KnownSpell, Me, Snapshot
 
 log = logging.getLogger("agent.think")
 
@@ -41,110 +41,11 @@ def _maybe_cancel_idle_trade(session, world):
     if time.monotonic() - trade["last_activity_at"] < TRADE_IDLE_TIMEOUT_S:
         return
     log.info("trade with %#x idle for over %.0fs — cancelling", trade["partner_guid"], TRADE_IDLE_TIMEOUT_S)
-    session._send_packet(tr.CMSG_CANCEL_TRADE, tr.build_cancel_trade())
+    send(session, tr.CMSG_CANCEL_TRADE, tr.build_cancel_trade())
     # Bump last_activity_at so we don't re-send the cancel on every think
     # cycle while waiting for the server's TRADE_STATUS_TRADE_CANCELED to
     # arrive and clear world.trade (found in post-merge review, UM-59).
     trade["last_activity_at"] = time.monotonic()
-
-
-HISTORY_LEN = 8          # UM-90: recent cycles shown to the model
-LOOP_GUARD_REPEATS = 3   # UM-90: identical failed/no-op calls before the guard blocks the next one
-_DETAIL_MAX_CHARS = 160  # keep each history line short; the prompt is token-budgeted
-
-# Snapshot keys whose change means an action did something. Deliberately
-# leaves out things that drift on their own (own health/mana regen, chat,
-# other units' positions) so "changed" means progress, not noise.
-_PROGRESS_KEYS = ("position", "is_dead", "is_ghost", "window", "trade", "mailbox",
-                  "equipment", "inventory", "quest_log", "pending_invite", "group")
-
-
-def _args_key(params: dict) -> str:
-    return json.dumps(params or {}, sort_keys=True, default=str)
-
-
-def progress_fingerprint(snapshot: Snapshot) -> str:
-    """Digest of the parts of a snapshot an action can change (UM-90's
-    "returned no state change" test): the _PROGRESS_KEYS (position rounded
-    to 1 yd so float jitter doesn't count), own level/xp, and the health of
-    units in combat (so a fight in progress counts as a change)."""
-    view = {k: snapshot.get(k) for k in _PROGRESS_KEYS}
-    pos = snapshot.get("position")
-    if isinstance(pos, dict):
-        view["position"] = {k: round(v) if isinstance(v, float) else v for k, v in pos.items()}
-    me = snapshot.get("me")
-    view["me"] = {"level": me.get("level") if me else None, "xp": me.get("xp") if me else None}
-    view["fights"] = sorted(
-        (str(u.get("guid")), u.get("health_pct"))
-        for u in snapshot.get("nearby_units") or [] if u.get("in_combat"))
-    raw = json.dumps(view, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha1(raw).hexdigest()
-
-
-def _short(value) -> str | None:
-    if value is None or value == {} or value == "":
-        return None
-    text = value if isinstance(value, str) else json.dumps(value, default=str, separators=(",", ":"))
-    return text if len(text) <= _DETAIL_MAX_CHARS else text[:_DETAIL_MAX_CHARS - 3] + "..."
-
-
-class ThinkState:
-    """Think-loop memory across cycles (UM-90), owned by the main loop and
-    passed into every think_and_act() call. Holds the last HISTORY_LEN
-    executed-or-rejected actions, args exactly as the model sent them.
-    LLM-failed cycles (no tool call) are not recorded: they carry nothing
-    the model could learn from. Kept out of WorldState on purpose: this is
-    the agent's own record, not protocol state."""
-
-    def __init__(self, maxlen: int = HISTORY_LEN):
-        self.history: deque = deque(maxlen=maxlen)
-
-    def observe(self, fingerprint: str) -> None:
-        """Called once per cycle with the fresh snapshot's fingerprint:
-        settles whether the previous action changed anything."""
-        if self.history and self.history[-1]["changed"] is None:
-            last = self.history[-1]
-            last["changed"] = fingerprint != last["fingerprint"]
-
-    def record(self, action: str, args: dict, ok: bool, fingerprint: str,
-               error: str | None = None, detail=None) -> None:
-        self.history.append({"action": action, "args": dict(args or {}), "ok": ok,
-                             "error": error, "detail": detail,
-                             "fingerprint": fingerprint, "changed": None})
-
-    def repeat_blocked(self, action: str, args: dict, n: int = LOOP_GUARD_REPEATS) -> bool:
-        """True when each of the last `n` recorded cycles was this exact
-        action with these exact args and either failed or changed nothing.
-
-        `idle` is the candidate generator's safe fallback when it has no
-        actionable option. Blocking it cannot make the brain choose something
-        else and would turn an empty candidate set into a permanent deadlock.
-        """
-        if action == "idle":
-            return False
-        if len(self.history) < n:
-            return False
-        key = _args_key(args)
-        for h in list(self.history)[-n:]:
-            if h["action"] != action or _args_key(h["args"]) != key:
-                return False
-            if h["ok"] and h["changed"] is not False:
-                return False
-        return True
-
-    def for_prompt(self) -> list[ActionRecord]:
-        """Compact oldest-first view for agent.llm.build_messages."""
-        out: list[ActionRecord] = []
-        for h in self.history:
-            e: ActionRecord = {"action": h["action"], "args": h["args"], "ok": h["ok"]}
-            if h["error"]:
-                e["error"] = _short(h["error"])
-            elif (d := _short(h["detail"])) is not None:
-                e["result"] = d
-            if h["changed"] is False:
-                e["changed"] = False
-            out.append(e)
-        return out
 
 
 def _self_status(session, world, snapshot: Snapshot) -> None:
@@ -198,169 +99,163 @@ class ThinkResult:
         return f"<ThinkResult error={self.error!r} action={self.action_name}>"
 
 
+class Cycle:
+    """State one think cycle carries through the stages. A stage that ends the
+    cycle early calls fail(); record() then writes the audit line and history."""
+
+    def __init__(self, session, world, brain, persona, my_position, registry,
+                 audit_logger, cycle, reflex_state, state):
+        self.session, self.world, self.brain, self.persona = session, world, brain, persona
+        self.my_position, self.registry, self.audit_logger = my_position, registry, audit_logger
+        self.cycle, self.reflex_state, self.state = cycle, reflex_state, state
+        self.snapshot: Snapshot = {}  # type: ignore[typeddict-item]  # filled by perceive
+        self.fingerprint = ""
+        self.decision = Decision()
+        self.action = None
+        self.action_name: str | None = None
+        self.params: dict | None = None
+        self.run_params: dict = {}
+        self.valid = False
+        self.ok = False
+        self.error: str | None = None
+        self.detail: dict | None = None
+        self.remember = True    # BrainError cycles carry nothing the model could learn from
+        self.done = False
+
+    def fail(self, error, *, valid=False, detail=None):
+        self.error, self.valid, self.detail, self.done = error, valid, detail, True
+
+
+# Pre-decision hooks, run in order before the snapshot is taken. A safety rail
+# is one function (session, world) added here; think_and_act does not change.
+GUARDS = [_maybe_cancel_idle_trade]
+
+
+def guards(c: Cycle) -> None:
+    for guard in GUARDS:
+        guard(c.session, c.world)
+
+
+def perceive(c: Cycle) -> None:
+    # corpse_position (UM-43) is session-scoped (MSG_CORPSE_QUERY), not part
+    # of WorldState; getattr() with a default keeps test doubles working.
+    c.snapshot = c.world.snapshot(my_position=c.my_position,
+                                  corpse_position=getattr(c.session, "corpse_position", None),
+                                  pending_invite=getattr(c.session, "pending_invite", None),
+                                  group=getattr(c.session, "group", None),
+                                  chat_inbox=getattr(c.session, "chat_inbox", None))
+    _self_status(c.session, c.world, c.snapshot)
+    c.fingerprint = progress_fingerprint(c.snapshot)
+    if c.state is not None:
+        c.state.observe(c.fingerprint)
+
+
+def decide(c: Cycle) -> None:
+    state = c.state
+    try:
+        c.decision = c.brain.decide(
+            c.snapshot, persona=c.persona,
+            history=state.for_prompt() if state is not None else None,
+            my_guid=getattr(c.world, "my_guid", None) or None,
+            reflex_state=c.reflex_state,
+            blocked=state.repeat_blocked if state is not None else None,
+            handles=getattr(c.world, "handles", None))
+    except BrainError as e:
+        c.decision, c.remember = e.decision, False
+        log.warning("%s", e)
+        return c.fail(str(e))
+    c.action_name, c.params = c.decision.action, c.decision.params
+
+
+def validate(c: Cycle) -> None:
+    name, params = c.action_name, c.params
+    c.action = c.registry.get(name) if name is not None else None
+    if c.action is None or name is None:
+        log.warning("model chose unknown action %r (params=%r)", name, params)
+        return c.fail(f"unknown action: {name!r}")
+    missing = [p for p in c.action.required if p not in params]  # type: ignore[operator]  # None params raise TypeError, as on main
+    if missing:
+        log.warning("action %s missing required params %r (got %r)", name, missing, params)
+        return c.fail(f"missing required params: {missing}")
+    # UM-89: the model sees and sends short handles ("u3"), never raw GUIDs;
+    # map them back here. `params` (handles) stays what the audit log records.
+    handles = getattr(c.world, "handles", None)
+    c.run_params = params  # type: ignore[assignment]
+    if handles is not None:
+        try:
+            c.run_params = handles.resolve_params(params)
+        except UnknownHandle as e:
+            log.warning("action %s got an unknown handle (params=%r): %s", name, params, e)
+            return c.fail(str(e))
+    if c.state is not None and c.state.repeat_blocked(name, params):
+        log.warning("loop guard blocked %s %r", name, params)
+        return c.fail(f"loop guard: {name} with these exact args already failed or changed "
+                      f"nothing {LOOP_GUARD_REPEATS} times in a row; not executed. Try something different.")
+
+
+def execute(c: Cycle) -> None:
+    assert c.action is not None  # validate() ended the cycle otherwise
+    try:
+        result = c.action.run(c.session, c.world, **c.run_params)
+    except TypeError as e:
+        # Extra kwargs the model hallucinated, or a param of the wrong shape.
+        log.warning("action %s rejected params %r: %s", c.action_name, c.params, e)
+        return c.fail(f"bad params: {e}", valid=True)
+    c.valid, c.detail = True, result.detail
+    if not result.ok:
+        log.info("action %s failed validation/execution: %s", c.action_name, result.error)
+        return c.fail(result.error, valid=True, detail=result.detail)
+    log.info("action %s executed: %s", c.action_name, result.detail)
+    c.ok = True
+
+
+def record(c: Cycle) -> ThinkResult:
+    d = c.decision
+    if c.audit_logger is not None:
+        try:
+            c.audit_logger.record(
+                cycle=c.cycle, snapshot=c.snapshot,
+                tool_call={"name": c.action_name, "args": c.params or {}},
+                valid=c.valid, result={"ok": c.ok, "error": c.error},
+                reflex=c.reflex_state or {}, goal=c.persona or None,
+                prompt_tokens=d.prompt_tokens, completion_tokens=d.completion_tokens,
+                model=d.model, latency_ms=d.latency_ms, brain=d.brain,
+                confidence=d.confidence, fallback=d.fallback, substituted=d.substituted,
+                candidates=d.candidates, confidence_threshold=d.confidence_threshold,
+                confidence_rule=d.confidence_rule, overridden=d.overridden, usage=d.usage,
+                jev_status=d.jev_status, history_notes=d.history_notes, prompt_id=d.prompt_id)
+        except OSError as e:  # never let audit I/O crash a think cycle
+            log.warning("audit log write failed: %s", e)
+    if c.state is not None and c.remember:
+        c.state.record(c.action_name, c.params, c.ok, c.fingerprint, error=c.error,
+                       detail=c.detail if c.ok else None)
+    return ThinkResult(ok=c.ok, action_name=c.action_name, params=c.params, error=c.error, detail=c.detail)
+
+
+STAGES = (guards, perceive, decide, validate, execute)
+
+
 def think_and_act(session, world, brain, persona: str = "",
                    my_position=None, registry: dict | None = None,
                    audit_logger=None, cycle: int = 0,
                    reflex_state: dict | None = None,
                    state: ThinkState | None = None) -> ThinkResult:
-    """One full think cycle:
+    """One think cycle: guards -> perceive -> decide -> validate -> execute -> record.
 
-    1. Build a perception snapshot (world.snapshot()).
-    2. Ask the brain (agent.brain.Brain, UM-101) for exactly one action:
-       Jev picking from agent.candidates.generate(), or the LLM picking
-       from the action catalog exposed as tools, with the LLM as Jev's
-       explicit opt-in per-cycle fallback. A bare LLM client (anything with LLMClient's
-       choose_action) is accepted too and wrapped as an LLM-only Brain.
-    3. Validate the model's choice against the action registry — unknown
-       action name, or an action whose check() rejects the params, never
-       reaches the game.
-    4. Execute exactly one validated action and return its result.
-
-    Any failure (LLM error, invalid tool call, failed validation) yields a
-    non-ok ThinkResult instead of raising — callers (the main loop) log and
-    move on to the next cycle rather than crash the agent.
-
-    If `audit_logger` (agent.audit.AuditLogger, UM-51) is given, one record
-    is appended for this cycle regardless of outcome — that's the whole
-    point of an audit log: it must capture failed/invalid cycles too, not
-    just successful ones.
-
-    If `state` (ThinkState, UM-90) is given, its recent history goes into
-    the prompt, this cycle's outcome is appended to it, and the loop guard
-    applies: an action+args identical to each of the last
-    LOOP_GUARD_REPEATS cycles, all of which failed or changed nothing, is
-    not executed.
+    Decide asks the brain (agent.brain.Brain, UM-101; a bare LLM client is
+    wrapped as an LLM-only Brain) for exactly one action. Validate checks it
+    against the registry, resolves handles and applies the loop guard
+    (`state`, UM-90). Execute runs it. Record appends the audit line (if
+    `audit_logger`, UM-51) and the history entry, whatever the outcome.
+    Expected failures yield a non-ok ThinkResult, never an exception.
     """
-    registry = registry if registry is not None else ac.REGISTRY
     if not isinstance(brain, Brain):
         brain = Brain(llm=brain)
-    _maybe_cancel_idle_trade(session, world)
-    # corpse_position (UM-43) is session-scoped (MSG_CORPSE_QUERY), not part
-    # of WorldState — pass it through so the snapshot exposes it alongside
-    # is_dead/is_ghost. getattr() with a default: harmless if session is a
-    # test double without it.
-    snapshot: Snapshot = world.snapshot(my_position=my_position, corpse_position=getattr(session, "corpse_position", None),
-                               pending_invite=getattr(session, "pending_invite", None),
-                               group=getattr(session, "group", None),
-                               chat_inbox=getattr(session, "chat_inbox", None))
-    _self_status(session, world, snapshot)
-    fingerprint = progress_fingerprint(snapshot)
-    if state is not None:
-        state.observe(fingerprint)
-
-    def _remember(action_name, params, ok, error=None, detail=None):
-        if state is not None:
-            state.record(action_name, params, ok, fingerprint, error=error, detail=detail)
-
-    decision = Decision()
-
-    def _audit(action_name=None, params=None, valid=False, ok=False, error=None):
-        if audit_logger is None:
-            return
-        try:
-            audit_logger.record(
-                cycle=cycle,
-                snapshot=snapshot,
-                tool_call={"name": action_name, "args": params or {}},
-                valid=valid,
-                result={"ok": ok, "error": error},
-                reflex=reflex_state or {},
-                goal=persona or None,
-                prompt_tokens=decision.prompt_tokens,
-                completion_tokens=decision.completion_tokens,
-                model=decision.model,
-                latency_ms=decision.latency_ms,
-                brain=decision.brain,
-                confidence=decision.confidence,
-                fallback=decision.fallback,
-                substituted=decision.substituted,
-                candidates=decision.candidates,
-                confidence_threshold=decision.confidence_threshold,
-                confidence_rule=decision.confidence_rule,
-                overridden=decision.overridden,
-                usage=decision.usage,
-                jev_status=decision.jev_status,
-                history_notes=decision.history_notes, prompt_id=decision.prompt_id,
-            )
-        except OSError as e:  # never let audit I/O crash a think cycle
-            log.warning("audit log write failed: %s", e)
-
-    try:
-        decision = brain.decide(
-            snapshot, persona=persona,
-            history=state.for_prompt() if state is not None else None,
-            my_guid=getattr(world, "my_guid", None) or None,
-            reflex_state=reflex_state,
-            blocked=state.repeat_blocked if state is not None else None,
-            handles=getattr(world, "handles", None))
-    except BrainError as e:
-        decision = e.decision
-        log.warning("%s", e)
-        _audit(error=str(e))
-        return ThinkResult(ok=False, error=str(e))
-    action_name, params = decision.action, decision.params
-
-    action = registry.get(action_name) if action_name is not None else None
-    if action is None or action_name is None:
-        log.warning("model chose unknown action %r (params=%r)", action_name, params)
-        _audit(action_name=action_name, params=params, valid=False,
-               error=f"unknown action: {action_name!r}")
-        _remember(action_name, params, False, error=f"unknown action: {action_name!r}")
-        return ThinkResult(ok=False, action_name=action_name, params=params,
-                            error=f"unknown action: {action_name!r}")
-
-    missing = [p for p in action.required if p not in params]
-    if missing:
-        log.warning("action %s missing required params %r (got %r)", action_name, missing, params)
-        _audit(action_name=action_name, params=params, valid=False,
-               error=f"missing required params: {missing}")
-        _remember(action_name, params, False, error=f"missing required params: {missing}")
-        return ThinkResult(ok=False, action_name=action_name, params=params,
-                            error=f"missing required params: {missing}")
-
-    # UM-89: the model sees and sends short handles ("u3"), never raw
-    # GUIDs; map them back here, the one place tool-call params enter the
-    # game. `params` (handles) stays what the audit log/ThinkResult record.
-    handles = getattr(world, "handles", None)
-    run_params = params
-    if handles is not None:
-        try:
-            run_params = handles.resolve_params(params)
-        except UnknownHandle as e:
-            log.warning("action %s got an unknown handle (params=%r): %s", action_name, params, e)
-            _audit(action_name=action_name, params=params, valid=False, error=str(e))
-            _remember(action_name, params, False, error=str(e))
-            return ThinkResult(ok=False, action_name=action_name, params=params, error=str(e))
-
-    if state is not None and state.repeat_blocked(action_name, params):
-        error = (f"loop guard: {action_name} with these exact args already failed or changed "
-                 f"nothing {LOOP_GUARD_REPEATS} times in a row; not executed. Try something different.")
-        log.warning("loop guard blocked %s %r", action_name, params)
-        _audit(action_name=action_name, params=params, valid=False, error=error)
-        _remember(action_name, params, False, error=error)
-        return ThinkResult(ok=False, action_name=action_name, params=params, error=error)
-
-
-    try:
-        result = action.run(session, world, **run_params)
-    except TypeError as e:
-        # Unexpected/extra kwargs the model hallucinated, or a param of the
-        # wrong shape reaching execute()'s positional signature.
-        log.warning("action %s rejected params %r: %s", action_name, params, e)
-        _audit(action_name=action_name, params=params, valid=True,
-               error=f"bad params: {e}")
-        _remember(action_name, params, False, error=f"bad params: {e}")
-        return ThinkResult(ok=False, action_name=action_name, params=params,
-                            error=f"bad params: {e}")
-
-    if not result.ok:
-        log.info("action %s failed validation/execution: %s", action_name, result.error)
-        _audit(action_name=action_name, params=params, valid=True, ok=False, error=result.error)
-        _remember(action_name, params, False, error=result.error)
-        return ThinkResult(ok=False, action_name=action_name, params=params,
-                            error=result.error, detail=result.detail)
-
-    log.info("action %s executed: %s", action_name, result.detail)
-    _audit(action_name=action_name, params=params, valid=True, ok=True)
-    _remember(action_name, params, True, detail=result.detail)
-    return ThinkResult(ok=True, action_name=action_name, params=params, detail=result.detail)
+    c = Cycle(session, world, brain, persona, my_position,
+              registry if registry is not None else ac.REGISTRY,
+              audit_logger, cycle, reflex_state, state)
+    for stage in STAGES:
+        stage(c)
+        if c.done:
+            break
+    return record(c)
