@@ -43,7 +43,10 @@ def _write(root: pathlib.Path, rel_paths: list[str]) -> None:
 class CheckRegistryTest(unittest.TestCase):
     def test_every_tests_dir_is_registered(self):
         script = (ROOT / "scripts" / "check.sh").read_text()
-        missing = find_tests_dirs(ROOT) - registered_dirs(script)
+        found = find_tests_dirs(ROOT)
+        known = {"agent/tests", "tools/tests", "exporters/wow-exporter/tests", "scripts/tests"}
+        self.assertEqual(sorted(known - found), [], "the walk no longer finds a known tests dir")
+        missing = found - registered_dirs(script)
         self.assertEqual(sorted(missing), [], "tests dir not registered in scripts/check.sh SUITES")
 
     def _unregistered_in(self, rel_paths: list[str]) -> set[str]:
@@ -70,8 +73,11 @@ class CheckRegistryTest(unittest.TestCase):
 
     def test_dot_claude_copy_is_not_reported(self):
         self.assertEqual(
-            self._unregistered_in([".claude/worktrees/w/tools/x/tests/test_x.py"]), set()
+            self._unregistered_in(["tools/x/.claude/worktrees/w/tests/test_x.py"]), set()
         )
+
+    def test_js_only_tests_dir_is_reported(self):
+        self.assertEqual(self._unregistered_in(["tools/y/tests/js/a.test.js"]), {"tools/y/tests"})
 
     def test_tests_dir_without_test_module_is_not_reported(self):
         self.assertEqual(self._unregistered_in(["tools/x/tests/helper.py"]), set())
