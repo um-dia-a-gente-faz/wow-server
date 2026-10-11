@@ -6,8 +6,9 @@ player gets a VALUES block with health 0. Then, like TrinityCore:
   CMSG_REPOP_REQUEST          -> ghost: health 1, PLAYER_FLAGS_GHOST, SMSG_DEATH_RELEASE_LOC
                                  (WorldSession::HandleRepopRequest -> BuildPlayerRepop/RepopAtGraveyard)
   MSG_CORPSE_QUERY            -> SMSG-side MSG_CORPSE_QUERY, valid corpse (HandleQueryCorpseLocation)
-  CMSG_RECLAIM_CORPSE (guid)  -> alive again iff guid is the corpse (HandleReclaimCorpse; the mock does
-                                 not model the 39 yd radius, the ghost-time delay or the repeat-death timer)
+  CMSG_RECLAIM_CORPSE (guid)  -> alive again iff guid is the corpse. The GUID check is the mock's own and
+                                 stricter than the server: HandleReclaimCorpse ignores the packet's GUID and
+                                 checks only alive/ghost, the corpse, the delay and the 39 yd radius (not modelled here)
   CMSG_SPIRIT_HEALER_ACTIVATE -> alive again (HandleSpiritHealerActivateOpcode; range not modelled)
 
 `corpse_perceived=False` never sends the corpse object, so the agent must fall back to the spirit
@@ -98,6 +99,8 @@ class DeathMock(server.WorldMock):
             else:
                 send(MSG_CORPSE_QUERY, b'\0')
         elif opcode == CMSG_RECLAIM_CORPSE:
+            # The GUID check below is the mock's own, stricter than the server: HandleReclaimCorpse
+            # never reads the packet's GUID. The mock still requires the corpse GUID so a wrong one fails here.
             if self.state == "ghost" and self.corpse_perceived and payload == struct.pack('<Q', CORPSE_GUID):
                 self._resurrect(send, "corpse")
         elif opcode == CMSG_SPIRIT_HEALER_ACTIVATE:
