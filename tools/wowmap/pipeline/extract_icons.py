@@ -26,7 +26,9 @@ import io
 import os
 import sys
 
-from item_icons import icon_file, load_display_icons, mpq_path
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wowmap"))  # runtime modules
+from item_icons import icon_file, load_display_icons, mpq_path  # noqa: E402
 
 # Highest priority first. 3.3.5a's patches contain whole files (no incremental
 # patching), so "first archive that has it" is what the client does too.

@@ -4,7 +4,7 @@ import sys
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))  # tools/
 from dbc.names import GameNames  # noqa: E402
 from dbc.spelltext import Effect, SpellInfo  # noqa: E402

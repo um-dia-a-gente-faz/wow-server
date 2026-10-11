@@ -42,5 +42,5 @@ Tests enforce the schema:
 - The schema checks types, not meaning: cross-field rules (Jev needs
   `JEV_BASE_URL`, `AGENT_BRAIN_FALLBACK` only applies to the jev brain) live in
   `Config`'s `default_factory` lambdas, not in `SETTINGS`.
-- Other services keep their own env handling: `tools/wowmap/state.py` and
+- Other services keep their own env handling: `tools/wowmap/wowmap/state.py` and
   `tools/agent-runner` do not use this schema.

@@ -191,7 +191,7 @@ and `mpyq`.
 
 | Directory | Owns | Runs on |
 |---|---|---|
-| `tools/wowmap` | observability site, :9400: live map, character inspect, activity feed, calibration, fleet panel (ADR 0008; `README.md`) | wow-server VM, `monitoring` project |
+| `tools/wowmap` | observability site, :9400: live map, character inspect, activity feed, calibration, fleet panel (ADR 0008; `README.md`). `wowmap/` is the runtime the image ships whole; `pipeline/` is hand-run extractors and calibration, not shipped (#392) | wow-server VM, `monitoring` project |
 | `tools/chat-feed` | SSE chat feed, :9500, fed by agent relay and a log tailer | wow-server VM, game project |
 | `tools/agent-runner` | fleet control plane, :9700: status, start/stop, character creation; owns the Docker socket (ADR 0002) | `wow-agents` VM |
 | `tools/jev-mock` | local stand-in for the Jev Decisions API | dev / tests |

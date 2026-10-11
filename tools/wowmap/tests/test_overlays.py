@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import pagesrc  # noqa: E402
 import areas  # noqa: E402
 import state  # noqa: E402

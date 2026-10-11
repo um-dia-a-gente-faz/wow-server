@@ -5,17 +5,17 @@ description: Work on tools/wowmap, the internal observability site (live map, ch
 
 # Working on the observability site
 
-`tools/wowmap` is a stdlib `http.server` app: `app.py` is wiring only, `routes.py` is the
+`tools/wowmap/wowmap/` is the runtime (offline `pipeline/` is run by hand, never shipped); a stdlib `http.server` app: `app.py` is wiring only, `routes.py` is the
 route table, SQL lives in `repo/`, and the HTML/CSS/JS lives in `static/` (one file per panel, `index.html` is the template `pages.py` fills in) — no build step, no framework. Keep it that way.
 The map stage is Leaflet (`L.CRS.Simple`, map units = zone-art pixels), vendored in
-`tools/wowmap/static/` and served under `/static/`; never load it from a CDN.
+`tools/wowmap/wowmap/static/` and served under `/static/`; never load it from a CDN.
 `tools/wowmap/README.md` documents the endpoints and the bag/slot convention;
 `docs/LIVE-MAP.md` documents how the map was built.
 
 ## Run it locally
 
 ```bash
-cd tools/wowmap
+cd tools/wowmap/wowmap
 pip install -r requirements.txt                 # pymysql, Pillow
 export MYSQL_HOST=192.168.1.64 MYSQL_USER=root MYSQL_PASSWORD=...   # from the VM's .env
 export DBC_DIR=/path/to/dbc MAPS_DIR=/path/to/maps LISTEN_PORT=9401
@@ -33,7 +33,7 @@ mounted, and the site is served at http://192.168.1.64:9400.
 | Player positions, level, money, inventory, reputation | `characters` database (saved every 5 s) |
 | Item names, stats, sell price | `world.item_template` (38k rows) |
 | Zone rectangles, names, continents | client DBCs via `transform.py` (`WorldMapArea`, `AreaTable`, `Map`) |
-| Zone art | `extract_maps.py`, from the client MPQs → per-zone PNG |
+| Zone art | `pipeline/extract_maps.py`, from the client MPQs → per-zone PNG |
 | Public chat | `tools/chat-feed` SSE on :9500 |
 | Agent decisions | the audit JSONL under `/opt/wow-server-metrics/audit` |
 

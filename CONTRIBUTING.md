@@ -44,7 +44,7 @@ Optional, lowercased, dash-separated. Examples:
 | `monitoring` | `monitoring/` compose, Prometheus config |
 | `docker` | `docker-compose.yml` or container changes |
 | `agent` | `agent/` (Python protocol-level AI agent) |
-| `transform` | `tools/wowmap/transform.py` (DBC → pixel math) |
+| `transform` | `tools/wowmap/wowmap/transform.py` (DBC → pixel math) |
 | `docs` | any `.md` file |
 
 ### Examples

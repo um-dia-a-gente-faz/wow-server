@@ -4,11 +4,11 @@ import re
 import sys
 import unittest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import routes  # noqa: E402
 from webio import Request  # noqa: E402
 
-STATIC = pathlib.Path(__file__).resolve().parents[1] / "static"
+STATIC = pathlib.Path(__file__).resolve().parents[1] / "wowmap" / "static"
 PAGE_ROUTES = ("/", "/index.html")
 
 

@@ -15,7 +15,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "pipeline"))  # extract_icons
 import app  # noqa: E402
 import pagesrc  # noqa: E402
 import assets  # noqa: E402

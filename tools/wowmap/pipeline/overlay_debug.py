@@ -13,7 +13,7 @@ import sys
 
 from PIL import Image, ImageDraw
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wowmap"))  # runtime modules
 from transform import DbcTables  # noqa: E402
 
 

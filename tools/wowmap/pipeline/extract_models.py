@@ -18,8 +18,9 @@ import argparse
 import os
 import sys
 
-import models
-from extract_icons import decode_blp, open_archives, read_first
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wowmap"))  # runtime modules
+import models  # noqa: E402
+from extract_icons import decode_blp, open_archives, read_first  # noqa: E402
 
 
 def main():
