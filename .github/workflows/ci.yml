@@ -45,7 +45,7 @@ jobs:
           {
             echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
             echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
-            echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
+            echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^\.env\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
 
