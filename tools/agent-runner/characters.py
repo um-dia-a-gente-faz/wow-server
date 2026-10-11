@@ -14,7 +14,9 @@ from pathlib import Path
 import random
 import sys
 
-ACCOUNT_RE = re.compile(r"^AGENT(0[1-9]|1[0-9]|2[0-5])$")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/, for common
+from common.agent_accounts import is_agent_account  # noqa: E402
+
 DEATH_KNIGHT = 6
 NAME_IN_USE = 50
 NAME_REJECTED = range(88, 103)  # SharedDefines.h CHAR_NAME_* codes: the server refused the name
@@ -56,7 +58,7 @@ class CharacterService:
 
     # ── validation ───────────────────────────────────────────────────
     def validate_account(self, account):
-        if not isinstance(account, str) or not ACCOUNT_RE.match(account):
+        if not is_agent_account(account):
             raise CharacterError("account must be one of AGENT01..AGENT25")
         return account
 

@@ -258,6 +258,7 @@ whose files changed:
 |---|---|
 | `docker-compose.yml`, `tdb/`, `tools/chat-feed/` | game |
 | `monitoring/`, `exporters/`, `tools/wowmap/`, `tools/dbc/` | monitoring |
+| `tools/common/` (copied into both images, ADR 0014) | game and monitoring |
 | anything else (docs, `agent/`, `scripts/`, tests, the root `Dockerfile`, which is the agent image) | none, the checkout just advances |
 
 Before the game stack, it counts online characters (`characters.characters WHERE online = 1`,

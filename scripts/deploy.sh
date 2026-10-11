@@ -13,7 +13,7 @@
 # Path-aware: each stack is compared from the commit it was last deployed at
 # (refs/deployed/<stack>) to origin/main, and only stacks whose files changed
 # are touched (game: docker-compose.yml, tdb/, tools/chat-feed;
-# monitoring: monitoring/, exporters/, tools/wowmap, tools/dbc). A docs, agent
+# monitoring: monitoring/, exporters/, tools/wowmap, tools/dbc; tools/common: both). A docs, agent
 # or test merge touches neither; the root Dockerfile is the agent image, in
 # neither stack. Before the game stack, the script defers it
 # while any character is online (agent characters included) or the count cannot
@@ -36,6 +36,7 @@ stacks_for() {
   while IFS= read -r -d '' f; do
     case "$f" in
       docker-compose.yml|tdb/*|tools/chat-feed/*) game=1 ;;
+      tools/common/*) game=1; mon=1 ;;  # copied into both images (ADR 0014)
       monitoring/*|exporters/*|tools/wowmap/*|tools/dbc/*) mon=1 ;;
     esac
   done

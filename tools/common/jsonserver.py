@@ -21,6 +21,7 @@ class HttpError(Exception):
 
 class JsonHandler(BaseHTTPRequestHandler):
     MAX_BODY = 1 << 20  # bytes; a larger Content-Length is refused before it is read
+    timeout = 10        # seconds a silent client may hold a thread (StreamRequestHandler)
 
     def log_message(self, fmt, *args):
         LOG.debug("%s - %s", self.address_string(), fmt % args)
@@ -43,13 +44,22 @@ class JsonHandler(BaseHTTPRequestHandler):
             raise HttpError(400, "expected a JSON object")
         return body
 
-    def send_json(self, status, obj):
-        data = json.dumps(obj).encode("utf-8")
+    def send_extra_headers(self):
+        """Hook: headers (CORS, ...) added to every send_body response."""
+
+    def send_body(self, status, data, ctype, cache=None):
+        """Answer with `data` (bytes) as `ctype`, plus Cache-Control when `cache` is given."""
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        if cache:
+            self.send_header("Cache-Control", cache)
+        self.send_extra_headers()
         self.end_headers()
         self.wfile.write(data)
+
+    def send_json(self, status, obj):
+        self.send_body(status, json.dumps(obj).encode("utf-8"), "application/json")
 
     def send_error_json(self, status, message):
         self.send_json(status, {"error": message})

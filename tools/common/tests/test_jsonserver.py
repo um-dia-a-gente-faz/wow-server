@@ -116,6 +116,52 @@ class Responses(Server):
         self.assertEqual(str(err), "unauthorized")
 
 
+class SendBody(Server):
+    """#451: wowmap and chat-feed answer non-JSON bodies, Cache-Control and CORS through the base."""
+
+    def get(self, handler):
+        self.httpd.RequestHandlerClass = handler
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=5)
+        self.addCleanup(conn.close)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        return resp, resp.read()
+
+    def test_send_body_sets_type_length_and_cache_control(self):
+        class Handler(JsonHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_body(200, b"<p>hi</p>", "text/html; charset=utf-8", cache="no-store")
+
+        resp, data = self.get(Handler)
+        self.assertEqual(data, b"<p>hi</p>")
+        self.assertEqual(resp.getheader("Content-Type"), "text/html; charset=utf-8")
+        self.assertEqual(resp.getheader("Content-Length"), "9")
+        self.assertEqual(resp.getheader("Cache-Control"), "no-store")
+
+    def test_no_cache_header_unless_asked(self):
+        class Handler(JsonHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_json(200, {})
+
+        resp, _ = self.get(Handler)
+        self.assertIsNone(resp.getheader("Cache-Control"))
+
+    def test_send_extra_headers_hook_reaches_json_and_errors(self):
+        class Handler(JsonHandler):
+            def send_extra_headers(self):
+                self.send_header("Access-Control-Allow-Origin", "*")
+
+            def do_GET(self):  # noqa: N802
+                self.send_error_json(404, "not found")
+
+        resp, data = self.get(Handler)
+        self.assertEqual(resp.getheader("Access-Control-Allow-Origin"), "*")
+        self.assertEqual(json.loads(data), {"error": "not found"})
+
+    def test_a_stalled_request_times_out(self):
+        self.assertEqual(JsonHandler.timeout, 10)
+
+
 class Bearer(Server):
     token = TOKEN
 
