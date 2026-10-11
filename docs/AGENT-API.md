@@ -178,7 +178,7 @@ Any non-2xx JSON body: {api_version, error}.
 <!-- BEGIN GENERATED catalog: agent/action_specs.py (scripts/generate.py) -->
 ## Action catalog
 
-One entry per action spec in `agent/action_specs.py`, in spec order: every action the agent can take, including the ones the death, rest and follow reflexes take. `cap` is the most candidates of that action offered per snapshot (`none`: the spec has no cap).
+One entry per action spec in `agent/action_specs.py`, in spec order: every action the agent can take, including the ones the death, rest and follow reflexes take. `cap` is the most candidates of that action offered per snapshot (`none`: the spec has no cap). An action marked *Not offered to the LLM* is left out of the LLM's tool list (`LLM_EXCLUDED_ACTIONS` in `agent/action_specs.py`); it stays registered and the other brain may still choose it.
 
 ### `set_target`
 
@@ -239,6 +239,8 @@ cap: none
 No parameters.
 
 ### `idle`
+
+**Not offered to the LLM.**
 
 cap: none
 

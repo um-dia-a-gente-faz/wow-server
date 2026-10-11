@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 
 from . import actions as ac
 from . import candidates as cand
+from .action_specs import LLM_EXCLUDED_ACTIONS  # #531: the one home of the set, shared with api_contract
 from .jev import JevClient, JevError
 from .llm import LLMClient, LLMError
 from .model import ActionRecord, Candidate, Snapshot
@@ -63,13 +64,6 @@ _COOLDOWNS = {401: JEV_AUTH_COOLDOWN_S, 402: JEV_AUTH_COOLDOWN_S,
 
 # #213: Jev token budget. Rolling window, per agent, input+output tokens (agent/tokenbudget.py).
 JEV_STATUS_BUDGET = "budget_exhausted"
-
-# Actions the LLM never sees as tools. `idle` (UM-97) exists so a choice-only
-# brain always has a valid option; offered to a free tool-calling model it is
-# an escape hatch that turns "could not decide" into a successful no-op,
-# which hides exactly the failures UM-44's >=90% valid-call bar measures.
-# Leaving it out keeps the LLM path what it was before UM-97.
-LLM_EXCLUDED_ACTIONS = frozenset({"idle"})
 
 
 class BrainError(Exception):
