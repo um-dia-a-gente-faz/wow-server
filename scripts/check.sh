@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Single entry point shared by CI and contributors (#298).
-#   scripts/check.sh <target>...   targets: compile lint types generated test test-<suite> all
+#   scripts/check.sh <target>...   targets: compile lint types types-legacy generated test test-<suite> all
 # Add a test suite = add one line to SUITES. scripts/tests guards that no tests dir is missed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -33,6 +33,7 @@ lint()      { ruff check .; }
 # the session or the fake does not follow is a type error.
 CONTRACT_TESTS="agent/tests/test_ports.py"
 types()     { mypy && mypy $CONTRACT_TESTS; }
+types_legacy() { python3 scripts/mypy_legacy_baseline.py --check; }   # #378
 generated() {
   local rc=0 f
   python3 scripts/generate.py --check || rc=1   # every generated file, #297
@@ -55,12 +56,14 @@ test_all()  { local s; for s in "${SUITES[@]}"; do suite "${s%%|*}"; done; }
 [ $# -gt 0 ] || set -- all
 for t in "$@"; do
   case "$t" in
-    compile|lint|types|generated) "$t" ;;
+    compile|lint|generated) "$t" ;;
+    types) types; types_legacy ;;   # CI's lint job runs this target (#378)
+    types-legacy) types_legacy ;;
     test) test_all ;;
     test-stdlib) for s in $STDLIB_SUITES; do suite "$s"; done ;;
     test-*) suite "${t#test-}" ;;
-    all) compile; lint; types; generated; test_all ;;
+    all) compile; lint; types; types_legacy; generated; test_all ;;
     list) for s in "${SUITES[@]}"; do echo "${s%%|*}"; done ;;
-    *) echo "usage: $0 compile|lint|types|generated|test|test-<suite>|test-stdlib|list|all" >&2; exit 2 ;;
+    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|list|all" >&2; exit 2 ;;
   esac
 done
