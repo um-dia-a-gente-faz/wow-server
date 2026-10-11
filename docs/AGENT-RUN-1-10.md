@@ -108,18 +108,21 @@ cycle both pass, then commits it here and to `.env.example`):
 ## How to start a run
 
 ```sh
-docker compose -f docker-compose.agents.yml up -d --build agent-<name>
+scripts/build-agent-image.sh                 # builds wow-agent:<sha> from this checkout, prints the SHA
+# set WOW_AGENT_TAG=<that sha> in .env, then:
+docker compose -f docker-compose.agents.yml up -d agent-<name>
 ```
 
-**Always pass `--build`.** Without it compose reuses whatever `wow-agent:latest`
-is already on the host. The 5-minute auto-deploy does not build this compose
+Build first, then start. Compose reuses whatever `wow-agent:<WOW_AGENT_TAG>` is already on
+the host, and the tag is a commit SHA (#291). The 5-minute auto-deploy does not build this compose
 file, so that image can be weeks old. A stale one still starts and still
 publishes its port, but the observability API (UM-50) never binds, and the
 console's "Agent mind" tab, `/state`, `/perception` and `/brain` all stay dead
-(issue #131). To rebuild without starting anything, or to check freshness:
+(issue #131). `up -d --build`, or `up -d` with a `WOW_AGENT_TAG` whose image is absent,
+builds the current checkout under that tag, which overwrites the image an older SHA should
+name and so breaks the rollback to it. To check freshness:
 
 ```sh
-scripts/build-agent-image.sh           # rebuild wow-agent:latest, print next steps
 scripts/build-agent-image.sh --check   # exit 1 if the image predates agent/ or the Dockerfile
 ```
 
