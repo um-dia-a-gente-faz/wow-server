@@ -63,8 +63,6 @@ idle session, not the footprint of a real agent (see `docs/loadtest-baseline.md`
 
 ## Not done yet
 
-- Growth under traffic is measured but not yet triaged: run `--stream-hz` soaks and file
-  one bug per collection that keeps growing (#421 acceptance, last item).
 - Time is real time. An injectable clock (#351) would let faults and backoff be
   simulated instead of waited for.
 - Numbers on the VM (the 6 GB budget) have not been taken.
