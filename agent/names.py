@@ -175,7 +175,9 @@ class NameCache:
     under agent/perception/world.py::WorldState's lock (want_*/on_*_response, and drain()
     via ResolutionMixin.drain_name_queries, called by agent/handlers/world.py
     send_name_queries). The one exception is load(): agent/session.py calls it from
-    login_character before the recv thread starts, so no other thread exists yet. The
+    login_character before CMSG_PLAYER_LOGIN is sent and before the recv thread starts.
+    Other threads already run (chat-relay, HTTP observer) but none can reach this
+    session's WorldState yet: the relay gets its resolver from a received chat packet. The
     recv thread and the chat-relay thread share this cache. The expiry sweep still
     iterates a snapshot of _in_flight and tolerates a token already removed, which keeps
     that sweep safe if the class is used alone.
@@ -223,7 +225,8 @@ class NameCache:
 
     def drain(self, max_items: int | None = None) -> list[tuple[str, int, int]]:
         """Pop up to the current send budget's worth of pending queries.
-        Callers (agent/session.py) send one packet per returned item. Also
+        Callers (agent/handlers/world.py send_name_queries, via WorldState.drain_name_queries)
+        send one packet per returned item. Also
         forgets every sent query older than QUERY_TIMEOUT_S (one pass, no sort)
         so a later want_*() asks again."""
         now = self._clock()
