@@ -10,7 +10,10 @@ Linear (`UM-*`) is the older mirror and is no longer kept up to date.
 - **Never restart the worldserver** or run `scripts/deploy.sh`. Merging to `main`
   auto-deploys the VM within 5 minutes, which disconnects everyone playing.
 - **Never use GM commands on agent characters** (`.go`, `.die`, `.modify`, …) and never
-  modify accounts or the owner's character (Rubens). Relog or walk instead.
+  modify accounts or the owner's character (Rubens). Relog or walk instead. The one
+  exception is an admin acting through the site's audited Tier 2 control (revive, heal,
+  teleport, summon; [ADR 0013](docs/adr/0013-admin-only-gm-control.md)); it never applies
+  to agent code, coding sessions or loop agents.
 - **Never merge a PR** unless it is your own, CI is green, it has no conflicts and no
   change request is open (see *Working model*). Never force-push a shared
   branch or push to `main`.

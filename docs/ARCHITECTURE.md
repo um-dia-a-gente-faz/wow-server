@@ -163,7 +163,7 @@ Wire formats are in `docs/PROTOCOL-NOTES.md`.
 
 Who owns what in the tree. Every path below exists on `main`; decisions behind the
 agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config schema,
-0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract;
+0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract, 0012 site stack, 0013 admin-only GM control;
 the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.json`).
 
 ### `agent/` (stdlib-only Python 3.12, one process per character)
