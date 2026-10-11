@@ -6,6 +6,7 @@ Split out of the former agent/actions.py (issue #248).
 import struct
 import time
 
+from .. import action_names as an
 from .. import spells
 from ..rules import MELEE_RANGE_YD
 from .. import update_fields as uf
@@ -39,12 +40,8 @@ def send_attack(session, guid: int):
 
 @register
 class AutoAttackAction(Action):
-    name = "auto_attack"
+    name = an.AUTO_ATTACK
     description = "Target and start melee auto-attack on a nearby hostile unit."
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the unit to attack."},
-    }
-    required = ("guid",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -87,10 +84,8 @@ class AutoAttackAction(Action):
 
 @register
 class StopAttackAction(Action):
-    name = "stop_attack"
+    name = an.STOP_ATTACK
     description = "Stop melee auto-attack."
-    params = {}
-    required = ()
 
     def execute(self, session, world, **_) -> ActionResult:
         send(session, CMSG_ATTACKSTOP)
@@ -102,10 +97,8 @@ class IdleAction(Action):
     """UM-97: an explicit "do nothing this cycle" choice, so a brain that
     picks from a fixed candidate list (agent/candidates.py, for Jev) always
     has a safe option that maps to a real registered action. Sends nothing."""
-    name = "idle"
+    name = an.IDLE
     description = "Do nothing this cycle (wait and watch). Always a valid choice."
-    params = {}
-    required = ()
 
     def execute(self, session, world, **_) -> ActionResult:
         return ActionResult(ok=True, detail={"idle": True})
@@ -113,13 +106,8 @@ class IdleAction(Action):
 
 @register
 class CastSpellAction(Action):
-    name = "cast_spell"
+    name = an.CAST_SPELL
     description = "Cast a known spell, optionally on a target (defaults to self if target_guid is omitted)."
-    params = {
-        "spell_id": {"type": "integer", "description": "Spell ID to cast — must be in the agent's spellbook."},
-        "target_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the unit to cast on. Omit to cast on self."},
-    }
-    required = ("spell_id",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 

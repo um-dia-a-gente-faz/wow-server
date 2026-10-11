@@ -28,6 +28,7 @@ from .think import ThinkState, think_and_act
 from .audit import AuditLogger
 from .http_api import AgentObserver, start_server
 from .metrics import swallowed
+from . import death  # noqa: F401  registers release_spirit/reclaim_corpse (gh-321: nothing else imported it)
 from .reflexes.follow import get_follow_reflex
 from .reflexes.rest import get_rest_reflex
 

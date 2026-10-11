@@ -12,6 +12,7 @@ Env:
     MYSQL_PASSWORD  required (no default; compose passes MYSQL_ROOT_PASSWORD from .env)
     LISTEN_PORT     default: 9300
     TOP_PLAYED      default: 20   (how many characters to expose playtime for)
+    BACKUP_DIR      default: /backups   (read-only mount of /opt/wow-server-backups)
 """
 import logging
 import os
@@ -22,6 +23,8 @@ from prometheus_client import REGISTRY, start_http_server
 from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
 
+from backups import backup_stats
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wow-exporter")
 
@@ -31,6 +34,7 @@ MYSQL_USER = os.environ.get("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9300"))
 TOP_PLAYED = int(os.environ.get("TOP_PLAYED", "20"))
+BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
 
 # --- Static lookups (DBC values, stable for 3.3.5a) -------------------------------
 
@@ -88,6 +92,14 @@ class WowCollector(Collector):
                 except Exception:  # noqa: BLE001
                     pass
 
+        # Read from disk, outside the MySQL block: a dead DB must not hide a stale backup.
+        count, newest_ts, newest_size = backup_stats(BACKUP_DIR)
+        yield GaugeMetricFamily("wow_backup_count", "Finished database dumps in the backup directory",
+                                value=count)
+        yield GaugeMetricFamily("wow_backup_newest_timestamp_seconds",
+                                "Unix mtime of the newest dump (0 if there is none)", value=newest_ts)
+        yield GaugeMetricFamily("wow_backup_newest_size_bytes", "Size of the newest dump (0 if none)",
+                                value=newest_size)
         yield GaugeMetricFamily("wow_exporter_up", "1 if the last MySQL scrape succeeded", value=up)
         yield GaugeMetricFamily("wow_exporter_scrape_duration_seconds",
                                 "Duration of the collector run", value=time.time() - t0)

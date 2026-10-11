@@ -49,18 +49,18 @@ LAYERS = {
     "rules": set(),
     "ports": set(),
     # parsers are pure: wire helpers only
-    "npc": {"opcodes", "packets"},
-    "quests": {"opcodes", "packets"},
+    "npc": {"opcodes", "wire"},
+    "quests": {"opcodes", "wire"},
     "loot": {"opcodes", "packets", "wire"},
     "mail": {"opcodes", "packets", "wire"},
     "trade": {"opcodes", "packets", "wire"},
-    "spells": {"packets"},
-    "channels": {"opcodes", "packets"},
-    "names": {"packets"},
-    "group": {"packets"},
+    "spells": {"opcodes", "packets", "wire"},
+    "channels": {"opcodes", "wire"},
+    "names": {"opcodes", "wire"},
+    "group": {"opcodes", "wire"},
     "items": set(),
     "item_compare": set(),
-    "update_object": {"packets"},
+    "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
@@ -70,15 +70,16 @@ LAYERS = {
     # routing: handlers parse and update state, they never act (ADR 0006)
     "router": {"packets", "wire"},   # PacketTruncated is counted apart from other handler errors (#494)
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
-                 "quests", "router", "spells", "trade", "update_fields", "update_object"},
+                 "quests", "router", "spells", "trade", "update_fields", "update_object", "wire"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
-    "actions": {"changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
+    "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
-    "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
+    "reflexes": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "update_fields"},
     "control": {"actions", "metrics", "movement"},
-    "death": {"actions", "movement", "opcodes", "perception", "rules"},
-    "action_names": set(),
-    "candidates": {"action_names", "handles", "item_compare", "metrics", "model", "rules"},
+    "death": {"action_names", "actions", "movement", "opcodes", "perception", "rules"},
+    "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
+    "action_names": {"action_specs"},
+    "candidates": {"action_names", "action_specs", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
     "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
@@ -88,15 +89,15 @@ LAYERS = {
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "brain": {"actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
-    "think": {"actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
+    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport"},
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
-    "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "http_api",
-                 "metrics", "reflexes", "session", "think"},
+    "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "death", "http_api",
+                 "metrics", "reflexes", "session", "think"},   # death: imported so its actions register (#321)
 }
 
 ADR = {

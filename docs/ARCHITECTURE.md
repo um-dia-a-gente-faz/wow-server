@@ -163,14 +163,14 @@ Wire formats are in `docs/PROTOCOL-NOTES.md`.
 
 Who owns what in the tree. Every path below exists on `main`; decisions behind the
 agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config schema,
-0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract;
+0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract, 0012 site stack, 0013 admin-only GM control;
 the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.json`).
 
 ### `agent/` (stdlib-only Python 3.12, one process per character)
 
 | Area | Modules | Owns |
 |---|---|---|
-| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). `action_names.py` holds one constant per registered action name (candidates refer to actions through it; a test pins it to `REGISTRY`). `rules.py` holds game-rule constants (ranges, level margin) shared by candidates and actions; it imports nothing. |
+| Entry and config | `__main__.py`, `config.py` | `python3 -m agent`: login, reconnect supervisor, reflex threads, think loop. `config.py::SETTINGS` is the single list of env settings (ADR 0007). `action_specs.py` holds one spec per registered action (name, params, required, cap) and the name constants; the action classes, the tool schema, `catalog()` and think.py's required-param check read it, and a test checks each spec against its class. `action_names.py` re-exports the constants (candidates refer to actions through it). `rules.py` holds game-rule constants (ranges, level margin) shared by candidates and actions; it imports nothing. |
 | Login and wire | `auth.py` (SRP6, :3724), `crypt.py` (RC4), `packets.py`, `wire.py` (cursor `Reader`/`Writer` with `PacketTruncated`, #274), `transport.py`, `opcodes.py` (all opcode constants), `session.py` | `WoWSession(Transport, GameState)`: world login, recv loop, keepalive (ADR 0005). |
 | State | `state.py` (`GameState`), `perception/` (`WorldState`, one snapshot builder per section), `model.py` (the snapshot contract: `TypedDict`s for `Snapshot`, `Unit`, `Item`, `QuestEntry`, `Me`, `Candidate`, `ActionRecord`, shared by perception, candidates, brain, think and audit), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |

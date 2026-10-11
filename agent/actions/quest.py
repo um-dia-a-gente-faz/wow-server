@@ -3,6 +3,7 @@
 Split out of the former agent/actions.py (issue #248).
 """
 
+from .. import action_names as an
 from .. import quests as qu
 from ..rules import INTERACT_RANGE_YD
 from .base import (Action, ActionResult, register, send)
@@ -29,18 +30,11 @@ def _open_quest_giver_window(session, world, npc_guid: int, quest_id: int, kinds
 
 @register
 class AcceptQuestAction(Action):
-    name = "accept_quest"
+    name = an.ACCEPT_QUEST
     description = ("Accept a quest offered by a nearby questgiver. Requires that NPC's quest "
                     "list/quest details window, or a gossip window listing the quest, to "
                     "already be open (interact() with the NPC first) and the quest to be "
                     "present in it.")
-    params = {
-        "npc_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC."},
-        "quest_id": {"type": "integer", "description": "Quest ID to accept, from the open "
-                                                         "quest_list/quest_details/gossip "
-                                                         "window."},
-    }
-    required = ("npc_guid", "quest_id")
 
     def check(self, session, world, npc_guid: int, quest_id: int, **_) -> str | None:
         target = world.get_object(npc_guid)
@@ -87,16 +81,11 @@ class AcceptQuestAction(Action):
 
 @register
 class CompleteQuestAction(Action):
-    name = "complete_quest"
+    name = an.COMPLETE_QUEST
     description = ("Tell a nearby questgiver you're ready to turn in quest_id — the first step "
                     "of turning a quest in. Opens the request-items or offer-reward window "
                     "(check the perception snapshot's `window` after calling this); use "
                     "turn_in_quest to actually finish once that window is open.")
-    params = {
-        "npc_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC."},
-        "quest_id": {"type": "integer", "description": "Quest ID to complete, from quest_log."},
-    }
-    required = ("npc_guid", "quest_id")
 
     def check(self, session, world, npc_guid: int, quest_id: int, **_) -> str | None:
         target = world.get_object(npc_guid)
@@ -120,19 +109,11 @@ class CompleteQuestAction(Action):
 
 @register
 class TurnInQuestAction(Action):
-    name = "turn_in_quest"
+    name = an.TURN_IN_QUEST
     description = ("Finish turning in quest_id at a nearby questgiver, picking reward_choice "
                     "(index into the open offer-reward window's reward_choice_items, if any). "
                     "Requires the offer-reward window to already be open (call complete_quest "
                     "first).")
-    params = {
-        "npc_guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the questgiver NPC."},
-        "quest_id": {"type": "integer", "description": "Quest ID to turn in."},
-        "reward_choice": {"type": "integer", "description": "Index of the reward item to pick, "
-                                                              "from the open window's "
-                                                              "reward_choice_items. Default 0."},
-    }
-    required = ("npc_guid", "quest_id")
 
     def check(self, session, world, npc_guid: int, quest_id: int, reward_choice: int = 0,
               **_) -> str | None:
@@ -155,13 +136,8 @@ class TurnInQuestAction(Action):
 
 @register
 class AbandonQuestAction(Action):
-    name = "abandon_quest"
+    name = an.ABANDON_QUEST
     description = "Drop a quest from the quest log by its slot number. Irreversible."
-    params = {
-        "slot": {"type": "integer", "description": "Quest log slot (0-24), from quest_log's "
-                                                     "`slot` field — not the quest id."},
-    }
-    required = ("slot",)
 
     def check(self, session, world, slot: int, **_) -> str | None:
         quest_log = world.build_quest_log()

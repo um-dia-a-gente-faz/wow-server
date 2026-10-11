@@ -17,6 +17,7 @@ from . import spells as sp
 from . import trade as tr
 from . import update_fields as uf
 from .brain import Brain, BrainError, Decision
+from .action_specs import specs_by_name
 from .handles import UnknownHandle
 from .actions.base import send
 from .loopguard import (HISTORY_LEN, LOOP_GUARD_REPEATS, ThinkState, _DETAIL_MAX_CHARS,  # noqa: F401 (re-exported)
@@ -173,7 +174,9 @@ def validate(c: Cycle) -> None:
     if c.action is None or name is None:
         log.warning("model chose unknown action %r (params=%r)", name, params)
         return c.fail(f"unknown action: {name!r}")
-    missing = [p for p in c.action.required if p not in params]  # type: ignore[operator]  # None params raise TypeError, as on main
+    spec = specs_by_name.get(name)  # the spec is the source of `required`; a test-double action has none
+    required = spec.required if spec is not None else c.action.required
+    missing = [p for p in required if p not in params]  # type: ignore[operator]  # None params raise TypeError, as on main
     if missing:
         log.warning("action %s missing required params %r (got %r)", name, missing, params)
         return c.fail(f"missing required params: {missing}")

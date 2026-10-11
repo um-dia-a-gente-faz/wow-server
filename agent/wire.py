@@ -17,11 +17,18 @@ from . import packets as pk
 class PacketTruncated(pk.ProtocolError):
     """A read ran past the end of a payload."""
 
-    def __init__(self, opcode: int, offset: int, wanted: int):
+    def __init__(self, opcode: int, offset: int, wanted: int | None = None):
+        """`wanted` is None when a raw struct/index error was wrapped and the size is unknown."""
         self.opcode = opcode
         self.offset = offset
         self.wanted = wanted
-        super().__init__(f"opcode {opcode:#x}: truncated at offset {offset}, wanted {wanted} bytes")
+        tail = "" if wanted is None else f", wanted {wanted} bytes"
+        super().__init__(f"opcode {opcode:#x}: truncated at offset {offset}{tail}")
+
+
+class PacketMalformed(pk.ProtocolError, ValueError):
+    """The bytes are all there but not a valid layout: leftover bytes, an unknown type.
+    Also a ValueError, which the checks it replaces used to raise."""
 
 
 class Reader:
@@ -40,6 +47,8 @@ class Reader:
         return len(self._data) - self._off
 
     def _need(self, n: int):
+        if n < 0:
+            raise ValueError(f"negative read of {n} bytes")   # a caller bug, not bad wire data
         if n > self.remaining():
             raise PacketTruncated(self._opcode, self._off, n)
 
@@ -58,6 +67,9 @@ class Reader:
 
     def u32(self) -> int:
         return self._fixed('<I')
+
+    def i8(self) -> int:
+        return self._fixed('<b')
 
     def i32(self) -> int:
         return self._fixed('<i')
@@ -86,15 +98,24 @@ class Reader:
                 self._off += 1
         return guid
 
-    def cstring(self) -> str:
-        """A NUL-terminated string (decoded like pk.cstring). No NUL before the end raises
-        PacketTruncated asking for the 1 terminator byte."""
+    def cstring(self, encoding: str = 'ascii') -> str:
+        """A NUL-terminated string (ascii like pk.cstring unless `encoding` says otherwise; bad
+        bytes are replaced). No NUL before the end raises PacketTruncated asking for the 1
+        terminator byte."""
         end = self._data.find(b'\x00', self._off)
         if end < 0:
             raise PacketTruncated(self._opcode, self._off, 1)
-        text = self._data[self._off:end].decode('ascii', errors='replace')
+        text = self._data[self._off:end].decode(encoding, errors='replace')
         self._off = end + 1
         return text
+
+    def done(self):
+        """Raise PacketMalformed if bytes are left: a layout mistake then shows up as leftover
+        bytes instead of silently shifted fields."""
+        if self.remaining():
+            raise PacketMalformed(
+                f"opcode {self._opcode:#x}: parsed {self._off} of {len(self._data)} bytes "
+                f"({self.remaining()} leftover)")
 
     def skip(self, n: int):
         self._need(n)

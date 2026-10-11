@@ -299,6 +299,27 @@ q.append(ts(pid, "Rede dos containers do jogo", 16, 22, 8, 8, "Bps",
               "tx {{name}}")],
             "Tráfego de rede do worldserver — cresce junto com o número de jogadores conectados."))
 
+pid += 1
+q.append(row(pid, "Backups", 30))
+
+pid += 1
+q.append(stat(pid, "Idade do backup mais novo", 0, 31, 8, 5, "s",
+              [('time() - wow_backup_newest_timestamp_seconds', "idade")],
+              "Tempo desde o dump mais recente de /opt/wow-server-backups. Sem backup, mostra o tempo desde 1970.",
+              {"mode": "absolute", "steps": [{"color": "green", "value": None},
+                                             {"color": "red", "value": 93600}]}))
+
+pid += 1
+q.append(stat(pid, "Tamanho do backup mais novo", 8, 31, 8, 5, "bytes",
+              [('wow_backup_newest_size_bytes', "tamanho")],
+              "Tamanho do dump mais recente. Queda brusca = dump truncado."))
+
+pid += 1
+q.append(ts(pid, "Idade e quantidade de backups", 16, 31, 8, 5, "short",
+            [('(time() - wow_backup_newest_timestamp_seconds) / 3600', "idade (h)"),
+             ('wow_backup_count', "dumps guardados")],
+            "Alerta BackupStale dispara com mais de 26h (monitoring/prometheus-agent-alerts.yml)."))
+
 dash_realm = {
     "uid": "wow-realm-health",
     "title": "WoW — Saúde do Realm",

@@ -22,7 +22,7 @@ by file:
 import struct
 
 from . import packets as pk
-from .wire import Reader
+from .wire import PacketMalformed, Reader
 
 # Opcodes (Opcodes.h)
 from .opcodes import (  # noqa: F401  (re-exported: callers use loot.CMSG_*/SMSG_*)
@@ -145,7 +145,7 @@ def parse_loot_response(payload: bytes) -> dict:
         info["failure_reason_name"] = LOOT_ERROR_NAMES.get(failure_reason, f"error_{failure_reason}")
 
     if r.remaining():
-        raise ValueError(f"parsed {r.offset} of {len(payload)} bytes ({r.remaining()} leftover)")
+        raise PacketMalformed(f"parsed {r.offset} of {len(payload)} bytes ({r.remaining()} leftover)")
     return info
 
 
@@ -431,7 +431,7 @@ def parse_item_query_response(payload: bytes) -> dict:
     r.skip(4)  # holiday_id
 
     if r.remaining():
-        raise ValueError(f"parsed {r.offset} of {len(payload)} bytes ({r.remaining()} leftover)")
+        raise PacketMalformed(f"parsed {r.offset} of {len(payload)} bytes ({r.remaining()} leftover)")
 
     info.update({
         "class_": item_class, "subclass": subclass, "name": name,
