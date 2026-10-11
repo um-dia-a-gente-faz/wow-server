@@ -45,10 +45,10 @@ jobs:
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
             echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
-            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
-            echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
+            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
+            echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^\.env\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
-            echo "wowmap=$(hit "$all|^tools/(wowmap|dbc)/" && echo true || echo false)"
+            echo "wowmap=$(hit "$all|^tools/(wowmap|dbc|common|chat-feed)/" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
 
   # The single required check (#399). Skipped by the path filter counts as passing;
@@ -97,7 +97,8 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: tools/wowmap/requirements.txt
-      - run: pip install -r tools/wowmap/requirements.txt
+      - run: pip install --require-hashes -r tools/wowmap/requirements.txt
+      - run: pip install --require-hashes -r exporters/wow-exporter/requirements.txt
       - run: scripts/check.sh generated test
 
       # UM-100: the real JevClient against jev-mock as a separate process, over
@@ -174,7 +175,8 @@ jobs:
         run: if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
       - name: No :latest images (#291)
         run: |
-          if git grep -nE '^\s*(image:|FROM)\s.*:latest(\s|$)' -- ':(glob)**/docker-compose*.yml' ':(glob)**/Dockerfile'; then
+          # every image:/FROM line needs a digest (or the agent tag variable); this also rejects :latest, quoted or not
+          if git grep -nE '^\s*(image:|FROM)\s' -- ':(glob)**/docker-compose*.yml' ':(glob)**/Dockerfile' | grep -vE '@sha256:[0-9a-f]{64}|\$\{WOW_AGENT_TAG'; then
             echo "::error::pin images by version and digest, never :latest (docs/DEPLOYMENT.md, Bumping pins)"; exit 1
           fi
       - name: Validate compose files
@@ -244,7 +246,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # The wowmap image (#392): its Dockerfile's RUN import smoke test runs here, before merge.
+  # The wowmap and chat-feed images (#392, #451): their Dockerfiles' RUN import smoke tests run
+  # here, before merge. Both build from the tools/ context (ADR 0014).
   docker-build-wowmap:
     name: docker build (wowmap image)
     needs: changes
@@ -263,6 +266,15 @@ jobs:
           tags: wowmap:ci
           cache-from: type=gha,scope=wowmap
           cache-to: type=gha,mode=max,scope=wowmap
+      - name: Build chat-feed (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: tools
+          file: tools/chat-feed/Dockerfile
+          push: false
+          tags: chat-feed:ci
+          cache-from: type=gha,scope=chat-feed
+          cache-to: type=gha,mode=max,scope=chat-feed
 
   backup-restore:
     name: backup/restore (real mysql)

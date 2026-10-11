@@ -72,7 +72,9 @@ LOGIN_POLL_S = 3.0
 LOGIN_TIMEOUT_S = 60.0
 
 
-# #401: logout() must finish inside Docker's 10 s stop grace: join (<= this) + wait (<= this).
+# #401: logout() must finish inside Docker's 10 s stop grace. Worst case is two bounded steps
+# of at most this each: join + wait for SMSG_LOGOUT_COMPLETE, or (stuck recv thread, #485)
+# join + cut the socket + join again, which skips the wait. 2 x 3 s = 6 s (#488).
 LOGOUT_WAIT_S = 3.0
 
 

@@ -44,10 +44,17 @@ def _setup_logging(level: str):
 def _install_stop_signals(stop: threading.Event | None = None) -> threading.Event:
     """#401: SIGTERM (docker stop) and SIGINT set the returned event; the loops unwind
     through the supervisor's finally: session.logout() instead of dying with the
-    character in world."""
+    character in world. The first signal also restores the default action (#488), so a
+    second ctrl+c / SIGTERM kills a shutdown that hangs."""
     stop = stop or threading.Event()
+
+    def on_signal(*_):
+        stop.set()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, signal.SIG_DFL)
+
     for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stop.set())
+        signal.signal(sig, on_signal)
     return stop
 
 

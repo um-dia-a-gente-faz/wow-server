@@ -81,6 +81,8 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.stacks_for("tdb/a.sql", "monitoring/docker-compose.yml"), ["game", "monitoring"])
         self.assertEqual(self.stacks_for("docs/X.md", "scripts/check.sh", "agent/tests/t.py"), [])
         self.assertEqual(self.stacks_for("tdb/ação.sql"), ["game"])
+        # tools/common is copied into the chat-feed and the wowmap image (ADR 0014)
+        self.assertEqual(self.stacks_for("tools/common/env.py"), ["game", "monitoring"])
         self.assertEqual(self.stacks_for("Dockerfile"), [])  # root Dockerfile is the agent image
 
     def test_docs_only_merge_touches_no_stack(self):

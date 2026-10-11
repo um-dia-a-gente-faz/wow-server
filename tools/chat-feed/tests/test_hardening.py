@@ -133,6 +133,33 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(response.getheader("Content-Type").startswith("text/plain; version=0.0.4"))
         self.assertIn('chat_feed_events_total{kind="say"} 1', response.read().decode())
 
+    def test_json_replies_carry_cors(self):
+        # The viewer on :9400 reads these from the browser, so every JSON reply needs CORS,
+        # errors included.
+        _, port = self.start(stream_token="s3cret")
+        for path in ("/healthz", "/nope", "/api/chat/stream"):    # 200, 404, 401
+            response, _ = self.get(port, path)
+            self.assertEqual(response.getheader("Content-Type"), "application/json", path)
+            self.assertEqual(response.getheader("Access-Control-Allow-Origin"), "*", path)
+            response.read()
+
+    def test_stream_ends_quietly_when_the_client_write_times_out(self):
+        import io
+        from unittest import mock
+
+        class Dead(io.BytesIO):
+            def write(self, data):
+                raise TimeoutError("timed out")
+
+        feed = ChatFeed(10, PUBLIC)
+        feed.publish_relay_event(say())
+        handler = app.Handler.__new__(app.Handler)
+        handler.server = mock.Mock(feed=feed)
+        handler.headers = {}
+        handler.wfile = Dead()
+        handler.send_response = handler.send_header = handler.end_headers = mock.Mock()
+        handler.stream()        # returns instead of raising
+
     def test_stream_is_open_without_a_token_configured(self):
         feed, port = self.start()
         feed.publish_relay_event(say(text="hello"))

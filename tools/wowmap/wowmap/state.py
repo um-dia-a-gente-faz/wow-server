@@ -15,30 +15,32 @@ import models
 from overlays import load_overlays
 from transform import DbcTables, GridAreas
 
-# The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
+# The shared DBC reader (tools/dbc) and tools/common are copied to /app/dbc and /app/common in
+# the image (ADR 0014); from a checkout, tools/ is two directories up.
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from common.env import env_int, env_str  # noqa: E402
 from dbc.names import GameNames  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wowmap")
 
 MYSQL: dict = dict(
-    host=os.environ.get("MYSQL_HOST", "trinitycore-db"),
-    port=int(os.environ.get("MYSQL_PORT", "3306")),
-    user=os.environ.get("MYSQL_USER", "root"),
-    password=os.environ.get("MYSQL_PASSWORD", ""),
+    host=env_str("MYSQL_HOST", "trinitycore-db"),
+    port=env_int("MYSQL_PORT", 3306),
+    user=env_str("MYSQL_USER", "root"),
+    password=env_str("MYSQL_PASSWORD"),
     charset="utf8mb4",
     autocommit=True,
 )
-DBC_DIR = os.environ.get("DBC_DIR", "/dbc")
-MAPS_DIR = os.environ.get("MAPS_DIR", "/maps")
-ICONS_DIR = os.environ.get("ICONS_DIR", "/icons")
-MODELS_DIR = os.environ.get("MODELS_DIR", "/models")
-GRID_MAPS_DIR = os.environ.get("GRID_MAPS_DIR", "/server-maps")
-LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9400"))
+DBC_DIR = env_str("DBC_DIR", "/dbc")
+MAPS_DIR = env_str("MAPS_DIR", "/maps")
+ICONS_DIR = env_str("ICONS_DIR", "/icons")
+MODELS_DIR = env_str("MODELS_DIR", "/models")
+GRID_MAPS_DIR = env_str("GRID_MAPS_DIR", "/server-maps")
+LISTEN_PORT = env_int("LISTEN_PORT", 9400)
 # Empty means "derive from the page's own hostname at :9500" (see CHAT_JS in pages.py);
 # set this only when chat-feed isn't reachable on the same host as wowmap.
-CHAT_FEED_URL = os.environ.get("CHAT_FEED_URL", "")
+CHAT_FEED_URL = env_str("CHAT_FEED_URL")
 ACTIVITY_DB = os.environ.get("ACTIVITY_DB", "/data/activity.sqlite3")
 ACTIVITY_CHAT_FEED_URL = os.environ.get("ACTIVITY_CHAT_FEED_URL", "http://chat-feed:9500")
 AUDIT_DIR = os.environ.get("AUDIT_DIR", "/audit")
