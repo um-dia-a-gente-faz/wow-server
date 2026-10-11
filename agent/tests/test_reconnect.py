@@ -6,7 +6,6 @@ timing (5s -> 5min cap) is asserted without the test taking minutes."""
 import functools
 import random
 import threading
-import time
 import unittest
 
 from agent import __main__ as main_mod
@@ -139,6 +138,9 @@ class _RecordingLog:
 
     def exception(self, *a):
         self._record("exception", *a)
+
+    def log(self, level, fmt, *args, **kwargs):   # swallowed() on a connect failure
+        self._record("log", fmt, *args)
 
 
 class SupervisorDisconnectTest(unittest.TestCase):
@@ -278,19 +280,109 @@ class SupervisorJitterTest(unittest.TestCase):
         self.assertEqual(sleep.calls, [3.0])
         self.assertIn("retrying in 3s", log.lines[0][1])
 
-    def test_stop_during_a_jittered_wait_returns_without_reconnecting(self):
+    def test_default_supervisors_draw_different_waits_even_after_seeding_the_global_rng(self):
+        waits = []
+        for _ in range(2):
+            random.seed(1)  # the global RNG is not what the supervisor draws from
+            waits.append(self.retry_waits())
+        self.assertNotEqual(waits[0], waits[1])
+
+    def drop_then_fail(self, failures, **kwargs):
+        """One session that drops, `failures` failed connects, then a session that stops
+        cleanly. Returns the waits and the recording log."""
+        sleep, log, builds, runs = FakeSleep(), _RecordingLog(), [], []
+
+        def build_session():
+            builds.append(1)
+            if 2 <= len(builds) < 2 + failures:
+                raise RuntimeError("connection refused")
+            return object()
+
+        def run_session(session):
+            runs.append(1)
+            return len(runs) == 1  # the first session drops, the second stops cleanly
+
+        main_mod._supervise_connection(build_session, run_session, log=log, sleep=sleep,
+                                       initial_backoff=5.0, max_backoff=300.0, **kwargs)
+        return sleep.calls, log
+
+    def test_post_disconnect_wait_is_jittered_and_the_connect_retries_follow_the_backoff(self):
+        firsts = []
+        for seed in range(25):
+            waits, _ = self.drop_then_fail(2, jitter=functools.partial(main_mod._equal_jitter,
+                                                                       rng=random.Random(seed)))
+            self.assertEqual(len(waits), 3)
+            for wait, backoff in zip(waits, (5.0, 10.0, 20.0), strict=True):
+                with self.subTest(seed=seed, backoff=backoff):
+                    self.assertGreaterEqual(wait, backoff / 2)
+                    self.assertLessEqual(wait, backoff)
+            firsts.append(waits[0])
+        self.assertGreaterEqual(len(set(firsts)), 20)
+
+    def test_post_disconnect_wait_and_log_line_print_the_jittered_delay(self):
+        waits, log = self.drop_then_fail(0, jitter=lambda b: 3.0)
+        self.assertEqual(waits, [3.0])
+        warnings = [m for level, m in log.lines if level == "warning"]
+        self.assertIn("reconnecting in 3s", warnings[0])
+
+    def test_connect_failed_log_line_prints_the_jittered_delay(self):
+        log, sleep, builds = _RecordingLog(), FakeSleep(limit=1), []
+
+        def build_session():
+            builds.append(1)
+            if len(builds) == 1:
+                raise RuntimeError("connection refused")
+            return object()
+
+        main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+                                       jitter=lambda b: 3.0, initial_backoff=5.0, max_backoff=300.0)
+        self.assertEqual(sleep.calls, [3.0])
+        warnings = [m for level, m in log.lines if level == "warning"]
+        self.assertIn("retrying in 3s", warnings[0])
+
+
+class _StopOnSleep(FakeSleep):
+    """Sets `stop` during the first wait (a signal arriving mid-backoff) and refuses a second wait,
+    so a supervisor that ignores the stop fails here instead of looping."""
+
+    def __init__(self, stop):
+        super().__init__(limit=1)
+        self.stop = stop
+
+    def __call__(self, seconds):
+        super().__call__(seconds)
+        self.stop.set()
+
+
+class SupervisorStopDuringWaitTest(unittest.TestCase):
+    """#401: a stop that arrives during a wait ends the supervisor, on both waits. Default jitter."""
+
+    def test_stop_during_a_connect_retry_wait_does_not_build_again(self):
         stop, builds = threading.Event(), []
 
         def build_session():
             builds.append(1)
-            raise RuntimeError("refused")
+            raise RuntimeError("connection refused")
 
-        threading.Timer(0.1, stop.set).start()
-        t0 = time.monotonic()
-        main_mod._supervise_connection(build_session, lambda s: False, log=_NullLog(), stop=stop,
-                                       initial_backoff=30.0)  # jittered wait: 15 s to 30 s
-        self.assertLess(time.monotonic() - t0, 5.0)
+        main_mod._supervise_connection(build_session, lambda s: False, log=_NullLog(),
+                                       sleep=_StopOnSleep(stop), stop=stop)
         self.assertEqual(len(builds), 1)
+
+    def test_stop_during_the_post_disconnect_wait_logs_out_once_and_does_not_reconnect(self):
+        stop, builds, logouts = threading.Event(), [], []
+
+        class Session:
+            def logout(self):
+                logouts.append(1)
+
+        def build_session():
+            builds.append(1)
+            return Session()
+
+        main_mod._supervise_connection(build_session, lambda s: True, log=_NullLog(),
+                                       sleep=_StopOnSleep(stop), stop=stop)
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(len(logouts), 1)
 
 
 class SupervisorReconnectCountTest(unittest.TestCase):
