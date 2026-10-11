@@ -30,8 +30,6 @@ BASELINE = {
     "agent/candidates.py::generate": 176,
     "agent/handlers/chat.py::handle_messagechat": 84,
     "agent/loot.py::parse_item_query_response": 128,
-    "agent/metrics.py::derive_metrics": 101,
-    "agent/metrics.py::render_prometheus_text": 87,
     "agent/movement.py::_simulate": 125,
     "tools/agent_dev/ab.py::run": 101,
     "agent/update_object.py::parse_monster_move": 88,
