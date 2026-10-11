@@ -72,13 +72,14 @@ LAYERS = {
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
-    "actions": {"changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
+    "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
-    "reflexes": {"actions", "movement", "opcodes", "perception", "ports", "update_fields"},
+    "reflexes": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "update_fields"},
     "control": {"actions", "metrics", "movement"},
-    "death": {"actions", "movement", "opcodes", "perception", "rules"},
-    "action_names": set(),
-    "candidates": {"action_names", "handles", "item_compare", "metrics", "model", "rules"},
+    "death": {"action_names", "actions", "movement", "opcodes", "perception", "rules"},
+    "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
+    "action_names": {"action_specs"},
+    "candidates": {"action_names", "action_specs", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
     "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
@@ -88,7 +89,7 @@ LAYERS = {
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "brain": {"actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
-    "think": {"actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
+    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport"},

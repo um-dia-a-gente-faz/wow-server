@@ -79,6 +79,7 @@ from typing import Literal
 
 from .handles import UnknownHandle
 from . import action_names as A, item_compare
+from .action_specs import cap_of
 from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
 from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
 from .metrics import swallowed
@@ -87,19 +88,19 @@ MAX_CANDIDATES = 15
 
 
 MAX_THREATS = 3
-MAX_LOOT = 3
-MAX_QUEST_GIVERS = 3
+MAX_LOOT = cap_of(A.LOOT)
+MAX_QUEST_GIVERS = cap_of(A.INTERACT)
 MAX_ATTACK = 3
-MAX_FOLLOW = 2
-MAX_GOSSIP_OPTIONS = 4
-MAX_ABANDON = 2
-MAX_SPELLS = 3
+MAX_FOLLOW = cap_of(A.FOLLOW)
+MAX_GOSSIP_OPTIONS = cap_of(A.GOSSIP_SELECT)
+MAX_ABANDON = cap_of(A.ABANDON_QUEST)
+MAX_SPELLS = cap_of(A.CAST_SPELL)
 # Healing spells (agent.spells.SPELL_TABLE: Holy Light, Lesser Heal), self-cast when hurt.
 HEAL_SPELL_IDS = frozenset({635, 2050})
-MAX_TRAIN = 3
-MAX_EQUIP = 3
-MAX_USE_ITEMS = 2
-MAX_SELL = 3
+MAX_TRAIN = cap_of(A.TRAIN_SPELL)
+MAX_EQUIP = cap_of(A.EQUIP_ITEM)
+MAX_USE_ITEMS = cap_of(A.USE_ITEM)
+MAX_SELL = cap_of(A.SELL_ITEM)
 
 # ItemTemplate.InventoryType -> Player equipment slot(s), following
 # EQUIPMENT_SLOT_* in TrinityCore. Paired slots are deliberately both checked.

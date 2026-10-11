@@ -6,6 +6,7 @@ Split out of the former agent/actions.py (issue #248).
 import math
 import struct
 
+from .. import action_names as an
 from .. import movement
 from ..opcodes import (
     CMSG_SET_SELECTION,
@@ -32,12 +33,8 @@ def send_target(session, guid: int):
 
 @register
 class SetTargetAction(Action):
-    name = "set_target"
+    name = an.SET_TARGET
     description = "Target a nearby unit, player, or object by its handle from the perception snapshot."
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the object to target."},
-    }
-    required = ("guid",)
     # Overridable (class or instance attribute) so tests don't have to block
     # for the production default — real confirmation normally lands within
     # one or two update-object ticks.
@@ -61,15 +58,9 @@ class SetTargetAction(Action):
 
 @register
 class FaceAction(Action):
-    name = "face"
+    name = an.FACE
     description = ("Turn in place to face a nearby object by handle, or a specific x,y position, "
                     "without otherwise moving.")
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the object to face. Mutually exclusive with x/y."},
-        "x": {"type": "number", "description": "Target X coordinate. Requires y; mutually exclusive with guid."},
-        "y": {"type": "number", "description": "Target Y coordinate. Requires x; mutually exclusive with guid."},
-    }
-    required = ()  # exactly one of guid or (x and y) — enforced in check(), not expressible as a flat "required" list
 
     def check(self, session, world, guid: int | None = None, x: float | None = None,
               y: float | None = None, **_) -> str | None:
@@ -107,18 +98,10 @@ class FaceAction(Action):
 
 @register
 class MoveToAction(Action):
-    name = "move_to"
+    name = an.MOVE_TO
     description = ("Walk in a straight line to a point on the ground, stopping within "
                     "stop_distance yards. No pathfinding — obstacles will block it (returns "
                     "ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.")
-    params = {
-        "x": {"type": "number", "description": "Destination X coordinate."},
-        "y": {"type": "number", "description": "Destination Y coordinate."},
-        "z": {"type": "number", "description": "Destination Z coordinate. Optional — "
-                                                 "omit to stay level with the current height (no terrain data in v1)."},
-        "stop_distance": {"type": "number", "description": "How close counts as arrived, in yards. Default 1.0."},
-    }
-    required = ("x", "y")
 
     def check(self, session, world, x: float, y: float, z: float | None = None,
               stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> str | None:
@@ -136,15 +119,10 @@ class MoveToAction(Action):
 
 @register
 class MoveTowardsAction(Action):
-    name = "move_towards"
+    name = an.MOVE_TOWARDS
     description = ("Chase a nearby unit or player by handle, re-targeting its position every "
                     "tick, stopping within stop_distance yards. Blocks until arrival, stuck, "
                     "the target leaving perception, or stopped.")
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the object to move towards."},
-        "stop_distance": {"type": "number", "description": "How close counts as arrived, in yards. Default 1.0."},
-    }
-    required = ("guid",)
 
     def check(self, session, world, guid: int,
               stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> str | None:
@@ -165,10 +143,8 @@ class MoveTowardsAction(Action):
 
 @register
 class StopMovementAction(Action):
-    name = "stop_movement"
+    name = an.STOP_MOVEMENT
     description = "Stop any in-progress move_to/move_towards immediately."
-    params = {}
-    required = ()
 
     def execute(self, session, world, **_) -> ActionResult:
         _pause_follow_reflex(session, world)

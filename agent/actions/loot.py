@@ -5,6 +5,7 @@ Split out of the former agent/actions.py (issue #248).
 
 import time
 
+from .. import action_names as an
 from .. import item_compare
 from .. import loot as lootmod
 from ..rules import LOOT_RANGE_YD
@@ -38,14 +39,10 @@ UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same bit agent/perception/
 
 @register
 class LootAction(Action):
-    name = "loot"
+    name = an.LOOT
     description = ("Loot a nearby lootable corpse/creature (UNIT_DYNFLAG_LOOTABLE): opens the "
                     "loot window, takes all money and every item (v1: take-everything, no "
                     "selective looting), then releases it. Must be within 5 yards.")
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the lootable corpse/creature."},
-    }
-    required = ("guid",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -112,18 +109,9 @@ class LootAction(Action):
 
 @register
 class UseItemAction(Action):
-    name = "use_item"
+    name = an.USE_ITEM
     description = ("Use/consume an item from inventory — e.g. eat food or drink water. Not usable "
                     "while in combat (server-enforced for most consumables; checked here too).")
-    params = {
-        "bag": {"type": "integer", "description": "Bag byte (255 = equipped items/backpack; "
-                                                    "see CMSG_USE_ITEM's bag field)."},
-        "slot": {"type": "integer", "description": "Slot within that bag (0-18 equipment, "
-                                                     "19-22 equipped bags, 23-38 backpack)."},
-        "target_guid": {"type": "string", "description": "Optional target snapshot handle (a string like \"p1\"), e.g. a bandage "
-                                                            "used on an ally. Omit to target self."},
-    }
-    required = ("bag", "slot")
 
     def check(self, session, world, bag: int, slot: int, target_guid: int | None = None, **_) -> str | None:
         me = world.get_my_object()
@@ -153,17 +141,9 @@ class UseItemAction(Action):
 
 @register
 class DestroyItemAction(Action):
-    name = "destroy_item"
+    name = an.DESTROY_ITEM
     description = ("Permanently destroy `count` of the item at bag/slot. Irreversible — requires "
                     "confirm=true as an explicit safety guard against accidental calls.")
-    params = {
-        "bag": {"type": "integer", "description": "Bag byte (255 = equipped items/backpack)."},
-        "slot": {"type": "integer", "description": "Slot within that bag."},
-        "count": {"type": "integer", "description": "How many to destroy from the stack."},
-        "confirm": {"type": "boolean", "description": "Must be true — a safety guard, not read by "
-                                                        "the server."},
-    }
-    required = ("bag", "slot", "count", "confirm")
 
     def check(self, session, world, bag: int, slot: int, count: int, confirm: bool = False,
               **_) -> str | None:
@@ -210,18 +190,11 @@ def _resolve_item_template(world, bag: int, slot: int):
 
 @register
 class CompareItemsAction(Action):
-    name = "compare_items"
+    name = an.COMPARE_ITEMS
     description = ("Compare two items at given bag/slot positions for the character's own class "
                     "(UM-69 v1 heuristic: primary stat for class + item level as a tiebreaker, no "
                     "talent/spec awareness — see agent.item_compare's docstring). Returns which "
                     "item scores higher and a human-readable reason.")
-    params = {
-        "bag_a": {"type": "integer", "description": "Bag byte of the first item (255 = equipped items/backpack)."},
-        "slot_a": {"type": "integer", "description": "Inventory slot of the first item."},
-        "bag_b": {"type": "integer", "description": "Bag byte of the second item (255 = equipped items/backpack)."},
-        "slot_b": {"type": "integer", "description": "Inventory slot of the second item."},
-    }
-    required = ("bag_a", "slot_a", "bag_b", "slot_b")
 
     def check(self, session, world, bag_a: int, slot_a: int, bag_b: int, slot_b: int, **_) -> str | None:
         _, _, template_a = _resolve_item_template(world, bag_a, slot_a)
@@ -251,17 +224,12 @@ class CompareItemsAction(Action):
 
 @register
 class EquipItemAction(Action):
-    name = "equip_item"
+    name = an.EQUIP_ITEM
     description = ("Equip the item at bag/slot (CMSG_AUTOEQUIP_ITEM) — the server picks the equip "
                     "slot from the item itself. Refuses up front if the item's cached template says "
                     "it can't be used by this character (wrong armor type, class-restricted); "
                     "otherwise waits for the server's confirmation/failure response before "
                     "returning, so ok=True means the item was actually equipped.")
-    params = {
-        "bag": {"type": "integer", "description": "Bag byte of the item (255 = equipped items/backpack)."},
-        "slot": {"type": "integer", "description": "Inventory slot of the item."},
-    }
-    required = ("bag", "slot")
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
