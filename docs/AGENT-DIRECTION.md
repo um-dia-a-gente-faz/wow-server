@@ -137,9 +137,12 @@ The first milestone replaced the roadmap's original order (one agent levels
   walking NPC or player parses cleanly instead of being dropped whole.
 - **Teleport ack is missing.** Without `MSG_MOVE_TELEPORT_ACK` a same-map GM
   teleport doesn't finish server-side (UM-38). Don't teleport agent characters
-  to set up tests; relog or walk instead. Exception: an admin's audited Tier 2 control on
-  the site ([ADR 0013](adr/0013-admin-only-gm-control.md)); its teleport stays disabled
-  until the acknowledge exists. Agent code and coding sessions still never teleport.
+  to set up tests; relog or walk instead. The only
+  exception ([ADR 0013](adr/0013-admin-only-gm-control.md)): a human admin logged in to the
+  site may use its Tier 2 debug controls on agent characters (revive, heal, teleport, summon
+  to a player), each confirm-gated and logged; the site's teleport stays disabled until the
+  acknowledge exists. No agent, agent code or coding agent (author, reviewer, milestone-loop
+  or live-test session) may use GM commands.
 - **Stacked PRs can merge "successfully" without ever reaching `main` — FIXED
   by re-opening against `main` directly, but the branching rule changed
   because of it.** On 2026-09-17, UM-38 and UM-39 were each opened as a PR

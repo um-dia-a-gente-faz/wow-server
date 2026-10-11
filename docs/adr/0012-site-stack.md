@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed (#311), docs only. Records the decisions of the Console v4 design review
-(spec #310). Nothing in this ADR changes code. Open questions are collected at the end.
+Accepted (#311) on the owner's approval of this PR; docs only. Records the decisions of
+the Console v4 design review (spec #310). Nothing in this ADR changes code. Open questions
+are collected at the end.
 
 ADR numbers: `0011` is already taken on `main` by the agent memory store, so the
 site-stack ADR is 0012 and the GM-control ADR is 0013. Issue #311 and #310 still call
@@ -44,7 +45,7 @@ into modules already (ADR 0008) and talks to the agents through the versioned ag
 - **Secrets stay on the backend.** The provider key and balance lookup are server-side; the
   browser only receives numbers.
 
-## Alternatives rejected
+## Alternatives considered
 
 - **React / Next.js.** Not chosen. Issue #311 names it as rejected; spec #310 records
   SvelteKit's lightness and the owner's wish for newer technology as the reasons for the
@@ -63,10 +64,25 @@ into modules already (ADR 0008) and talks to the agents through the versioned ag
   between them. CI and the image must build both.
 - The site's own store is a second database next to the game database. The game database is
   opened read-only; nothing in the site writes to it.
-- The agent API (ADR 0010) stays the only way the site reaches an agent, and the OpenAPI
-  spec plays the same role between the backend and the frontend.
+- The site reaches agents through the agent API (ADR 0010) for Tier 1 actions, through the
+  agent runner for container start/stop, roster edits and account creation, and through the
+  server's command channel for Tier 2 (ADR 0013). The OpenAPI spec is the contract between
+  the backend and the frontend.
 - The unset agent API URL and the character-stats setting are fixed as part of the
   migration (spec #310), not by this ADR.
+
+## Supersedes on acceptance
+
+Accepting this ADR supersedes these statements, which the issue that introduces the code
+updates (not this PR):
+
+- `CONTRIBUTING.md`: "No external framework" for the site (stdlib `http.server`).
+- The `tools/` dependency rule: `CLAUDE.md` ("`tools/` may use `pymysql`/`Pillow`"),
+  `docs/ARCHITECTURE.md`, and the check in `agent/tests/test_architecture.py`.
+- ADR 0008: the `ThreadingHTTPServer` server and the static front end of `tools/wowmap`.
+
+New dependencies are hash-locked, as `docs/DEPLOYMENT.md` and the existing tool
+requirements already require.
 
 ## Open questions
 
