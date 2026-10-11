@@ -94,6 +94,17 @@ class EndpointsTest(_ServerCase):
             text = r.read().decode("utf-8")
         self.assertIn('wow_agent_swallowed_errors_total{agent="Luaprata",where="unit.http"} 2', text)
 
+    def test_metrics_exposes_the_router_counters(self):
+        from agent import metrics
+        metrics.ROUTER_COUNTS.clear()
+        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+        metrics.count_router_event("unhandled", 0xFFFE)
+        with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
+            text = r.read().decode("utf-8")
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f"# TYPE wow_agent_router_{kind}_total counter", text)
+        self.assertIn('wow_agent_router_unhandled_total{agent="Luaprata",opcode="0xFFFE"} 1', text)
+
     def test_healthz(self):
         body = json.loads(self.get("/healthz")[1])
         self.assertEqual(body["agent"], "Luaprata")

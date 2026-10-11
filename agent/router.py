@@ -11,6 +11,7 @@ import zlib
 from typing import Callable
 
 from .packets import ProtocolError
+from .wire import PacketTruncated
 
 # What reading a truncated or garbled payload raises (UnicodeError is a ValueError; zlib.error is a bad compressed update).
 # ponytail: a logic bug raising one of these is also folded in; #274's Reader narrows it.
@@ -37,7 +38,10 @@ class Context:
 
 
 class PacketRouter:
-    def __init__(self):
+    def __init__(self, count: Callable[[str, int], None] = lambda kind, opcode: None):
+        """`count(kind, opcode)` is the metrics sink (kinds: packets, unhandled, truncated,
+        handler_errors); handlers.build_router wires the real one, the default is a no-op."""
+        self._count = count
         self._handlers: dict[int, Callable] = {}
         self._ticks: list[Callable] = []
 
@@ -56,13 +60,23 @@ class PacketRouter:
 
     def dispatch(self, ctx: Context, opcode: int, payload: bytes) -> bool:
         """Run the handler for `opcode`. False if nobody handles it."""
+        count = self._count
+        count("packets", opcode)
         handler = self._handlers.get(opcode)
         if handler is None:
+            count("unhandled", opcode)
             return False
         try:
             handler(ctx, payload)
+        except PacketTruncated:
+            count("truncated", opcode)
+            raise
         except RAW_PARSE_ERRORS as e:
+            count("handler_errors", opcode)
             raise ProtocolError(f"malformed {opcode:#05x} ({len(payload)} B): {e!r}") from e
+        except Exception:
+            count("handler_errors", opcode)
+            raise
         return True
 
     def tick(self, ctx: Context):

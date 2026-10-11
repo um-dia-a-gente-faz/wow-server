@@ -40,7 +40,7 @@ LAYERS = {
     "handles": set(),
     "lines": set(),
     "known_targets": set(),
-    "metrics": {"audit_schema", "transport"},   # swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
+    "metrics": {"audit_schema", "opcodes", "transport"},   # opcode names for the router counters (#494); swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
     "api_contract": set(),
     "memory": set(),   # durable agent memory store (#276); stdlib sqlite3 only
     "model": set(),
@@ -68,7 +68,7 @@ LAYERS = {
                    "update_fields", "update_object"},
     "state": {"changes", "perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
-    "router": {"packets"},
+    "router": {"packets", "wire"},   # PacketTruncated is counted apart from other handler errors (#494)
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
