@@ -4,10 +4,11 @@
 fake (`agent.tests.builders.FakeSession`). An action or reflex uses only these
 members, so the interface is written down once instead of living in each test's
 fake. Read-only members are properties: code behind a port reads them and never
-rebinds them. Two `PlayerView` members are plain writable attributes because
+rebinds them. Three `PlayerView` members are plain writable attributes because
 actions do set them: `player_position` (`FaceAction` and the walk in
 `agent.movement` mirror what they sent, since the server does not echo our own
-movement) and `pending_invite` (`accept_group`/`decline_group` clear it).
+movement), `pending_invite` (`accept_group`/`decline_group` clear it) and
+`follow_on_accept` (`accept_group` sets it, the follow reflex clears it).
 
 This module imports nothing from `agent/`.
 """
@@ -41,9 +42,20 @@ class PlayerView(Protocol):
     player_position: tuple | None
     # {"inviter_name": str} while an invite is open, else None.
     pending_invite: dict | None
+    # (inviter_name, monotonic deadline) after accepting an invite; the follow reflex consumes it (#318).
+    follow_on_accept: tuple[str, float] | None
 
     @property
     def player_guid(self) -> int: ...
+
+    @property
+    def player_name(self) -> str: ...
+
+    @property
+    def agent_names(self) -> frozenset[str]: ...
+
+    @property
+    def is_alive(self) -> bool: ...
 
     @property
     def race(self) -> int: ...
