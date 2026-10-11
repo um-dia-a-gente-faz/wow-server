@@ -462,7 +462,7 @@ default until a buying policy is decided. The generator's `NOT_OFFERED` map
 documents deliberate gaps: combat micro actions, trade and mail, destructive
 actions, and social invites. `agent/tests/test_candidates.py` pins registered
 actions to candidate branches or documented exclusions. Candidate lists
-reserve their last slot for `idle`; on overflow `_finish` keeps earlier
+reserve their last slot for `idle`; on overflow `candidate_history.finish` keeps earlier
 candidates in generator priority order.
 
 ## References
