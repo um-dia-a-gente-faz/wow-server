@@ -1,5 +1,7 @@
 # SMSG_MONSTER_MOVE fixtures
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Real, live-captured `SMSG_MONSTER_MOVE` (`0x0DD`) payloads from `192.168.1.64`
 (character **Luaprata**, account `AGENT01`), captured with `AGENT_DUMP_PACKETS`
 during a 5-minute `--dry-run` in Sunstrider Isle (UM-64's live acceptance

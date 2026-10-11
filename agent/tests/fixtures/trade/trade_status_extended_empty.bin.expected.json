@@ -1,0 +1,13 @@
+{
+  "opcode": "SMSG_TRADE_STATUS_EXTENDED",
+  "source": "src/server/game/Handlers/TradeHandler.cpp WorldSession::SendUpdateTrade",
+  "expect": {
+    "is_trader_data": true,
+    "money": 0,
+    "spell": 0,
+    "item_slots": [],
+    "trade_id": 0,
+    "slot_count_a": 7,
+    "slot_count_b": 7
+  }
+}

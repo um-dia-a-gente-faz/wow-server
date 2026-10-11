@@ -1,0 +1,29 @@
+{
+  "opcode": "SMSG_MONSTER_MOVE",
+  "source": "src/server/game/Server/Packets/MovementPackets.cpp MonsterMove::Write, MonsterMove::InitializeSplineData, operator<<(ByteBuffer&, MovementSpline const&); src/server/shared/Packets/ByteBuffer.h ByteBuffer::appendPackXYZ",
+  "expect": {
+    "mover_guid": "0xf13000433d0027ed",
+    "move_type": 0,
+    "spline_id": 126354,
+    "flags": 4096,
+    "pos": [
+      9508.9580078125,
+      -7303.66845703125,
+      14.119026184082031
+    ],
+    "points": [
+      [
+        9508.24609375,
+        -7307.8076171875,
+        14.119014739990234
+      ]
+    ],
+    "destination": [
+      9508.24609375,
+      -7307.8076171875,
+      14.119014739990234
+    ],
+    "move_time": 1680,
+    "vehicle_exit_voluntary": 0
+  }
+}
