@@ -105,6 +105,15 @@ class EndpointsTest(_ServerCase):
             self.assertIn(f"# TYPE wow_agent_router_{kind}_total counter", text)
         self.assertIn('wow_agent_router_unhandled_total{agent="Luaprata",opcode="0xFFFE"} 1', text)
 
+    def test_metrics_exposes_the_reconnect_counter(self):
+        from agent import metrics
+        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        metrics.count_reconnect("disconnected")
+        with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
+            text = r.read().decode("utf-8")
+        self.assertIn('wow_agent_reconnect_attempts_total{agent="Luaprata",reason="disconnected"} 1', text)
+
     def test_healthz(self):
         body = json.loads(self.get("/healthz")[1])
         self.assertEqual(body["agent"], "Luaprata")

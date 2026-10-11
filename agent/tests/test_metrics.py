@@ -184,6 +184,44 @@ class SwallowedTest(unittest.TestCase):
         self.assertIn('wow_agent_swallowed_errors_total{agent="A",where="unit.site"} 3', text)
 
 
+class ReconnectCountersTest(unittest.TestCase):
+    """#402: wow_agent_reconnect_attempts_total{agent,reason}, process-wide like the router counters."""
+
+    def setUp(self):
+        from agent import metrics
+        self.m = metrics
+        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+
+    def test_count_per_reason_and_render(self):
+        self.m.count_reconnect("auth_rejected")
+        self.m.count_reconnect("disconnected")
+        self.m.count_reconnect("disconnected")
+        text = self.m.render_reconnects("A")
+        self.assertIn('wow_agent_reconnect_attempts_total{agent="A",reason="auth_rejected"} 1', text)
+        self.assertIn('wow_agent_reconnect_attempts_total{agent="A",reason="disconnected"} 2', text)
+        self.assertIn('wow_agent_reconnect_attempts_total{agent="A",reason="connect_failed"} 0', text)
+
+    def test_all_reasons_render_at_zero_before_any_event(self):
+        text = self.m.render_reconnects("A")
+        self.assertIn("# TYPE wow_agent_reconnect_attempts_total counter", text)
+        for reason in self.m.RECONNECT_REASONS:
+            self.assertIn(f'wow_agent_reconnect_attempts_total{{agent="A",reason="{reason}"}} 0', text)
+
+    def test_unknown_reason_is_refused_so_labels_stay_bounded(self):
+        with self.assertRaises(KeyError):
+            self.m.count_reconnect("permanent")
+
+    def test_rendered_lines_are_valid_exposition_text(self):
+        import re
+        self.m.count_reconnect("connect_failed")
+        sample = re.compile(r'^wow_agent_reconnect_attempts_total\{agent="A",reason="\w+"\} \d+$')
+        for line in self.m.render_reconnects("A").splitlines():
+            if line.startswith("#"):
+                continue
+            self.assertRegex(line, sample)
+
+
 class DecisionsByPromptTest(unittest.TestCase):
     """#476: wow_agent_decisions_by_prompt_total{agent,prompt_id}, derived from the audit
     records by the textfile exporter only; 8 newest ids keep a label, older ones are `other`."""

@@ -11,12 +11,15 @@ Modes:
 
 import argparse
 import contextlib
+import functools
 import json
 import logging
+import random
 import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 from .channels import parse_channel_spec
 from .chat_relay import ChatRelay
@@ -27,7 +30,7 @@ from .brain import Brain
 from .think import ThinkState, think_and_act
 from .audit import AuditLogger
 from .http_api import AgentObserver, start_server
-from .metrics import swallowed
+from .metrics import count_reconnect, swallowed
 from . import death  # noqa: F401  registers release_spirit/reclaim_corpse (gh-321: nothing else imported it)
 from .reflexes.follow import get_follow_reflex
 from .reflexes.rest import get_rest_reflex
@@ -263,10 +266,17 @@ INITIAL_RECONNECT_BACKOFF_S = 5.0
 MAX_RECONNECT_BACKOFF_S = 300.0
 
 
+def _equal_jitter(backoff: float, rng: random.Random) -> float:
+    """#402: the wait for one backoff step, uniform in [backoff / 2, backoff]. It never exceeds
+    the backoff, so jitter only spreads the waits out; the backoff sequence itself is unchanged."""
+    return rng.uniform(backoff / 2, backoff)
+
+
 def _supervise_connection(build_session, run_session, log,
                            sleep=None, stop: threading.Event | None = None,
                            initial_backoff: float = INITIAL_RECONNECT_BACKOFF_S,
-                           max_backoff: float = MAX_RECONNECT_BACKOFF_S):
+                           max_backoff: float = MAX_RECONNECT_BACKOFF_S,
+                           jitter: Callable[[float], float] | None = None):
     """Reconnect supervisor (UM-43). `build_session()` does auth+connect+
     login and returns a fresh WoWSession (and therefore fresh WorldState);
     `run_session(session)` drives one full agent run and returns True if it
@@ -285,9 +295,17 @@ def _supervise_connection(build_session, run_session, log,
     `sleep` is injectable so tests can assert on backoff timing without
     actually waiting (see agent/tests/test_reconnect.py). By default the backoff
     waits on `stop` (#401): once it is set (SIGTERM) the supervisor logs out the
-    current session and returns instead of reconnecting."""
+    current session and returns instead of reconnecting.
+
+    #402: each wait is `jitter(backoff)`, by default equal jitter from a per-supervisor
+    OS-seeded RNG, so a fleet restarting together does not retry in lockstep. Jitter
+    changes only the wait: `backoff` keeps doubling from the un-jittered value. Every
+    reconnect wait is counted once under its reason (agent.metrics.count_reconnect)."""
     stop = stop or threading.Event()
     sleep = sleep or stop.wait
+    if jitter is None:
+        rng = random.Random()  # OS-seeded: each supervisor draws its own waits
+        jitter = functools.partial(_equal_jitter, rng=rng)
     backoff = initial_backoff
     attempt = 0
     while True:
@@ -295,16 +313,19 @@ def _supervise_connection(build_session, run_session, log,
         try:
             session = build_session()
         except Exception as e:
-            if isinstance(e, AuthRejected):
+            if isinstance(e, AuthRejected) and e.code in PERMANENT_AUTH_CODES:
                 # #430: a refusal is one readable line, never a traceback
-                if e.code in PERMANENT_AUTH_CODES:
-                    log.error("%s — not retrying", e)
-                    raise
-                log.warning("%s — retrying in %.0fs", e, backoff)
+                log.error("%s — not retrying", e)
+                raise
+            delay = jitter(backoff)
+            if isinstance(e, AuthRejected):
+                count_reconnect("auth_rejected")
+                log.warning("%s — retrying in %.0fs", e, delay)
             else:
+                count_reconnect("connect_failed")
                 swallowed("main.connect", log, f"attempt {attempt}")
-                log.warning("retrying in %.0fs", backoff)
-            sleep(backoff)
+                log.warning("retrying in %.0fs", delay)
+            sleep(delay)
             if stop.is_set():
                 return
             backoff = min(backoff * 2, max_backoff)
@@ -321,8 +342,10 @@ def _supervise_connection(build_session, run_session, log,
 
         if not disconnected or stop.is_set():
             return
-        log.warning("connection lost unexpectedly — reconnecting in %.0fs", backoff)
-        sleep(backoff)
+        delay = jitter(backoff)
+        count_reconnect("disconnected")
+        log.warning("connection lost unexpectedly — reconnecting in %.0fs", delay)
+        sleep(delay)
         if stop.is_set():
             return
         backoff = min(backoff * 2, max_backoff)
