@@ -199,6 +199,11 @@ and `mpyq`.
 | `tools/dbc` | WDBC reader and name/spell-text helpers shared by wowmap | library |
 | `tools/agent_dev` | developer CLIs that import agent as a library: probe (manual live capability probe), replay, ab, cache_probe, dump_update; run as `python3 -m tools.agent_dev.<name>` from the repo root | dev machine / VM shell |
 
+The import rules for `tools/` are enforced by `tools/tests/test_architecture.py`: tool-to-tool
+edges, the `agent/` modules each tool may import, and the edges inside wowmap, agent-runner and
+the wowmap pipeline are pinned in its tables. The `agent/` rules themselves are in
+`agent/tests/test_architecture.py`.
+
 ### Other top-level directories
 
 | Path | Owns |
