@@ -42,7 +42,7 @@ from . import control
 from . import spells as sp
 from . import update_fields as uf
 from .audit import _redact
-from .metrics import render_swallowed, swallowed
+from .metrics import render_router, render_swallowed, swallowed
 
 log = logging.getLogger("agent.http")
 
@@ -312,7 +312,7 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/events":
                 return self._stream_events()
             if path == "/metrics":   # Prometheus text, not JSON; the swallowed-error counter (#306)
-                data = render_swallowed(obs.agent_name).encode("utf-8")
+                data = (render_swallowed(obs.agent_name) + render_router(obs.agent_name)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
