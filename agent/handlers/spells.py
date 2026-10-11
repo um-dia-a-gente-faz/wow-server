@@ -45,7 +45,7 @@ def handle_spell_start(ctx, payload: bytes):
 
 
 def handle_spell_go(ctx, payload: bytes):
-    ctx.state.record_event("spell_go", **sp.parse_spell_cast_prefix(payload))
+    ctx.state.record_event("spell_go", **sp.parse_spell_cast_prefix(payload, SMSG_SPELL_GO))
 
 
 def handle_attack_start(ctx, payload: bytes):

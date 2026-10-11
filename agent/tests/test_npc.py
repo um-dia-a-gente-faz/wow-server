@@ -12,6 +12,12 @@ def cstring(s: str) -> bytes:
     return s.encode('utf-8') + b'\x00'
 
 
+class VendorReasonTest(unittest.TestCase):
+    def test_reason_is_signed(self):
+        payload = struct.pack('<QB', 7, 0) + b'\xff'
+        self.assertEqual(npc.parse_list_inventory(payload)["reason"], -1)
+
+
 class BuildRequestTest(unittest.TestCase):
     """Golden-byte tests: each builder's output must match the exact wire
     layout, byte for byte, not just round-trip through our own parser."""

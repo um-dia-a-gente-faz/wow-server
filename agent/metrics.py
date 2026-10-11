@@ -12,6 +12,7 @@ filesystem beyond the fixtures it's given.
 import glob
 import json
 import logging
+import math
 import os
 import sys
 import threading
@@ -59,6 +60,7 @@ class AgentMetrics:
     jev_latency_buckets: dict = field(default_factory=lambda: {b: 0 for b in LATENCY_BUCKETS_MS})
     prompt_stats: dict = field(default_factory=dict)  # prompt_id -> [count, last ts, last line] (#476)
     prompt_none: int = 0                               # cycles with no usable prompt_id
+    bad_lines: int = 0                                 # audit lines skipped while reading this agent's files (#513)
 
     def outcome_pairs(self):
         return sorted(self.actions_total.items())
@@ -66,13 +68,15 @@ class AgentMetrics:
     @property
     def decisions_by_prompt(self) -> dict:
         """label -> count: the MAX_PROMPT_IDS ids with the newest record keep their own
-        label, older ones are summed under `other`, no usable id is `none`."""
+        label, older ones are summed under `other`, no usable id is `none`. A literal id
+        `other` or `none` adds to that label (summed, never overwritten, #513)."""
         newest = sorted(self.prompt_stats, key=lambda k: self.prompt_stats[k][1:], reverse=True)
-        out = {k: self.prompt_stats[k][0] for k in newest[:MAX_PROMPT_IDS]}
-        if len(newest) > MAX_PROMPT_IDS:
-            out["other"] = sum(self.prompt_stats[k][0] for k in newest[MAX_PROMPT_IDS:])
+        out: dict[str, int] = {}
+        for i, k in enumerate(newest):
+            label = k if i < MAX_PROMPT_IDS else "other"
+            out[label] = out.get(label, 0) + self.prompt_stats[k][0]
         if self.prompt_none:
-            out["none"] = self.prompt_none
+            out["none"] = out.get("none", 0) + self.prompt_none
         return out
 
 
@@ -87,16 +91,34 @@ def _count_prompt(m: AgentMetrics, rec: dict) -> None:
         m.prompt_none += 1
         return
     ts = rec.get("ts")
-    ts = ts if isinstance(ts, (int, float)) else float("-inf")
+    ts = ts if _finite(ts) else float("-inf")
     stat = m.prompt_stats.setdefault(pid, [0, float("-inf"), 0])
     stat[0] += 1
     # newest first by record ts; the line number breaks ties and covers records without ts
     stat[1:] = max(stat[1:], [ts, m.cycles_total])
 
 
-def _label_value(v: str) -> str:
-    """Escape a label value per the Prometheus text format."""
-    return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+def _finite(v) -> bool:
+    """A JSON number usable as a count or a latency (NaN, Infinity and an int too large
+    for a float, all from a bad line, are not)."""
+    try:
+        return isinstance(v, (int, float)) and math.isfinite(v)
+    except OverflowError:
+        return False
+
+
+def _label_value(v) -> str:
+    """Escape one label value per the Prometheus text format (backslash, quote, newline).
+    What UTF-8 cannot encode (a lone surrogate, from a JSON "\\ud800") is written as its
+    backslash-u text, so the .prom file can always be written and two distinct surrogates
+    stay two distinct series (#513). Every label value is written through here."""
+    text = str(v).encode("utf-8", "backslashreplace").decode("utf-8")
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def _labels(**labels) -> str:
+    """`{k="v",...}` in the order given, every value through _label_value."""
+    return "{" + ",".join(f'{k}="{_label_value(v)}"' for k, v in labels.items()) + "}"
 
 
 def _bucket_for(latency_ms: float) -> int | None:
@@ -106,19 +128,37 @@ def _bucket_for(latency_ms: float) -> int | None:
     return None  # +Inf bucket, handled separately
 
 
-def iter_records(path: str):
-    """Yield parsed JSON records from one JSONL file, skipping malformed
-    lines (see tools.agent_dev.replay.load_records — same rationale)."""
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
+def iter_records(path: str, on_bad=None):
+    """Yield parsed JSON records from one JSONL file. A line that is not UTF-8, not JSON,
+    or JSON but not an object is skipped and `on_bad()` is called for it (#513); blank
+    lines are skipped silently. Never raises on file content."""
+    with open(path, "rb") as f:
+        for raw in f:
+            if not raw.strip():
                 continue
             try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
+                obj = json.loads(raw.decode("utf-8"))
+            except (ValueError, RecursionError):  # bad UTF-8 and bad JSON are both ValueError
+                obj = None
+            if not isinstance(obj, dict):
+                if on_bad is not None:
+                    on_bad()
                 continue
-            yield AuditRecord.from_json(raw).to_json()
+            yield AuditRecord.from_json(obj).to_json()
+
+
+def read_audit(paths) -> tuple[list[dict], dict[str, int]]:
+    """Records of every file, and the lines skipped per agent. A file's agent is its
+    directory name (`<base>/<agent>/<day>.jsonl`), since a bad line says nothing about itself."""
+    records, bad = [], {}
+    for path in paths:
+        agent = os.path.basename(os.path.dirname(path))
+
+        def on_bad(agent=agent):
+            bad[agent] = bad.get(agent, 0) + 1
+
+        records.extend(iter_records(path, on_bad))
+    return records, bad
 
 
 def find_audit_files(base_dir: str, agent: str | None = None) -> list[str]:
@@ -136,7 +176,7 @@ def _derive_jev(m: AgentMetrics, rec: dict, ts, now: float) -> None:
     status = rec.get("jev_status")
     if status == "success":
         m.jev_calls_total += 1
-    elif status in m.jev_errors:
+    elif isinstance(status, str) and status in m.jev_errors:
         m.jev_errors[status] += 1
     if rec.get("brain") == "llm" and rec.get("fallback"):
         m.jev_fallback_total += 1
@@ -144,20 +184,20 @@ def _derive_jev(m: AgentMetrics, rec: dict, ts, now: float) -> None:
     for key, attr in (("input_tokens", "jev_prompt_tokens_total"),
                       ("output_tokens", "jev_completion_tokens_total")):
         value = usage.get(key)
-        if isinstance(value, (int, float)):
+        if _finite(value):
             setattr(m, attr, getattr(m, attr) + int(value))
     cost = usage.get("cost")
-    if isinstance(cost, (int, float)):
+    if _finite(cost):
         m.jev_cost_usd_total += float(cost)
-        if isinstance(ts, (int, float)) and ts >= now - 86400:
+        if _finite(ts) and ts >= now - 86400:
             m.jev_cost_24h_usd += float(cost)
     if rec.get("confidence_rule") == "low_confidence_safe_fallback":
         m.jev_low_confidence_total += 1
     confidence = rec.get("confidence")
-    if rec.get("brain") == "jev" and isinstance(confidence, (int, float)):
+    if rec.get("brain") == "jev" and _finite(confidence):
         m.jev_confidence = float(confidence)
     latency = rec.get("latency_ms")
-    if isinstance(latency, (int, float)) and status is not None:
+    if _finite(latency) and status is not None:
         m.jev_latency_count += 1
         m.jev_latency_sum_ms += latency
         bucket = _bucket_for(latency)
@@ -167,9 +207,73 @@ def _derive_jev(m: AgentMetrics, rec: dict, ts, now: float) -> None:
                     m.jev_latency_buckets[bound] += 1
 
 
-def derive_metrics(records) -> dict:
+def _as_dict(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
+def _derive_record(m: AgentMetrics, rec: dict, now: float) -> None:
+    """Fold one audit record into `m`. Every field is type-checked: a wrong type reads as
+    absent, never raises (#513)."""
+    m.cycles_total += 1
+    ts = rec.get("ts")
+    if _finite(ts):
+        m.first_ts = ts if m.first_ts is None else min(m.first_ts, ts)
+        m.last_ts = ts if m.last_ts is None else max(m.last_ts, ts)
+
+    _derive_jev(m, rec, ts, now)
+    _count_prompt(m, rec)
+
+    valid = bool(rec.get("valid", False))
+    result = _as_dict(rec.get("result"))
+    ok = bool(result.get("ok", False))
+    if valid:
+        m.valid_tool_calls_total += 1
+    else:
+        m.invalid_tool_calls_total += 1
+
+    name = _as_dict(rec.get("tool_call")).get("name")
+    name = name if isinstance(name, str) and name else "none"
+    outcome = "ok" if (valid and ok) else "invalid" if not valid else "failed"
+    key = (name, outcome)
+    m.actions_total[key] = m.actions_total.get(key, 0) + 1
+
+    pt, ct = rec.get("prompt_tokens"), rec.get("completion_tokens")
+    if _finite(pt):
+        m.prompt_tokens_total += int(pt)
+    if _finite(ct):
+        m.completion_tokens_total += int(ct)
+
+    latency = rec.get("latency_ms")
+    if _finite(latency):
+        m.latency_count += 1
+        m.latency_sum_ms += latency
+        b = _bucket_for(latency)
+        if b is not None:
+            # Cumulative histogram: every bucket >= this one gets +1.
+            for bucket in LATENCY_BUCKETS_MS:
+                if bucket >= b:
+                    m.latency_bucket_counts[bucket] += 1
+
+    detail = _as_dict(result.get("detail"))
+    if detail.get("died") or detail.get("death"):
+        m.deaths_total += 1
+    if detail.get("leveled_up") or detail.get("level_up"):
+        m.levelups_total += 1
+
+    xp = detail.get("xp")
+    if xp is None:
+        xp = _as_dict(rec.get("snapshot")).get("xp")
+    if _finite(xp):
+        m.last_xp = int(xp)
+        if m.first_xp is None:
+            m.first_xp = int(xp)
+
+
+def derive_metrics(records, bad_lines: dict | None = None) -> dict:
     """records: iterable of parsed audit-log dicts (any agent mixed in is
     fine — grouped by the `agent` field). Returns {agent_name: AgentMetrics}.
+    `bad_lines` ({agent: count}, from read_audit) sets AgentMetrics.bad_lines, and gives
+    an agent with only bad lines a row (#513).
 
     Deaths/level-ups/XP are derived from `result.detail`/`snapshot` fields
     when present rather than a dedicated schema field, since UM-51's record
@@ -179,79 +283,34 @@ def derive_metrics(records) -> dict:
     now = time.time()
 
     for rec in records:
-        agent = rec.get("agent") or "unknown"
-        m = by_agent.setdefault(agent, AgentMetrics(agent=agent))
-
-        m.cycles_total += 1
-        ts = rec.get("ts")
-        if isinstance(ts, (int, float)):
-            m.first_ts = ts if m.first_ts is None else min(m.first_ts, ts)
-            m.last_ts = ts if m.last_ts is None else max(m.last_ts, ts)
-
-        _derive_jev(m, rec, ts, now)
-        _count_prompt(m, rec)
-
-        valid = bool(rec.get("valid", False))
-        result = rec.get("result") or {}
-        ok = bool(result.get("ok", False))
-        if valid:
-            m.valid_tool_calls_total += 1
-        else:
-            m.invalid_tool_calls_total += 1
-
-        tool_call = rec.get("tool_call") or {}
-        name = tool_call.get("name") or "none"
-        outcome = "ok" if (valid and ok) else "invalid" if not valid else "failed"
-        key = (name, outcome)
-        m.actions_total[key] = m.actions_total.get(key, 0) + 1
-
-        pt, ct = rec.get("prompt_tokens"), rec.get("completion_tokens")
-        if isinstance(pt, (int, float)):
-            m.prompt_tokens_total += int(pt)
-        if isinstance(ct, (int, float)):
-            m.completion_tokens_total += int(ct)
-
-        latency = rec.get("latency_ms")
-        if isinstance(latency, (int, float)):
-            m.latency_count += 1
-            m.latency_sum_ms += latency
-            b = _bucket_for(latency)
-            if b is not None:
-                # Cumulative histogram: every bucket >= this one gets +1.
-                for bucket in LATENCY_BUCKETS_MS:
-                    if bucket >= b:
-                        m.latency_bucket_counts[bucket] += 1
-
-        detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
-        if detail.get("died") or detail.get("death"):
-            m.deaths_total += 1
-        if detail.get("leveled_up") or detail.get("level_up"):
-            m.levelups_total += 1
-
-        xp = detail.get("xp")
-        if xp is None:
-            snap = rec.get("snapshot") or {}
-            xp = snap.get("xp") if isinstance(snap, dict) else None
-        if isinstance(xp, (int, float)):
-            m.last_xp = int(xp)
-            if m.first_xp is None:
-                m.first_xp = int(xp)
-
+        agent = rec.get("agent")
+        agent = agent if isinstance(agent, str) and agent else "unknown"
+        _derive_record(by_agent.setdefault(agent, AgentMetrics(agent=agent)), rec, now)
+    for agent, count in (bad_lines or {}).items():
+        by_agent.setdefault(agent, AgentMetrics(agent=agent)).bad_lines += count
     return by_agent
 
 
 def xp_per_hour(m: AgentMetrics) -> float | None:
     if m.first_xp is None or m.last_xp is None or m.first_ts is None or m.last_ts is None:
         return None
-    elapsed_hours = (m.last_ts - m.first_ts) / 3600.0
-    if elapsed_hours <= 0:
+    try:
+        elapsed_hours = (m.last_ts - m.first_ts) / 3600.0
+        if elapsed_hours <= 0:
+            return None
+        return (m.last_xp - m.first_xp) / elapsed_hours
+    except OverflowError:  # two ints, each finite, whose difference a float cannot hold (#513)
         return None
-    return (m.last_xp - m.first_xp) / elapsed_hours
+
+
+def _emit(lines: list[str], name: str, help_text: str, mtype: str) -> None:
+    lines.append(f"# HELP {name} {help_text}")
+    lines.append(f"# TYPE {name} {mtype}")
 
 
 def _jev_sample_lines(m: AgentMetrics) -> list[str]:
     lines = []
-    label = f'{{agent="{m.agent}"}}'
+    label = _labels(agent=m.agent)
     for name, value in (("wow_agent_jev_calls_total", m.jev_calls_total),
                         ("wow_agent_jev_fallback_total", m.jev_fallback_total),
                         ("wow_agent_jev_prompt_tokens_total", m.jev_prompt_tokens_total),
@@ -261,70 +320,69 @@ def _jev_sample_lines(m: AgentMetrics) -> list[str]:
                         ("wow_agent_jev_low_confidence_total", m.jev_low_confidence_total)):
         lines.append(f"{name}{label} {value}")
     for status, count in m.jev_errors.items():
-        lines.append(f'wow_agent_jev_errors_total{{agent="{m.agent}",status="{status}"}} {count}')
+        lines.append(f"wow_agent_jev_errors_total{_labels(agent=m.agent, status=status)} {count}")
     if m.jev_confidence is not None:
         lines.append(f"wow_agent_jev_confidence{label} {m.jev_confidence}")
     for bucket in LATENCY_BUCKETS_MS:
-        lines.append(f'wow_agent_jev_latency_ms_bucket{{agent="{m.agent}",le="{bucket}"}} {m.jev_latency_buckets[bucket]}')
-    lines.append(f'wow_agent_jev_latency_ms_bucket{{agent="{m.agent}",le="+Inf"}} {m.jev_latency_count}')
+        lines.append(f"wow_agent_jev_latency_ms_bucket{_labels(agent=m.agent, le=bucket)} {m.jev_latency_buckets[bucket]}")
+    lines.append(f"wow_agent_jev_latency_ms_bucket{_labels(agent=m.agent, le='+Inf')} {m.jev_latency_count}")
     lines.append(f"wow_agent_jev_latency_ms_sum{label} {m.jev_latency_sum_ms}")
     lines.append(f"wow_agent_jev_latency_ms_count{label} {m.jev_latency_count}")
     return lines
 
 
-def render_prometheus_text(by_agent: dict) -> str:
-    """Render the derived metrics as Prometheus exposition-format text
-    (what a textfile collector expects a `.prom` file to contain)."""
-    lines = []
-
-    def emit(name, help_text, mtype):
-        lines.append(f"# HELP {name} {help_text}")
-        lines.append(f"# TYPE {name} {mtype}")
-
-    emit("wow_agent_audit_cycles_total", "Think cycles recorded in the audit log", "counter")
+def _core_sample_lines(by_agent: dict) -> list[str]:
+    """The audit-derived families up to and including wow_agent_xp_per_hour."""
+    lines: list[str] = []
+    _emit(lines, "wow_agent_audit_cycles_total", "Think cycles recorded in the audit log", "counter")
     for m in by_agent.values():
-        lines.append(f'wow_agent_audit_cycles_total{{agent="{m.agent}"}} {m.cycles_total}')
+        lines.append(f"wow_agent_audit_cycles_total{_labels(agent=m.agent)} {m.cycles_total}")
 
-    emit("wow_agent_audit_tool_calls_total", "Tool calls by validity", "counter")
+    _emit(lines, "wow_agent_audit_tool_calls_total", "Tool calls by validity", "counter")
     for m in by_agent.values():
-        lines.append(f'wow_agent_audit_tool_calls_total{{agent="{m.agent}",valid="true"}} {m.valid_tool_calls_total}')
-        lines.append(f'wow_agent_audit_tool_calls_total{{agent="{m.agent}",valid="false"}} {m.invalid_tool_calls_total}')
+        lines.append(f"wow_agent_audit_tool_calls_total{_labels(agent=m.agent, valid='true')} {m.valid_tool_calls_total}")
+        lines.append(f"wow_agent_audit_tool_calls_total{_labels(agent=m.agent, valid='false')} {m.invalid_tool_calls_total}")
 
-    emit("wow_agent_action_total", "Actions taken, by action name and outcome (ok/invalid/failed)", "counter")
+    _emit(lines, "wow_agent_action_total", "Actions taken, by action name and outcome (ok/invalid/failed)", "counter")
     for m in by_agent.values():
         for (name, outcome), count in m.outcome_pairs():
-            lines.append(f'wow_agent_action_total{{agent="{m.agent}",action="{name}",outcome="{outcome}"}} {count}')
+            lines.append(f"wow_agent_action_total{_labels(agent=m.agent, action=name, outcome=outcome)} {count}")
 
-    emit("wow_agent_llm_prompt_tokens_total", "Prompt tokens consumed", "counter")
+    _emit(lines, "wow_agent_llm_prompt_tokens_total", "Prompt tokens consumed", "counter")
     for m in by_agent.values():
-        lines.append(f'wow_agent_llm_prompt_tokens_total{{agent="{m.agent}"}} {m.prompt_tokens_total}')
+        lines.append(f"wow_agent_llm_prompt_tokens_total{_labels(agent=m.agent)} {m.prompt_tokens_total}")
 
-    emit("wow_agent_llm_completion_tokens_total", "Completion tokens consumed", "counter")
+    _emit(lines, "wow_agent_llm_completion_tokens_total", "Completion tokens consumed", "counter")
     for m in by_agent.values():
-        lines.append(f'wow_agent_llm_completion_tokens_total{{agent="{m.agent}"}} {m.completion_tokens_total}')
+        lines.append(f"wow_agent_llm_completion_tokens_total{_labels(agent=m.agent)} {m.completion_tokens_total}")
 
-    emit("wow_agent_llm_latency_ms", "LLM call latency histogram", "histogram")
+    _emit(lines, "wow_agent_llm_latency_ms", "LLM call latency histogram", "histogram")
     for m in by_agent.values():
         for bucket in LATENCY_BUCKETS_MS:
-            lines.append(f'wow_agent_llm_latency_ms_bucket{{agent="{m.agent}",le="{bucket}"}} {m.latency_bucket_counts[bucket]}')
-        lines.append(f'wow_agent_llm_latency_ms_bucket{{agent="{m.agent}",le="+Inf"}} {m.latency_count}')
-        lines.append(f'wow_agent_llm_latency_ms_sum{{agent="{m.agent}"}} {m.latency_sum_ms}')
-        lines.append(f'wow_agent_llm_latency_ms_count{{agent="{m.agent}"}} {m.latency_count}')
+            lines.append(f"wow_agent_llm_latency_ms_bucket{_labels(agent=m.agent, le=bucket)} {m.latency_bucket_counts[bucket]}")
+        lines.append(f"wow_agent_llm_latency_ms_bucket{_labels(agent=m.agent, le='+Inf')} {m.latency_count}")
+        lines.append(f"wow_agent_llm_latency_ms_sum{_labels(agent=m.agent)} {m.latency_sum_ms}")
+        lines.append(f"wow_agent_llm_latency_ms_count{_labels(agent=m.agent)} {m.latency_count}")
 
-    emit("wow_agent_deaths_total", "Deaths observed in the audit log", "counter")
+    _emit(lines, "wow_agent_deaths_total", "Deaths observed in the audit log", "counter")
     for m in by_agent.values():
-        lines.append(f'wow_agent_deaths_total{{agent="{m.agent}"}} {m.deaths_total}')
+        lines.append(f"wow_agent_deaths_total{_labels(agent=m.agent)} {m.deaths_total}")
 
-    emit("wow_agent_levelups_total", "Level-ups observed in the audit log", "counter")
+    _emit(lines, "wow_agent_levelups_total", "Level-ups observed in the audit log", "counter")
     for m in by_agent.values():
-        lines.append(f'wow_agent_levelups_total{{agent="{m.agent}"}} {m.levelups_total}')
+        lines.append(f"wow_agent_levelups_total{_labels(agent=m.agent)} {m.levelups_total}")
 
-    emit("wow_agent_xp_per_hour", "XP gained per hour, over the audit log's time span", "gauge")
+    _emit(lines, "wow_agent_xp_per_hour", "XP gained per hour, over the audit log's time span", "gauge")
     for m in by_agent.values():
         rate = xp_per_hour(m)
         if rate is not None:
-            lines.append(f'wow_agent_xp_per_hour{{agent="{m.agent}"}} {rate}')
+            lines.append(f"wow_agent_xp_per_hour{_labels(agent=m.agent)} {rate}")
+    return lines
 
+
+def _tail_sample_lines(by_agent: dict) -> list[str]:
+    """The Jev families, decisions by prompt id, and bad audit lines (appended last, #513)."""
+    lines: list[str] = []
     for name, help_text, mtype in (
         ("wow_agent_jev_calls_total", "Successful Jev Decisions API calls", "counter"),
         ("wow_agent_jev_errors_total", "Jev decision errors by bounded status class", "counter"),
@@ -337,15 +395,27 @@ def render_prometheus_text(by_agent: dict) -> str:
         ("wow_agent_jev_low_confidence_total", "Low confidence substitutions recorded", "counter"),
         ("wow_agent_jev_latency_ms", "Jev Decisions API latency histogram", "histogram"),
     ):
-        emit(name, help_text, mtype)
+        _emit(lines, name, help_text, mtype)
     for m in by_agent.values():
         lines += _jev_sample_lines(m)
 
-    emit(DECISIONS_BY_PROMPT_NAME, DECISIONS_BY_PROMPT_HELP, "counter")
+    _emit(lines, DECISIONS_BY_PROMPT_NAME, DECISIONS_BY_PROMPT_HELP, "counter")
     for m in by_agent.values():
         for pid, count in sorted(m.decisions_by_prompt.items()):
-            lines.append(f'{DECISIONS_BY_PROMPT_NAME}{{agent="{m.agent}",prompt_id="{_label_value(pid)}"}} {count}')
+            lines.append(f"{DECISIONS_BY_PROMPT_NAME}{_labels(agent=m.agent, prompt_id=pid)} {count}")
 
+    _emit(lines, "wow_agent_audit_bad_lines_total",
+          "Audit lines skipped by the exporter: not UTF-8, not JSON, or JSON that is not an object", "counter")
+    for m in by_agent.values():
+        lines.append(f"wow_agent_audit_bad_lines_total{_labels(agent=m.agent)} {m.bad_lines}")
+    return lines
+
+
+def render_prometheus_text(by_agent: dict) -> str:
+    """Render the derived metrics as Prometheus exposition-format text
+    (what a textfile collector expects a `.prom` file to contain). Every label value
+    goes through _labels/_label_value (#513)."""
+    lines = _core_sample_lines(by_agent) + _tail_sample_lines(by_agent)
     return "\n".join(lines) + "\n"
 
 

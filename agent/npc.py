@@ -28,7 +28,7 @@ verified against each struct's operator<</operator>> above.
 import struct
 import time
 
-from . import packets as pk
+from .wire import Reader
 
 # Opcodes (Opcodes.h)
 from .opcodes import (  # noqa: F401  (re-exported: callers use npc.CMSG_*/SMSG_*)
@@ -138,34 +138,34 @@ def parse_gossip_message(payload: bytes) -> dict:
     QuestType, int32 QuestLevel, int32 QuestFlags, uint8 Repeatable, cstring
     QuestTitle — this field order (Type before Level) is what the actual
     `operator<<` writes, not the struct's declaration order."""
-    off = 0
-    guid = pk.u64(payload, off); off += 8
-    menu_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    text_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    option_count = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_GOSSIP_MESSAGE)
+    guid = r.u64()
+    menu_id = r.i32()
+    text_id = r.i32()
+    option_count = r.u32()
 
     options = []
     for _ in range(option_count):
-        index = struct.unpack_from('<i', payload, off)[0]; off += 4
-        icon = payload[off]; off += 1
-        coded = bool(struct.unpack_from('<b', payload, off)[0]); off += 1
-        box_money = pk.u32(payload, off); off += 4
-        text, off = pk.cstring(payload, off)
-        box_text, off = pk.cstring(payload, off)
+        index = r.i32()
+        icon = r.u8()
+        coded = bool(r.i8())
+        box_money = r.u32()
+        text = r.cstring()
+        box_text = r.cstring()
         options.append({
             "index": index, "icon": icon, "coded": coded,
             "box_money": box_money, "text": text, "box_text": box_text,
         })
 
-    quest_count = pk.u32(payload, off); off += 4
+    quest_count = r.u32()
     quests = []
     for _ in range(quest_count):
-        quest_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-        quest_type = struct.unpack_from('<i', payload, off)[0]; off += 4
-        level = struct.unpack_from('<i', payload, off)[0]; off += 4
-        flags = struct.unpack_from('<i', payload, off)[0]; off += 4
-        repeatable = bool(payload[off]); off += 1
-        title, off = pk.cstring(payload, off)
+        quest_id = r.i32()
+        quest_type = r.i32()
+        level = r.i32()
+        flags = r.i32()
+        repeatable = bool(r.u8())
+        title = r.cstring()
         quests.append({
             "quest_id": quest_id, "quest_type": quest_type, "level": level,
             "flags": flags, "repeatable": repeatable, "title": title,
@@ -187,20 +187,20 @@ def parse_list_inventory(payload: bytes) -> dict:
     template's MaxDurability), int32 StackCount (buy count per purchase),
     int32 ExtendedCostID. If ItemCount == 0, one trailing int8 Reason (e.g.
     vendor has nothing to sell) — otherwise nothing follows the last item."""
-    off = 0
-    vendor_guid = pk.u64(payload, off); off += 8
-    item_count = payload[off]; off += 1
+    r = Reader(payload, SMSG_LIST_INVENTORY)
+    vendor_guid = r.u64()
+    item_count = r.u8()
 
     items = []
     for _ in range(item_count):
-        slot = struct.unpack_from('<i', payload, off)[0]; off += 4
-        entry = pk.u32(payload, off); off += 4
-        display_id = pk.u32(payload, off); off += 4
-        quantity = struct.unpack_from('<i', payload, off)[0]; off += 4
-        price = struct.unpack_from('<i', payload, off)[0]; off += 4
-        durability = struct.unpack_from('<i', payload, off)[0]; off += 4
-        stack_count = struct.unpack_from('<i', payload, off)[0]; off += 4
-        extended_cost = struct.unpack_from('<i', payload, off)[0]; off += 4
+        slot = r.i32()
+        entry = r.u32()
+        display_id = r.u32()
+        quantity = r.i32()
+        price = r.i32()
+        durability = r.i32()
+        stack_count = r.i32()
+        extended_cost = r.i32()
         items.append({
             "slot": slot, "entry": entry, "display_id": display_id,
             "quantity": quantity, "price": price, "durability": durability,
@@ -208,8 +208,8 @@ def parse_list_inventory(payload: bytes) -> dict:
         })
 
     reason = None
-    if item_count == 0 and off < len(payload):
-        reason = struct.unpack_from('<b', payload, off)[0]; off += 1
+    if item_count == 0 and r.remaining():
+        reason = r.i8()
 
     return {"vendor_guid": vendor_guid, "items": items, "reason": reason}
 
@@ -222,21 +222,21 @@ def parse_trainer_list(payload: bytes) -> dict:
     normal trainers), uint8 ReqLevel, int32 ReqSkillLine, int32
     ReqSkillRank, int32 ReqAbility[3] (prerequisite spell ids, 0 = none);
     finally cstring Greeting."""
-    off = 0
-    trainer_guid = pk.u64(payload, off); off += 8
-    trainer_type = struct.unpack_from('<i', payload, off)[0]; off += 4
-    spell_count = struct.unpack_from('<i', payload, off)[0]; off += 4
+    r = Reader(payload, SMSG_TRAINER_LIST)
+    trainer_guid = r.u64()
+    trainer_type = r.i32()
+    spell_count = r.i32()
 
     spells = []
     for _ in range(spell_count):
-        spell_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-        state = payload[off]; off += 1
-        cost = struct.unpack_from('<i', payload, off)[0]; off += 4
-        point_cost = list(struct.unpack_from('<2i', payload, off)); off += 8
-        req_level = payload[off]; off += 1
-        req_skill_line = struct.unpack_from('<i', payload, off)[0]; off += 4
-        req_skill_rank = struct.unpack_from('<i', payload, off)[0]; off += 4
-        req_abilities = list(struct.unpack_from('<3i', payload, off)); off += 12
+        spell_id = r.i32()
+        state = r.u8()
+        cost = r.i32()
+        point_cost = [r.i32(), r.i32()]
+        req_level = r.u8()
+        req_skill_line = r.i32()
+        req_skill_rank = r.i32()
+        req_abilities = [r.i32(), r.i32(), r.i32()]
         spells.append({
             "spell_id": spell_id, "state": state, "cost": cost,
             "point_cost": point_cost, "required_level": req_level,
@@ -245,7 +245,7 @@ def parse_trainer_list(payload: bytes) -> dict:
             "required_abilities": req_abilities,
         })
 
-    greeting, off = pk.cstring(payload, off)
+    greeting = r.cstring()
 
     return {
         "trainer_guid": trainer_guid, "trainer_type": trainer_type,
@@ -261,7 +261,8 @@ def parse_npc_text_update(payload: bytes) -> dict:
     LanguageID, then a fixed 3 entries (MAX_GOSSIP_TEXT_EMOTES) of: uint32
     EmoteDelay, uint32 EmoteID (delay before id — opposite of the struct's
     field-declaration order)."""
-    raw = pk.u32(payload, 0); off = 4
+    r = Reader(payload, SMSG_NPC_TEXT_UPDATE)
+    raw = r.u32()
     found = not (raw & 0x80000000)
     text_id = raw & 0x7FFFFFFF
     info = {"text_id": text_id, "found": found}
@@ -270,14 +271,14 @@ def parse_npc_text_update(payload: bytes) -> dict:
 
     options = []
     for _ in range(MAX_NPC_TEXT_OPTIONS):
-        probability = pk.f32(payload, off); off += 4
-        text0, off = pk.cstring(payload, off)
-        text1, off = pk.cstring(payload, off)
-        language = struct.unpack_from('<i', payload, off)[0]; off += 4
+        probability = r.f32()
+        text0 = r.cstring()
+        text1 = r.cstring()
+        language = r.i32()
         emotes = []
         for _ in range(MAX_NPC_TEXT_EMOTES):
-            delay = pk.u32(payload, off); off += 4
-            emote_id = pk.u32(payload, off); off += 4
+            delay = r.u32()
+            emote_id = r.u32()
             emotes.append({"delay": delay, "id": emote_id})
         options.append({
             "probability": probability, "text0": text0, "text1": text1,
@@ -312,11 +313,11 @@ def parse_buy_item(payload: bytes) -> dict:
     uint32 vendor slot (1-based, matches SMSG_LIST_INVENTORY's MuID/
     build_buy_item's `slot`), int32 new stock count (-1/0xFFFFFFFF if the
     vendor slot has unlimited stock), uint32 stacks bought."""
-    off = 0
-    vendor_guid = pk.u64(payload, off); off += 8
-    slot = pk.u32(payload, off); off += 4
-    new_count = struct.unpack_from('<i', payload, off)[0]; off += 4
-    stacks = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_BUY_ITEM)
+    vendor_guid = r.u64()
+    slot = r.u32()
+    new_count = r.i32()
+    stacks = r.u32()
     return {"vendor_guid": vendor_guid, "slot": slot, "new_count": new_count, "stacks": stacks}
 
 
@@ -326,13 +327,13 @@ def parse_buy_failed(payload: bytes) -> dict:
     optional uint32 param (only present if param > 0 — not flag-encoded,
     only inferable from packet length: absent leaves the packet 13 B,
     present makes it 17 B), uint8 BuyResult reason."""
-    off = 0
-    vendor_guid = pk.u64(payload, off); off += 8
-    item_entry = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_BUY_FAILED)
+    vendor_guid = r.u64()
+    item_entry = r.u32()
     param = None
-    if len(payload) - off > 1:
-        param = pk.u32(payload, off); off += 4
-    reason = payload[off]
+    if r.remaining() > 1:
+        param = r.u32()
+    reason = r.u8()
     return {"vendor_guid": vendor_guid, "item_entry": item_entry, "param": param,
             "reason": reason, "reason_name": BUY_RESULT_NAMES.get(reason, f"reason_{reason}")}
 
@@ -344,13 +345,13 @@ def parse_sell_item(payload: bytes) -> dict:
     guid (Empty if creature was null), ObjectGuid item guid, optional
     uint32 param (only present if param > 0 — same length-inferred
     presence as SMSG_BUY_FAILED), uint8 SellResult reason."""
-    off = 0
-    vendor_guid = pk.u64(payload, off); off += 8
-    item_guid = pk.u64(payload, off); off += 8
+    r = Reader(payload, SMSG_SELL_ITEM)
+    vendor_guid = r.u64()
+    item_guid = r.u64()
     param = None
-    if len(payload) - off > 1:
-        param = pk.u32(payload, off); off += 4
-    reason = payload[off]
+    if r.remaining() > 1:
+        param = r.u32()
+    reason = r.u8()
     return {"vendor_guid": vendor_guid, "item_guid": item_guid, "param": param,
             "reason": reason, "reason_name": SELL_RESULT_NAMES.get(reason, f"reason_{reason}")}
 
@@ -359,8 +360,9 @@ def parse_trainer_buy_succeeded(payload: bytes) -> dict:
     """SMSG_TRAINER_BUY_SUCCEEDED (0x1B3): TrainerBuySucceeded::Write
     (NPCPackets.cpp) — raw uint64 TrainerGUID, int32 SpellID. No reason
     field; presence of this opcode at all is the success signal."""
-    trainer_guid = pk.u64(payload, 0)
-    spell_id = struct.unpack_from('<i', payload, 8)[0]
+    r = Reader(payload, SMSG_TRAINER_BUY_SUCCEEDED)
+    trainer_guid = r.u64()
+    spell_id = r.i32()
     return {"trainer_guid": trainer_guid, "spell_id": spell_id}
 
 
@@ -368,9 +370,10 @@ def parse_trainer_buy_failed(payload: bytes) -> dict:
     """SMSG_TRAINER_BUY_FAILED (0x1B4): TrainerBuyFailed::Write
     (NPCPackets.cpp) — raw uint64 TrainerGUID, int32 SpellID, int32
     TrainerFailedReason (Trainer::FailReason)."""
-    trainer_guid = pk.u64(payload, 0)
-    spell_id = struct.unpack_from('<i', payload, 8)[0]
-    reason = struct.unpack_from('<i', payload, 12)[0]
+    r = Reader(payload, SMSG_TRAINER_BUY_FAILED)
+    trainer_guid = r.u64()
+    spell_id = r.i32()
+    reason = r.i32()
     return {"trainer_guid": trainer_guid, "spell_id": spell_id, "reason": reason,
             "reason_name": TRAINER_FAIL_REASON_NAMES.get(reason, f"reason_{reason}")}
 

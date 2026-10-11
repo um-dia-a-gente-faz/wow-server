@@ -25,7 +25,10 @@ host metrics.
   it's unit-tested directly (`agent/tests/test_metrics.py`).
 - `monitoring/agent_metrics_textfile.py` — reads every
   `AGENT_AUDIT_DIR/*/*.jsonl*`, renders the text, and writes it atomically
-  (temp file + rename) to a `.prom` file.
+  (temp file + rename) to a `.prom` file. A bad line (see
+  `wow_agent_audit_bad_lines_total`) is skipped and counted, never fatal; every label
+  value is escaped (quote, backslash, newline), and a lone surrogate is written as its
+  backslash-u text (`\\ud800`), so the file always writes and distinct values stay distinct.
 - `monitoring/docker-compose.yml`'s `node-exporter` mounts
   `/opt/wow-server-metrics/textfile:/textfile:ro` and runs with
   `--collector.textfile.directory=/textfile`, so any `*.prom` file dropped
@@ -56,7 +59,8 @@ On the wow-server VM (192.168.1.64), run the exporter script periodically
 | `wow_agent_deaths_total` | counter | `agent` | Deaths observed |
 | `wow_agent_levelups_total` | counter | `agent` | Level-ups observed |
 | `wow_agent_xp_per_hour` | gauge | `agent` | XP/hour over the log's time span |
-| `wow_agent_decisions_by_prompt_total` | counter | `agent`, `prompt_id` | Cycles by the audit record's `prompt_id`; the 8 ids with the newest record per agent keep their label, older ones are summed under `other`, a missing/empty/non-string id is `none`. The textfile exporter is the only producer (not on the agents' `GET /metrics`); the "Decisions by prompt" panel reads it |
+| `wow_agent_decisions_by_prompt_total` | counter | `agent`, `prompt_id` | Cycles by the audit record's `prompt_id`; the 8 ids with the newest record per agent keep their label, older ones are summed under `other`, a missing/empty/non-string id is `none`. A literal id `other` or `none` is summed into that label, never overwritten. The textfile exporter is the only producer (not on the agents' `GET /metrics`); the "Decisions by prompt" panel reads it |
+| `wow_agent_audit_bad_lines_total` | counter | `agent` | Audit lines the exporter skipped: not UTF-8, not JSON, or JSON that is not an object. The agent is the line's directory name (`<audit-dir>/<agent>/`). Skipped lines never stop the run |
 | `wow_agent_jev_calls_total` | counter | `agent` | Successful Jev Decisions requests |
 | `wow_agent_jev_errors_total` | counter | `agent`, `status` | Failed requests (`http_4xx`, `http_5xx`, `error`) |
 | `wow_agent_jev_fallback_total` | counter | `agent` | Cycles where Jev was configured but another brain decided |

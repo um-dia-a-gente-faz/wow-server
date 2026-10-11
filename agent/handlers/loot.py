@@ -1,25 +1,16 @@
 """Loot and item packets (UM-42)."""
 
-import struct
-
 from .. import loot as lo
-from .. import perception as per
 
 
 def handle_loot_response(ctx, payload: bytes):
-    try:
-        data = lo.parse_loot_response(payload)
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_LOOT_RESPONSE ({len(payload)} B): {e}") from e
+    data = lo.parse_loot_response(payload)
     ctx.state.loot = data
     ctx.state.record_event("loot_response", **data)
 
 
 def handle_loot_release_response(ctx, payload: bytes):
-    try:
-        data = lo.parse_loot_release_response(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_LOOT_RELEASE_RESPONSE ({len(payload)} B): {e}") from e
+    data = lo.parse_loot_release_response(payload)
     if ctx.state.loot is not None and ctx.state.loot.get("guid") == data["guid"]:
         ctx.state.loot = None
     ctx.state.record_event("loot_release", **data)
@@ -33,36 +24,24 @@ def handle_loot_removed(ctx, payload: bytes):
 
 
 def handle_loot_money_notify(ctx, payload: bytes):
-    try:
-        data = lo.parse_loot_money_notify(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_LOOT_MONEY_NOTIFY ({len(payload)} B): {e}") from e
+    data = lo.parse_loot_money_notify(payload)
     if ctx.state.loot is not None:
         ctx.state.loot["coins"] = 0
     ctx.state.record_event("loot_money", **data)
 
 
 def handle_item_push_result(ctx, payload: bytes):
-    try:
-        data = lo.parse_item_push_result(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_ITEM_PUSH_RESULT ({len(payload)} B): {e}") from e
+    data = lo.parse_item_push_result(payload)
     ctx.state.record_event("item_received", **data)
 
 
 def handle_inventory_change_failure(ctx, payload: bytes):
-    try:
-        data = lo.parse_inventory_change_failure(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_INVENTORY_CHANGE_FAILURE ({len(payload)} B): {e}") from e
+    data = lo.parse_inventory_change_failure(payload)
     ctx.state.record_event("inventory_change_failure", **data)
 
 
 def handle_item_query_response(ctx, payload: bytes):
-    try:
-        data = lo.parse_item_query_response(payload)
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_ITEM_QUERY_SINGLE_RESPONSE ({len(payload)} B): {e}") from e
+    data = lo.parse_item_query_response(payload)
     ctx.state.world_state.apply_item_query_response(data)
 
 

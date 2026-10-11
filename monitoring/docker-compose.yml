@@ -81,6 +81,9 @@ services:
       - MYSQL_PASSWORD=${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in the repo-root .env}
       - LISTEN_PORT=9300
       - TOP_PLAYED=20
+      - BACKUP_DIR=/backups
+    volumes:
+      - /opt/wow-server-backups:/backups:ro   # scripts/backup-db.sh output, for the backup-age metric (#361)
     ports:
       - "9300:9300"
     networks:
