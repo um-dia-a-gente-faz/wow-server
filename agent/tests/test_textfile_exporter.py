@@ -18,7 +18,7 @@ LABEL_PAIR = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\\n]|\\[\\"n])*)"')
 
 # every character the issue names, plus a lone surrogate (not encodable as UTF-8)
 NASTY = 'q"b\\s\nn\ud800z'
-NASTY_SEEN = 'q"b\\s\nn?z'  # what the exporter writes: the surrogate is replaced by "?"
+NASTY_SEEN = 'q"b\\s\nn\\ud800z'  # what the exporter writes: the surrogate as backslash-u text, the backslash escaped
 
 
 def unescape(v: str) -> str:
@@ -73,19 +73,25 @@ class ExporterTest(unittest.TestCase):
         return base
 
     def test_every_label_field_is_escaped_and_the_output_is_strictly_valid(self):
+        def pair(**kw):
+            # two records an hour apart with an XP span, so every family (xp_per_hour too) is emitted
+            return [self.rec(ts=0.0, snapshot={"xp": 10}, **kw), self.rec(ts=3600.0, snapshot={"xp": 20}, **kw)]
+
         cases = {
-            "agent": lambda: self.rec(agent=NASTY),
-            "tool": lambda: self.rec(tool_call={"name": NASTY, "args": {}}),
-            "prompt_id": lambda: self.rec(prompt_id=NASTY),
+            "agent": lambda: pair(agent=NASTY),
+            "tool": lambda: pair(tool_call={"name": NASTY, "args": {}}),
+            "prompt_id": lambda: pair(prompt_id=NASTY),
         }
         for field, make in cases.items():
             with self.subTest(field=field):
                 self.audit = os.path.join(self._tmp.name, field, "audit")
                 self.out = os.path.join(self._tmp.name, field, "out", "wow_agent.prom")
-                write_jsonl(os.path.join(self.audit, "A", "2026-10-11.jsonl"), [make()])
+                write_jsonl(os.path.join(self.audit, "A", "2026-10-11.jsonl"), make())
                 samples = self.run_exporter()
                 if field == "agent":
                     self.assertTrue(any(s[1].get("agent") == NASTY_SEEN for s in samples))
+                    self.assertTrue(any(s[0] == "wow_agent_xp_per_hour" and s[1].get("agent") == NASTY_SEEN
+                                        for s in samples))
                 elif field == "tool":
                     self.assertTrue(any(s[0] == "wow_agent_action_total" and s[1].get("action") == NASTY_SEEN
                                         for s in samples))
@@ -121,10 +127,17 @@ class ExporterTest(unittest.TestCase):
                           and s[1] == {"agent": "A"}], [str(len(bad))])
 
     def test_records_of_odd_shapes_do_not_raise(self):
+        big = b"1" * 401  # an int JSON allows but a float cannot hold: math.isfinite raises OverflowError on it
         odd = [
             {"agent": ["x"]}, {"agent": "A", "tool_call": "face"}, {"agent": "A", "tool_call": {"name": ["x"]}},
             {"agent": "A", "result": "ok"}, {"agent": "A", "jev_status": ["x"]},
             {"agent": "A", "ts": 1.0, "prompt_tokens": float("inf"), "latency_ms": float("nan")},
+            b'{"agent":"A","ts":' + big + b',"valid":true}',
+            b'{"agent":"A","ts":1.0,"prompt_tokens":' + big + b'}',
+            b'{"agent":"A","ts":1.0,"latency_ms":' + big + b'}',
+            b'{"agent":"A","ts":1.0,"snapshot":{"xp":' + big + b'}}',
+            b'{"agent":"A","ts":1.0,"brain":"jev","jev_status":"success","usage":{"input_tokens":' + big
+            + b',"cost":' + big + b'}}',
         ]
         write_jsonl(os.path.join(self.audit, "A", "2026-10-11.jsonl"), odd)
         self.run_exporter()  # any exception fails the test

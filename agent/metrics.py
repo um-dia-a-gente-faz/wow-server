@@ -99,15 +99,20 @@ def _count_prompt(m: AgentMetrics, rec: dict) -> None:
 
 
 def _finite(v) -> bool:
-    """A JSON number usable as a count or a latency (NaN and Infinity from a bad line are not)."""
-    return isinstance(v, (int, float)) and math.isfinite(v)
+    """A JSON number usable as a count or a latency (NaN, Infinity and an int too large
+    for a float, all from a bad line, are not)."""
+    try:
+        return isinstance(v, (int, float)) and math.isfinite(v)
+    except OverflowError:
+        return False
 
 
 def _label_value(v) -> str:
     """Escape one label value per the Prometheus text format (backslash, quote, newline).
-    What UTF-8 cannot encode (a lone surrogate, from a JSON "\\ud800") becomes "?", so the
-    .prom file can always be written (#513). Every label value is written through here."""
-    text = str(v).encode("utf-8", "replace").decode("utf-8")
+    What UTF-8 cannot encode (a lone surrogate, from a JSON "\\ud800") is written as its
+    backslash-u text, so the .prom file can always be written and two distinct surrogates
+    stay two distinct series (#513). Every label value is written through here."""
+    text = str(v).encode("utf-8", "backslashreplace").decode("utf-8")
     return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 

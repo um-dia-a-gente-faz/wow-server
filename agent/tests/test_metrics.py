@@ -273,15 +273,19 @@ class LabelValueTest(unittest.TestCase):
     def test_escapes_backslash_quote_newline_and_replaces_lone_surrogates(self):
         from agent.metrics import _label_value
         self.assertEqual(_label_value('a\\b"c\nd'), 'a\\\\b\\"c\\nd')
-        self.assertEqual(_label_value("a\ud800b"), "a?b")
+        self.assertEqual(_label_value("a\ud800b"), "a\\\\ud800b")  # backslash-u text, the backslash escaped
+
+    def test_distinct_lone_surrogates_stay_distinct(self):
+        from agent.metrics import _label_value
+        self.assertNotEqual(_label_value("p\ud800"), _label_value("p\ud801"))
 
     def test_every_rendered_label_value_goes_through_the_escape(self):
         recs = [{"agent": "A", "ts": 1.0, "tool_call": {"name": 'x"\\\n\ud800', "args": {}},
                  "valid": True, "result": {"ok": True}, "prompt_id": 'p"\\\n\ud800'}]
         text = render_prometheus_text(derive_metrics(recs))
         text.encode("utf-8")  # never raises
-        self.assertIn('action="x\\"\\\\\\n?"', text)
-        self.assertIn('prompt_id="p\\"\\\\\\n?"', text)
+        self.assertIn('action="x\\"\\\\\\n\\\\ud800"', text)
+        self.assertIn('prompt_id="p\\"\\\\\\n\\\\ud800"', text)
 
 
 class PromptCollisionTest(unittest.TestCase):

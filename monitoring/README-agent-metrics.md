@@ -27,8 +27,8 @@ host metrics.
   `AGENT_AUDIT_DIR/*/*.jsonl*`, renders the text, and writes it atomically
   (temp file + rename) to a `.prom` file. A bad line (see
   `wow_agent_audit_bad_lines_total`) is skipped and counted, never fatal; every label
-  value is escaped (quote, backslash, newline), and a lone surrogate becomes `?`, so
-  the file always writes.
+  value is escaped (quote, backslash, newline), and a lone surrogate is written as its
+  backslash-u text (`\\ud800`), so the file always writes and distinct values stay distinct.
 - `monitoring/docker-compose.yml`'s `node-exporter` mounts
   `/opt/wow-server-metrics/textfile:/textfile:ro` and runs with
   `--collector.textfile.directory=/textfile`, so any `*.prom` file dropped
