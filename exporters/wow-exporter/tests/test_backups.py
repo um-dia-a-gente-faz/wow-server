@@ -31,9 +31,9 @@ class BackupStatsTest(unittest.TestCase):
         self.assertEqual(backups.backup_stats(self.dir), (1, 1000.0, 123.0))
 
     def test_newest_by_mtime_not_name_or_size(self):
-        self.make("auth-a.sql.gz", 900, 1000)
-        self.make("characters-z.sql.gz", 50, 3000)
-        self.make("auth-b.sql.gz", 700, 2000)
+        self.make("characters-a.sql.gz", 900, 1000)
+        self.make("auth-z.sql.gz", 50, 3000)
+        self.make("characters-z.sql.gz", 700, 2000)
         self.assertEqual(backups.backup_stats(self.dir), (3, 3000.0, 50.0))
 
     def test_ignores_part_files_other_files_and_directories(self):
