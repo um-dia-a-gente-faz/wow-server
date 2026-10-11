@@ -25,6 +25,22 @@ import struct
 from dataclasses import dataclass
 
 from . import packets as pk
+from .opcodes import (
+    SMSG_ATTACK_START,
+    SMSG_ATTACK_STOP,
+    SMSG_ATTACKERSTATEUPDATE,
+    SMSG_CAST_FAILED,
+    SMSG_INITIAL_SPELLS,
+    SMSG_LEARNED_SPELL,
+    SMSG_LEVELUP_INFO,
+    SMSG_LOG_XPGAIN,
+    SMSG_PARTYKILLLOG,
+    SMSG_REMOVED_SPELL,
+    SMSG_SPELL_GO,
+    SMSG_SPELL_START,
+    SMSG_SPELLNONMELEEDAMAGELOG,
+)
+from .wire import Reader
 
 # ── Spellbook (SMSG_INITIAL_SPELLS / LEARNED_SPELL / REMOVED_SPELL) ───────
 
@@ -40,38 +56,37 @@ def parse_initial_spells(payload: bytes) -> dict:
     negative) rather than a separate flag on the wire — not distinguished
     here, just returned as those raw values.
     """
-    off = 0
-    initial_login = payload[off]; off += 1
-    spell_count = pk.u16(payload, off); off += 2
+    r = Reader(payload, SMSG_INITIAL_SPELLS)
+    initial_login = r.u8()
+    spell_count = r.u16()
     spell_ids = []
     for _ in range(spell_count):
-        spell_ids.append(pk.u32(payload, off)); off += 4
-        off += 2  # action_bar_slot
-    cooldown_count = pk.u16(payload, off); off += 2
+        spell_ids.append(r.u32())
+        r.skip(2)  # action_bar_slot
+    cooldown_count = r.u16()
     cooldowns = []
     for _ in range(cooldown_count):
-        spell_id = pk.u32(payload, off); off += 4
-        item_id = pk.u16(payload, off); off += 2
-        category = pk.u16(payload, off); off += 2
-        recovery_time = struct.unpack_from('<i', payload, off)[0]; off += 4
-        category_recovery_time = struct.unpack_from('<i', payload, off)[0]; off += 4
+        spell_id = r.u32()
+        item_id = r.u16()
+        category = r.u16()
+        recovery_time = r.i32()
+        category_recovery_time = r.i32()
         cooldowns.append({"spell_id": spell_id, "item_id": item_id, "category": category,
                            "recovery_time": recovery_time,
                            "category_recovery_time": category_recovery_time})
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    r.done()
     return {"initial_login": bool(initial_login), "spell_ids": spell_ids, "cooldowns": cooldowns}
 
 
 def parse_learned_spell(payload: bytes) -> int:
     """SMSG_LEARNED_SPELL: int32 spell_id, uint16 action_bar_slot (unused,
     not consumed — self-delimited packet, no sibling data follows)."""
-    return struct.unpack_from('<i', payload, 0)[0]
+    return Reader(payload, SMSG_LEARNED_SPELL).i32()
 
 
 def parse_removed_spell(payload: bytes) -> int:
     """SMSG_REMOVED_SPELL: uint32 spell_id."""
-    return pk.u32(payload, 0)
+    return Reader(payload, SMSG_REMOVED_SPELL).u32()
 
 
 # ── Spell metadata ─────────────────────────────────────────────────────────
@@ -240,15 +255,16 @@ def parse_cast_failed(payload: bytes) -> dict:
     long enough (>= 10 B) and [int32 failed_arg2] if longer still (>= 14 B)
     — presence isn't flag-encoded on the wire, only implied by the packet's
     total length (known here from the transport framing)."""
-    cast_id = payload[0]
-    spell_id = pk.u32(payload, 1)
-    reason = payload[5]
+    r = Reader(payload, SMSG_CAST_FAILED)
+    cast_id = r.u8()
+    spell_id = r.u32()
+    reason = r.u8()
     info = {"cast_id": cast_id, "spell_id": spell_id, "reason": reason,
             "reason_name": SPELL_CAST_RESULT_NAMES.get(reason, f"reason_{reason}")}
-    if len(payload) >= 10:
-        info["failed_arg1"] = struct.unpack_from('<i', payload, 6)[0]
-    if len(payload) >= 14:
-        info["failed_arg2"] = struct.unpack_from('<i', payload, 10)[0]
+    if r.remaining() >= 4:
+        info["failed_arg1"] = r.i32()
+    if r.remaining() >= 4:
+        info["failed_arg2"] = r.i32()
     return info
 
 
@@ -259,13 +275,14 @@ def parse_cast_failed(payload: bytes) -> dict:
 # gated by CastFlags bits we don't need to decode. Both opcodes are
 # self-delimited packets (nothing follows them on the wire), so stopping
 # after the fixed prefix is safe — it just means the tail is left unread.
-def parse_spell_cast_prefix(payload: bytes) -> dict:
-    caster_guid, off = pk.unpack_packed_guid(payload, 0)
-    caster_unit_guid, off = pk.unpack_packed_guid(payload, off)
-    cast_id = payload[off]; off += 1
-    spell_id = pk.u32(payload, off); off += 4
-    cast_flags = pk.u32(payload, off); off += 4
-    cast_time = pk.u32(payload, off); off += 4
+def parse_spell_cast_prefix(payload: bytes, opcode: int = SMSG_SPELL_START) -> dict:
+    r = Reader(payload, opcode)
+    caster_guid = r.packed_guid()
+    caster_unit_guid = r.packed_guid()
+    cast_id = r.u8()
+    spell_id = r.u32()
+    cast_flags = r.u32()
+    cast_time = r.u32()
     return {"caster_guid": caster_guid, "caster_unit_guid": caster_unit_guid,
             "cast_id": cast_id, "spell_id": spell_id, "cast_flags": cast_flags,
             "cast_time": cast_time}
@@ -289,53 +306,54 @@ HITINFO_RAGE_GAIN = 0x00800000
 def parse_attack_start(payload: bytes) -> dict:
     """SMSG_ATTACK_START (AttackStart::Write, CombatPackets.cpp): two raw
     (not packed) uint64 guids, attacker then victim."""
-    return {"attacker_guid": pk.u64(payload, 0), "victim_guid": pk.u64(payload, 8)}
+    r = Reader(payload, SMSG_ATTACK_START)
+    return {"attacker_guid": r.guid(), "victim_guid": r.guid()}
 
 
 def parse_attack_stop(payload: bytes) -> dict:
     """SMSG_ATTACK_STOP (SAttackStop::Write): packed attacker guid, packed
     victim guid, uint32 now_dead (bool)."""
-    attacker_guid, off = pk.unpack_packed_guid(payload, 0)
-    victim_guid, off = pk.unpack_packed_guid(payload, off)
-    now_dead = pk.u32(payload, off)
+    r = Reader(payload, SMSG_ATTACK_STOP)
+    attacker_guid = r.packed_guid()
+    victim_guid = r.packed_guid()
+    now_dead = r.u32()
     return {"attacker_guid": attacker_guid, "victim_guid": victim_guid, "now_dead": bool(now_dead)}
 
 
 def parse_attacker_state_update(payload: bytes) -> dict:
     """SMSG_ATTACKERSTATEUPDATE (AttackerStateUpdate::Write, CombatLogPackets.cpp)."""
-    off = 0
-    flags = pk.u32(payload, off); off += 4
-    attacker_guid, off = pk.unpack_packed_guid(payload, off)
-    victim_guid, off = pk.unpack_packed_guid(payload, off)
-    damage = pk.u32(payload, off); off += 4
-    over_damage = struct.unpack_from('<i', payload, off)[0]; off += 4
-    sub_count = payload[off]; off += 1
+    r = Reader(payload, SMSG_ATTACKERSTATEUPDATE)
+    flags = r.u32()
+    attacker_guid = r.packed_guid()
+    victim_guid = r.packed_guid()
+    damage = r.u32()
+    over_damage = r.i32()
+    sub_count = r.u8()
 
     sub_school = []
     sub_damage = []
     for _ in range(sub_count):
-        sub_school.append(pk.u32(payload, off)); off += 4
-        off += 4  # FDamage (float) — same value as Damage below in practice, not needed by callers
-        sub_damage.append(pk.u32(payload, off)); off += 4
+        sub_school.append(r.u32())
+        r.skip(4)  # FDamage (float) — same value as Damage below in practice, not needed by callers
+        sub_damage.append(r.u32())
 
     if flags & (HITINFO_FULL_ABSORB | HITINFO_PARTIAL_ABSORB):
-        off += 4 * sub_count
+        r.skip(4 * sub_count)
     if flags & (HITINFO_FULL_RESIST | HITINFO_PARTIAL_RESIST):
-        off += 4 * sub_count
+        r.skip(4 * sub_count)
 
-    victim_state = payload[off]; off += 1
-    attacker_state = pk.u32(payload, off); off += 4
-    melee_spell_id = pk.u32(payload, off); off += 4
+    victim_state = r.u8()
+    attacker_state = r.u32()
+    melee_spell_id = r.u32()
 
     if flags & HITINFO_BLOCK:
-        off += 4
+        r.skip(4)
     if flags & HITINFO_RAGE_GAIN:
-        off += 4
+        r.skip(4)
     if flags & HITINFO_UNK1:
-        off += 4 * 14  # ArmorReduction + 9 floats + Min/MaxDamage[0,1] + SinceLastSwing
+        r.skip(4 * 14)  # ArmorReduction + 9 floats + Min/MaxDamage[0,1] + SinceLastSwing
 
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    r.done()
 
     return {"flags": flags, "attacker_guid": attacker_guid, "victim_guid": victim_guid,
             "damage": damage, "over_damage": over_damage, "sub_school_mask": sub_school,
@@ -347,19 +365,19 @@ def parse_attacker_state_update(payload: bytes) -> dict:
 def parse_spell_non_melee_damage_log(payload: bytes) -> dict:
     """SMSG_SPELLNONMELEEDAMAGELOG (SpellNonMeleeDamageLog::Write,
     CombatLogPackets.cpp)."""
-    off = 0
-    target_guid, off = pk.unpack_packed_guid(payload, off)
-    caster_guid, off = pk.unpack_packed_guid(payload, off)
-    spell_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    damage = struct.unpack_from('<i', payload, off)[0]; off += 4
-    overkill = struct.unpack_from('<i', payload, off)[0]; off += 4
-    school_mask = payload[off]; off += 1
-    absorbed = pk.u32(payload, off); off += 4
-    resisted = pk.u32(payload, off); off += 4
-    periodic = payload[off]; off += 1
-    off += 1  # unused
-    shield_block = pk.u32(payload, off); off += 4
-    flags = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_SPELLNONMELEEDAMAGELOG)
+    target_guid = r.packed_guid()
+    caster_guid = r.packed_guid()
+    spell_id = r.i32()
+    damage = r.i32()
+    overkill = r.i32()
+    school_mask = r.u8()
+    absorbed = r.u32()
+    resisted = r.u32()
+    periodic = r.u8()
+    r.skip(1)  # unused
+    shield_block = r.u32()
+    flags = r.u32()
     # trailing uint8 debug-info flag + optional debug floats not decoded —
     # this server build never sets it (Write()'s DebugInfo branch is
     # commented out upstream), so the packet always ends right here.
@@ -372,7 +390,8 @@ def parse_spell_non_melee_damage_log(payload: bytes) -> dict:
 def parse_party_kill_log(payload: bytes) -> dict:
     """SMSG_PARTYKILLLOG (Unit::Kill, Unit.cpp): two raw uint64 guids,
     killer then victim."""
-    return {"killer_guid": pk.u64(payload, 0), "victim_guid": pk.u64(payload, 8)}
+    r = Reader(payload, SMSG_PARTYKILLLOG)
+    return {"killer_guid": r.guid(), "victim_guid": r.guid()}
 
 
 def parse_log_xp_gain(payload: bytes) -> dict:
@@ -381,16 +400,16 @@ def parse_log_xp_gain(payload: bytes) -> dict:
     (given + bonus), uint8 type (0 kill, 1 non-kill), [uint32
     xp_without_bonus, float group_bonus_rate — only if victim_guid != 0],
     uint8 recruit_a_friend."""
-    off = 0
-    victim_guid = pk.u64(payload, off); off += 8
-    total_xp = pk.u32(payload, off); off += 4
-    xp_type = payload[off]; off += 1
+    r = Reader(payload, SMSG_LOG_XPGAIN)
+    victim_guid = r.guid()
+    total_xp = r.u32()
+    xp_type = r.u8()
     info = {"victim_guid": victim_guid, "total_xp": total_xp,
             "is_kill": xp_type == 0}
     if victim_guid:
-        info["xp_without_bonus"] = pk.u32(payload, off); off += 4
-        info["group_bonus_rate"] = pk.f32(payload, off); off += 4
-    info["recruit_a_friend"] = bool(payload[off]); off += 1
+        info["xp_without_bonus"] = r.u32()
+        info["group_bonus_rate"] = r.f32()
+    info["recruit_a_friend"] = bool(r.u8())
     return info
 
 
@@ -398,10 +417,10 @@ def parse_levelup_info(payload: bytes) -> dict:
     """SMSG_LEVELUP_INFO (LevelUpInfo::Write, MiscPackets.cpp): uint32
     level, uint32 health_delta, 7x uint32 power_delta (MAX_POWERS), 5x
     uint32 stat_delta (MAX_STATS: str/agi/sta/int/spirit)."""
-    off = 0
-    level = pk.u32(payload, off); off += 4
-    health_delta = pk.u32(payload, off); off += 4
-    power_delta = list(struct.unpack_from('<7I', payload, off)); off += 4 * 7
-    stat_delta = list(struct.unpack_from('<5I', payload, off)); off += 4 * 5
+    r = Reader(payload, SMSG_LEVELUP_INFO)
+    level = r.u32()
+    health_delta = r.u32()
+    power_delta = [r.u32() for _ in range(7)]
+    stat_delta = [r.u32() for _ in range(5)]
     return {"level": level, "health_delta": health_delta, "power_delta": power_delta,
             "stat_delta": stat_delta}

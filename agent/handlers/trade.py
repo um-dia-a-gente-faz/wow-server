@@ -1,17 +1,11 @@
 """Trade packets (UM-59)."""
 
-import struct
-
-from .. import perception as per
 from .. import trade as trade_mod
 
 
 def handle_trade_status(ctx, payload: bytes):
     ctx.dump(trade_mod.SMSG_TRADE_STATUS, payload)
-    try:
-        data = trade_mod.parse_trade_status(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_TRADE_STATUS ({len(payload)} B): {e}") from e
+    data = trade_mod.parse_trade_status(payload)
     # Recorded unconditionally (not just when apply_trade_status returns
     # a named event) — agent/actions/trade.py's offer_item/offer_gold/open_trade/
     # accept_trade_request/cancel_trade wait on this raw status_name
@@ -26,10 +20,7 @@ def handle_trade_status(ctx, payload: bytes):
 
 def handle_trade_status_extended(ctx, payload: bytes):
     ctx.dump(trade_mod.SMSG_TRADE_STATUS_EXTENDED, payload)
-    try:
-        data = trade_mod.parse_trade_status_extended(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_TRADE_STATUS_EXTENDED ({len(payload)} B): {e}") from e
+    data = trade_mod.parse_trade_status_extended(payload)
     changed = ctx.state.world_state.apply_trade_status_extended(data)
     if changed is not None:
         ctx.state.record_event("trade_offer_changed", **changed)

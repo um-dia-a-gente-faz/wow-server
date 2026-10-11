@@ -30,6 +30,7 @@ ChatChannels.dbc (/opt/wowmap-data/dbc/ChatChannels.dbc).
 import struct
 
 from . import packets as pk
+from .wire import PacketMalformed, Reader
 
 from .opcodes import (  # noqa: F401  (re-exported: callers use channels.CMSG_*/SMSG_*)
     CMSG_JOIN_CHANNEL,
@@ -148,11 +149,6 @@ def build_leave_channel(name: str) -> bytes:
     return struct.pack("<i", system_channel_id(name)) + name.encode("utf-8") + b"\x00"
 
 
-def _cstring_utf8(data: bytes, off: int) -> tuple[str, int]:
-    end = data.index(0, off)
-    return data[off:end].decode("utf-8", errors="replace"), end + 1
-
-
 def parse_channel_notify(payload: bytes) -> dict:
     """SMSG_CHANNEL_NOTIFY. ChannelNotify::Write: uint8 Type, cstring
     Channel, then a Type-dependent tail (raw uint64 GUIDs, not packed):
@@ -165,29 +161,32 @@ def parse_channel_notify(payload: bytes) -> dict:
       player_kicked/banned/unbanned: uint64 target_guid, uint64 sender_guid
       everything else (errors like not_member, muted, throttled): nothing
     """
-    off = 0
-    kind = payload[off]; off += 1
-    channel, off = _cstring_utf8(payload, off)
+    r = Reader(payload, SMSG_CHANNEL_NOTIFY)
+    kind = r.u8()
+    channel = r.cstring("utf-8")
     out = {"notice": kind, "notice_name": NOTIFY_NAMES.get(kind, f"notice_{kind}"),
            "channel": channel}
     if kind == CHAT_YOU_JOINED_NOTICE:
-        out["flags"] = payload[off]; off += 1
-        out["channel_id"], out["instance_id"] = struct.unpack_from("<ii", payload, off); off += 8
+        out["flags"] = r.u8()
+        out["channel_id"] = r.i32()
+        out["instance_id"] = r.i32()
     elif kind == CHAT_YOU_LEFT_NOTICE:
-        out["channel_id"] = struct.unpack_from("<i", payload, off)[0]; off += 4
-        out["suspended"] = bool(payload[off]); off += 1
+        out["channel_id"] = r.i32()
+        out["suspended"] = bool(r.u8())
     elif kind in _GUID_NOTICES:
-        out["sender_guid"] = pk.u64(payload, off); off += 8
+        out["sender_guid"] = r.guid()
     elif kind in _NAME_NOTICES:
-        out["sender_name"], off = _cstring_utf8(payload, off)
+        out["sender_name"] = r.cstring("utf-8")
     elif kind == CHAT_MODE_CHANGE_NOTICE:
-        out["sender_guid"] = pk.u64(payload, off); off += 8
-        out["old_flags"] = payload[off]; out["new_flags"] = payload[off + 1]; off += 2
+        out["sender_guid"] = r.guid()
+        out["old_flags"] = r.u8()
+        out["new_flags"] = r.u8()
     elif kind in _TARGET_SENDER_NOTICES:
-        out["target_guid"] = pk.u64(payload, off)
-        out["sender_guid"] = pk.u64(payload, off + 8); off += 16
-    if off != len(payload):
-        raise ValueError(f"SMSG_CHANNEL_NOTIFY {out['notice_name']}: consumed {off} of {len(payload)} bytes")
+        out["target_guid"] = r.guid()
+        out["sender_guid"] = r.guid()
+    if r.remaining():
+        raise PacketMalformed(
+            f"SMSG_CHANNEL_NOTIFY {out['notice_name']}: consumed {r.offset} of {len(payload)} bytes")
     return out
 
 

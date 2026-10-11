@@ -11,11 +11,14 @@ file. Verify against that source, not against the old handoff doc
 (removed; its layout table was wrong per UM-32's card).
 """
 
+import functools
 import struct
 from dataclasses import dataclass, field
 from typing import Any
 
 from . import packets as pk
+from .opcodes import SMSG_MONSTER_MOVE, SMSG_UPDATE_OBJECT
+from .wire import PacketMalformed, PacketTruncated
 
 # OBJECT_UPDATE_TYPE
 # src/server/game/Entities/Object/Updates/UpdateData.h
@@ -108,6 +111,28 @@ class UpdateBlock:
     guids: list = field(default_factory=list)   # only OUT_OF_RANGE_OBJECTS / NEAR_OBJECTS
 
 
+def _protocol_errors(opcode: int):
+    """Decorator for the public parsers (#459): a raw struct.error/IndexError becomes
+    PacketTruncated, a ValueError (bad update_type, leftover bytes) PacketMalformed, so a caller
+    only ever sees a ProtocolError and the router need not guess. The bodies stay as they are
+    (hot path); a try block costs nothing when nothing is raised. The raw reads do not know
+    their offset, so a truncation reports the payload size: the read ran past that end."""
+    def decorate(parse):
+        @functools.wraps(parse)
+        def wrapper(data, *args):
+            try:
+                return parse(data, *args)
+            except pk.ProtocolError:
+                raise   # an inner public parser already converted it
+            except (struct.error, IndexError, ValueError) as e:
+                if isinstance(e, ValueError):
+                    raise PacketMalformed(f"opcode {opcode:#x}: {e}") from e
+                raise PacketTruncated(opcode, len(data)) from e
+        return wrapper
+    return decorate
+
+
+@_protocol_errors(SMSG_UPDATE_OBJECT)
 def parse_update_object(data: bytes) -> list[UpdateBlock]:
     """Parse an already-inflated SMSG_UPDATE_OBJECT payload into UpdateBlocks.
 
@@ -115,9 +140,8 @@ def parse_update_object(data: bytes) -> list[UpdateBlock]:
         uint32 block_count
         block*: uint8 update_type, ...  (shape depends on update_type)
 
-    Raises IndexError/struct.error on truncated data, ValueError on an
-    update_type outside 0-5 — the caller (agent/session.py) turns both into
-    PerceptionParseError.
+    Raises PacketTruncated on truncated data, PacketMalformed (also a ValueError) on an
+    update_type outside 0-5; both are ProtocolErrors.
     """
     off = 0
     block_count = pk.u32(data, off); off += 4
@@ -278,6 +302,7 @@ def _parse_create_object_spline_block(data: bytes, off: int) -> tuple[dict, int]
     return info, off
 
 
+@_protocol_errors(SMSG_UPDATE_OBJECT)
 def parse_movement_info(data: bytes, off: int) -> tuple[dict, int]:
     """The shared MovementInfo wire format (ByteBuffer operator<</>> for
     MovementInfo, MovementPackets.cpp): uint32 move_flags, uint16
@@ -345,6 +370,7 @@ def _unpack_xyz_delta(word: int) -> tuple[float, float, float]:
     return (x_bits * 0.25, y_bits * 0.25, z_bits * 0.25)
 
 
+@_protocol_errors(SMSG_MONSTER_MOVE)
 def parse_monster_move(payload: bytes) -> dict:
     """SMSG_MONSTER_MOVE (0x0DD) — an NPC's new destination/path, sent
     whenever a creature starts, retargets, or resumes a spline. Does NOT
@@ -368,8 +394,8 @@ def parse_monster_move(payload: bytes) -> dict:
     (each a compressed offset from the midpoint of start and destination —
     see _unpack_xyz_delta).
 
-    Raises IndexError/struct.error on truncated data, ValueError if bytes
-    are left over after parsing (a parser bug, not something to silently
+    Raises PacketTruncated on truncated data, PacketMalformed if bytes are
+    left over after parsing (a parser bug, not something to silently
     ignore — mirrors parse_update_object's own check).
     """
     off = 0

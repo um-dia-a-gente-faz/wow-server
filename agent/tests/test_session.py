@@ -26,6 +26,7 @@ from agent import state as state_mod
 from agent import trade as tr
 from agent import update_fields as uf
 from agent import update_object as uo
+from agent.wire import PacketMalformed, PacketTruncated
 from agent.tests.builders import tc_server_header  # noqa: F401
 
 
@@ -98,12 +99,12 @@ class ParseUpdateObjectTest(unittest.TestCase):
         sess = make_session()
         for data in (b'\x01\x00', update_object(b'\x02\xFF\x01'), update_object(out_of_range_block(5))[:-1]):
             with self.subTest(data=data.hex()):
-                with self.assertRaises(per.PerceptionParseError):
+                with self.assertRaises(PacketTruncated):
                     hworld.parse_update_object(sess.ctx, data)
 
     def test_unknown_update_type_raises_parse_error(self):
         sess = make_session()
-        with self.assertRaises(per.PerceptionParseError):
+        with self.assertRaises(PacketMalformed):
             hworld.parse_update_object(sess.ctx, update_object(object_block(9, 2)))
 
     def test_compressed_inflates_and_dumps(self):

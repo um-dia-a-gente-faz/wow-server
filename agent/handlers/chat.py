@@ -1,12 +1,10 @@
 """Chat, group-invite and channel packets."""
 
 import logging
-import struct
 
 from .. import channels as ch_mod
-from .. import packets as pk
-from .. import perception as per
 from ..metrics import swallowed
+from ..wire import Reader
 
 log = logging.getLogger("agent.session")
 
@@ -157,15 +155,13 @@ def _guid_is_pet(guid: int) -> bool:
 
 
 
-def _read_len_string(data: bytes, off: int) -> tuple[str, int]:
+def _read_len_string(r: Reader) -> str:
     """A uint32-length-prefixed string (length includes the trailing null),
     as ChatPackets.cpp writes SenderName/ChatText — distinct from
-    agent.packets.cstring's null-scan, which is for the plain cstrings used
+    Reader.cstring's null-scan, which is for the plain cstrings used
     elsewhere in the same packet (e.g. channel name)."""
-    length = struct.unpack_from('<I', data, off)[0]; off += 4
-    s = data[off:off + length - 1].decode('utf-8', 'replace') if length > 0 else ""
-    off += length
-    return s, off
+    length = r.u32()
+    return r.bytes(length)[:length - 1].decode('utf-8', 'replace') if length > 0 else ""
 
 
 def handle_messagechat(ctx, opcode: int, payload: bytes):
@@ -208,11 +204,11 @@ def handle_messagechat(ctx, opcode: int, payload: bytes):
     in sender_guid, while the whisperer gets CHAT_MSG_WHISPER_INFORM
     with the *addressee* in sender_guid.
     """
-    off = 0
-    slash_cmd = payload[off]; off += 1
-    off += 4  # language (int32) — not needed by callers yet
-    sender_guid = pk.u64(payload, off); off += 8
-    off += 4  # flags (uint32), always 0 in 3.3.5
+    r = Reader(payload, opcode)
+    slash_cmd = r.u8()
+    r.skip(4)  # language (int32) — not needed by callers yet
+    sender_guid = r.guid()
+    r.skip(4)  # flags (uint32), always 0 in 3.3.5
 
     sender_name = ""
     target_name = ""
@@ -220,26 +216,26 @@ def handle_messagechat(ctx, opcode: int, payload: bytes):
     channel = None
 
     if slash_cmd in CHAT_KINDS_MONSTER:
-        sender_name, off = _read_len_string(payload, off)
-        target_guid = pk.u64(payload, off); off += 8
+        sender_name = _read_len_string(r)
+        target_guid = r.guid()
         if target_guid and not _guid_is_player(target_guid) and not _guid_is_pet(target_guid):
-            target_name, off = _read_len_string(payload, off)
+            target_name = _read_len_string(r)
     elif slash_cmd == CHAT_MSG_WHISPER_FOREIGN:
-        sender_name, off = _read_len_string(payload, off)
-        off += 8  # target_guid — see the docstring; not exported
+        sender_name = _read_len_string(r)
+        r.skip(8)  # target_guid — see the docstring; not exported
     elif slash_cmd in CHAT_KINDS_BG_SYSTEM:
-        target_guid = pk.u64(payload, off); off += 8
+        target_guid = r.guid()
         if target_guid and not _guid_is_player(target_guid):
-            target_name, off = _read_len_string(payload, off)
+            target_name = _read_len_string(r)
     else:
         if opcode == SMSG_GM_MESSAGECHAT:
-            sender_name, off = _read_len_string(payload, off)
+            sender_name = _read_len_string(r)
         if slash_cmd == CHAT_MSG_CHANNEL:
-            channel, off = pk.cstring(payload, off)
-        off += 8  # target_guid — see the docstring; not exported
+            channel = r.cstring()
+        r.skip(8)  # target_guid — see the docstring; not exported
 
-    text, off = _read_len_string(payload, off)
-    off += 1  # chat_tag (uint8) — not needed by callers yet
+    text = _read_len_string(r)
+    r.skip(1)  # chat_tag (uint8) — not needed by callers yet
 
     entry = {
         "kind": CHAT_KIND_NAMES.get(slash_cmd, f"type_{slash_cmd}"),
@@ -270,8 +266,9 @@ def relay_chat(ctx, entry: dict):
 def handle_group_invite(ctx, payload: bytes):
     # PartyInvite::Write (PartyPackets.cpp): uint8 can_accept, cstring
     # inviter_name, uint32 proposed_roles, ... (LFG fields, ignored).
-    off = 1  # skip can_accept
-    inviter_name, off = pk.cstring(payload, off)
+    r = Reader(payload, SMSG_GROUP_INVITE)
+    r.skip(1)  # can_accept
+    inviter_name = r.cstring()
     ctx.state.pending_invite = {"inviter_name": inviter_name}
     log.info("group invite from %s", inviter_name)
 
@@ -284,7 +281,7 @@ def handle_chat_player_not_found(ctx, payload: bytes):
     any ack for the CMSG_MESSAGECHAT that triggered it, so
     WhisperAction.execute() polls session.events for this rather than a
     direct per-message ack."""
-    target_name, _ = pk.cstring(payload, 0)
+    target_name = Reader(payload, SMSG_CHAT_PLAYER_NOT_FOUND).cstring()
     ctx.state.record_event("whisper_failed", target_name=target_name)
 
 
@@ -294,10 +291,7 @@ def handle_channel_notify(ctx, payload: bytes):
     error notice (not_member, muted, throttled, ...) are also recorded
     as channel_joined / channel_left / channel_error events so
     join_channels() and ChannelSayAction can confirm the outcome."""
-    try:
-        data = ch_mod.parse_channel_notify(payload)
-    except (IndexError, ValueError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_CHANNEL_NOTIFY ({len(payload)} B): {e}") from e
+    data = ch_mod.parse_channel_notify(payload)
     ctx.state.world_state.apply_channel_notify(data)
     if data["notice"] == ch_mod.CHAT_YOU_JOINED_NOTICE:
         ctx.state.record_event("channel_joined", channel=data["channel"],
@@ -318,10 +312,10 @@ def handle_party_command_result(ctx, payload: bytes):
     already in a group) — only record it as an event on failure, so
     InviteToGroupAction's timeout-is-success default still applies to
     the OK case without special-casing it."""
-    off = 0
-    _operation = pk.u32(payload, off); off += 4
-    member_name, off = pk.cstring(payload, off)
-    result = pk.u32(payload, off); off += 4
+    r = Reader(payload, SMSG_PARTY_COMMAND_RESULT)
+    r.skip(4)  # operation
+    member_name = r.cstring()
+    result = r.u32()
     if result == ERR_PARTY_RESULT_OK:
         return
     ctx.state.record_event("group_invite_failed", target_name=member_name,

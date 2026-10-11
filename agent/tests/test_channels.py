@@ -13,6 +13,7 @@ from agent import perception as per
 from agent import session as se
 from agent.handlers import chat as hchat
 from agent.tests.builders import FakeSession
+from agent.wire import PacketTruncated
 
 GENERAL = "General - Eversong Woods"
 ME = 0x0000000000000042
@@ -160,7 +161,7 @@ class SessionNotifyTest(unittest.TestCase):
 
     def test_malformed_notify_is_parse_error(self):
         sess = make_session()
-        with self.assertRaises(per.PerceptionParseError):
+        with self.assertRaises(PacketTruncated):
             sess._dispatch(ch.SMSG_CHANNEL_NOTIFY, notify(ch.CHAT_YOU_JOINED_NOTICE, GENERAL, b"\x00"))
 
     def test_incoming_channel_chat_lands_in_inbox(self):

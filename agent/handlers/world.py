@@ -1,17 +1,15 @@
 """World-state packets: object create/update/destroy, movement broadcasts, name queries."""
 
-import struct
 import zlib
 
 from .. import names as nm
-from .. import packets as pk
-from .. import perception as per
 from .. import update_fields as uo_fields
 from .. import update_object as uo
 from ..update_object import (
     UPDATETYPE_OUT_OF_RANGE_OBJECTS,
     UPDATETYPE_NEAR_OBJECTS,
 )
+from ..wire import PacketMalformed, Reader
 from . import death
 
 from ..opcodes import (
@@ -21,6 +19,7 @@ from ..opcodes import (
     SMSG_GAMEOBJECT_QUERY_RESPONSE,
     CMSG_CREATURE_QUERY,
     SMSG_CREATURE_QUERY_RESPONSE,
+    SMSG_LOGIN_VERIFY_WORLD,
     SMSG_UPDATE_OBJECT,
     SMSG_DESTROY_OBJECT,
     MSG_MOVE_START_FORWARD,
@@ -63,19 +62,19 @@ MSG_MOVE_OPCODES = frozenset((
 
 
 def handle_verify_world(ctx, payload):
-    off = 0
-    map_id = struct.unpack_from('<i', payload, off)[0]; off += 4
-    px = struct.unpack_from('<f', payload, off)[0]; off += 4
-    py = struct.unpack_from('<f', payload, off)[0]; off += 4
-    pz = struct.unpack_from('<f', payload, off)[0]; off += 4
-    orient = struct.unpack_from('<f', payload, off)[0]
+    r = Reader(payload, SMSG_LOGIN_VERIFY_WORLD)
+    map_id = r.i32()
+    px = r.f32()
+    py = r.f32()
+    pz = r.f32()
+    orient = r.f32()
     ctx.state.player_position = (map_id, px, py, pz, orient)
     ctx.state.world_state.set_my_map(map_id)
 
 
 def handle_destroy_object(ctx, payload: bytes):
     # Object::DestroyForPlayer (Object.cpp): uint64 guid, uint8 onDeath.
-    guid = pk.u64(payload, 0)
+    guid = Reader(payload, SMSG_DESTROY_OBJECT).guid()
     ctx.state.world_state.remove_guids([guid])
 
 
@@ -94,26 +93,17 @@ def send_name_queries(ctx):
 
 
 def handle_name_query_response(ctx, payload: bytes):
-    try:
-        data = nm.parse_name_query_response(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_NAME_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+    data = nm.parse_name_query_response(payload)
     ctx.state.world_state.apply_name_query_response(data)
 
 
 def handle_creature_query_response(ctx, payload: bytes):
-    try:
-        data = nm.parse_creature_query_response(payload)
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_CREATURE_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+    data = nm.parse_creature_query_response(payload)
     ctx.state.world_state.apply_creature_query_response(data)
 
 
 def handle_gameobject_query_response(ctx, payload: bytes):
-    try:
-        data = nm.parse_gameobject_query_response(payload)
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_GAMEOBJECT_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+    data = nm.parse_gameobject_query_response(payload)
     ctx.state.world_state.apply_gameobject_query_response(data)
 
 
@@ -123,11 +113,7 @@ def handle_monster_move(ctx, payload: bytes):
     world_state — see agent/update_object.py::parse_monster_move and
     agent/perception/world.py::WorldState.apply_monster_move."""
     ctx.dump(SMSG_MONSTER_MOVE, payload)
-    try:
-        info = uo.parse_monster_move(payload)
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(
-            f"malformed SMSG_MONSTER_MOVE payload ({len(payload)} B): {e}") from e
+    info = uo.parse_monster_move(payload)
     ctx.state.world_state.apply_monster_move(info)
 
 
@@ -137,24 +123,23 @@ def handle_move_broadcast(ctx, opcode: int, payload: bytes):
     parse_movement_info) — see MSG_MOVE_OPCODES for which ones this
     covers and why."""
     ctx.dump(opcode, payload)
-    try:
-        guid, off = pk.unpack_packed_guid(payload, 0)
-        move_info, off = uo.parse_movement_info(payload, off)
-        if off != len(payload):
-            raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(
-            f"malformed {opcode:#05x} payload ({len(payload)} B): {e}") from e
+    r = Reader(payload, opcode)
+    guid = r.packed_guid()
+    move_info, off = uo.parse_movement_info(payload, r.offset)
+    if off != len(payload):
+        raise PacketMalformed(f"opcode {opcode:#x}: parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
     ctx.state.world_state.apply_movement_info(guid, move_info)
 
 
 def handle_update_object(ctx, opcode: int, payload: bytes):
     if opcode == SMSG_COMPRESSED_UPDATE_OBJECT:
-        unc_size = pk.u32(payload, 0)
-        data = zlib.decompress(payload[4:])
+        unc_size = Reader(payload, opcode).u32()
+        try:
+            data = zlib.decompress(payload[4:])
+        except zlib.error as e:
+            raise PacketMalformed(f"opcode {opcode:#x}: bad compressed update ({e})") from e
         if len(data) != unc_size:
-            raise per.PerceptionParseError(
-                f"inflated to {len(data)} B, header said {unc_size} B")
+            raise PacketMalformed(f"opcode {opcode:#x}: inflated to {len(data)} B, header said {unc_size} B")
     else:
         data = payload
     ctx.dump(opcode, data)
@@ -171,16 +156,12 @@ def parse_update_object(ctx, data: bytes):
     the session directly for cheap access without going through
     world_state.
 
-    Raises PerceptionParseError on truncated or malformed data — the
-    caller's per-packet safety net (_dispatch_guarded) drops just this
-    packet and keeps the connection. Anything recorded from earlier
-    packets is kept.
+    Raises PacketTruncated or PacketMalformed (ProtocolErrors) on truncated or
+    malformed data — the caller's per-packet safety net (_dispatch_guarded)
+    drops just this packet and keeps the connection. Anything recorded from
+    earlier packets is kept.
     """
-    try:
-        blocks = uo.parse_update_object(data)
-    except (IndexError, struct.error, ValueError) as e:
-        raise per.PerceptionParseError(
-            f"malformed update-object payload ({len(data)} B): {e}") from e
+    blocks = uo.parse_update_object(data)
     for block in blocks:
         if block.update_type in (UPDATETYPE_OUT_OF_RANGE_OBJECTS, UPDATETYPE_NEAR_OBJECTS):
             ctx.state.world_state.remove_guids(block.guids)
