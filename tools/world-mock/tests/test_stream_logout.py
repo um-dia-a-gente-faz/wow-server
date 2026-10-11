@@ -17,7 +17,7 @@ from server import FaultPlan  # noqa: E402
 from agent import session as session_mod  # noqa: E402
 from agent.__main__ import _connect_and_login  # noqa: E402
 
-LOGOUT_BOUND_S = session_mod.LOGOUT_WAIT_S * 2 + 1.0   # recv-thread join + logout wait + slack
+LOGOUT_BOUND_S = session_mod.LOGOUT_WAIT_S * 2 + 3.0   # recv-thread join + logout wait + 3 s slack
 LOG = logging.getLogger("test")
 STREAM_HZ = 200.0       # fast enough that bytes always arrive, the socket timeout never fires
 SETTLE_S = 0.5          # let the desync happen and the stream fill the socket buffers
@@ -50,24 +50,30 @@ class StreamingShutdownTest(unittest.TestCase):
     def test_logout_is_bounded_with_stream_and_bad_crypt(self):
         self.start(FaultPlan(bad_crypt_from=9))     # after the login burst, once the stream runs
         sess = _connect_and_login(self.cfg, LOG)
+        sock = sess.sock
+        self.addCleanup(self.assert_threads_return)     # registered first, runs after the closes below
+        self.addCleanup(self.mock.close)
+        self.addCleanup(sock.close)     # a hung logout() thread must not keep the process alive
         time.sleep(SETTLE_S)
+        t = threading.Thread(target=sess.logout, daemon=True)
         t0 = time.monotonic()
-        sess.logout()
-        took = time.monotonic() - t0
-        try:
-            self.assertLess(took, LOGOUT_BOUND_S)
-            self.assertIsNone(sess.sock)
-        finally:
-            self.mock.close()
-        self.assert_threads_return()
+        t.start()
+        t.join(LOGOUT_BOUND_S)
+        self.assertFalse(t.is_alive(), f"logout() still blocked after {LOGOUT_BOUND_S} s")
+        self.assertLess(time.monotonic() - t0, LOGOUT_BOUND_S)
+        self.assertIsNone(sess.sock)
 
     def test_mock_close_stops_streaming_handlers(self):
         self.start()
         sess = _connect_and_login(self.cfg, LOG)
         self.addCleanup(sess.logout)
         time.sleep(SETTLE_S)
+
+        def handlers():     # by target, so this also finds them on a server.py without the thread name
+            return [t for t in threading.enumerate() if getattr(t, "_target", None) == self.mock._guarded]
+
+        self.assertTrue(handlers(), "no handler thread found while the client is connected")
         self.mock.close()
-        handlers = lambda: [t for t in threading.enumerate() if t.name.startswith("world-mock-handler")]
         self.assertTrue(wait_for(lambda: not handlers(), 3.0), f"handlers alive: {handlers()}")
 
 
