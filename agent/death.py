@@ -28,6 +28,7 @@ import time
 from . import action_names as an
 from . import actions
 from . import movement
+from . import ports
 from .rules import SPIRIT_HEALER_SEARCH_RANGE_YD
 from .perception import UNIT_NPC_FLAG_SPIRITHEALER
 
@@ -60,13 +61,13 @@ def _is_ghost(world) -> bool:
     return bool(me is not None and me.is_ghost())
 
 
-def _query_corpse(session) -> bool:
+def _query_corpse(session: ports.ActionSession) -> bool:
     """Ask the server where our corpse is (nothing else ever sends
     MSG_CORPSE_QUERY, so session.corpse_position stays None otherwise — gh-208)
     and wait briefly for the response. True once a position is known."""
     if session.corpse_position is not None:
         return True
-    session._send_packet(MSG_CORPSE_QUERY, b'')
+    session.send_packet(MSG_CORPSE_QUERY, b'')
     return actions._wait_for(lambda: session.corpse_position is not None,
                              timeout=RESURRECT_CONFIRM_TIMEOUT_S, interval=RESURRECT_CONFIRM_POLL_S)
 
@@ -76,7 +77,7 @@ def _rotate(dx: float, dy: float, angle_rad: float) -> tuple:
     return dx * cos_a - dy * sin_a, dx * sin_a + dy * cos_a
 
 
-def _corpse_run(session, world, target_pos: tuple,
+def _corpse_run(session: ports.ActionSession, world, target_pos: tuple,
                  max_detours: int = MAX_DETOUR_ATTEMPTS,
                  detour_angle_deg: float = DETOUR_ANGLE_DEG,
                  detour_distance_yd: float = DETOUR_DISTANCE_YD) -> dict:
@@ -161,20 +162,20 @@ def _find_spirit_healer(world, my_position, max_range: float = SPIRIT_HEALER_SEA
     return best
 
 
-def _activate_spirit_healer(session, world, guid: int) -> actions.ActionResult:
+def _activate_spirit_healer(session: ports.ActionSession, world, guid: int) -> actions.ActionResult:
     mover = movement.get_mover(session, world)
     move_result = mover.move_towards(guid, stop_distance=SPIRIT_HEALER_STOP_DISTANCE_YD)
     if not move_result.get("ok"):
         return actions.ActionResult(ok=False,
                                      error=f"could not reach spirit healer ({move_result.get('error')})",
                                      detail=move_result)
-    session._send_packet(CMSG_SPIRIT_HEALER_ACTIVATE, struct.pack('<Q', guid))
+    session.send_packet(CMSG_SPIRIT_HEALER_ACTIVATE, struct.pack('<Q', guid))
     confirmed = actions._wait_for(lambda: not _is_ghost(world),
                                    timeout=RESURRECT_CONFIRM_TIMEOUT_S, interval=RESURRECT_CONFIRM_POLL_S)
     if not confirmed:
         return actions.ActionResult(ok=False, error="no resurrection confirmed after spirit healer activation",
                                      detail={"guid": guid})
-    session._record_event("resurrect", method="spirit_healer")
+    session.record_event("resurrect", method="spirit_healer")
     return actions.ActionResult(ok=True, detail={"method": "spirit_healer", "guid": guid})
 
 
@@ -184,7 +185,7 @@ class ReleaseSpiritAction(actions.Action):
     description = ("After dying, release your spirit to become a ghost at the graveyard. "
                     "Required before a corpse run/reclaim_corpse.")
 
-    def check(self, session, world, **_):
+    def check(self, session: ports.ActionSession, world, **_):
         me = world.get_my_object()
         if me is None:
             return "own object not yet perceived"
@@ -194,13 +195,13 @@ class ReleaseSpiritAction(actions.Action):
             return "not dead"
         return None
 
-    def execute(self, session, world, **_) -> actions.ActionResult:
-        session._send_packet(CMSG_REPOP_REQUEST, struct.pack('<B', 0))
+    def execute(self, session: ports.ActionSession, world, **_) -> actions.ActionResult:
+        session.send_packet(CMSG_REPOP_REQUEST, struct.pack('<B', 0))
         confirmed = actions._wait_for(lambda: _is_ghost(world),
                                        timeout=RESURRECT_CONFIRM_TIMEOUT_S, interval=RESURRECT_CONFIRM_POLL_S)
         if not confirmed:
             return actions.ActionResult(ok=False, error="no ghost state confirmed after release")
-        session._send_packet(MSG_CORPSE_QUERY, b'')  # populate corpse_position for the corpse run (gh-208)
+        session.send_packet(MSG_CORPSE_QUERY, b'')  # populate corpse_position for the corpse run (gh-208)
         return actions.ActionResult(ok=True, detail={"position": session.player_position})
 
 
@@ -212,7 +213,7 @@ class ReclaimCorpseAction(actions.Action):
                     "or no corpse perceived). Asks the server for the corpse position if unknown. "
                     "Requires release_spirit first.")
 
-    def check(self, session, world, **_):
+    def check(self, session: ports.ActionSession, world, **_):
         me = world.get_my_object()
         if me is None or not me.is_ghost():
             return "not a ghost — call release_spirit first"
@@ -221,22 +222,25 @@ class ReclaimCorpseAction(actions.Action):
             return f"corpse reclaim still on cooldown ({ready_at - time.monotonic():.0f}s left)"
         return None
 
-    def execute(self, session, world, **_) -> actions.ActionResult:
-        if not _query_corpse(session):
+    def execute(self, session: ports.ActionSession, world, **_) -> actions.ActionResult:
+        # Read once: the recv thread may clear corpse_position (a "no corpse" query answer), and
+        # the typed corpse run and corpse lookup need a position, not None.
+        corpse_at = session.corpse_position if _query_corpse(session) else None
+        if corpse_at is None:
             run_result = {"ok": False, "error": "corpse position unknown (no MSG_CORPSE_QUERY response)"}
         else:
-            run_result = _corpse_run(session, world, session.corpse_position)
-        if run_result.get("ok"):
-            corpse = _find_my_corpse(world, session.corpse_position)
+            run_result = _corpse_run(session, world, corpse_at)
+        if run_result.get("ok") and corpse_at is not None:
+            corpse = _find_my_corpse(world, corpse_at)
             if corpse is not None:
                 distance = corpse.distance_to(session.player_position) if session.player_position else None
                 if distance is None or distance <= CORPSE_RECLAIM_RADIUS_YD:
-                    session._send_packet(CMSG_RECLAIM_CORPSE, struct.pack('<Q', corpse.guid))
+                    session.send_packet(CMSG_RECLAIM_CORPSE, struct.pack('<Q', corpse.guid))
                     confirmed = actions._wait_for(
                         lambda: not _is_ghost(world),
                         timeout=RESURRECT_CONFIRM_TIMEOUT_S, interval=RESURRECT_CONFIRM_POLL_S)
                     if confirmed:
-                        session._record_event("resurrect", method="corpse")
+                        session.record_event("resurrect", method="corpse")
                         return actions.ActionResult(ok=True, detail={"method": "corpse", "corpse_guid": corpse.guid})
                     # fall through to the spirit-healer fallback below
 

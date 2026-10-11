@@ -17,10 +17,17 @@ PORTS = (ports.PacketSink, ports.EventLog, ports.PlayerView, ports.Inbox, ports.
          ports.ActionSession)
 
 
-def _sources(*packages):
-    for package in packages:
-        for path in sorted((AGENT / package).rglob("*.py")):
+def _sources(*names):
+    """Parsed source of each package directory or single module (`movement` is agent/movement.py)."""
+    for name in names:
+        base = AGENT / name
+        paths = sorted(base.rglob("*.py")) if base.is_dir() else [base.with_suffix(".py")]
+        for path in paths:
             yield path, ast.parse(path.read_text(), str(path))
+
+
+# The modules whose session access is typed: the packages #304 covered and the four #411 finished.
+TYPED_SESSION_MODULES = ("actions", "reflexes", "movement", "death", "control", "think")
 
 
 def _static_contract(real: session.WoWSession, fake: builders.FakeSession) -> None:
@@ -65,11 +72,11 @@ class PortConformanceTests(unittest.TestCase):
 
 
 class SessionAccessTests(unittest.TestCase):
-    """Acceptance of #304, enforced from the source of agent/actions and agent/reflexes."""
+    """Acceptance of #304 and #411, enforced from the source of TYPED_SESSION_MODULES."""
 
     def test_no_getattr_on_the_session(self):
         bad = []
-        for path, tree in _sources("actions", "reflexes"):
+        for path, tree in _sources(*TYPED_SESSION_MODULES):
             for node in ast.walk(tree):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                         and node.func.id in ("getattr", "setattr", "hasattr") and node.args
@@ -79,7 +86,7 @@ class SessionAccessTests(unittest.TestCase):
 
     def test_no_private_session_member(self):
         bad = []
-        for path, tree in _sources("actions", "reflexes"):
+        for path, tree in _sources(*TYPED_SESSION_MODULES):
             for node in ast.walk(tree):
                 if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
                         and node.value.id == "session" and node.attr.startswith("_")):
@@ -97,6 +104,7 @@ class SessionAccessTests(unittest.TestCase):
         # ports.py declares the method on the EventLog protocol; state.py implements it.
         self.assertEqual(found, ["ports.py:record_event", "state.py:record_event"])
         self.assertIs(builders.FakeSession.record_event, state.GameState.record_event)
+        self.assertFalse(hasattr(state.GameState, "_record_event"), "the alias is gone: call record_event")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ import threading
 import time
 
 from . import packets as pk
+from . import ports
 from .update_object import (
     MOVEMENTFLAG_ONTRANSPORT,
     MOVEMENTFLAG_FALLING,
@@ -93,26 +94,26 @@ def build_movement_info(guid: int, x: float, y: float, z: float, o: float,
     return body
 
 
-def send_set_facing(session, x: float, y: float, z: float, o: float):
+def send_set_facing(session: ports.ActionSession, x: float, y: float, z: float, o: float):
     """MSG_MOVE_SET_FACING (0x0DA): turn in place to face orientation `o`,
     without otherwise moving — agent/actions/movement.py::FaceAction."""
     payload = build_movement_info(session.player_guid, x, y, z, o)
-    session._send_packet(MSG_MOVE_SET_FACING, payload)
+    session.send_packet(MSG_MOVE_SET_FACING, payload)
 
 
-def send_start_forward(session, x: float, y: float, z: float, o: float):
+def send_start_forward(session: ports.ActionSession, x: float, y: float, z: float, o: float):
     payload = build_movement_info(session.player_guid, x, y, z, o, move_flags=MOVEMENTFLAG_FORWARD)
-    session._send_packet(MSG_MOVE_START_FORWARD, payload)
+    session.send_packet(MSG_MOVE_START_FORWARD, payload)
 
 
-def send_heartbeat(session, x: float, y: float, z: float, o: float):
+def send_heartbeat(session: ports.ActionSession, x: float, y: float, z: float, o: float):
     payload = build_movement_info(session.player_guid, x, y, z, o, move_flags=MOVEMENTFLAG_FORWARD)
-    session._send_packet(MSG_MOVE_HEARTBEAT, payload)
+    session.send_packet(MSG_MOVE_HEARTBEAT, payload)
 
 
-def send_stop(session, x: float, y: float, z: float, o: float):
+def send_stop(session: ports.ActionSession, x: float, y: float, z: float, o: float):
     payload = build_movement_info(session.player_guid, x, y, z, o, move_flags=0)
-    session._send_packet(MSG_MOVE_STOP, payload)
+    session.send_packet(MSG_MOVE_STOP, payload)
 
 
 # ── Straight-line movement (UM-38) ───────────────────────────────────────
@@ -343,13 +344,13 @@ class Mover:
         return result
 
 
-def get_mover(session, world) -> Mover:
+def get_mover(session: ports.ReflexSlots, world) -> Mover:
     """One Mover per session, created lazily and cached on the session —
     agent/actions/movement.py's move_to/move_towards/stop_movement all need to reach the
     *same* Mover so stop_movement can cancel a move_to issued moments
     earlier from a different action call."""
-    mover = getattr(session, "_mover", None)
+    mover = session.mover
     if mover is None:
         mover = Mover(session, world)
-        session._mover = mover
+        session.mover = mover
     return mover

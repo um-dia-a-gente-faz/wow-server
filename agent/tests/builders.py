@@ -100,8 +100,7 @@ class FakeSession(state.GameState):
     are the production ones; only sending is faked. Keyword arguments override
     attributes, e.g. `FakeSession(player_guid=ME, events=[])` for a plain list of
     events. `send_packet` goes through `_send_packet`, as on Transport, so a test
-    that replaces `_send_packet` sees both names; movement.py and death.py still
-    use the private one."""
+    that replaces `_send_packet` sees both names."""
 
     def __init__(self, **attrs):
         super().__init__()

@@ -422,7 +422,7 @@ class ThinkAuditFieldsTest(unittest.TestCase):
         good["model"] = "routed-model"
         good["usage"] = {"prompt_tokens": 100, "completion_tokens": 5}
         post = ScriptedPost({"auto": [good, unavailable(429, retry_after=60)]})
-        session = SimpleNamespace(_send_packet=lambda *a: None)
+        session = SimpleNamespace(_send_packet=lambda *a: None, spellbook=())
         with mock.patch.object(client, "_post", post):
             think.think_and_act(session, perception.WorldState(), client, audit_logger=audit)
             think.think_and_act(session, perception.WorldState(), client, audit_logger=audit)

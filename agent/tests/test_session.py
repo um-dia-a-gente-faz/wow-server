@@ -770,7 +770,7 @@ class DeathAndCorpseHandlerTest(unittest.TestCase):
         hworld.parse_update_object(sess.ctx, update_object(
             object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE, object_type=uo.TYPEID_PLAYER,
                          values=values_body({uf.UNIT_FIELD_HEALTH: 100}))))
-        sess._record_event("attacker_state_update", attacker_guid=0xBEEF, victim_guid=CREATURE)
+        sess.record_event("attacker_state_update", attacker_guid=0xBEEF, victim_guid=CREATURE)
         hworld.parse_update_object(sess.ctx, update_object(
             values_block(CREATURE, values=values_body({uf.UNIT_FIELD_HEALTH: 0}))))
         self.assertEqual(sess.events[-1]["killer_guid"], 0xBEEF)
