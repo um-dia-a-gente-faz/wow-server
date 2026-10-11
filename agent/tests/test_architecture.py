@@ -79,7 +79,8 @@ LAYERS = {
     "death": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "rules"},   # #411: ports
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
-    "candidates": {"action_names", "action_specs", "handles", "item_compare", "metrics", "model", "rules"},
+    "candidate_history": {"metrics", "model"},   # #550: the history drop/demote and the cap, moved out of candidates
+    "candidates": {"action_names", "action_specs", "candidate_history", "handles", "item_compare", "model", "rules"},   # #550: metrics moved with the history code
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
     "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
