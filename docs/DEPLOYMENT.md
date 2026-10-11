@@ -250,6 +250,23 @@ recreated (not just restarted) for `ConfigurationWriter.js` to regenerate
 `worldserver.conf` — `up -d` does this automatically when the compose file
 changed.
 
+**First run.** A checkout with no `refs/deployed/*` (a fresh VM) counts both stacks as
+deployed at the `HEAD` it had before the run, then diffs from there. If `HEAD` is behind
+`origin/main`, the game-path commits in between deploy on that first run. If `HEAD` already
+equals `origin/main`, nothing deploys and both refs move to it, so a game-path commit already
+at `HEAD` is never deployed by the poller (`ALL=1` deploys both stacks regardless; see the table below).
+
+**Repairing a stuck ref (human step, VM operator only).** The game ref stays behind `origin/main`
+while a game change is deferred, and a failed game build leaves it in place, so every poll retries
+the build. The scripts never drop a pending change on their own. Reset a ref only to end that pending range, for
+example to skip a deferred change, and only by hand on the VM:
+
+```bash
+git -C /opt/wow-server rev-parse refs/deployed/game     # where the game stack was last deployed
+git -C /opt/wow-server rev-parse origin/main            # where main is now
+git -C /opt/wow-server update-ref refs/deployed/game <sha>   # the next poll diffs from <sha>
+```
+
 Grafana dashboard JSONs (`monitoring/grafana-dashboard-*.json`) are provisioned
 on the *separate* docker-stack VM (192.168.1.60), not this one:
 
