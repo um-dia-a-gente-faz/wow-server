@@ -204,9 +204,12 @@ Merge when all hold:
    `.github/PULL_REQUEST_TEMPLATE.md`, has `Closes #<n>`, and carries no "shelving" or
    "hold" comment or open change request.
 6. **No deploy path.** The diff does not touch `docker-compose.yml`, `tdb/*`,
-   `tools/chat-feed/*`, `scripts/*` (all of it) or `.github/workflows/*`. The first three
-   are the paths for which `scripts/deploy.sh` (`stacks_for`, line 38) recreates the game
-   stack, and with it the worldserver (`docker compose up -d --build`, line 99).
+   `tools/chat-feed/*`, `tools/common/*`, `scripts/*` (all of it) or `.github/workflows/*`.
+   The first four are the paths for which `scripts/deploy.sh` (`stacks_for`) recreates the
+   game stack, and with it the worldserver (`docker compose up -d --build`, in the game
+   `case` of the main body). `tools/common/*` is copied into the chat-feed image (ADR
+   0014), so an edit there recreates the worldserver too. `stacks_for` in `scripts/deploy.sh`
+   is the source of truth for this list.
    `docker-compose.yml` also holds the worldserver config: no `worldserver.conf` is
    tracked, the `TC_WORLD__*` entries are the config. `scripts/deploy.sh` and
    `scripts/auto-deploy.sh` run on the VM at every poll (`docs/DEPLOYMENT.md`, "Automatic
@@ -216,8 +219,8 @@ Merge when all hold:
    directory holds CI only. `CLAUDE.md` says a PR touching `scripts/` waits for the owner.
    A merge on any of these paths disconnects players or waits on the owner: park the PR.
    Not gated: the monitoring paths (`monitoring/`, `exporters/`, `tools/wowmap/`,
-   `tools/dbc/`), which recreate only the monitoring stack (`deploy.sh` lines 39, 103), and
-   the root `Dockerfile`, the agent image, in neither stack.
+   `tools/dbc/`), which recreate only the monitoring stack (`stacks_for`, and the monitoring
+   `case` of the main body), and the root `Dockerfile`, the agent image, in neither stack.
 7. **Spacing.** `origin/main` has no commit from the last 10 minutes (another merge may be
    deploying). Otherwise wait.
 

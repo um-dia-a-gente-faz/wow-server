@@ -168,9 +168,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   swallowed-error policy (#306): narrowing them is behaviour work, not lint work. `SIM115`
   is fixed by hand where the handle's lifetime is one read; long-lived handles are baselined.
   A lint stage baselines, and does not edit, two groups of paths. `docker-compose.yml`,
-  `tdb/*`, `tools/chat-feed/*` and `tools/common/*`: `scripts/deploy.sh` (`stacks_for`)
-  recreates the game stack, and with it the worldserver, when one of them changes
-  (`tools/common/*` is copied into the chat-feed image, ADR 0014). `scripts/*` and
+  `tdb/*`, `tools/chat-feed/*` and `tools/common/*`: `scripts/deploy.sh` (`stacks_for`, the
+  source of truth for this list) recreates the game stack, and with it the worldserver, when
+  one of them changes (`tools/common/*` is copied into the chat-feed image, ADR 0014). `scripts/*` and
   `.github/*`: a PR touching them waits for the owner's go-ahead (`CLAUDE.md`, *Working model*).
 - **The baseline is keyed by path.** A file you move keeps its debt: move its line with
   it. A file that is new must be clean, and gets no line.
