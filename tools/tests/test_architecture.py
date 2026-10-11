@@ -1,12 +1,14 @@
 """Layering fitness tests for tools/ (#387): the tools counterpart of agent/tests/test_architecture.py.
 
 Static imports are read with `ast` (function-level imports, try blocks and `if TYPE_CHECKING:`
-included), so every `import` and `from ... import` is an edge. Dynamic imports (`__import__`,
-importlib, runpy) are not edges a static read can follow: they are found by call site and pinned
-per file in DYNAMIC_IMPORTS, so none can load a tool or agent module unseen. The tool modules are
-never imported: the graph comes from source, and this suite stays stdlib-only. Each table below
-lists exactly what may be imported today. A new edge, or a pinned edge the code no longer has, is
-a deliberate edit to its table, in a PR that says why.
+included): every `import` and `from ... import` is an edge. Dynamic loading is checked narrower.
+The check finds every reference to five loader names (`__import__`, `import_module`,
+`spec_from_file_location`, `run_path`, `run_module`) and pins, per file, the files that have one in
+DYNAMIC_IMPORTS. It does not see `getattr`, `exec` or loader classes such as `SourceFileLoader`,
+and it does not look at what a pinned file loads: a pin is a reviewed decision, not a proof.
+The tool modules are never imported: the graph comes from source, and this suite stays stdlib-only.
+Each table below lists exactly what may be imported today. A new edge, or a pinned edge the code no
+longer has, is a deliberate edit to its table, in a PR that says why.
 """
 import ast
 import pathlib
@@ -114,10 +116,11 @@ RUNNER_LAYERS = {
 # Rule 5: wowmap's offline pipeline/ -> the wowmap runtime modules it may import. wowmap never imports it.
 PIPELINE_RUNTIME_IMPORTS = {"item_icons", "models", "overlays", "transform"}
 
-# Dynamic imports: files that load a module by name at run time (__import__, importlib.import_module,
-# importlib.util.spec_from_file_location, runpy.run_path/run_module). A static read cannot follow them,
-# so each file is pinned here with its reason. Today: characters.py loads the checkout's scripts/
-# roster generator by name (load_script).
+# Dynamic imports: files with a reference to one of DYNAMIC_CALLS (a loader that loads a module by
+# name at run time). A static read cannot follow what they load, so each such file is pinned here
+# with its reason. The check does not see getattr, exec or loader classes, and does not check what a
+# pinned file loads. Today: characters.py loads the checkout's scripts/ roster generator by name
+# (load_script).
 DYNAMIC_IMPORTS = {"tools/agent-runner/characters.py"}
 DYNAMIC_CALLS = {"__import__", "import_module", "spec_from_file_location", "run_path", "run_module"}
 
@@ -225,14 +228,24 @@ def tool_edges():
 
 
 def _dynamic_sites_from(rel, source):
-    """(where, call) for every dynamic import call in one file's source."""
+    """(where, name) for every reference to one of DYNAMIC_CALLS in one file's source: a name or an
+    attribute carrying that name (a call, or a binding such as `imp = __import__`), and a
+    `from ... import` of it (possibly aliased). Each reference is one AST node, so a call is counted once."""
     out = []
     for node in ast.walk(ast.parse(source, rel)):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-            if name in DYNAMIC_CALLS:
-                out.append((f"{rel}:{node.lineno}", name))
+        if isinstance(node, ast.Name):
+            name = node.id
+        elif isinstance(node, ast.Attribute):
+            name = node.attr
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in DYNAMIC_CALLS:
+                    out.append((f"{rel}:{node.lineno}", alias.name))
+            continue
+        else:
+            continue
+        if name in DYNAMIC_CALLS:
+            out.append((f"{rel}:{node.lineno}", name))
     return out
 
 
@@ -489,17 +502,28 @@ class CheckerSelfChecks(unittest.TestCase):
         msgs = check_layers({}, {"new_module"}, {}, "RUNNER_LAYERS")
         self.assertTrue(any(m.startswith("new_module: not in RUNNER_LAYERS") for m in msgs), msgs)
 
-    def test_dynamic_import_calls_are_found(self):
+    def test_dynamic_import_references_are_found(self):
         src = ("import importlib, runpy\n"
                "importlib.import_module('agent.brain')\n"
                "__import__('dbc')\n"
                "importlib.util.spec_from_file_location('m', 'p')\n"
                "runpy.run_path('p')\n"
                "runpy.run_module('m')\n"
-               "from importlib import import_module\n")
+               "from importlib import import_module\n")   # a reference too: the from-import is counted
         calls = sorted(call for _, call in _dynamic_sites_from("tools/wowmap/wowmap/app.py", src))
-        self.assertEqual(calls, ["__import__", "import_module", "run_module", "run_path",
+        self.assertEqual(calls, ["__import__", "import_module", "import_module", "run_module", "run_path",
                                  "spec_from_file_location"])
+
+    def test_an_aliased_from_import_of_a_dynamic_function_is_a_reference(self):
+        # reviewer round 2, fix 1: `from importlib import import_module as im` then `im('fleet')`.
+        sites = _dynamic_sites_from("tools/chat-feed/app.py",
+                                    "from importlib import import_module as im\nim('fleet')\n")
+        self.assertEqual(sites, [("tools/chat-feed/app.py:1", "import_module")])
+
+    def test_a_dynamic_function_bound_to_a_name_is_a_reference(self):
+        # reviewer round 2, fix 1: `imp = __import__` then `imp('dbc')`.
+        sites = _dynamic_sites_from("tools/chat-feed/app.py", "imp = __import__\nimp('dbc')\n")
+        self.assertEqual(sites, [("tools/chat-feed/app.py:1", "__import__")])
 
     def test_a_dynamic_import_outside_the_table_names_the_table(self):
         msgs = check_dynamic([("tools/wowmap/wowmap/app.py:9", "import_module")], set())
