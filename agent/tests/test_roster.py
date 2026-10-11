@@ -381,6 +381,19 @@ class CommittedFilesTests(unittest.TestCase):
                  and not line.lstrip().startswith("#")]
         self.assertEqual(ports, list(range(9701, 9726)))
 
+    def test_render_takes_service_and_container_names_from_the_library(self):
+        with mock.patch.object(roster.Agent, "container", property(lambda s: "wow-agentx-" + s.slug)), \
+                mock.patch.object(roster.Agent, "service", property(lambda s: "svcx-" + s.slug)):
+            text = gen.render(gen.load_roster())
+        self.assertIn("\n  svcx-luaprata:\n", text)
+        self.assertIn("container_name: wow-agentx-luaprata\n", text)
+
+    def test_render_profiles_follow_the_library_party_size(self):
+        with mock.patch.object(roster, "PARTY_SIZE", 3):
+            text = gen.render(gen.load_roster())
+        self.assertEqual(text.count("profiles: [party, raid]"), 3)
+        self.assertEqual(text.count("profiles: [raid]"), 22)
+
     def test_api_urls_publish_the_library_first_port(self):
         with mock.patch.object(roster, "FIRST_PORT", 9701):
             value = urls.render(gen.load_roster(), "10.0.0.7")

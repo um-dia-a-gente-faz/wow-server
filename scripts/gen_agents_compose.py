@@ -124,9 +124,9 @@ services:
 """
 
 SERVICE = """\
-  agent-{slug}:
+  {service}:
     <<: *agent-defaults
-    container_name: wow-agent-{slug}
+    container_name: {container}
     profiles: [{profiles}]
     environment:
       <<: *env-defaults
@@ -197,7 +197,8 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
             raise ValueError(f"bad or duplicate character name in roster: {a['character']!r}")
         seen.add(agent.slug)
         blocks.append(SERVICE.format(
-            slug=agent.slug, account=agent.account, character=agent.character, port=agent.api_port,
+            service=agent.service, container=agent.container,
+            account=agent.account, character=agent.character, port=agent.api_port,
             profiles=", ".join(agent.profiles)))
     last_port = roster.FIRST_PORT + RAID_SIZE - 1
     header = HEADER.replace("@API_PORTS@", f"{roster.FIRST_PORT}-{last_port}")
