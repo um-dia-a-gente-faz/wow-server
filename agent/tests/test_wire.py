@@ -202,7 +202,7 @@ class CStringTest(unittest.TestCase):
         self.assertEqual(Reader(b'\xff\x00').cstring(), '�')
 
     def test_utf8_decoding_on_request(self):
-        data = 'Pão'.encode('utf-8') + b'\x00'
+        data = 'Pão'.encode() + b'\x00'
         self.assertEqual(Reader(data).cstring(encoding='utf-8'), 'Pão')
         self.assertNotEqual(Reader(data).cstring(), 'Pão')   # the default stays ascii, like pk.cstring
 

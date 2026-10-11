@@ -5,6 +5,9 @@ extend-exclude = ["tdb"]
 # Staged (#261, #386): syntax errors + pyflakes, then bugbear (B) and bare except (E722).
 # Next stages are listed in CONTRIBUTING.md, "Lint and types".
 select = ["E9", "F", "B", "E722"]
+# UP038 (isinstance with a tuple to `X | Y`) is not applied: the union form is slower at
+# runtime, which ruff's own docs call out for hot paths (#413).
+ignore = ["UP038"]
 
 # Baseline: files that already violated a rule when it was enabled. Ratchet only: fix a
 # file's violations, then delete its line here. Never add a line for new code.
