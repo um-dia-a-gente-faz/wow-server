@@ -18,6 +18,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from . import opcodes
 from .audit_schema import AuditRecord
 from .transport import ERROR_LOG_INTERVAL_S, _ErrorThrottle
 
@@ -329,4 +330,39 @@ def render_swallowed(agent: str) -> str:
     lines = ["# HELP wow_agent_swallowed_errors_total Exceptions caught and swallowed, by call site",
              "# TYPE wow_agent_swallowed_errors_total counter"]
     lines += [f'wow_agent_swallowed_errors_total{{agent="{agent}",where="{w}"}} {n}' for w, n in items]
+    return "\n".join(lines) + "\n"
+
+
+# ── Packet router counters (#494) ─────────────────────────────────────────
+# Live and in-process like SWALLOWED: (kind, opcode) -> count, bumped by the router's
+# injected sink (handlers.build_router wires count_router_event). Opcode names are
+# resolved only when rendering, so the per-packet cost is one locked dict increment.
+_ROUTER_METRICS = {   # kind -> (name, help). Names are literals: the #280 test reads this file as text.
+    "packets": ("wow_agent_router_packets_total", "Packets dispatched by the router, handled or not"),
+    "unhandled": ("wow_agent_router_unhandled_total", "Packets with no registered handler"),
+    "truncated": ("wow_agent_router_truncated_total", "Packets whose handler raised PacketTruncated"),
+    "handler_errors": ("wow_agent_router_handler_errors_total", "Packets whose handler raised any other exception"),
+}
+ROUTER_KINDS = tuple(_ROUTER_METRICS)
+ROUTER_COUNTS: dict[tuple[str, int], int] = {}
+_router_lock = threading.Lock()
+
+
+def count_router_event(kind: str, opcode: int) -> None:
+    with _router_lock:
+        key = (kind, opcode)
+        ROUTER_COUNTS[key] = ROUTER_COUNTS.get(key, 0) + 1
+
+
+def render_router(agent: str) -> str:
+    """The four router counters as Prometheus exposition text, labelled by opcode name."""
+    names = {v: k for k, v in vars(opcodes).items() if k.isupper() and isinstance(v, int)}
+    with _router_lock:
+        items = sorted(ROUTER_COUNTS.items())
+    lines = []
+    for kind in ROUTER_KINDS:
+        name, help_text = _ROUTER_METRICS[kind]
+        lines += [f"# HELP {name} {help_text}", f"# TYPE {name} counter"]
+        lines += [f'{name}{{agent="{agent}",opcode="{names.get(op, "0x%03X" % op)}"}} {n}'
+                  for (k, op), n in items if k == kind]
     return "\n".join(lines) + "\n"
