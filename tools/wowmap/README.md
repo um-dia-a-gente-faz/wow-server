@@ -53,7 +53,7 @@ handler plus one line in `ROUTES`.
 | `MODELS_DIR` | `/models` | directory containing extracted character meshes and skins `<race>_<gender>.bin|.png` (see *Character model*); empty means the drawer shows a placeholder |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
-| `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
+| `CALIBRATION_FILE` | `tools/wowmap/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
 | `ACTIVITY_DB` | `/data/activity.sqlite3` | activity feed store; empty disables the feed |
 | `ACTIVITY_CHAT_FEED_URL` | `http://chat-feed:9500` | chat-feed as seen from the wowmap process; empty = no chat events |

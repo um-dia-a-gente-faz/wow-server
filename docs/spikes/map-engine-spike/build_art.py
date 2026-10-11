@@ -5,7 +5,7 @@ Reads the user-supplied 3.3.5a client (read-only) and writes, under --out:
 
     dbc/                      WorldMapArea, WorldMapContinent, WorldMapOverlay, AreaTable, Map
     continents/<Name>.png     the continent world-map art (1024x768 sheet, 1002x668 visible)
-    zones/<area_id>.png       zone art, via tools/wowmap/extract_maps.py (--zones)
+    zones/<area_id>.png       zone art, via tools/wowmap/pipeline/extract_maps.py (--zones)
     tiles/<Dir>/<z>/<x>/<y>.jpg   minimap tile pyramid (z6 = the client's own tiles)
     data.json                 rects and tile extents the prototype pages read
 
@@ -25,7 +25,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WOWMAP = os.path.normpath(os.path.join(HERE, "..", "..", "..", "tools", "wowmap"))
-sys.path.insert(0, WOWMAP)
+sys.path[:0] = [os.path.join(WOWMAP, "wowmap"), os.path.join(WOWMAP, "pipeline")]
 
 from PIL import Image, ImageStat  # noqa: E402
 
@@ -115,7 +115,7 @@ def main():
         sheet = em.base_sheet(chain, name)
         sheet.save(os.path.join(args.out, "continents", f"{name}.png"))
     if args.zones:
-        subprocess.run([sys.executable, os.path.join(WOWMAP, "extract_maps.py"),
+        subprocess.run([sys.executable, os.path.join(WOWMAP, "pipeline", "extract_maps.py"),
                         "--client", args.client, "--dbc", os.path.join(args.out, "dbc"),
                         "--out", os.path.join(args.out, "zones"), "--locale", args.locale,
                         "--only", args.zones], check=True)

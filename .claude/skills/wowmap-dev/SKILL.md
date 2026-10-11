@@ -16,7 +16,7 @@ The map stage is Leaflet (`L.CRS.Simple`, map units = zone-art pixels), vendored
 
 ```bash
 cd tools/wowmap/wowmap
-pip install -r requirements.txt                 # pymysql, Pillow
+pip install -r ../requirements.txt              # pymysql, Pillow
 export MYSQL_HOST=192.168.1.64 MYSQL_USER=root MYSQL_PASSWORD=...   # from the VM's .env
 export DBC_DIR=/path/to/dbc MAPS_DIR=/path/to/maps LISTEN_PORT=9401
 python3 app.py                                  # then open http://localhost:9401

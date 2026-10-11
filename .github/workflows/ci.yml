@@ -27,6 +27,7 @@ jobs:
       tools: ${{ steps.f.outputs.tools }}
       compose: ${{ steps.f.outputs.compose }}
       backup: ${{ steps.f.outputs.backup }}
+      wowmap: ${{ steps.f.outputs.wowmap }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,6 +48,7 @@ jobs:
             echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
             echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
+            echo "wowmap=$(hit "$all|^tools/(wowmap|dbc)/" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
 
   # The single required check (#399). Skipped by the path filter counts as passing;
@@ -55,7 +57,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, agent, tools, lint-typing, compose, secrets, docker-build, backup-restore]
+    needs: [changes, agent, tools, lint-typing, compose, secrets, docker-build, docker-build-wowmap, backup-restore]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -236,6 +238,26 @@ jobs:
           tags: wow-agent:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The wowmap image (#392): its Dockerfile's RUN import smoke test runs here, before merge.
+  docker-build-wowmap:
+    name: docker build (wowmap image)
+    needs: changes
+    if: needs.changes.outputs.wowmap == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: tools
+          file: tools/wowmap/Dockerfile
+          push: false
+          tags: wowmap:ci
+          cache-from: type=gha,scope=wowmap
+          cache-to: type=gha,mode=max,scope=wowmap
 
   backup-restore:
     name: backup/restore (real mysql)
