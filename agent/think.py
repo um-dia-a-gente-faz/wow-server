@@ -13,6 +13,7 @@ import logging
 import time
 
 from . import actions as ac
+from . import death  # noqa: F401  registers release_spirit/reclaim_corpse (gh-321: nothing else imported it)
 from . import spells as sp
 from . import trade as tr
 from . import update_fields as uf
