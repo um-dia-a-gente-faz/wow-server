@@ -147,6 +147,14 @@ class RouterCountersRenderTest(unittest.TestCase):
         self.assertIn('wow_agent_router_packets_total{agent="A",opcode="0xFFFE"} 1', text)
         self.assertIn("# TYPE wow_agent_router_handler_errors_total counter", text)
 
+    def test_router_names_are_literals_in_the_producer_source(self):
+        # the #280 dashboards-vs-producers test scans agent/metrics.py as text with this regex
+        import re
+        with open(self.m.__file__, encoding="utf-8") as f:
+            found = set(re.findall(r"\b(?:wow|jev)_[a-z0-9_]+\b", f.read()))
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f"wow_agent_router_{kind}_total", found)
+
     def test_names_present_even_with_no_events(self):
         text = self.m.render_router("A")
         for kind in ("packets", "unhandled", "truncated", "handler_errors"):

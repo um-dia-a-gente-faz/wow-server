@@ -337,13 +337,13 @@ def render_swallowed(agent: str) -> str:
 # Live and in-process like SWALLOWED: (kind, opcode) -> count, bumped by the router's
 # injected sink (handlers.build_router wires count_router_event). Opcode names are
 # resolved only when rendering, so the per-packet cost is one locked dict increment.
-ROUTER_KINDS = ("packets", "unhandled", "truncated", "handler_errors")
-_ROUTER_HELP = {
-    "packets": "Packets dispatched by the router, handled or not",
-    "unhandled": "Packets with no registered handler",
-    "truncated": "Packets whose handler raised PacketTruncated",
-    "handler_errors": "Packets whose handler raised any other exception",
+_ROUTER_METRICS = {   # kind -> (name, help). Names are literals: the #280 test reads this file as text.
+    "packets": ("wow_agent_router_packets_total", "Packets dispatched by the router, handled or not"),
+    "unhandled": ("wow_agent_router_unhandled_total", "Packets with no registered handler"),
+    "truncated": ("wow_agent_router_truncated_total", "Packets whose handler raised PacketTruncated"),
+    "handler_errors": ("wow_agent_router_handler_errors_total", "Packets whose handler raised any other exception"),
 }
+ROUTER_KINDS = tuple(_ROUTER_METRICS)
 ROUTER_COUNTS: dict[tuple[str, int], int] = {}
 _router_lock = threading.Lock()
 
@@ -361,8 +361,8 @@ def render_router(agent: str) -> str:
         items = sorted(ROUTER_COUNTS.items())
     lines = []
     for kind in ROUTER_KINDS:
-        name = f"wow_agent_router_{kind}_total"
-        lines += [f"# HELP {name} {_ROUTER_HELP[kind]}", f"# TYPE {name} counter"]
+        name, help_text = _ROUTER_METRICS[kind]
+        lines += [f"# HELP {name} {help_text}", f"# TYPE {name} counter"]
         lines += [f'{name}{{agent="{agent}",opcode="{names.get(op, "0x%03X" % op)}"}} {n}'
                   for (k, op), n in items if k == kind]
     return "\n".join(lines) + "\n"
