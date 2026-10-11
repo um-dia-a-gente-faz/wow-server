@@ -239,3 +239,92 @@ class DecisionsByPromptTest(unittest.TestCase):
         recs = [{"agent": "A", "prompt_id": 'sys"te\\m\n@1'}]
         self.assertEqual(self.render(recs), [
             'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="sys\\"te\\\\m\\n@1"} 1'])
+
+
+class ReaderSkipsBadLinesTest(unittest.TestCase):
+    """#513: iter_records skips non-object JSON and undecodable bytes without raising, and
+    reports each skipped line through on_bad."""
+
+    def write(self, data: bytes) -> str:
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        path = os.path.join(self._dir.name, "A.jsonl")
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def test_skips_non_object_truncated_and_non_utf8_lines(self):
+        lines = [b'{"agent": "A", "ts": 1.0}', b"[1, 2]", b"7", b'"s"', b"null",
+                 b'{"agent": "A", "ts"', b"\xff\xfe\x00", b'{"agent": "A", "prompt_id": "\xff"}',
+                 b'{"agent": "A", "ts": 2.0}']
+        bad = []
+        got = list(iter_records(self.write(b"\n".join(lines) + b"\n"), on_bad=lambda: bad.append(1)))
+        self.assertEqual([r["ts"] for r in got], [1.0, 2.0])
+        self.assertEqual(len(bad), 7)  # list, number, string, null, truncated, two non-UTF-8 lines
+
+    def test_a_deeply_nested_line_is_skipped(self):
+        bad = []
+        self.assertEqual(list(iter_records(self.write(b"[" * 100000 + b"\n"), on_bad=lambda: bad.append(1))), [])
+        self.assertEqual(len(bad), 1)
+
+
+class LabelValueTest(unittest.TestCase):
+    def test_escapes_backslash_quote_newline_and_writes_lone_surrogates_as_text(self):
+        from agent.metrics import _label_value
+        self.assertEqual(_label_value('a\\b"c\nd'), 'a\\\\b\\"c\\nd')
+        self.assertEqual(_label_value("a\ud800b"), "a\\\\ud800b")  # backslash-u text, the backslash escaped
+
+    def test_distinct_lone_surrogates_stay_distinct(self):
+        from agent.metrics import _label_value
+        self.assertNotEqual(_label_value("p\ud800"), _label_value("p\ud801"))
+
+    def test_every_rendered_label_value_goes_through_the_escape(self):
+        recs = [{"agent": "A", "ts": 1.0, "tool_call": {"name": 'x"\\\n\ud800', "args": {}},
+                 "valid": True, "result": {"ok": True}, "prompt_id": 'p"\\\n\ud800'}]
+        text = render_prometheus_text(derive_metrics(recs))
+        text.encode("utf-8")  # never raises
+        self.assertIn('action="x\\"\\\\\\n\\\\ud800"', text)
+        self.assertIn('prompt_id="p\\"\\\\\\n\\\\ud800"', text)
+
+
+class PromptCollisionTest(unittest.TestCase):
+    """#513: a prompt_id literally `other` or `none` is summed with the fold, never overwritten."""
+
+    @staticmethod
+    def counts(recs):
+        return derive_metrics(recs)["A"].decisions_by_prompt
+
+    def test_literal_none_and_other_ids_keep_their_counts(self):
+        recs = [{"agent": "A", "ts": float(i), "prompt_id": "other"} for i in range(3)]
+        recs += [{"agent": "A", "ts": 10.0 + i, "prompt_id": "none"} for i in range(2)]
+        recs += [{"agent": "A", "ts": 20.0}, {"agent": "A", "ts": 21.0, "prompt_id": "p1"}]
+        counts = self.counts(recs)
+        self.assertEqual(counts, {"other": 3, "none": 3, "p1": 1})
+        self.assertEqual(sum(counts.values()), len(recs))
+
+    def test_literal_other_that_is_kept_is_summed_with_the_fold(self):
+        recs = [{"agent": "A", "ts": 100.0 + i, "prompt_id": "other"} for i in range(2)]
+        recs += [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(9)]
+        counts = self.counts(recs)
+        # 11 ids: p0 and p1 are the two oldest and fold into other, with the two literal "other" records
+        self.assertEqual(counts["other"], 2 + 1 + 1)
+        self.assertEqual(sum(counts.values()), len(recs))
+
+
+class OtherSumTest(unittest.TestCase):
+    """#513: with more than 8 ids, `other` equals the sum of the counts of the dropped ids,
+    even though the lines are out of chronological order."""
+
+    def test_other_is_the_sum_of_the_dropped_ids_counts(self):
+        import random
+        ids = [f"p{i}" for i in range(12)]
+        counts = {pid: i + 1 for i, pid in enumerate(ids)}            # 1..12 records each
+        ts = {pid: float((i * 7) % 12) for i, pid in enumerate(ids)}  # distinct, not in id order
+        recs = [{"agent": "A", "ts": ts[pid], "prompt_id": pid} for pid in ids for _ in range(counts[pid])]
+        random.Random(513).shuffle(recs)                              # out of chronological order
+        dropped = sorted(ids, key=lambda pid: ts[pid])[:4]
+        got = derive_metrics(recs)["A"].decisions_by_prompt
+        self.assertEqual(got["other"], sum(counts[pid] for pid in dropped))
+        self.assertEqual({k for k in got if k != "other"}, set(ids) - set(dropped))
+        self.assertEqual(sum(got.values()), len(recs))
