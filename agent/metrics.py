@@ -294,10 +294,13 @@ def derive_metrics(records, bad_lines: dict | None = None) -> dict:
 def xp_per_hour(m: AgentMetrics) -> float | None:
     if m.first_xp is None or m.last_xp is None or m.first_ts is None or m.last_ts is None:
         return None
-    elapsed_hours = (m.last_ts - m.first_ts) / 3600.0
-    if elapsed_hours <= 0:
+    try:
+        elapsed_hours = (m.last_ts - m.first_ts) / 3600.0
+        if elapsed_hours <= 0:
+            return None
+        return (m.last_xp - m.first_xp) / elapsed_hours
+    except OverflowError:  # two ints, each finite, whose difference a float cannot hold (#513)
         return None
-    return (m.last_xp - m.first_xp) / elapsed_hours
 
 
 def _emit(lines: list[str], name: str, help_text: str, mtype: str) -> None:

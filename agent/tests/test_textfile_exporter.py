@@ -128,6 +128,7 @@ class ExporterTest(unittest.TestCase):
 
     def test_records_of_odd_shapes_do_not_raise(self):
         big = b"1" * 401  # an int JSON allows but a float cannot hold: math.isfinite raises OverflowError on it
+        e308 = b"1" + b"0" * 308  # 1e308 as an int: finite, but a difference of two of them is not a float
         odd = [
             {"agent": ["x"]}, {"agent": "A", "tool_call": "face"}, {"agent": "A", "tool_call": {"name": ["x"]}},
             {"agent": "A", "result": "ok"}, {"agent": "A", "jev_status": ["x"]},
@@ -138,6 +139,11 @@ class ExporterTest(unittest.TestCase):
             b'{"agent":"A","ts":1.0,"snapshot":{"xp":' + big + b'}}',
             b'{"agent":"A","ts":1.0,"brain":"jev","jev_status":"success","usage":{"input_tokens":' + big
             + b',"cost":' + big + b'}}',
+            # each int is finite, but the XP span / time span between them does not fit a float (#513 round 3)
+            b'{"agent":"X","ts":0,"snapshot":{"xp":-' + e308 + b'}}',
+            b'{"agent":"X","ts":3600,"snapshot":{"xp":' + e308 + b'}}',
+            b'{"agent":"Y","ts":-' + e308 + b',"snapshot":{"xp":1}}',
+            b'{"agent":"Y","ts":' + e308 + b',"snapshot":{"xp":2}}',
         ]
         write_jsonl(os.path.join(self.audit, "A", "2026-10-11.jsonl"), odd)
         self.run_exporter()  # any exception fails the test

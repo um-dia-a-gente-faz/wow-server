@@ -270,7 +270,7 @@ class ReaderSkipsBadLinesTest(unittest.TestCase):
 
 
 class LabelValueTest(unittest.TestCase):
-    def test_escapes_backslash_quote_newline_and_replaces_lone_surrogates(self):
+    def test_escapes_backslash_quote_newline_and_writes_lone_surrogates_as_text(self):
         from agent.metrics import _label_value
         self.assertEqual(_label_value('a\\b"c\nd'), 'a\\\\b\\"c\\nd')
         self.assertEqual(_label_value("a\ud800b"), "a\\\\ud800b")  # backslash-u text, the backslash escaped
