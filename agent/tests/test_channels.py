@@ -84,6 +84,10 @@ class NotifyParseTest(unittest.TestCase):
         self.assertEqual(d, {"notice": 2, "notice_name": "you_joined", "channel": GENERAL,
                              "flags": 0x18, "channel_id": 1, "instance_id": 0})
 
+    def test_channel_name_is_utf8(self):
+        d = ch.parse_channel_notify(notify(ch.CHAT_JOINED_NOTICE, "Comércio - Cidade", struct.pack("<Q", ME)))
+        self.assertEqual(d["channel"], "Comércio - Cidade")
+
     def test_you_left(self):
         d = ch.parse_channel_notify(notify(ch.CHAT_YOU_LEFT_NOTICE, "world", struct.pack("<iB", 0, 1)))
         self.assertEqual((d["notice_name"], d["channel_id"], d["suspended"]), ("you_left", 0, True))

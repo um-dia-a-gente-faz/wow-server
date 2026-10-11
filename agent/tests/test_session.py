@@ -177,6 +177,13 @@ class MovementBroadcastTest(unittest.TestCase):
         obj = sess.world_state.get_object(CREATURE)
         self.assertEqual((obj.position[1], obj.position[2], obj.position[3]), (5.0, 6.0, 7.0))
 
+    def test_truncated_move_broadcast_reports_its_own_opcode(self):
+        sess = make_session()
+        payload = heartbeat_payload(CREATURE)[:-6]
+        with self.assertRaises(PacketTruncated) as cm:
+            hworld.handle_move_broadcast(sess.ctx, hworld.MSG_MOVE_HEARTBEAT, payload)
+        self.assertEqual(cm.exception.opcode, hworld.MSG_MOVE_HEARTBEAT)
+
     def test_move_broadcast_for_unknown_guid_is_ignored_and_counted(self):
         sess = make_session()
         sess._dispatch(hworld.MSG_MOVE_HEARTBEAT, heartbeat_payload(0xDEAD))

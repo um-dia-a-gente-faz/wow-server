@@ -19,6 +19,5 @@ from .objects import (  # noqa: F401
     UNIT_NPC_FLAG_TRAINER,
     UNIT_NPC_FLAG_VENDOR,
     ObjectInfo,
-    PerceptionParseError,
 )
 from .world import WorldState  # noqa: F401

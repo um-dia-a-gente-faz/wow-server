@@ -9,7 +9,7 @@ from ..update_object import (
     UPDATETYPE_OUT_OF_RANGE_OBJECTS,
     UPDATETYPE_NEAR_OBJECTS,
 )
-from ..wire import PacketMalformed, Reader
+from ..wire import PacketMalformed, PacketTruncated, Reader
 from . import death
 
 from ..opcodes import (
@@ -125,7 +125,10 @@ def handle_move_broadcast(ctx, opcode: int, payload: bytes):
     ctx.dump(opcode, payload)
     r = Reader(payload, opcode)
     guid = r.packed_guid()
-    move_info, off = uo.parse_movement_info(payload, r.offset)
+    try:
+        move_info, off = uo.parse_movement_info(payload, r.offset)
+    except PacketTruncated as e:
+        raise PacketTruncated(opcode, e.offset, e.wanted) from e
     if off != len(payload):
         raise PacketMalformed(f"opcode {opcode:#x}: parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
     ctx.state.world_state.apply_movement_info(guid, move_info)

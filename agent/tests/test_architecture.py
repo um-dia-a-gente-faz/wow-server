@@ -55,7 +55,7 @@ LAYERS = {
     "mail": {"opcodes", "packets", "wire"},
     "trade": {"opcodes", "packets", "wire"},
     "spells": {"opcodes", "packets", "wire"},
-    "channels": {"opcodes", "packets", "wire"},
+    "channels": {"opcodes", "wire"},
     "names": {"opcodes", "wire"},
     "group": {"opcodes", "wire"},
     "items": set(),
