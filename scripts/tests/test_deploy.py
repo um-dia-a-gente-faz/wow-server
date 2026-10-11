@@ -165,6 +165,9 @@ class DeployTest(unittest.TestCase):
         self.assertNotIn(r.returncode, (0, 75), r.stdout)  # a failed build, not a deferral
         self.assertEqual(self.calls().count("docker compose up -d --build"), 1)
         self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), base)
+        # no ref existed before this run: the first run seeds both at base, and the failed game
+        # build aborts before the monitoring ref moves, so monitoring stays at base too
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/monitoring"), base)
         self.assertNotIn("deployed", self.deploy_log())
         tip = git(self.origin, "rev-parse", "HEAD")
         r = self.run_deploy(FAKE_ONLINE="0", FAKE_COMPOSE_FAIL=marker)  # docker healthy now
