@@ -5,6 +5,7 @@ The module-name tests use real paths from the repo and the real mypy.ini.
 """
 import json
 import pathlib
+import re
 import sys
 import unittest
 
@@ -139,6 +140,35 @@ class Compare(unittest.TestCase):
 
     def test_unchanged_passes_silently(self):
         self.assertEqual(mlb.compare({"agent.names": 3}, {"agent.names": 3}), ([], []))
+
+
+class CheckShWiring(unittest.TestCase):
+    """The types target must run the legacy baseline too (CI's lint job calls only `types`)."""
+
+    def setUp(self):
+        self.script = (ROOT / "scripts" / "check.sh").read_text()
+
+    def arm(self, pattern):
+        m = re.search(rf"^\s*{pattern}\)\s*(.*?);;", self.script, re.MULTILINE)
+        self.assertIsNotNone(m, f"dispatch arm {pattern!r} not found in scripts/check.sh")
+        return m.group(1).strip()
+
+    def test_types_target_runs_types_then_legacy(self):
+        body = self.arm("types")
+        self.assertEqual(body.split(";")[0].strip(), "types")
+        self.assertEqual(body.split(";")[1].strip(), "types_legacy")
+
+    def test_shared_arm_no_longer_takes_types(self):
+        m = re.search(r"^\s*(compile\|lint\|[a-z|]*)\)", self.script, re.MULTILINE)
+        self.assertIsNotNone(m)
+        self.assertNotIn("types", m.group(1).split("|"))
+
+    def test_types_legacy_target_is_its_own_arm(self):
+        self.assertEqual(self.arm("types-legacy"), "types_legacy")
+
+    def test_all_runs_types_legacy_exactly_once(self):
+        body = self.arm("all")
+        self.assertEqual(body.count("types_legacy"), 1)
 
 
 class CommittedBaseline(unittest.TestCase):

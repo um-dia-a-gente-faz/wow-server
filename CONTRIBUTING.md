@@ -190,7 +190,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   `disallow_untyped_defs = True`. Count the legacy modules in the PR description. Never
   add a module to legacy. mypy was chosen over pyright because it is pip-only (no Node
   download in CI) and its gradual mode matches the tiers.
-- **Legacy error baseline (#378):** `scripts/check.sh types-legacy` (in `all`) fails when a legacy module has more mypy errors than its count in `mypy-legacy-baseline.json`. The counts assume only `requirements-dev.txt` is installed: Pillow or PyMySQL in your user site changes the wowmap counts.
+- **Legacy error baseline (#378):** `scripts/check.sh types` (what CI runs) includes it, as does `types-legacy` on its own and `all`. It fails when a legacy module has more mypy errors than its count in `mypy-legacy-baseline.json`. The counts assume only `requirements-dev.txt` is installed: Pillow or PyMySQL in your user site changes the wowmap counts.
 - After fixing errors in a legacy module, run `python3 scripts/mypy_legacy_baseline.py --update` and commit the JSON. A lower count is a note, never a failure.
 
 ## Size budget
