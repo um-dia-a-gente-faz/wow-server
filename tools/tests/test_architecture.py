@@ -1,9 +1,12 @@
 """Layering fitness tests for tools/ (#387): the tools counterpart of agent/tests/test_architecture.py.
 
-Imports are read with `ast` (function-level imports, try blocks and `if TYPE_CHECKING:` included),
-so no edge can hide. The tool modules are never imported: the graph comes from source, and this
-suite stays stdlib-only. Each table below lists exactly what may be imported today. A new edge, or a
-pinned edge the code no longer has, is a deliberate edit to its table, in a PR that says why.
+Static imports are read with `ast` (function-level imports, try blocks and `if TYPE_CHECKING:`
+included), so every `import` and `from ... import` is an edge. Dynamic imports (`__import__`,
+importlib, runpy) are not edges a static read can follow: they are found by call site and pinned
+per file in DYNAMIC_IMPORTS, so none can load a tool or agent module unseen. The tool modules are
+never imported: the graph comes from source, and this suite stays stdlib-only. Each table below
+lists exactly what may be imported today. A new edge, or a pinned edge the code no longer has, is
+a deliberate edit to its table, in a PR that says why.
 """
 import ast
 import pathlib
@@ -29,6 +32,8 @@ LAYER_DIRS = {
 ROOTS = {
     "agent-runner": ["tools/agent-runner", "tools", "scripts"],   # characters.py: tools/; fleet.py: scripts/
     "chat-feed": ["tools/chat-feed", "tools"],                    # app.py appends tools/
+    "common": ["tools/common", "tools"],                          # imported by path from tools/ (wowmap, chat-feed, agent-runner)
+    "dbc": ["tools/dbc", "tools"],                                # imported by path from tools/ (wowmap)
     "loadtest": ["tools/loadtest", "tools/world-mock"],           # soak.py inserts the repo root and world-mock/
     "wowmap": ["tools/wowmap/wowmap", "tools"],                   # state.py appends tools/
     "wowmap/pipeline": ["tools/wowmap/pipeline", "tools/wowmap/wowmap"],   # extract_*.py insert ../wowmap
@@ -109,6 +114,13 @@ RUNNER_LAYERS = {
 # Rule 5: wowmap's offline pipeline/ -> the wowmap runtime modules it may import. wowmap never imports it.
 PIPELINE_RUNTIME_IMPORTS = {"item_icons", "models", "overlays", "transform"}
 
+# Dynamic imports: files that load a module by name at run time (__import__, importlib.import_module,
+# importlib.util.spec_from_file_location, runpy.run_path/run_module). A static read cannot follow them,
+# so each file is pinned here with its reason. Today: characters.py loads the checkout's scripts/
+# roster generator by name (load_script).
+DYNAMIC_IMPORTS = {"tools/agent-runner/characters.py"}
+DYNAMIC_CALLS = {"__import__", "import_module", "spec_from_file_location", "run_path", "run_module"}
+
 
 def _files():
     """(repo-relative posix path, path) of every non-test .py under tools/."""
@@ -148,9 +160,10 @@ def _find(base, parts):
     return init if init.is_file() else here
 
 
-def _resolve(rel, line, name, level):
+def _resolve(rel, line, name, level, exact=False):
     """One import, classified: 'agent' (a unit of agent/), 'tool' (a file under tools/), 'external'
-    (stdlib, an allowed library, or a file outside tools/) or 'unresolved' (none of those)."""
+    (stdlib, an allowed library, or a file outside tools/) or 'unresolved' (none of those).
+    With `exact`, return None unless the name itself names a tool file, package or agent unit."""
     tool = rel.split("/")[1]
     layer = _layer(rel)
     edge = {"src": rel, "tool": tool, "layer": layer, "unit": _unit(rel), "where": f"{rel}:{line}",
@@ -159,7 +172,9 @@ def _resolve(rel, line, name, level):
     if level == 0 and parts[:1] == ["agent"]:
         return {**edge, "kind": "agent", "unit": parts[1] if len(parts) > 1 else "__init__"}
     if level == 0 and parts[:1] == ["tools"] and len(parts) > 1:
-        return {**edge, "kind": "tool", "dst_tool": parts[1], "dst_layer": "", "dst_unit": ""}
+        if (TOOLS / parts[1]).is_dir():
+            return {**edge, "kind": "tool", "dst_tool": parts[1], "dst_layer": "", "dst_unit": ""}
+        return None if exact else {**edge, "kind": "unresolved"}
     if level:
         base = (ROOT / rel).parent
         for _ in range(level - 1):
@@ -172,10 +187,14 @@ def _resolve(rel, line, name, level):
             if found is not None:
                 break
     if found is None:
+        if exact:
+            return None
         top = parts[0] if parts else ""
         kind = "external" if not level and (top in STDLIB or top in THIRD_PARTY) else "unresolved"
         return {**edge, "kind": kind}
     target = found.relative_to(ROOT).as_posix()
+    if target == "tools":   # a path inside tools/ is never external; the tools/ directory is no module
+        return None if exact else {**edge, "kind": "unresolved"}
     if not target.startswith("tools/"):
         return {**edge, "kind": "external"}   # e.g. scripts/gen_agents_compose.py: not a tool
     return {**edge, "kind": "tool", "dst_tool": target.split("/")[1], "dst_layer": _layer(target),
@@ -183,16 +202,18 @@ def _resolve(rel, line, name, level):
 
 
 def _edges_from(rel, source):
-    """Every import in one file's source, function-level and guarded ones included."""
+    """Every import in one file's source, function-level and guarded ones included. `from X import y`
+    is the edge to `X.y` when that names a file, package or agent unit, else the edge to `X`."""
     out = []
     for node in ast.walk(ast.parse(source, rel)):
         if isinstance(node, ast.Import):
             out += [_resolve(rel, node.lineno, alias.name, 0) for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            if node.level == 0 and node.module == "agent":   # `from agent import actions` is agent.actions
-                out += [_resolve(rel, node.lineno, f"agent.{alias.name}", 0) for alias in node.names]
-            else:
-                out.append(_resolve(rel, node.lineno, node.module or "", node.level))
+            module = node.module or ""
+            for alias in node.names:
+                full = f"{module}.{alias.name}" if module else alias.name
+                edge = _resolve(rel, node.lineno, full, node.level, exact=True)
+                out.append(edge or _resolve(rel, node.lineno, module, node.level))
     return out
 
 
@@ -200,6 +221,25 @@ def tool_edges():
     out = []
     for rel, path in _files():
         out += _edges_from(rel, path.read_text())
+    return out
+
+
+def _dynamic_sites_from(rel, source):
+    """(where, call) for every dynamic import call in one file's source."""
+    out = []
+    for node in ast.walk(ast.parse(source, rel)):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name in DYNAMIC_CALLS:
+                out.append((f"{rel}:{node.lineno}", name))
+    return out
+
+
+def dynamic_sites():
+    out = []
+    for rel, path in _files():
+        out += _dynamic_sites_from(rel, path.read_text())
     return out
 
 
@@ -288,6 +328,13 @@ def cycle_problems(graph, known=frozenset()):
     return found
 
 
+def unresolved_problems(edges):
+    return [f"{e['where']} imports {e['name']}: no file under its roots {e['roots']}. If that is a real "
+            f"sys.path root of this tool, add it to ROOTS; if it is a library, add it to THIRD_PARTY "
+            f"(CLAUDE.md allows only pymysql, PIL, mpyq); otherwise the import is wrong"
+            for e in edges if e["kind"] == "unresolved"]
+
+
 def check_packages(graph, tools, table=PACKAGE_EDGES):
     return (coverage_problems(tools, table, "PACKAGE_EDGES") + edge_problems(graph, table, "PACKAGE_EDGES")
             + pin_problems(graph, table, "PACKAGE_EDGES"))
@@ -309,6 +356,16 @@ def check_layers(graph, units, table, table_name, known=frozenset()):
             + pin_problems(graph, table, table_name) + cycle_problems(graph, known))
 
 
+def check_dynamic(sites, pinned):
+    """sites: (where, call) pairs; pinned: the files DYNAMIC_IMPORTS allows."""
+    seen = {where.split(":")[0] for where, _ in sites}
+    return ([f"{where}: {call}() loads a module by name, which no static rule can follow; "
+             f"pin the file in DYNAMIC_IMPORTS with a reason, or make the import static"
+             for where, call in sorted(sites) if where.split(":")[0] not in pinned]
+            + [f"{f}: pinned in DYNAMIC_IMPORTS but has no dynamic import any more; remove the pin"
+               for f in sorted(pinned - seen)])
+
+
 def check_pinned(graph, table, table_name):
     return edge_problems(graph, table, table_name) + pin_problems(graph, table, table_name)
 
@@ -319,10 +376,12 @@ class ToolsArchitectureTests(unittest.TestCase):
         cls.edges = tool_edges()
 
     def test_every_import_resolves_on_its_path(self):
-        bad = [f"{e['where']} imports {e['name']}: not stdlib, not one of {sorted(THIRD_PARTY)}, and not a file "
-               f"under its roots {e['roots']}; a tool may not import another tool's file"
-               for e in self.edges if e["kind"] == "unresolved"]
-        self.assertEqual(bad, [], "import that resolves to nothing on its path")
+        self.assertEqual(unresolved_problems(self.edges), [], "import that resolves to nothing on its path")
+
+    def test_dynamic_imports_are_pinned(self):
+        # reviewer fix 2: __import__ and importlib/runpy load by name at run time; no static edge shows it.
+        self.assertEqual(check_dynamic(dynamic_sites(), DYNAMIC_IMPORTS), [],
+                         "dynamic import outside DYNAMIC_IMPORTS")
 
     def test_packages_import_only_the_allowed_tools(self):
         self.assertEqual(check_packages(package_graph(self.edges), TOOL_DIRS), [],
@@ -367,6 +426,34 @@ class ResolutionSelfChecks(unittest.TestCase):
                                  "tools/agent-runner/runner.py": "tool",
                                  "tools/chat-feed/app.py": "unresolved"})
 
+    def test_from_dotted_import_of_a_tool_package_names_that_tool(self):
+        # reviewer fix 1: `from .. import common` named no tool before, so the edge was lost.
+        edges = _edges_from("tools/agent_dev/replay.py", "from .. import common\n")
+        self.assertEqual([(e["kind"], e.get("dst_tool")) for e in edges], [("tool", "common")])
+
+    def test_from_package_import_of_a_submodule_names_the_submodule(self):
+        # `from wowmap.pipeline import extract_maps` names the file, not the package it sits in.
+        edges = _edges_from("tools/wowmap/wowmap/app.py", "from wowmap.pipeline import extract_maps\n")
+        self.assertEqual([(e["kind"], e.get("dst_layer"), e.get("dst_unit")) for e in edges],
+                         [("tool", "wowmap/pipeline", "extract_maps")])
+
+    def test_common_and_dbc_resolve_each_other_through_the_tools_root(self):
+        # reviewer fix 3: tools/ is on sys.path whenever common or dbc is importable.
+        self.assertEqual(_resolve("tools/common/env.py", 1, "dbc", 0)["dst_tool"], "dbc")
+        self.assertEqual(_resolve("tools/dbc/wdbc.py", 1, "common", 0)["dst_tool"], "common")
+
+    def test_an_unresolved_import_message_names_the_tables_to_edit(self):
+        msgs = unresolved_problems([{"where": "tools/chat-feed/app.py:9", "name": "fleet", "kind": "unresolved",
+                                     "roots": ["tools/chat-feed", "tools"]}])
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("ROOTS", msgs[0])
+        self.assertIn("THIRD_PARTY", msgs[0])
+
+    def test_a_relative_from_import_that_names_nothing_is_unresolved_never_external(self):
+        # a path inside tools/ is never "external"; `from .. import nothere` must not pass silently.
+        edges = _edges_from("tools/agent_dev/replay.py", "from .. import nothere\n")
+        self.assertEqual([e["kind"] for e in edges], ["unresolved"])
+
 
 class CheckerSelfChecks(unittest.TestCase):
     """Each rule's checker must report a synthetic graph that breaks it."""
@@ -401,6 +488,27 @@ class CheckerSelfChecks(unittest.TestCase):
     def test_rules3_to_4_report_a_module_missing_from_the_table(self):
         msgs = check_layers({}, {"new_module"}, {}, "RUNNER_LAYERS")
         self.assertTrue(any(m.startswith("new_module: not in RUNNER_LAYERS") for m in msgs), msgs)
+
+    def test_dynamic_import_calls_are_found(self):
+        src = ("import importlib, runpy\n"
+               "importlib.import_module('agent.brain')\n"
+               "__import__('dbc')\n"
+               "importlib.util.spec_from_file_location('m', 'p')\n"
+               "runpy.run_path('p')\n"
+               "runpy.run_module('m')\n"
+               "from importlib import import_module\n")
+        calls = sorted(call for _, call in _dynamic_sites_from("tools/wowmap/wowmap/app.py", src))
+        self.assertEqual(calls, ["__import__", "import_module", "run_module", "run_path",
+                                 "spec_from_file_location"])
+
+    def test_a_dynamic_import_outside_the_table_names_the_table(self):
+        msgs = check_dynamic([("tools/wowmap/wowmap/app.py:9", "import_module")], set())
+        self.assertTrue(any(m.startswith("tools/wowmap/wowmap/app.py:9: import_module") and
+                            "DYNAMIC_IMPORTS" in m for m in msgs), msgs)
+
+    def test_a_pinned_file_with_no_dynamic_import_is_reported(self):
+        msgs = check_dynamic([], {"tools/agent-runner/characters.py"})
+        self.assertTrue(any("characters.py" in m and "DYNAMIC_IMPORTS" in m for m in msgs), msgs)
 
     def test_rule5_reports_an_unpinned_runtime_module(self):
         msgs = check_pinned({"pipeline": {"app": "tools/wowmap/pipeline/x.py:2"}},
