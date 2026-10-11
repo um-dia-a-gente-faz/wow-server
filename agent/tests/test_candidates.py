@@ -102,7 +102,7 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
                          ["auto_attack:guid=4660", "loot:guid=4661", "idle"])
 
     def test_without_my_guid_threats_are_plain_targets(self):
-        cands = cand.generate(healthy_combat())
+        cands = cand.generate(load("combat"))
         self.assertIn("auto_attack:guid=4660", ids(cands))
         self.assertNotIn("attacking you", cands[ids(cands).index("auto_attack:guid=4660")]["label"])
 
@@ -115,6 +115,13 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
         self.assertIn("auto_attack:guid=2", ids(cand.generate(unknown, my_guid=MY_GUID)))
         attacker = dict(idle_mob, in_combat=True, target_guid=MY_GUID)
         self.assertIn("auto_attack:guid=2", ids(cand.generate(dict(snap, nearby_units=[attacker]), my_guid=MY_GUID)))
+        # between 50% and 70% (needs_health is the bar, not 50%): the idle mob is still not pulled
+        mid = dict(snap, me={"level": 3, "health": "54/90"})
+        self.assertNotIn("auto_attack:guid=2", ids(cand.generate(mid, my_guid=MY_GUID)))
+        # hurt: a unit already in combat is offered even with target 0 (stunned or feared), since
+        # health does not regenerate in combat and the rest reflex refuses there (gh-475, option b)
+        stunned = dict(idle_mob, in_combat=True, target_guid=0)
+        self.assertIn("auto_attack:guid=2", ids(cand.generate(dict(mid, nearby_units=[stunned]), my_guid=MY_GUID)))
 
 
 class QuestScenarioTest(CandidateShapeMixin, unittest.TestCase):
