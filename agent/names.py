@@ -174,9 +174,11 @@ class NameCache:
     Not thread-safe on its own. Threading rule: every call, drain() included, is made
     under agent/perception/world.py::WorldState's lock (want_*/on_*_response, and drain()
     via ResolutionMixin.drain_name_queries, called by agent/handlers/world.py
-    send_name_queries). The recv thread and the chat-relay thread share this cache. The
-    expiry sweep still iterates a snapshot of _in_flight and tolerates a token already
-    removed, which keeps the class safe if used alone.
+    send_name_queries). The one exception is load(): agent/session.py calls it from
+    login_character before the recv thread starts, so no other thread exists yet. The
+    recv thread and the chat-relay thread share this cache. The expiry sweep still
+    iterates a snapshot of _in_flight and tolerates a token already removed, which keeps
+    that sweep safe if the class is used alone.
     """
 
     def __init__(self, budget_per_second: int = 10, clock=time.monotonic,
@@ -227,9 +229,11 @@ class NameCache:
         now = self._clock()
         while self._sent_times and now - self._sent_times[0] >= 1.0:
             self._sent_times.popleft()
-        # drain() runs on the recv thread without WorldState's lock, while want_*() can add
-        # keys from the chat-relay thread: iterate a snapshot, and tolerate a token that
-        # another thread already removed.
+        # Under WorldState the lock serialises drain() with want_*() (drain_name_queries
+        # holds it; the chat-relay thread calls want_*()). The sweep still iterates a
+        # snapshot and tolerates a token already removed, so the sweep itself does not
+        # break if the class is used on its own (the class as a whole is still not
+        # thread-safe alone; see the docstring).
         expired = [token for token, sent in list(self._in_flight.items())
                    if sent is not None and now - sent >= QUERY_TIMEOUT_S]
         for token in expired:
