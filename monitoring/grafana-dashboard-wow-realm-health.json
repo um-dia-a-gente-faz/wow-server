@@ -760,6 +760,188 @@
           "sort": "desc"
         }
       }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Backups",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Idade do backup mais novo",
+      "description": "Tempo desde o dump mais recente de /opt/wow-server-backups. Sem backup, mostra o tempo desde 1970.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 31
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 93600
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - wow_backup_newest_timestamp_seconds",
+          "legendFormat": "idade",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Tamanho do backup mais novo",
+      "description": "Tamanho do dump mais recente. Queda brusca = dump truncado.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 31
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "wow_backup_newest_size_bytes",
+          "legendFormat": "tamanho",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Idade e quantidade de backups",
+      "description": "Alerta BackupStale dispara com mais de 26h (monitoring/prometheus-agent-alerts.yml).",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 31
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - wow_backup_newest_timestamp_seconds) / 3600",
+          "legendFormat": "idade (h)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "wow_backup_count",
+          "legendFormat": "dumps guardados",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
     }
   ]
 }
