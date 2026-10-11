@@ -414,6 +414,20 @@ class RegistryCoverageTest(unittest.TestCase):
         self.assertEqual(set(ac.REGISTRY) - offered - set(cand.NOT_OFFERED), set())
         self.assertTrue(all(isinstance(reason, str) and reason for reason in cand.NOT_OFFERED.values()))
 
+    def test_generate_runs_only_declared_providers_for_known_actions(self):
+        from agent.action_specs import specs_by_name
+        for providers in (cand.ALIVE_PROVIDERS, cand.DEAD_PROVIDERS):
+            for provider in providers:
+                self.assertTrue(provider.actions, provider.__name__)
+                self.assertLessEqual(set(provider.actions), set(specs_by_name), provider.__name__)
+        declared = {a for p in cand.ALIVE_PROVIDERS + cand.DEAD_PROVIDERS for a in p.actions}
+        self.assertEqual(declared | {"idle"} | set(cand.NOT_OFFERED), set(ac.REGISTRY))
+
+    def test_dead_snapshot_runs_only_the_dead_providers(self):
+        self.assertEqual([c["action"] for c in cand.generate({"is_dead": True, "nearby_units": [
+            {"guid": 2, "target_guid": 1, "in_combat": True, "distance": 3}]}, my_guid=1)],
+            ["release_spirit", "idle"])
+
     def test_low_health_offers_self_heal_without_offensive_spell(self):
         snap = {"me": {"health": "5/58", "mana": "40/40"}, "spells": [{"id": 635, "name": "Holy Light"}],
                 "nearby_units": [], "inventory": [], "equipment": {}, "window": None}
