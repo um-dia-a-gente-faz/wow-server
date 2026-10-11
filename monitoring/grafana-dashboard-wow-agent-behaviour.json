@@ -577,6 +577,45 @@
         "displayMode": "gradient",
         "showUnfilled": true
       }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Decisions by prompt",
+      "description": "Decision cycles per second by prompt id (name@hash8; at most 8 ids per agent, the rest are 'other', 'none' = no LLM prompt). Derived from the audit log's prompt_id by the textfile exporter.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (prompt_id) (rate(wow_agent_decisions_by_prompt_total[5m]))",
+          "legendFormat": "{{prompt_id}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
     }
   ]
 }

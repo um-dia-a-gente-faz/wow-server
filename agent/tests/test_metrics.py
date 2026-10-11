@@ -151,3 +151,65 @@ class SwallowedTest(unittest.TestCase):
         self.assertIn("unit.site (ctx 7): ValueError: boom", cm.output[0])
         text = self.m.render_swallowed("A")
         self.assertIn('wow_agent_swallowed_errors_total{agent="A",where="unit.site"} 3', text)
+
+
+class DecisionsByPromptTest(unittest.TestCase):
+    """#476: wow_agent_decisions_by_prompt_total{prompt_id}, bounded to 8 ids + other."""
+
+    def setUp(self):
+        from agent import metrics
+        self.m = metrics
+        metrics.DECISIONS_BY_PROMPT.clear()
+        self.addCleanup(metrics.DECISIONS_BY_PROMPT.clear)
+
+    def test_counts_per_prompt_id_and_renders(self):
+        for pid in ("system@1a2b3c4d", "system@1a2b3c4d", "system@5e6f7a8b"):
+            self.m.count_decision(pid)
+        text = self.m.render_decisions_by_prompt("A")
+        self.assertIn("# TYPE wow_agent_decisions_by_prompt_total counter", text)
+        self.assertIn('wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@1a2b3c4d"} 2', text)
+        self.assertIn('wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@5e6f7a8b"} 1', text)
+
+    def test_ten_distinct_ids_make_eight_labels_and_other_is_two(self):
+        for i in range(10):
+            self.m.count_decision(f"system@{i:08x}")
+        counts = dict(self.m.DECISIONS_BY_PROMPT)
+        self.assertEqual(len(counts), 9)
+        self.assertEqual(counts["other"], 2)
+        self.assertEqual(sum(1 for k in counts if k != "other"), 8)
+        self.m.count_decision("system@00000000")        # already-known id keeps its own label
+        self.assertEqual(self.m.DECISIONS_BY_PROMPT["system@00000000"], 2)
+        self.assertEqual(self.m.DECISIONS_BY_PROMPT["other"], 2)
+
+    def test_missing_or_empty_id_is_none(self):
+        self.m.count_decision(None)
+        self.m.count_decision("")
+        self.assertEqual(dict(self.m.DECISIONS_BY_PROMPT), {"none": 2})
+
+    def test_none_does_not_use_up_one_of_the_eight(self):
+        self.m.count_decision(None)
+        for i in range(8):
+            self.m.count_decision(f"p{i}")
+        self.assertNotIn("other", self.m.DECISIONS_BY_PROMPT)
+
+    def test_threads_cannot_exceed_the_bound(self):
+        import threading
+        ts = [threading.Thread(target=lambda i=i: [self.m.count_decision(f"p{i}-{j}") for j in range(20)])
+              for i in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(len(self.m.DECISIONS_BY_PROMPT), 9)
+        self.assertEqual(sum(self.m.DECISIONS_BY_PROMPT.values()), 160)
+
+    def test_textfile_derives_same_series_from_audit_records(self):
+        recs = [{"agent": "A", "prompt_id": f"system@{i:08x}"} for i in range(10)]
+        recs += [{"agent": "A", "prompt_id": None}, {"agent": "B"}]
+        by_agent = self.m.derive_metrics(recs)
+        self.assertEqual(by_agent["A"].decisions_by_prompt["other"], 2)
+        self.assertEqual(by_agent["A"].decisions_by_prompt["none"], 1)
+        self.assertEqual(by_agent["B"].decisions_by_prompt, {"none": 1})
+        text = self.m.render_prometheus_text(by_agent)
+        self.assertIn('wow_agent_decisions_by_prompt_total{agent="A",prompt_id="other"} 2', text)
+        self.assertIn('wow_agent_decisions_by_prompt_total{agent="B",prompt_id="none"} 1', text)

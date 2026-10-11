@@ -100,6 +100,19 @@ class SchemalessReaderTests(unittest.TestCase):
 
 
 class WriterContractTests(unittest.TestCase):
+    def test_decision_counter_uses_the_written_records_prompt_id(self):
+        metrics.DECISIONS_BY_PROMPT.clear()
+        self.addCleanup(metrics.DECISIONS_BY_PROMPT.clear)
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = AuditLogger("Jev1", base_dir=tmp)
+            for pid in ("system@abcd1234", "system@abcd1234", None):
+                audit.record(cycle=1, snapshot={}, tool_call={"name": "loot", "args": {}}, valid=True,
+                             result={"ok": True, "error": None}, prompt_id=pid)
+            (path,) = glob.glob(os.path.join(tmp, "Jev1", "*.jsonl"))
+            written = [json.loads(line)["prompt_id"] for line in open(path, encoding="utf-8")]
+        self.assertEqual(written, ["system@abcd1234", "system@abcd1234", None])
+        self.assertEqual(metrics.DECISIONS_BY_PROMPT, {"system@abcd1234": 2, "none": 1})
+
     def test_writer_emits_exactly_the_schema_fields_when_all_populated(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = AuditLogger("Jev1", base_dir=tmp)

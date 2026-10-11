@@ -94,6 +94,14 @@ class EndpointsTest(_ServerCase):
             text = r.read().decode("utf-8")
         self.assertIn('wow_agent_swallowed_errors_total{agent="Luaprata",where="unit.http"} 2', text)
 
+    def test_metrics_exposes_decisions_by_prompt(self):
+        from agent import metrics
+        metrics.DECISIONS_BY_PROMPT["system@abcd1234"] = 4
+        self.addCleanup(metrics.DECISIONS_BY_PROMPT.clear)
+        with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
+            text = r.read().decode("utf-8")
+        self.assertIn('wow_agent_decisions_by_prompt_total{agent="Luaprata",prompt_id="system@abcd1234"} 4', text)
+
     def test_healthz(self):
         body = json.loads(self.get("/healthz")[1])
         self.assertEqual(body["agent"], "Luaprata")
