@@ -20,7 +20,7 @@ import time
 
 from .channels import parse_channel_spec
 from .chat_relay import ChatRelay
-from .config import ConfigError, load_config
+from .config import ConfigError, load_config, get as config_get
 from .auth import PERMANENT_AUTH_CODES, AuthRejected, auth_logon
 from .session import WoWSession
 from .brain import Brain
@@ -238,6 +238,7 @@ def _connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
     sess.chat_relay = chat_relay  # UM-47 — attached before login so nothing is missed
     choice = _resolve_character(cfg, chars)
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
+    sess.agent_names = frozenset(n.strip().lower() for n in config_get('AGENT_ROSTER').split(',') if n.strip())  # #318
     sess.race = choice['race']
     sess.class_ = choice['class_']
     sess.login_character(choice['guid'])

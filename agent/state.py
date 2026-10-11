@@ -17,6 +17,11 @@ EVENTS_MAXLEN = 100
 class GameState:
     """Everything the agent knows about its character and the world."""
 
+    @property
+    def is_alive(self) -> bool:
+        """False from the health>0 -> 0 transition until health is back (see _was_alive)."""
+        return self._was_alive
+
     def __init__(self):
         # Connection lifecycle (read by the recv loop and the reconnect supervisor)
         self._running = False
@@ -47,6 +52,11 @@ class GameState:
         self.rest_reflex = None
         self.pending_invite: dict | None = None  # {"inviter_name": str} or None
         self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
+        # #318: lower-cased character names of the other agents (config AGENT_ROSTER); empty = unknown.
+        self.agent_names: frozenset[str] = frozenset()
+        # #318: set when an invite is accepted: (inviter_name, monotonic deadline). The follow reflex
+        # starts following that leader once the server confirms the party, then clears it.
+        self.follow_on_accept: tuple[str, float] | None = None
         self.spellbook: set[int] = set()  # known spell IDs (UM-39)
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
         self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}
