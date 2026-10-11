@@ -246,12 +246,17 @@ fixed (#388, #475).
    `python3 -m tools.agent_dev.replay <file> --failures` lists the invalid or failed cycles.
    Full snapshots are written only every 20th cycle and on invalid or failed cycles, so
    capture a cycle that carries one.
-2. Capture it: `python3 -m tools.agent_dev.capture_scenario <file> --cycle <N>` prints a
-   `"captured_<agent>_<N>": dict(...)` entry. The snapshot is a literal; the action the brain
-   chose is a comment.
+2. Capture it: `python3 -m tools.agent_dev.capture_scenario <file> --cycle <N> --me <handle>`
+   prints a `"captured_<agent>_<N>": dict(...)` entry. The audit log keeps GUIDs as handle
+   strings (`u1`, `p3`) and not the handle table, so the entry carries its own: `handles` maps
+   each handle to an integer, and `my_guid` is the player's own handle, given by `--me` (the
+   `p<n>` the attacking mobs target). Without `--me`, `my_guid` is `...` and must be filled in.
+   The action the brain chose is a comment. The agent does not write `history` to the audit
+   log; add it by hand if the scenario needs it.
 3. Paste the entry into `SCENARIOS` and write `offered` (what the candidate list must never
    contain) and `chosen` (what the brain must never pick). State what must never happen, not
    the one right answer. The predicate helpers at the top of the file cover the common cases.
+   Refer to units by the handle string in the entry (`offering_attack_on("u1")`).
 4. Run `python3 -m unittest agent.tests.test_brain_scenarios`; the new scenario must fail on
    the bug.
 5. Fix the code and see it pass. Keep the scenario: it is the regression test. If the fix has
