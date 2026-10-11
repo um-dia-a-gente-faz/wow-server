@@ -72,6 +72,7 @@ class Me(TypedDict):
     level: int | None
     class_id: int | None
     health: NotRequired[str]
+    in_combat: NotRequired[bool]  # own UNIT_FLAG_IN_COMBAT; present only when true
     mana: NotRequired[str | int]  # the power keys are agent.update_fields.POWER_NAMES
     rage: NotRequired[str | int]
     focus: NotRequired[str | int]

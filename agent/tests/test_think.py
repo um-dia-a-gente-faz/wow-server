@@ -12,6 +12,7 @@ from agent import config
 from agent import perception as per
 from agent import think
 from agent import trade as tr
+from agent import update_fields as uf
 from agent import update_object as uo
 from agent.jev import JevError
 from agent.llm import LLMError
@@ -293,6 +294,32 @@ class ThinkStateHistoryTest(unittest.TestCase):
         think_and_act(sess, world, llm, my_position=sess.player_position)
         self.assertEqual(llm.calls[0]["snapshot"]["spells"], [{"id": 635, "name": "Holy Light"}])
         self.assertIn("me", llm.calls[0]["snapshot"])
+
+
+class SelfCombatStateTest(unittest.TestCase):
+    """gh-544: `me.in_combat` is set only when the own unit has UNIT_FLAG_IN_COMBAT (0x00080000,
+    UnitDefines.h on TrinityCore 3.3.5); otherwise the key is absent, not false."""
+
+    def _me(self, fields):
+        world = per.WorldState()
+        world.set_my_guid(1)
+        world.set_my_map(0)
+        world.update_object(uo.UpdateBlock(
+            update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=1, object_type=uo.TYPEID_PLAYER,
+            movement={"update_flags": uo.UPDATEFLAG_STATIONARY_POSITION, "x": 0.0, "y": 0.0, "z": 0.0, "o": 0.0},
+            fields=fields))
+        snap = {}
+        think._self_status(fake_session(), world, snap)
+        return snap["me"]
+
+    def test_present_and_true_with_the_combat_bit(self):
+        self.assertIs(self._me({uf.UNIT_FIELD_FLAGS: 0x00080000})["in_combat"], True)
+
+    def test_absent_when_the_bit_is_clear(self):
+        self.assertNotIn("in_combat", self._me({uf.UNIT_FIELD_FLAGS: 0x00000000}))
+
+    def test_absent_when_unit_flags_are_unknown(self):
+        self.assertNotIn("in_combat", self._me({}))
 
 
 class LoopGuardTest(unittest.TestCase):
