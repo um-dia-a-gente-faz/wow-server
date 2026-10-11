@@ -136,11 +136,16 @@ def _attempt(url: str, data: bytes, headers: Mapping[str, str], timeout: float,
             body = e.read() if e.fp is not None else b""
         except (OSError, http.client.HTTPException):
             body = None
-        if body is not None and error_body_limit is not None:
-            body = body[:error_body_limit]
+        # The retry hint reads the first `error_body_limit` raw bytes, as before.
+        # Redaction runs on the whole body and the cut comes after, so a key
+        # straddling the limit cannot leave a prefix behind.
+        hint = body if error_body_limit is None or body is None else body[:error_body_limit]
         header = e.headers.get("Retry-After") if e.headers is not None else None
-        retry_after = retry_after_seconds(header, (body or b"").decode("utf-8", "replace"))
-        raise HttpJsonError("http", safe_url, status=e.code, body=_safe_body(body, secrets),
+        retry_after = retry_after_seconds(header, (hint or b"").decode("utf-8", "replace"))
+        safe = _safe_body(body, secrets)
+        if safe is not None and error_body_limit is not None:
+            safe = safe[:error_body_limit]
+        raise HttpJsonError("http", safe_url, status=e.code, body=safe,
                             retry_after=retry_after) from None
     except urllib.error.URLError as e:
         raise HttpJsonError("network", safe_url, detail=redact(str(e.reason), secrets)) from None

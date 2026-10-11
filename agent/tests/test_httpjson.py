@@ -164,12 +164,12 @@ class RedactionTest(unittest.TestCase):
             cause = nxt(cause)
         return "\n".join(parts)
 
-    def run_case(self, make_exc, url=URL):
+    def run_case(self, make_exc, url=URL, **kw):
         with self.assertLogs("agent.httpjson", level=logging.DEBUG) as logs, \
                 mock.patch("urllib.request.urlopen", urlopen(make_exc(), make_exc())):
             try:
                 httpjson.post_json(url, {}, api_key=FAKE_KEY, retries=1, retry_statuses=(500,),
-                                   sleep=lambda s: None)
+                                   sleep=lambda s: None, **kw)
             except httpjson.HttpJsonError as e:
                 return self.surfaces(e) + "\n".join(logs.output)
         self.fail("no error")
@@ -177,6 +177,20 @@ class RedactionTest(unittest.TestCase):
     def test_key_echoed_in_http_error_body(self):
         text = self.run_case(lambda: http_error(500, f"bad key {FAKE_KEY}".encode()))
         self.assertNotIn(FAKE_KEY, text)
+
+    def test_key_straddling_the_error_body_limit(self):
+        # The cut must come after redaction: cutting first leaves a key prefix.
+        body = b"p" * 480 + FAKE_KEY.encode() + b" tail"
+        text = self.run_case(lambda: http_error(500, body), error_body_limit=500)
+        for i in range(len(FAKE_KEY) - 7):
+            self.assertNotIn(FAKE_KEY[i:i + 8], text)
+
+    def test_error_body_is_cut_after_redaction(self):
+        body = b"p" * 480 + FAKE_KEY.encode() + b"q" * 100
+        with mock.patch("urllib.request.urlopen", urlopen(http_error(500, body))):
+            with self.assertRaises(httpjson.HttpJsonError) as cm:
+                httpjson.post_json(URL, {}, api_key=FAKE_KEY, error_body_limit=500)
+        self.assertLessEqual(len(cm.exception.body), 500)
 
     def test_bearer_header_echoed_in_error_body(self):
         text = self.run_case(lambda: http_error(500, f"got Authorization: Bearer {FAKE_KEY}".encode()))
