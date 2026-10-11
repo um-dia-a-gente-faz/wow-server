@@ -1,0 +1,11 @@
+{
+  "opcode": "SMSG_SEND_MAIL_RESULT",
+  "source": "src/server/game/Entities/Player/Player.cpp Player::SendMailResult; src/server/game/Server/Packets/MailPackets.cpp WorldPackets::Mail::MailCommandResult::Write",
+  "expect": {
+    "mail_id": 0,
+    "command": 0,
+    "command_name": "send",
+    "error_code": 3,
+    "error_name": "not_enough_money"
+  }
+}

@@ -1,5 +1,6 @@
 """The `nearby_units` / `nearby_players` / `nearby_objects` sections of the snapshot."""
 
+from .. import update_fields as uf
 from ..model import Position, Unit
 from .objects import ObjectInfo
 
@@ -33,7 +34,7 @@ def object_dict(obj: ObjectInfo, distance: float) -> Unit:
         d["target_guid"] = obj.target_guid
     if obj.quest_giver_status is not None:
         d["quest_giver_status"] = obj.quest_giver_status_name or obj.quest_giver_status
-    d["in_combat"] = bool(obj.unit_flags and (obj.unit_flags & 0x00080000))  # UNIT_FLAG_IN_COMBAT, UnitDefines.h
+    d["in_combat"] = bool(obj.unit_flags and (obj.unit_flags & uf.UNIT_FLAG_IN_COMBAT))
     # UM-97: only set when true/non-zero, so existing snapshots (and the
     # pruned LLM prompt) are unchanged for ordinary units. agent/candidates.py
     # reads these to offer loot and to keep service NPCs out of attack options.

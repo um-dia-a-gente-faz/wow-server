@@ -1,0 +1,9 @@
+{
+  "opcode": "SMSG_MESSAGECHAT",
+  "source": "src/server/game/Server/Packets/ChatPackets.cpp WorldPackets::Chat::Chat::Write (default branch: TargetGUID raw uint64, uint32-length text, chat tag)",
+  "expect": {
+    "kind": "whisper_inform",
+    "sender_guid": "0x0000000000000004",
+    "text": "UM-47 whisper check"
+  }
+}

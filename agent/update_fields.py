@@ -73,6 +73,11 @@ GAMEOBJECT_FACTION = OBJECT_END + 0x0009  # Size: 1, Type: INT, Flags: PUBLIC
 GAMEOBJECT_LEVEL = OBJECT_END + 0x000A  # Size: 1, Type: INT, Flags: PUBLIC
 # --- END GENERATED ---
 
+# UnitFlags (UNIT_FIELD_FLAGS bits): UNIT_FLAG_IN_COMBAT is UnitDefines.h `enum UnitFlags`, TrinityCore
+# branch 3.3.5, src/server/game/Entities/Unit/UnitDefines.h. Read by perception (every unit's in_combat)
+# and think (our own me.in_combat), so it lives here: both modules already import this one.
+UNIT_FLAG_IN_COMBAT = 0x00080000
+
 # UNIT_FIELD_BYTES_0 packs race, class, gender, power_type (one byte each).
 # UNIT_FIELD_POWER1 / UNIT_FIELD_MAXPOWER1 start 7-slot arrays (POWER1..POWER7).
 

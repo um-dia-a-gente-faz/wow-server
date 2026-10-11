@@ -92,6 +92,25 @@ class SoakTest(unittest.TestCase):
         self.assertEqual(rep["dropped_packets"], 0)
         self.assertGreater(rep["recv_packets_total"], 0)
 
+    def test_report_carries_the_stream_pool(self):
+        """#486: the pool is echoed in the report; the default is the mock's STREAM_POOL, 0 = unbounded."""
+        rep = soak.run_soak(1, 1, think_interval=0.05, sample_every=0.5, stream_hz=5)
+        self.assertEqual(rep["stream_pool"], 50)
+        rep = soak.run_soak(1, 1, think_interval=0.05, sample_every=0.5, stream_hz=5, stream_pool=0)
+        self.assertEqual(rep["stream_pool"], 0)
+
+    def test_cli_passes_the_stream_pool_to_the_soak(self):
+        with mock.patch.object(soak, "run_soak", return_value={"agents": 1}) as run:
+            self.assertEqual(main(["--agents", "1", "--duration", "1", "--stream-pool", "0"]), 0)
+            self.assertEqual(run.call_args.kwargs["stream_pool"], 0)
+            main(["--agents", "1", "--duration", "1"])
+            self.assertEqual(run.call_args.kwargs["stream_pool"], 50)
+
+    def test_run_soak_hands_the_pool_to_the_mock(self):
+        with mock.patch.object(soak.server, "WorldMock", wraps=soak.server.WorldMock) as spy:
+            soak.run_soak(1, 1, think_interval=0.05, sample_every=0.5, stream_hz=5, stream_pool=0)
+        self.assertEqual(spy.call_args.kwargs["stream_pool"], 0)
+
     def test_smoke_three_agents_with_a_drop_and_a_reset(self):
         # The first two login attempts are faulted so recovery is exercised.
         rep = soak.run_soak(3, 5, faults="drop_after=8;drop_after=8,reset;;;", think_interval=0.05,
