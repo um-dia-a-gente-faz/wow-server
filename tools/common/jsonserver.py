@@ -68,7 +68,7 @@ class JsonHandler(BaseHTTPRequestHandler):
         """Require `Authorization: Bearer <token>`. An empty token turns the check off."""
         if not token:
             return
-        expected = f"Bearer {token}".encode()
+        expected = f"Bearer {token}".encode("utf-8")
         given = (self.headers.get("Authorization") or "").encode("utf-8")
         if not hmac.compare_digest(given, expected):
             raise HttpError(401, "unauthorized")
