@@ -11,17 +11,33 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TOP_DIRS = ("agent", "tools", "exporters", "scripts")
 SKIP_NAMES = {"node_modules", "__pycache__", ".claude"}
-DEFAULT_SCRIPT = (
-    'dbc|python3 -m unittest discover -s tools/dbc/tests\n'
-    'wowmap-js|node --test tools/wowmap/tests/js/*.test.js\n'
+def _array(*entries: str) -> str:
+    return "SUITES=(\n" + "".join(f"  {e}\n" for e in entries) + ")\n"
+
+
+DEFAULT_SCRIPT = _array(
+    '"dbc|python3 -m unittest discover -s tools/dbc/tests"',
+    '"wowmap-js|node --test tools/wowmap/tests/js/*.test.js"',
 )
 
 
+SUITE_ENTRY = re.compile(r'^\s*"[^"|]+\|([^"]*)"')
+
+
+def _suite_span(lines: list[str]) -> tuple[int, int]:
+    # ValueError when SUITES is renamed or reformatted, so the guard fails instead of passing empty.
+    start = lines.index("SUITES=(")
+    return start + 1, lines.index(")", start)
+
+
 def registered_suites(script_text: str) -> set[tuple[str, str]]:
-    # Comment lines are not registrations, even when they name a path.
-    code = "\n".join(l for l in script_text.splitlines() if not l.lstrip().startswith("#"))
-    py = {("py", d) for d in re.findall(r"-s ([^\s\"]+)", code)}
-    js = {("js", d) for d in re.findall(r"node --test (\S+?)/js/", code)}
+    # Only the command inside each quoted SUITES entry registers a suite. Comments, trailing
+    # text after the closing quote and anything outside the array do not.
+    lines = script_text.splitlines()
+    first, last = _suite_span(lines)
+    commands = [m.group(1) for m in map(SUITE_ENTRY.match, lines[first:last]) if m]
+    py = {("py", d) for c in commands for d in re.findall(r"-s ([^\s\"]+)", c)}
+    js = {("js", d) for c in commands for d in re.findall(r"node --test (\S+?)/js/", c)}
     return py | js
 
 
@@ -54,9 +70,8 @@ def _write(root: pathlib.Path, rel_paths: list[str]) -> None:
 
 def _suite_lines(script_text: str) -> list[int]:
     lines = script_text.splitlines()
-    start = lines.index("SUITES=(")
-    end = next(i for i in range(start + 1, len(lines)) if lines[i] == ")")
-    return [i for i in range(start + 1, end) if lines[i].lstrip().startswith('"')]
+    first, last = _suite_span(lines)
+    return [i for i in range(first, last) if lines[i].lstrip().startswith('"')]
 
 
 class CheckRegistryTest(unittest.TestCase):
@@ -102,6 +117,9 @@ class CheckRegistryTest(unittest.TestCase):
             with self.subTest(line=lines[i]):
                 text = "\n".join(lines[:i] + lines[i + 1:])
                 self.assertEqual(len(found - registered_suites(text)), 1)
+            with self.subTest(commented=lines[i]):
+                commented = lines[:i] + ["# " + lines[i].lstrip()] + lines[i + 1:]
+                self.assertEqual(len(found - registered_suites("\n".join(commented))), 1)
 
     def _unregistered_in(self, rel_paths: list[str], script: str = DEFAULT_SCRIPT) -> set:
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,20 +154,44 @@ class CheckRegistryTest(unittest.TestCase):
     def test_js_only_tests_dir_needs_node_test_line(self):
         rel = ["tools/y/tests/js/a.test.js"]
         self.assertEqual(
-            self._unregistered_in(rel, "y|python3 -m unittest discover -s tools/y/tests\n"),
+            self._unregistered_in(rel, _array('"y|python3 -m unittest discover -s tools/y/tests"')),
             {("js", "tools/y/tests")},
         )
         self.assertEqual(
-            self._unregistered_in(rel, "y|node --test tools/y/tests/js/*.test.js\n"), set()
+            self._unregistered_in(rel, _array('"y|node --test tools/y/tests/js/*.test.js"')), set()
         )
 
     def test_comment_mentioning_a_suite_is_not_a_registration(self):
         self.assertEqual(
             self._unregistered_in(
-                ["tools/y/tests/js/a.test.js"], "# node --test tools/y/tests/js/\n"
+                ["tools/y/tests/js/a.test.js"], _array("# node --test tools/y/tests/js/")
             ),
             {("js", "tools/y/tests")},
         )
+
+    def test_path_in_trailing_comment_does_not_register_another_suite(self):
+        script = _array(
+            '"a|python3 -m unittest discover -s tools/y/tests"  # see also -s tools/x/tests'
+        )
+        self.assertEqual(
+            self._unregistered_in(["tools/x/tests/test_x.py"], script),
+            {("py", "tools/x/tests")},
+        )
+
+    def test_s_outside_suites_array_does_not_register(self):
+        script = (
+            'OLD="python3 -m unittest discover -s tools/x/tests"\n'
+            'echo "try -s tools/x/tests"\n'
+            + _array('"a|python3 -m unittest discover -s tools/y/tests"')
+        )
+        self.assertEqual(
+            self._unregistered_in(["tools/x/tests/test_x.py"], script),
+            {("py", "tools/x/tests")},
+        )
+
+    def test_script_without_suites_array_is_an_error(self):
+        with self.assertRaises(ValueError):
+            registered_suites('"a|python3 -m unittest discover -s tools/x/tests"\n')
 
     def test_tests_dir_without_test_module_is_not_reported(self):
         self.assertEqual(self._unregistered_in(["tools/x/tests/helper.py"]), set())
