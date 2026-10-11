@@ -140,7 +140,7 @@ class GatePathsTest(unittest.TestCase):
     def test_nested_case_in_stacks_for_raises(self):  # rule 7
         script = SYNTHETIC.replace("      bar/*) mon=1 ;;\n",
                                    "      bar/*) mon=1 ;;\n      baz/*) case \"$g\" in\n"
-                                   "        q/*) mon=1 ;;\n      esac ;;\n")
+                                   "        q/*) mon=1 ;;\n      esac\n")
         with self.assertRaises(AssertionError):
             game_patterns(script)
 
