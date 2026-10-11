@@ -6,7 +6,7 @@ Accepted. Records a decision already merged in PR #257 (commit `f2066b2`, closes
 
 ## Context
 
-`tools/wowmap/app.py` had reached about 2900 lines (per the diffstat of
+`tools/wowmap/wowmap/app.py` had reached about 2900 lines (per the diffstat of
 `f2066b2`): HTTP handling, every SQL statement, the page HTML, fog, calibration,
 fleet proxying and character assembly in one file, with no unit that could be
 tested without a socket.
@@ -32,8 +32,9 @@ No URL or JSON shape changed.
 - Handlers can be tested by calling them with a `webio.Request`; tests patch
   `state.db` or the repo functions (`tools/wowmap/tests/`).
 - New SQL belongs in `repo/`, not in a service.
-- `tools/wowmap/Dockerfile` lists the files it copies, so a new module has to be
-  added there too (the split commit changed it for that reason).
+- `tools/wowmap/Dockerfile` listed the files it copied, so a new module had to be
+  added there too. #392 moved the runtime into `tools/wowmap/wowmap/` (copied whole) and the
+  offline extractors into `tools/wowmap/pipeline/`; the list is gone.
 - Follow-up (#262): `pages.py` no longer holds the front end. `static/index.html` is the page
   (`pages.py` fills in one value with `string.Template`); each panel has its own `static/*.css`
   and `static/*.js`, served by `assets.static`, with `node --test` tests in `tests/js/`.

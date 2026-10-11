@@ -6,11 +6,11 @@ it. Alignment within zones is approximate (see § Alignment below).
 
 ## What is already proven
 
-**The coordinate transform works.** `tools/wowmap/transform.py` converts a player's
+**The coordinate transform works.** `tools/wowmap/wowmap/transform.py` converts a player's
 `characters.position_x/y` into a normalised (0..1) position on that zone's world-map
 image, using the DBCs TrinityCore's `mapextractor` already produced.
 
-Output of `python3 tools/wowmap/transform.py <dbc dir>` (norm x is horizontal, left to
+Output of `python3 tools/wowmap/wowmap/transform.py <dbc dir>` (norm x is horizontal, left to
 right; norm y is vertical, top to bottom; ×100 gives the in-game map coordinates):
 
 | position | area | norm x | norm y |
@@ -173,7 +173,7 @@ left-to-right, top-to-bottom.
 BLP2/DXT payloads are decoded by wrapping them in a minimal DDS header and
 letting Pillow decompress that — no custom DXT decoder needed.
 
-The extraction script is `tools/wowmap/extract_maps.py`. It requires:
+The extraction script is `tools/wowmap/pipeline/extract_maps.py`. It requires:
 - `mpyq` (pip-installable pure-Python MPQ reader — reads the `(hash table)` but needs filenames as input since the listfile lacks worldmap paths)
 - `Pillow` (for DDS-in-Pillow decode + PNG output)
 - The client MPQs from `/opt/wow-server/client/Data/<locale>/`
@@ -196,7 +196,7 @@ not try.
 The base tiles are the *unexplored* parchment. The colour comes from
 `WorldMapOverlay.dbc`: one row per explored area, with the texture name, its size
 and its `(OffsetX, OffsetY)` on the zone's 1024x768 canvas (field layout in
-`tools/wowmap/overlays.py`, checked against TrinityCore's `WorldMapOverlayEntry` and
+`tools/wowmap/wowmap/overlays.py`, checked against TrinityCore's `WorldMapOverlayEntry` and
 the real DBC). Each overlay is split into 256 px tiles,
 `Interface\WorldMap\<Zone>\<TextureName><N>.blp`, numbered row-major; the last
 row/column is drawn `size % 256` pixels from a file padded to a power of two
@@ -204,7 +204,7 @@ row/column is drawn `size % 256` pixels from a file padded to a power of two
 offset, so `<area_id>.png` is the zone fully explored and `<area_id>_base.png` the
 parchment alone. Overlays are placed by pixel offset, not through `transform.py`.
 Each overlay's own art also goes to `overlays/<overlay_id>.png` (one per overlay that has a texture); the site
-stacks a character's revealed ones on the base art for fog of war (`tools/wowmap/fog.py`).
+stacks a character's revealed ones on the base art for fog of war (`tools/wowmap/wowmap/fog.py`).
 
 Overlay tiles are DXT3/DXT5 (alpha encoding 1/7), base tiles DXT1; the BLP decoder
 picks the DDS FourCC from the BLP's alpha-encoding byte.
@@ -213,7 +213,7 @@ Re-running it (read-only on the client; the output dir is what the container
 mounts, so write to a scratch dir first and swap it in on purpose):
 
 ```
-/opt/wowmap-venv/bin/python tools/wowmap/extract_maps.py \
+/opt/wowmap-venv/bin/python tools/wowmap/pipeline/extract_maps.py \
   --client /opt/wow-server/client --dbc /opt/wowmap-data/dbc --out /tmp/maps-new
 ```
 
@@ -256,9 +256,9 @@ With the axes and the frame right, markers sit where the game shows them, and
 was fixed) should not be needed. Keep it for art that really is offset.
 
 Three earlier calibration attempts, from before the axis fix, are in `tools/wowmap/`:
-- `overlay_test.py` — draw specific points on a map image
-- `scatter_test.py` — dense scatter of creature spawns
-- `calibrate.py` + `fit_transform.py` — texture-based auto-fit (overfit)
+- `pipeline/overlay_debug.py` — draw specific points on a map image
+- `pipeline/scatter_debug.py` — dense scatter of creature spawns
+- `pipeline/calibrate.py` + `pipeline/fit_transform.py` — texture-based auto-fit (overfit)
 
 ### API
 

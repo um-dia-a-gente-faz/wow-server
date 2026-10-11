@@ -120,10 +120,10 @@ services:
     volumes:
       - /opt/wowmap-data/dbc:/dbc:ro
       - /opt/wowmap-data/maps:/maps:ro
-      # Item icons from tools/wowmap/extract_icons.py. Until it has been run, Docker
+      # Item icons from tools/wowmap/pipeline/extract_icons.py. Until it has been run, Docker
       # creates this directory empty and the inspect drawer shows placeholders.
       - /opt/wowmap-data/icons:/icons:ro
-      # Character meshes + skins from tools/wowmap/extract_models.py (#171). Empty until
+      # Character meshes + skins from tools/wowmap/pipeline/extract_models.py (#171). Empty until
       # it has been run: the drawer then shows "No 3D model extracted".
       - /opt/wowmap-data/models:/models:ro
       - /opt/wowmap-data/calibration.json:/app/calibration.json

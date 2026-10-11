@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const STATIC = path.join(__dirname, '..', '..', 'static');
+const STATIC = path.join(__dirname, '..', '..', 'wowmap', 'static');
 const read = (file) => fs.readFileSync(path.join(STATIC, file), 'utf8');
 
 // Source of top-level `function name(...) {...}`: ends at the first line that is `}` (or on

@@ -39,7 +39,7 @@ one scripted scenario (see `tools/world-mock/README.md`), so the agent mostly id
 lookup and the activity snapshot poller (so it holds `auth.account`, `characters.characters`,
 `character_inventory`, `item_instance(guid, itemEntry, count)`,
 `character_queststatus_rewarded`, `world.item_template(entry, name, SellPrice)` and
-`world.quest_template`; each is read by `tools/wowmap/activity.py` or `repo/*.py`).
+`world.quest_template`; each is read by `tools/wowmap/wowmap/activity.py` or `repo/*.py`).
 
 It does **not** cover the inspect drawer's inventory, talents, reputation, stats and
 achievements: those need more `item_instance`/`item_template` columns and the

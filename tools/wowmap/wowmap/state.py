@@ -16,7 +16,7 @@ from overlays import load_overlays
 from transform import DbcTables, GridAreas
 
 # The shared DBC reader lives in tools/dbc (copied to /app/dbc in the image).
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from dbc.names import GameNames  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

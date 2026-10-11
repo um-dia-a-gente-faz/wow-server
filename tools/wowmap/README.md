@@ -11,12 +11,26 @@ The container setup supplies the usual MySQL variables, DBCs, and map PNGs. For
 local use, install `requirements.txt` and run:
 
 ```bash
-python3 app.py
+python3 wowmap/app.py
 ```
 
 Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 `MYSQL_PASSWORD` (plus the optional paths and port described below and in
 `app.py`).
+
+### Directory layout (#392)
+
+- `wowmap/` is the runtime: every module the service imports, plus `repo/`, `static/` and
+  `calibration.json`. The Dockerfile copies this directory whole, so a new module needs no
+  Dockerfile edit, and `tests/test_runtime_imports.py` imports each one from a clean
+  interpreter.
+- `pipeline/` is offline tooling, **run by hand, not part of the service, not in the
+  image**: `extract_maps.py`, `extract_icons.py`, `extract_models.py`, `calibrate.py`,
+  `fit_transform.py` and the debug scripts `overlay_debug.py` / `scatter_debug.py` (not
+  tests). They need `mpyq` and `Pillow` (`pip install mpyq Pillow`) on top of
+  `requirements.txt`, and import the runtime modules they share (`overlays`,
+  `item_icons`, `models`, `transform`) through a `sys.path` entry for `wowmap/`.
+- `tests/` covers the runtime; run `python3 -m unittest discover -s tools/wowmap/tests`.
 
 ### Code layout (#249)
 
@@ -39,7 +53,7 @@ handler plus one line in `ROUTES`.
 | `MODELS_DIR` | `/models` | directory containing extracted character meshes and skins `<race>_<gender>.bin|.png` (see *Character model*); empty means the drawer shows a placeholder |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
-| `CALIBRATION_FILE` | `tools/wowmap/calibration.json` | persisted per-zone pixel offsets |
+| `CALIBRATION_FILE` | `tools/wowmap/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
 | `ACTIVITY_DB` | `/data/activity.sqlite3` | activity feed store; empty disables the feed |
 | `ACTIVITY_CHAT_FEED_URL` | `http://chat-feed:9500` | chat-feed as seen from the wowmap process; empty = no chat events |
@@ -216,7 +230,7 @@ change), on the VM, with `mpyq` and `Pillow` available:
 
 ```bash
 cd /opt/wow-server/tools/wowmap
-python3 extract_icons.py --client /opt/wow-server/client \
+python3 pipeline/extract_icons.py --client /opt/wow-server/client \
     --dbc /opt/wowmap-data/dbc --out /opt/wowmap-data/icons
 ```
 
@@ -233,7 +247,7 @@ outside the output directory:
 ```bash
 docker run --rm -v /opt/wow-server:/src:ro -v /opt/wowmap-data:/data \
   --entrypoint sh monitoring-wowmap:latest -c \
-  "pip install -q mpyq Pillow && cd /src/tools/wowmap && python extract_icons.py \
+  "pip install -q mpyq Pillow && cd /src/tools/wowmap/pipeline && python extract_icons.py \
    --client /src/client --dbc /data/dbc --out /data/icons"
 ```
 
@@ -583,7 +597,7 @@ VM and never committed. Run once, with `mpyq` and `Pillow` available:
 
 ```bash
 cd /opt/wow-server/tools/wowmap
-python3 extract_models.py --client /opt/wow-server/client \
+python3 pipeline/extract_models.py --client /opt/wow-server/client \
     --dbc /opt/wowmap-data/dbc --out /opt/wowmap-data/models
 ```
 

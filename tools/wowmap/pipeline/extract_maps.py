@@ -46,7 +46,9 @@ import sys
 
 from PIL import Image
 
-import overlays as ovl
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wowmap"))  # runtime modules
+import overlays as ovl  # noqa: E402
 
 TILE = ovl.TILE
 GRID_COLS, GRID_ROWS = 4, 3

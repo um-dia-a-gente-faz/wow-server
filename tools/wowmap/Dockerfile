@@ -7,12 +7,11 @@ COPY wowmap/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dbc/__init__.py dbc/wdbc.py dbc/names.py dbc/spelltext.py ./dbc/
-COPY wowmap/transform.py wowmap/overlays.py wowmap/item_icons.py wowmap/models.py wowmap/item_tooltip.py wowmap/activity.py wowmap/fog.py wowmap/fleet.py wowmap/walk.py wowmap/app.py wowmap/state.py wowmap/webio.py wowmap/routes.py wowmap/pages.py \
-     wowmap/players.py wowmap/character.py wowmap/inventory.py wowmap/areas.py wowmap/fogview.py \
-     wowmap/agents.py wowmap/calibration.py wowmap/assets.py wowmap/calibration.json ./
-COPY wowmap/repo ./repo
-# index.html (the page template), the page's css/js, vendored Leaflet and three.js (#171), served under /static/.
-COPY wowmap/static ./static
+# The whole runtime directory (modules, repo/, static/, calibration.json). The offline
+# pipeline/ is not shipped (#392); a new module needs no edit here.
+COPY wowmap/wowmap/ ./
+# Import smoke test: a module missing from the image fails the build, not the deploy.
+RUN python -c "import app, routes"
 
 EXPOSE 9400
 CMD ["python", "-u", "app.py"]

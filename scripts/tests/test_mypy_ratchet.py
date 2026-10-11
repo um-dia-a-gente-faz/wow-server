@@ -67,13 +67,13 @@ def agent_modules():
 
 
 def tools_modules():
-    """Names as mypy sees them: tools/wowmap is a base dir, other tools/<pkg> are packages."""
+    """Names as mypy sees them: tools/wowmap/{wowmap,pipeline} are base dirs, other tools/<pkg> are packages."""
     out = set()
     for p in (ROOT / "tools").rglob("*.py"):
         parts = p.relative_to(ROOT / "tools").with_suffix("").parts
         if "tests" in parts or "node_modules" in parts:
             continue
-        out.add(".".join(parts[1:] if parts[0] == "wowmap" else parts))
+        out.add(".".join(parts[2:] if parts[:2] in (("wowmap", "wowmap"), ("wowmap", "pipeline")) else parts))
     return out
 
 
