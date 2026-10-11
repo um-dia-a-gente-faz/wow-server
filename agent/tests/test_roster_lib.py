@@ -97,6 +97,7 @@ class ComposeAgreementTests(unittest.TestCase):
                 lines = self.blocks[a.service]
                 self.assertIn(f"container_name: {a.container}", lines)
                 self.assertIn(f"AGENT_HTTP_PORT: {a.api_port}", lines)
+                self.assertIn(f"profiles: [{', '.join(a.profiles)}]", lines)
 
 
 class ValidationTests(unittest.TestCase):
@@ -116,7 +117,11 @@ class ValidationTests(unittest.TestCase):
     def test_rule2_missing_key_is_rejected(self):
         broken = entry("AGENT02", "Farstrider")
         del broken["race"]
-        self.assertRejects(data(entry(), broken), 2, "race")
+        with self.assertRaises(RosterError) as cm:
+            parse_roster(data(entry(), broken))
+        msg = str(cm.exception)
+        self.assertIn("entry 2", msg)
+        self.assertIn("missing ['race']", msg)
 
     def test_rule2_unknown_key_is_rejected(self):
         typo = entry("AGENT02", "Farstrider")
@@ -126,6 +131,15 @@ class ValidationTests(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("entry 2", msg)
         self.assertIn("charcter", msg)
+
+    def test_rule2_extra_key_is_rejected(self):
+        extra = entry("AGENT02", "Farstrider")
+        extra["retired"] = True
+        with self.assertRaises(RosterError) as cm:
+            parse_roster(data(entry(), extra))
+        msg = str(cm.exception)
+        self.assertIn("entry 2", msg)
+        self.assertIn("retired", msg)
 
     def test_rule2_entry_must_be_object(self):
         with self.assertRaises(RosterError) as cm:
@@ -142,6 +156,11 @@ class ValidationTests(unittest.TestCase):
 
     def test_rule4_character_must_be_alphanumeric_text(self):
         for bad in ("", "Lua prata", "Lua-prata", None, 7):
+            with self.subTest(character=bad):
+                self.assertRejects(data(entry(character=bad)), 1, "character")
+
+    def test_rule4_character_must_be_ascii(self):
+        for bad in ("Ébano", "Lua²"):
             with self.subTest(character=bad):
                 self.assertRejects(data(entry(character=bad)), 1, "character")
 

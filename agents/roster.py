@@ -84,8 +84,8 @@ def _parse_entry(entry: object, index: int, seen_accounts: set[str], seen_names:
     seen_accounts.add(account)
 
     character = entry["character"]
-    if not isinstance(character, str) or not character or not character.isalnum():
-        raise _fail(index, "character", f"must be a non-empty alphanumeric name, got {character!r}")
+    if not isinstance(character, str) or not character or not character.isascii() or not character.isalnum():
+        raise _fail(index, "character", f"must be a non-empty ASCII alphanumeric name, got {character!r}")
     if character.lower() in seen_names:
         raise _fail(index, "character", f"duplicates {character!r} (names are case-insensitive)")
     seen_names.add(character.lower())
