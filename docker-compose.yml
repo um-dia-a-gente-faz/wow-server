@@ -68,7 +68,9 @@ services:
           memory: "3g"
 
   chat-feed:
-    build: ./tools/chat-feed
+    build:
+      context: ./tools          # tools/ so the image also gets tools/common (ADR 0014)
+      dockerfile: chat-feed/Dockerfile
     container_name: chat-feed
     restart: unless-stopped
     environment:

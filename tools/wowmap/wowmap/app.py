@@ -48,37 +48,29 @@ Env:
 import json
 import logging
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import activity as activity_feed
 import routes
 import state
+from common.jsonserver import JsonHandler
 from webio import Request
 
 log = logging.getLogger("wowmap")
 
 
 # ---------------------------------------------------------------- HTTP
-class Handler(BaseHTTPRequestHandler):
+class Handler(JsonHandler):
     """Wiring only: build a webio.Request, let routes.dispatch answer, write the reply."""
     server_version = "wowmap/1.0"
-
-    def log_message(self, fmt, *args):  # quieter access log
-        log.debug("%s - %s", self.address_string(), fmt % args)
 
     def _send(self, code, body, ctype="application/json", cache=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
         elif isinstance(body, str):
             body = body.encode()
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        if cache:
-            self.send_header("Cache-Control", cache)
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_body(code, body, ctype, cache)
 
     def _handle(self, method):
         u = urlparse(self.path)

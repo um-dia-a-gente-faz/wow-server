@@ -16,41 +16,47 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+# tools/common is copied next to app.py in the image (ADR 0014); from a checkout it is in tools/.
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from common.env import env_int, env_str  # noqa: E402
+from common.jsonserver import HttpError, JsonHandler  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("chat-feed")
 
-LOG_PATH = os.environ.get("LOG_PATH", "/logs/Server.log")
-REPLAY_BUFFER_SIZE = int(os.environ.get("REPLAY_BUFFER_SIZE", "200"))
-LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9500"))
+LOG_PATH = env_str("LOG_PATH", "/logs/Server.log")
+REPLAY_BUFFER_SIZE = env_int("REPLAY_BUFFER_SIZE", 200)
+LISTEN_PORT = env_int("LISTEN_PORT", 9500)
 PUBLIC_KINDS = frozenset(
     kind.strip().lower()
-    for kind in os.environ.get("CHAT_FEED_CHANNELS", "say,yell,channel,emote,text_emote,system").split(",")
+    for kind in env_str("CHAT_FEED_CHANNELS", "say,yell,channel,emote,text_emote,system").split(",")
     if kind.strip()
 )
 # Shared secret for POST /api/chat/ingest. Empty (the default) accepts any
 # LAN client, matching the rest of this LAN-only stack; set it to require
 # `Authorization: Bearer <token>` from the agents. Never logged.
-INGEST_TOKEN = os.environ.get("CHAT_FEED_INGEST_TOKEN", "").strip()
+INGEST_TOKEN = env_str("CHAT_FEED_INGEST_TOKEN").strip()
 # Shared secret for GET /api/chat/stream (UM-48). Empty (the default) leaves
 # the stream open to the LAN. Sent as `Authorization: Bearer <token>`, or as
 # `?token=<token>` because a browser's EventSource cannot set headers. Never
 # logged. /healthz and /metrics carry no chat text and stay open.
-STREAM_TOKEN = os.environ.get("CHAT_FEED_TOKEN", "").strip()
+STREAM_TOKEN = env_str("CHAT_FEED_TOKEN").strip()
 # Each stream client holds a thread and a socket for as long as it stays
 # connected, so both are capped. 0 disables a cap.
-MAX_CLIENTS = int(os.environ.get("CHAT_FEED_MAX_CLIENTS", "100"))
-MAX_CLIENTS_PER_IP = int(os.environ.get("CHAT_FEED_MAX_CLIENTS_PER_IP", "20"))
+MAX_CLIENTS = env_int("CHAT_FEED_MAX_CLIENTS", 100)
+MAX_CLIENTS_PER_IP = env_int("CHAT_FEED_MAX_CLIENTS_PER_IP", 20)
 # Several agents hear the same /say, so each relayed event carries a
 # dedupe_key computed from the message alone; the first copy inside this
 # window wins. Identical text from the same speaker inside the window is
 # therefore also collapsed — that is the accepted trade-off.
 DEDUPE_WINDOW_S = float(os.environ.get("CHAT_FEED_DEDUPE_WINDOW_S", "5"))
-MAX_INGEST_BYTES = int(os.environ.get("CHAT_FEED_MAX_INGEST_BYTES", "65536"))
+MAX_INGEST_BYTES = env_int("CHAT_FEED_MAX_INGEST_BYTES", 65536)
 MAX_INGEST_EVENTS = 50
 MAX_TEXT_LEN = 512      # 3.3.5a's own chat limit is 255 bytes
 MAX_FIELD_LEN = 64      # speaker/channel/target/source names
@@ -374,15 +380,12 @@ def tail_log(feed, path):
     LogTailer(feed, path).run()
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(JsonHandler):
     server_version = "chat-feed/0.1"
 
     @property
     def feed(self):
         return self.server.feed
-
-    def log_message(self, fmt, *args):
-        LOG.debug("%s - %s", self.address_string(), fmt % args)
 
     def send_cors_headers(self):
         # The viewer (tools/wowmap) is served from :9400 and this feed from
@@ -392,14 +395,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
-    def send_json(self, status, body):
-        data = json.dumps(body).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
+    def send_extra_headers(self):
         self.send_cors_headers()
-        self.end_headers()
-        self.wfile.write(data)
 
     def authorized(self, token=None, allow_query=False):
         """Bearer check against `token` (default: the ingest token). With
@@ -427,8 +424,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         if urlparse(self.path).path != "/api/chat/ingest":
             return self.send_json(404, {"error": "not found"})
-        if not self.authorized():
-            return self.send_json(401, {"error": "unauthorized"})
+        try:
+            self.check_bearer(getattr(self.server, "ingest_token", ""))
+        except HttpError as e:
+            return self.send_error_json(e.status, e.message)
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -503,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
                 self.feed.wait_after(last_id)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
             return
 
 

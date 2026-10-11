@@ -1,21 +1,20 @@
 """One character's inspect payload, and agent-or-human classification."""
-import re
 
 import agents
 import state
 from inventory import inventory_item, item_set_context
 from players import CLASS_COLORS, CLASSES, RACES, position_fields
 from repo import characters as characters_repo
+from common import agent_accounts  # tools/ is on sys.path once `state` is imported
 
 # characters.power1..power7 in TrinityCore `Powers` enum order (SharedDefines.h:
 # POWER_MANA=0 .. POWER_RUNIC_POWER=6; Player::SaveToDB writes GetPower(i) to power<i+1>).
 POWER_NAMES = ("mana", "rage", "focus", "energy", "happiness", "rune", "runic_power")
-# #174: agent characters live on accounts AGENT01..AGENT25 (agents/roster.json).
-AGENT_ACCOUNT_RE = re.compile(r"AGENT(?:0[1-9]|1[0-9]|2[0-5])", re.IGNORECASE)
 
 
 def is_agent_account(username):
-    return bool(username) and AGENT_ACCOUNT_RE.fullmatch(username) is not None
+    """#174: agent characters live on accounts AGENT01..AGENT25 (tools/common/agent_accounts.py)."""
+    return agent_accounts.is_agent_account(username, ignore_case=True)
 
 
 def character_kind(name):
