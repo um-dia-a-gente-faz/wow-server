@@ -16,7 +16,8 @@ see agent/control.py). With no token configured every POST is still a 405.
     GET /brain       goal, brain (jev/llm), model, last decisions (from the audit records),
                      recent-action history, reflexes, token usage
     GET /events      Server-Sent Events: session.events + decisions
-    GET /metrics     Prometheus text: wow_agent_swallowed_errors_total{agent,where} (agent.metrics)
+    GET /metrics     Prometheus text: wow_agent_swallowed_errors_total{agent,where}, router counters,
+                     wow_agent_reconnect_attempts_total{agent,reason} (agent.metrics)
     POST /control/walk   operator walk, only with AGENT_CONTROL_TOKEN set (agent/control.py)
 
 Threading: the recv thread and the think loop mutate state; handlers only
@@ -42,7 +43,7 @@ from . import control
 from . import spells as sp
 from . import update_fields as uf
 from .audit import _redact
-from .metrics import render_router, render_swallowed, swallowed
+from .metrics import render_reconnects, render_router, render_swallowed, swallowed
 
 log = logging.getLogger("agent.http")
 
@@ -312,7 +313,8 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/events":
                 return self._stream_events()
             if path == "/metrics":   # Prometheus text, not JSON; the swallowed-error counter (#306)
-                data = (render_swallowed(obs.agent_name) + render_router(obs.agent_name)).encode("utf-8")
+                data = (render_swallowed(obs.agent_name) + render_router(obs.agent_name)
+                        + render_reconnects(obs.agent_name)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))

@@ -124,7 +124,7 @@ class FaultInjectionTest(unittest.TestCase):
                 raise AssertionError(f"supervisor did not recover: backoffs {sleeps}")
 
         _supervise_connection(build, lambda s: _run_think_loop(s, self.cfg, SESSION_S, time.monotonic()),
-                              self.log, sleep=sleep, initial_backoff=BACKOFF_S)
+                              self.log, sleep=sleep, jitter=lambda b: b, initial_backoff=BACKOFF_S)
         self.assertLess(time.monotonic() - t0, RECOVER_S)
         self.assertTrue(burst_applied(self.sessions[-1]), "the session after the fault is not healthy")
         return sleeps
