@@ -62,7 +62,7 @@ LAYERS = {
     "item_compare": set(),
     "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
-    "movement": {"opcodes", "packets", "update_object"},
+    "movement": {"opcodes", "packets", "ports", "update_object"},   # #411: the session contract (ports)
     # state
     "perception": {"changes", "group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
@@ -75,8 +75,8 @@ LAYERS = {
     "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "update_fields"},
-    "control": {"actions", "metrics", "movement"},
-    "death": {"action_names", "actions", "movement", "opcodes", "perception", "rules"},
+    "control": {"actions", "metrics", "movement", "ports"},   # #411: the session contract (ports)
+    "death": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "rules"},   # #411: ports
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
     "candidates": {"action_names", "action_specs", "handles", "item_compare", "metrics", "model", "rules"},
@@ -89,7 +89,7 @@ LAYERS = {
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "brain": {"action_specs", "actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
-    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
+    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "update_fields"},  # #411: ports
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport", "wire"},   # enum_characters and handle_time_sync read through Reader (#517)

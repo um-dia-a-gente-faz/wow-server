@@ -46,7 +46,7 @@ def fast_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
     if position is not None:
         world.set_my_map(position[0])
     clock = FakeClock()
-    sess._mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
+    sess.mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
     return sess, world
 
 

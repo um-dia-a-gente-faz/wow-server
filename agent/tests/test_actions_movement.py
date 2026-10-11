@@ -31,7 +31,7 @@ def fast_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
     sess = fake_session(player_guid=guid, player_position=position)
     world = per.WorldState()
     clock = FakeClock()
-    sess._mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
+    sess.mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
     return sess, world
 
 
@@ -149,7 +149,7 @@ class MoveToActionTest(unittest.TestCase):
     def test_execute_reuses_the_same_mover_as_stop_movement(self):
         sess, world = fast_session(position=(530, 0.0, 0.0, 0.0, 0.0))
         ac.MoveToAction().execute(sess, world, x=5.0, y=0.0)
-        self.assertIs(sess._mover, mv.get_mover(sess, world))
+        self.assertIs(sess.mover, mv.get_mover(sess, world))
 
 
 class MoveTowardsActionTest(unittest.TestCase):
