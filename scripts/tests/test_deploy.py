@@ -14,8 +14,9 @@ DEPLOY = ROOT / "scripts" / "deploy.sh"
 FAKE_DOCKER = """#!/bin/sh
 echo "docker $*" >> "$FAKE_LOG"
 [ "$1" = exec ] && { [ "$FAKE_ONLINE" = fail ] && exit 1; echo "$FAKE_ONLINE"; }
+[ "$*" = "compose up -d --build" ] && [ -n "$FAKE_COMPOSE_FAIL" ] && [ ! -e "$FAKE_COMPOSE_FAIL" ] && { : > "$FAKE_COMPOSE_FAIL"; exit 1; }
 exit 0
-"""
+"""  # FAKE_COMPOSE_FAIL=<marker path> fails the first game-stack `compose up` only
 
 
 def git(cwd, *args):
@@ -155,6 +156,71 @@ class DeployTest(unittest.TestCase):
         r = self.run_deploy(FAKE_ONLINE="0")
         self.assertIn("docker compose up -d --build", self.calls(), r.stdout)
         self.assertTrue(self.deploy_log().endswith("stacks: game\n"))
+
+    def test_failed_game_build_is_retried(self):
+        self.merge("docker-compose.yml")
+        base = git(self.work, "rev-parse", "HEAD")
+        marker = str(self.tmp / "compose-failed")
+        r = self.run_deploy(FAKE_ONLINE="0", FAKE_COMPOSE_FAIL=marker)
+        self.assertNotIn(r.returncode, (0, 75), r.stdout)  # a failed build, not a deferral
+        self.assertEqual(self.calls().count("docker compose up -d --build"), 1)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), base)
+        # no ref existed before this run: the first run seeds both at base, and the failed game
+        # build aborts before the monitoring ref moves, so monitoring stays at base too
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/monitoring"), base)
+        self.assertNotIn("deployed", self.deploy_log())
+        tip = git(self.origin, "rev-parse", "HEAD")
+        r = self.run_deploy(FAKE_ONLINE="0", FAKE_COMPOSE_FAIL=marker)  # docker healthy now
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.calls().count("docker compose up -d --build"), 2)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), tip)
+        self.assertTrue(self.deploy_log().endswith("stacks: game\n"))
+
+    def test_fresh_vm_behind_main_deploys_pending_game_change(self):
+        # no refs/deployed/* yet; HEAD is the base commit and origin/main holds a game-path commit
+        base = git(self.work, "rev-parse", "HEAD")
+        self.merge("docker-compose.yml")
+        tip = git(self.origin, "rev-parse", "HEAD")
+        r = self.run_deploy(FAKE_ONLINE="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"== {base[:7]} -> {tip[:7]}, stacks: game ==", r.stdout)
+        self.assertIn("docker compose up -d --build", self.calls())
+        self.assertNotIn("monitoring/docker-compose.yml up", self.calls())
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), tip)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/monitoring"), tip)
+        self.assertTrue(self.deploy_log().endswith("stacks: game\n"))
+
+    def test_fresh_vm_at_main_marks_pending_game_change_as_deployed(self):
+        # FINDING (pinned, not changed): a clone already at origin/main with no refs/deployed/*
+        # treats the game-path commit at HEAD as deployed: the first run deploys nothing.
+        self.merge("docker-compose.yml")
+        git(self.work, "fetch", "-q", "origin")
+        git(self.work, "merge", "-q", "--ff-only", "origin/main")
+        tip = git(self.work, "rev-parse", "HEAD")
+        r = self.run_deploy(FAKE_ONLINE="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("stacks: none", r.stdout)
+        self.assertNotIn("up -d", self.calls())  # no stack touched; only the status listing ran
+        self.assertNotIn("exec", self.calls())  # not even the players query
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), tip)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/monitoring"), tip)
+        self.assertEqual(self.deploy_log(), "")
+
+    def test_deferred_game_stays_pending_after_head_catches_up(self):
+        # the state auto-deploy.sh polls on: HEAD == origin/main, refs/deployed/game still behind
+        self.run_deploy()  # first run: refs at the base commit
+        base = git(self.work, "rev-parse", "HEAD")
+        self.merge("docker-compose.yml")
+        tip = git(self.origin, "rev-parse", "HEAD")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertEqual(git(self.work, "rev-parse", "HEAD"), tip)
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), base)
+        r = self.run_deploy(DRY_RUN="1", FAKE_ONLINE="3")  # the next poll still plans the game stack
+        self.assertIn(f"== {tip[:7]} -> {tip[:7]}, stacks: game ==", r.stdout)
+        r = self.run_deploy(FAKE_ONLINE="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("docker compose up -d --build", self.calls())
+        self.assertEqual(git(self.work, "rev-parse", "refs/deployed/game"), tip)
 
     def test_force_overrides_guard(self):
         self.merge("tdb/a.sql")

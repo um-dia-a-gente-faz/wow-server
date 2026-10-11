@@ -250,6 +250,38 @@ recreated (not just restarted) for `ConfigurationWriter.js` to regenerate
 `worldserver.conf` — `up -d` does this automatically when the compose file
 changed.
 
+**First run.** A checkout with no `refs/deployed/*` (a fresh VM) counts both stacks as
+deployed at the `HEAD` it had before the run, then diffs from there. If `HEAD` is behind
+`origin/main`, the stacks whose paths changed in between deploy on that first run (the game
+stack subject to the players-online guard, like any deploy). If `HEAD` already equals
+`origin/main`, nothing deploys: the poller prints "up to date" without calling `deploy.sh`, and
+a `deploy.sh` run by hand plans no stack and sets both refs to `HEAD`. Either way a game-path
+commit already at `HEAD` is never deployed by the poller; run `ALL=1 ./scripts/deploy.sh` once
+by hand to bring both stacks up (see the table below; the guard applies to it too).
+
+**Repairing a stuck ref (human step, VM operator only).** `refs/deployed/game` stays behind
+`origin/main` while a game change is deferred, and a failed game build leaves it (and
+`refs/deployed/monitoring`) in place, so every poll retries. **Retrying needs no command: leave
+the ref alone.** The scripts never drop a pending change on their own. Move the ref only to
+**skip** the pending game range (a deferred change that should not go out on its own, a build
+that keeps failing), only **forward to `origin/main`**, and only by hand on the VM:
+
+```bash
+git -C /opt/wow-server rev-parse refs/deployed/game     # where the game stack was last deployed
+git -C /opt/wow-server rev-parse origin/main            # where main was at the last poll
+git -C /opt/wow-server update-ref refs/deployed/game origin/main   # skip: nothing pending for the game stack
+```
+
+With the ref at `origin/main` the poller prints "up to date" and brings nothing up. The skip is
+not permanent: the skipped files are still in the checkout, so the next game-path merge applies
+them together with its own change. Any other value is not a skip. `deploy.sh` compares the two
+trees (`git diff <ref> origin/main`, not ancestry), so a ref set to a commit behind `origin/main`,
+ahead of it or on another branch that differs from it in a game path plans the game stack again,
+and `docker compose up -d --build` runs for it on the first poll with nobody online (the
+players-online guard still applies). After a failed game build the monitoring changes of the same
+merge are not deployed either, and the poller only looks at the game ref: after skipping, run
+`./scripts/deploy.sh` once by hand, or they wait for the next merge.
+
 Grafana dashboard JSONs (`monitoring/grafana-dashboard-*.json`) are provisioned
 on the *separate* docker-stack VM (192.168.1.60), not this one:
 
