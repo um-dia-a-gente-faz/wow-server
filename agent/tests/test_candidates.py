@@ -123,6 +123,25 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
         stunned = dict(idle_mob, in_combat=True, target_guid=0)
         self.assertIn("auto_attack:guid=2", ids(cand.generate(dict(mid, nearby_units=[stunned]), my_guid=MY_GUID)))
 
+    def test_hurt_in_combat_with_no_threat_offers_the_pull_again(self):
+        # gh-544: our own combat flag is set but nothing attacks us (a stuck flag). Health cannot
+        # regenerate in combat, so the idle mob is offered; with a real attacker it still is not.
+        idle_mob = {"guid": 2, "distance": 4, "level": 1, "name": "rat", "health_pct": 1}
+        attacker = dict(idle_mob, guid=3, in_combat=True, target_guid=MY_GUID)
+        in_combat = {"level": 3, "health": "18/90", "in_combat": True}
+        snap = {"me": in_combat, "nearby_units": [idle_mob], "window": None}
+        self.assertIn("auto_attack:guid=2", ids(cand.generate(snap, my_guid=MY_GUID)))
+        fight = dict(snap, nearby_units=[attacker, idle_mob])
+        cands = ids(cand.generate(fight, my_guid=MY_GUID))
+        self.assertIn("auto_attack:guid=3", cands)
+        self.assertNotIn("auto_attack:guid=2", cands)
+        # `in_combat` is only ever set when true: absent, false, or no `me` at all is out of combat
+        for me in ({"level": 3, "health": "18/90"}, {"level": 3, "health": "18/90", "in_combat": False}, None):
+            out = dict(snap, me=me, nearby_units=[idle_mob])
+            if me is None:
+                del out["me"]
+            self.assertNotIn("auto_attack:guid=2", ids(cand.generate(out, my_guid=MY_GUID)))
+
 
 class QuestScenarioTest(CandidateShapeMixin, unittest.TestCase):
     def test_quest(self):

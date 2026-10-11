@@ -60,6 +60,8 @@ def _self_status(session: ports.PlayerView, world, snapshot: Snapshot) -> None:
         mine: Me = {"level": me.level, "class_id": session.class_}
         if me.health is not None and me.max_health:
             mine["health"] = f"{me.health}/{me.max_health}"
+        if me.unit_flags and (me.unit_flags & uf.UNIT_FLAG_IN_COMBAT):
+            mine["in_combat"] = True  # only ever true: absent means out of combat (gh-544)
         for name, cur in (me.power or {}).items():
             top = (me.max_power or {}).get(name)
             # `name` is one of agent.update_fields.POWER_NAMES, all declared on Me.
