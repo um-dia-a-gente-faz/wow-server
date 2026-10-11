@@ -83,7 +83,7 @@ def send_name_queries(ctx):
     up to its per-second budget. Called once per recv-loop tick (like
     the keepalive below), so new objects get their names resolved
     within a tick or two of showing up."""
-    for kind, key, sample_guid in ctx.state.world_state.names.drain():
+    for kind, key, sample_guid in ctx.state.world_state.drain_name_queries():
         if kind == "player":
             ctx.send(CMSG_NAME_QUERY, nm.build_name_query(key))
         elif kind == "creature":

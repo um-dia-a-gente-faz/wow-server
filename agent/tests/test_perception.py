@@ -197,6 +197,21 @@ class NameResolutionTest(unittest.TestCase):
         self.assertEqual(ws.get_object(1).name, "")
         self.assertIsNone(ws.names.creatures[999])
 
+    def test_creature_query_response_clears_its_in_flight_token(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_UNIT, fields={0x03: 17213}))
+        self.assertIn(("creature", 17213), ws.names._in_flight)
+        ws.apply_creature_query_response({"entry": 17213, "found": True, "name": "Broom",
+                                           "subname": "", "rank": "normal", "creature_type_name": "critter"})
+        self.assertNotIn(("creature", 17213), ws.names._in_flight)
+
+    def test_gameobject_query_response_clears_its_in_flight_token(self):
+        ws = self._new_ws()
+        ws.update_object(create_block(1, object_type=uo.TYPEID_GAMEOBJECT, fields={0x03: 181646}))
+        self.assertIn(("gameobject", 181646), ws.names._in_flight)
+        ws.apply_gameobject_query_response({"entry": 181646, "found": True, "name": "Ship", "type": 15})
+        self.assertNotIn(("gameobject", 181646), ws.names._in_flight)
+
     def test_name_query_response_backfills_the_player(self):
         ws = self._new_ws()
         ws.set_my_guid(99)

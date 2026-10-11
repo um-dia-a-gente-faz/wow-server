@@ -82,6 +82,14 @@ class ResolutionMixin:
             self._quest_status_pending = self._quest_status_pending[max_items:]
             return out
 
+    def drain_name_queries(self, max_items: int | None = None) -> list:
+        """UM-35 / #577: pop the queued name/creature/gameobject queries for
+        agent/handlers/world.py send_name_queries. Goes through the same lock as
+        want_*(), which the chat-relay thread calls. The caller sends after this
+        returns, so the lock is never held across a socket send."""
+        with self._lock:
+            return self.names.drain(max_items)
+
     def resolve_player_name(self, guid: int) -> str | None:
         """UM-47: cached name for a player GUID, queuing a CMSG_NAME_QUERY
         the first time it's asked for.
