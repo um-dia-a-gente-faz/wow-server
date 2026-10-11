@@ -12,6 +12,7 @@ import unittest
 from agent import packets as pk
 from agent import update_object as uo
 from agent.tests.builders import values_body
+from agent.wire import PacketTruncated
 
 
 def block_header(block_count: int, *block_bytes: bytes) -> bytes:
@@ -381,6 +382,33 @@ class MonsterMoveParseTest(unittest.TestCase):
                    + b'\xFF')
         with self.assertRaises(ValueError):
             uo.parse_monster_move(payload)
+
+
+class TruncationOffsetTest(unittest.TestCase):
+    """#517: the public parsers read through wire.Reader, so a truncation is a PacketTruncated
+    naming the offset and size of the read that failed (not the payload length)."""
+
+    def test_values_cut_mid_value_names_the_failed_read(self):
+        body = values_body({0x03: 1, 0x04: 2})   # mask byte, mask word, two values = 13 bytes
+        data = block_header(1, bytes([uo.UPDATETYPE_VALUES]) + pk.pack_packed_guid(5) + body[:-2])
+        with self.assertRaises(PacketTruncated) as cm:
+            uo.parse_update_object(data)
+        self.assertEqual((cm.exception.offset, cm.exception.wanted), (16, 4))
+        self.assertEqual(len(data), 18)
+
+    def test_movement_info_cut_before_fall_time_names_the_failed_read(self):
+        body = (struct.pack('<IH', 0, 0) + struct.pack('<I', 0) + struct.pack('<4f', 1, 2, 3, 0))
+        with self.assertRaises(PacketTruncated) as cm:
+            uo.parse_movement_info(body, 0)
+        self.assertEqual((cm.exception.offset, cm.exception.wanted), (len(body), 4))
+
+    def test_monster_move_without_its_destination_names_the_failed_read(self):
+        payload = (pk.pack_packed_guid(1) + bytes([0]) + struct.pack('<3f', 0, 0, 0)
+                   + struct.pack('<I', 1) + bytes([uo.MONSTER_MOVE_NORMAL])
+                   + struct.pack('<III', 0, 2000, 1))   # flags, move_time, point_count=1; no point
+        with self.assertRaises(PacketTruncated) as cm:
+            uo.parse_monster_move(payload)
+        self.assertEqual((cm.exception.offset, cm.exception.wanted), (len(payload), 4))  # one f32 at a time
 
 
 if __name__ == '__main__':
