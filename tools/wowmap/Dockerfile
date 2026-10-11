@@ -4,7 +4,7 @@ FROM python:3.12.15-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df27
 
 WORKDIR /app
 COPY wowmap/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 COPY dbc/__init__.py dbc/wdbc.py dbc/names.py dbc/spelltext.py ./dbc/
 COPY wowmap/transform.py wowmap/overlays.py wowmap/item_icons.py wowmap/models.py wowmap/item_tooltip.py wowmap/activity.py wowmap/fog.py wowmap/fleet.py wowmap/walk.py wowmap/app.py wowmap/state.py wowmap/webio.py wowmap/routes.py wowmap/pages.py \

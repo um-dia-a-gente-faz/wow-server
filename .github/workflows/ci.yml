@@ -44,7 +44,7 @@ jobs:
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
             echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
-            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
+            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
             echo "compose=$(hit "$all|^docker-compose[^/]*\.yml|^monitoring/|^\.env\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
@@ -95,7 +95,8 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: tools/wowmap/requirements.txt
-      - run: pip install -r tools/wowmap/requirements.txt
+      - run: pip install --require-hashes -r tools/wowmap/requirements.txt
+      - run: pip install --require-hashes -r exporters/wow-exporter/requirements.txt
       - run: scripts/check.sh generated test
 
       # UM-100: the real JevClient against jev-mock as a separate process, over
@@ -172,7 +173,8 @@ jobs:
         run: if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
       - name: No :latest images (#291)
         run: |
-          if git grep -nE '^\s*(image:|FROM)\s.*:latest(\s|$)' -- ':(glob)**/docker-compose*.yml' ':(glob)**/Dockerfile'; then
+          # every image:/FROM line needs a digest (or the agent tag variable); this also rejects :latest, quoted or not
+          if git grep -nE '^\s*(image:|FROM)\s' -- ':(glob)**/docker-compose*.yml' ':(glob)**/Dockerfile' | grep -vE '@sha256:[0-9a-f]{64}|\$\{WOW_AGENT_TAG'; then
             echo "::error::pin images by version and digest, never :latest (docs/DEPLOYMENT.md, Bumping pins)"; exit 1
           fi
       - name: Validate compose files

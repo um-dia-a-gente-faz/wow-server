@@ -121,7 +121,7 @@ if [ -e "$env_file" ]; then
   say "$env_file exists: leaving it exactly as it is"
   chmod 600 "$env_file"
   git -C "$CHECKOUT" check-ignore -q .env || { echo "WARNING: .env is NOT gitignored here"; env_ok=0; }
-  for key in AGENT_PASSWORD; do
+  for key in AGENT_PASSWORD WOW_AGENT_TAG; do
     grep -Eq "^${key}=.+" "$env_file" || { echo "MISSING in .env: $key"; env_ok=0; }
     ! grep -Eq "^${key}=(change-me)?$" "$env_file" || { echo "PLACEHOLDER in .env: $key"; env_ok=0; }
   done
@@ -141,6 +141,7 @@ if [ "$env_ok" -eq 0 ]; then
   1. Create $env_file (mode 600, never committed). Copy it from the wow-server VM
      over a trusted channel, or write it by hand. It must contain at least:
        AGENT_PASSWORD=...      shared password of AGENT01..AGENT25 (required)
+       WOW_AGENT_TAG=...       SHA tag of the wow-agent image, printed by scripts/build-agent-image.sh (required)
        LLM_BASE_URL / LLM_API_KEY / LLM_MODEL    if the agents use the LLM brain
        JEV_BASE_URL / JEV_API_KEY / JEV_MODEL    if the agents use Jev
      Optional: AGENT_HTTP_PUBLISH_IP (default all interfaces, i.e. LAN).
@@ -148,7 +149,7 @@ if [ "$env_ok" -eq 0 ]; then
      the wrong password. Then:  chmod 600 $env_file
 EOF
 else
-  echo "  1. .env present with AGENT_PASSWORD set. Nothing to do."
+  echo "  1. .env present with AGENT_PASSWORD and WOW_AGENT_TAG set. Nothing to do."
 fi
 if [ -z "${AUDIT_PULL_PUBKEY:-}" ]; then
   cat <<EOF
