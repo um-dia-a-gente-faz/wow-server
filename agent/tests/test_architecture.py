@@ -49,18 +49,18 @@ LAYERS = {
     "rules": set(),
     "ports": set(),
     # parsers are pure: wire helpers only
-    "npc": {"opcodes", "packets"},
-    "quests": {"opcodes", "packets"},
+    "npc": {"opcodes", "wire"},
+    "quests": {"opcodes", "wire"},
     "loot": {"opcodes", "packets", "wire"},
     "mail": {"opcodes", "packets", "wire"},
     "trade": {"opcodes", "packets", "wire"},
-    "spells": {"packets"},
-    "channels": {"opcodes", "packets"},
-    "names": {"packets"},
-    "group": {"packets"},
+    "spells": {"opcodes", "packets", "wire"},
+    "channels": {"opcodes", "wire"},
+    "names": {"opcodes", "wire"},
+    "group": {"opcodes", "wire"},
     "items": set(),
     "item_compare": set(),
-    "update_object": {"packets"},
+    "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
     "movement": {"opcodes", "packets", "update_object"},
     # state
@@ -70,7 +70,7 @@ LAYERS = {
     # routing: handlers parse and update state, they never act (ADR 0006)
     "router": {"packets", "wire"},   # PacketTruncated is counted apart from other handler errors (#494)
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
-                 "quests", "router", "spells", "trade", "update_fields", "update_object"},
+                 "quests", "router", "spells", "trade", "update_fields", "update_object", "wire"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
     "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},

@@ -18,7 +18,12 @@ import os
 import struct
 import time
 
-from . import packets as pk
+from .opcodes import (
+    SMSG_CREATURE_QUERY_RESPONSE,
+    SMSG_GAMEOBJECT_QUERY_RESPONSE,
+    SMSG_NAME_QUERY_RESPONSE,
+)
+from .wire import Reader
 
 DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/wow-agent/names.json")
 
@@ -71,17 +76,18 @@ def parse_name_query_response(payload: bytes) -> dict:
     is a self-delimited packet with nothing after it, not fully consuming
     those bytes is harmless].
     """
-    guid, off = pk.unpack_packed_guid(payload, 0)
-    result = payload[off]; off += 1
+    r = Reader(payload, SMSG_NAME_QUERY_RESPONSE)
+    guid = r.packed_guid()
+    result = r.u8()
     info = {"guid": guid, "found": result == 0}
     if not info["found"]:
         return info
-    info["name"], off = pk.cstring(payload, off)
-    info["realm"], off = pk.cstring(payload, off)
-    info["race"] = payload[off]; off += 1
-    info["sex"] = payload[off]; off += 1
-    info["class_"] = payload[off]; off += 1
-    info["has_declined_names"] = bool(payload[off]); off += 1
+    info["name"] = r.cstring()
+    info["realm"] = r.cstring()
+    info["race"] = r.u8()
+    info["sex"] = r.u8()
+    info["class_"] = r.u8()
+    info["has_declined_names"] = bool(r.u8())
     return info
 
 
@@ -94,33 +100,33 @@ def parse_creature_query_response(payload: bytes) -> dict:
     uint32 killCredit[2], uint32 displayId[4], float hpMulti, float
     energyMulti, uint8 leader, uint32 questItems[6], uint32 movementInfoId.
     """
-    raw_entry = pk.u32(payload, 0); off = 4
+    r = Reader(payload, SMSG_CREATURE_QUERY_RESPONSE)
+    raw_entry = r.u32()
     found = not (raw_entry & 0x80000000)
     entry = raw_entry & 0x7FFFFFFF
     info = {"entry": entry, "found": found}
     if not found:
         return info
 
-    info["name"], off = pk.cstring(payload, off)
-    off += 3  # name2, name3, name4 — always empty uint8(0) each
-    info["subname"], off = pk.cstring(payload, off)
-    info["cursor_name"], off = pk.cstring(payload, off)
-    info["flags"] = pk.u32(payload, off); off += 4
-    creature_type = pk.u32(payload, off); off += 4
+    info["name"] = r.cstring()
+    r.skip(3)  # name2, name3, name4 — always empty uint8(0) each
+    info["subname"] = r.cstring()
+    info["cursor_name"] = r.cstring()
+    info["flags"] = r.u32()
+    creature_type = r.u32()
     info["creature_type"] = creature_type
     info["creature_type_name"] = CREATURE_TYPE_NAMES.get(creature_type)
-    info["creature_family"] = pk.u32(payload, off); off += 4
-    classification = pk.u32(payload, off); off += 4
+    info["creature_family"] = r.u32()
+    classification = r.u32()
     info["rank"] = CREATURE_RANK_NAMES.get(classification, f"rank_{classification}")
-    off += 4 * MAX_KILL_CREDIT
-    off += 4 * MAX_CREATURE_MODELS
-    off += 4 * 2  # hp_multi, energy_multi (float, float) — not needed by callers yet
-    off += 1  # leader (uint8/bool) — not needed by callers yet
-    off += 4 * MAX_CREATURE_QUEST_ITEMS
-    off += 4  # movement_info_id — not needed by callers yet
+    r.skip(4 * MAX_KILL_CREDIT)
+    r.skip(4 * MAX_CREATURE_MODELS)
+    r.skip(4 * 2)  # hp_multi, energy_multi (float, float) — not needed by callers yet
+    r.skip(1)  # leader (uint8/bool) — not needed by callers yet
+    r.skip(4 * MAX_CREATURE_QUEST_ITEMS)
+    r.skip(4)  # movement_info_id — not needed by callers yet
 
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    r.done()
     return info
 
 
@@ -132,26 +138,26 @@ def parse_gameobject_query_response(payload: bytes) -> dict:
     uint32 data[24] (type-specific params — not decoded here), float size,
     uint32 questItems[6].
     """
-    raw_entry = pk.u32(payload, 0); off = 4
+    r = Reader(payload, SMSG_GAMEOBJECT_QUERY_RESPONSE)
+    raw_entry = r.u32()
     found = not (raw_entry & 0x80000000)
     entry = raw_entry & 0x7FFFFFFF
     info = {"entry": entry, "found": found}
     if not found:
         return info
 
-    info["type"] = pk.u32(payload, off); off += 4
-    info["display_id"] = pk.u32(payload, off); off += 4
-    info["name"], off = pk.cstring(payload, off)
-    off += 3  # name2, name3, name4 — always empty
-    info["icon_name"], off = pk.cstring(payload, off)
-    info["cast_bar_caption"], off = pk.cstring(payload, off)
-    _, off = pk.cstring(payload, off)  # unk_string — not needed by callers yet
-    off += 4 * MAX_GAMEOBJECT_DATA
-    info["size"] = pk.f32(payload, off); off += 4
-    off += 4 * MAX_GAMEOBJECT_QUEST_ITEMS
+    info["type"] = r.u32()
+    info["display_id"] = r.u32()
+    info["name"] = r.cstring()
+    r.skip(3)  # name2, name3, name4 — always empty
+    info["icon_name"] = r.cstring()
+    info["cast_bar_caption"] = r.cstring()
+    r.cstring()  # unk_string — not needed by callers yet
+    r.skip(4 * MAX_GAMEOBJECT_DATA)
+    info["size"] = r.f32()
+    r.skip(4 * MAX_GAMEOBJECT_QUEST_ITEMS)
 
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    r.done()
     return info
 
 

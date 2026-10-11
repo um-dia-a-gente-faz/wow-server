@@ -13,6 +13,7 @@ from agent import perception as per
 from agent import session as se
 from agent.handlers import chat as hchat
 from agent.tests.builders import FakeSession
+from agent.wire import PacketTruncated
 
 GENERAL = "General - Eversong Woods"
 ME = 0x0000000000000042
@@ -82,6 +83,10 @@ class NotifyParseTest(unittest.TestCase):
         d = ch.parse_channel_notify(you_joined(GENERAL, 1, flags=0x18))
         self.assertEqual(d, {"notice": 2, "notice_name": "you_joined", "channel": GENERAL,
                              "flags": 0x18, "channel_id": 1, "instance_id": 0})
+
+    def test_channel_name_is_utf8(self):
+        d = ch.parse_channel_notify(notify(ch.CHAT_JOINED_NOTICE, "Comércio - Cidade", struct.pack("<Q", ME)))
+        self.assertEqual(d["channel"], "Comércio - Cidade")
 
     def test_you_left(self):
         d = ch.parse_channel_notify(notify(ch.CHAT_YOU_LEFT_NOTICE, "world", struct.pack("<iB", 0, 1)))
@@ -160,7 +165,7 @@ class SessionNotifyTest(unittest.TestCase):
 
     def test_malformed_notify_is_parse_error(self):
         sess = make_session()
-        with self.assertRaises(per.PerceptionParseError):
+        with self.assertRaises(PacketTruncated):
             sess._dispatch(ch.SMSG_CHANNEL_NOTIFY, notify(ch.CHAT_YOU_JOINED_NOTICE, GENERAL, b"\x00"))
 
     def test_incoming_channel_chat_lands_in_inbox(self):
