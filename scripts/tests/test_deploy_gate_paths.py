@@ -24,6 +24,8 @@ def game_patterns(script):
     body = [line.split("#")[0] for line in m.group(1).splitlines()]  # comments do not count
     if any(re.search(r";&\s*\S|;;(?!\s*esac\s*$)\s*\S", line) for line in body):
         raise AssertionError("two case arms on one line in stacks_for: put each arm on its own line")
+    if any(re.search(r"\besac\b\s*\S", line) for line in body):
+        raise AssertionError("code after esac on one line in stacks_for: put it on its own line")
     if sum(bool(re.search(r"\bcase\b", line)) for line in body) > 1:
         raise AssertionError("nested case in stacks_for: only the stacks_for case may be parsed")
     for line in body:
@@ -141,6 +143,15 @@ class GatePathsTest(unittest.TestCase):
                                    "        q/*) mon=1 ;;\n      esac ;;\n")
         with self.assertRaises(AssertionError):
             game_patterns(script)
+
+    # #567 review round 1: code after esac, and the end-of-line anchor of rule 6.
+    def test_code_after_esac_on_an_arm_line_raises(self):
+        for arm in ("foo/*) game=1; esac; game=1", "zip/*) mon=1 ;; esac foo/*) game=1 ;;",
+                    "foo/*) mon=1 ;; esac; game=1", "foo/*) mon=1 ;;esacx/*) game=1 ;;"):
+            with self.subTest(arm=arm):
+                script = SYNTHETIC.replace("      foo/*) game=1 ;;", "      " + arm)
+                with self.assertRaises(AssertionError):
+                    game_patterns(script)
 
 
 if __name__ == "__main__":
