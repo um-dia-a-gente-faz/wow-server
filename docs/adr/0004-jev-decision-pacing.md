@@ -247,3 +247,12 @@ Two traps worth knowing before writing your own, both hit while producing this A
 2. `choose_action()` makes **no network call** when the candidate set has one
    entry. A benchmark that reuses an idle snapshot measures nothing and reports
    zero latency — check the candidate count, or the numbers are silently empty.
+
+## Update 2026-10-11 (#454): the spend cap moved
+
+The cap wired for D4 (#213) is unchanged in behaviour: rolling hour, per agent,
+input+output tokens, breach fails the cycle as `budget_exhausted`. Its code now
+lives in `agent/tokenbudget.py` as `TokenBudget`, which `Brain` holds, so any
+decider can be given the same object and draw from one allowance. Only Jev calls
+are charged, as before; LLM tokens stay out of it. The HTTP transport moved to
+`agent/httpjson.py`; request bytes, timeouts and per-error handling are as they were.
