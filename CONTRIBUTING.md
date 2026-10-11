@@ -167,10 +167,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   size budget proves too weak. `BLE001` sites are the deliberate catch-and-log sites of the
   swallowed-error policy (#306): narrowing them is behaviour work, not lint work. `SIM115`
   is fixed by hand where the handle's lifetime is one read; long-lived handles are baselined.
-  Deploy paths are baselined, never edited, by a lint stage: a change to any of
-  `docker-compose.yml`, `tdb/*`, `tools/chat-feed/*`, `tools/common/*` (copied into the
-  chat-feed image, ADR 0014), `scripts/*` or `.github/*` makes `scripts/deploy.sh` recreate
-  the game stack and the worldserver, which disconnects players.
+  A lint stage baselines, and does not edit, two groups of paths. `docker-compose.yml`,
+  `tdb/*`, `tools/chat-feed/*` and `tools/common/*`: `scripts/deploy.sh` (`stacks_for`)
+  recreates the game stack, and with it the worldserver, when one of them changes
+  (`tools/common/*` is copied into the chat-feed image, ADR 0014). `scripts/*` and
+  `.github/*`: a PR touching them waits for the owner's go-ahead (`CLAUDE.md`, *Working model*).
 - **The baseline is keyed by path.** A file you move keeps its debt: move its line with
   it. A file that is new must be clean, and gets no line.
 - **An import other modules reach through this one** (`npc.CMSG_BUY_ITEM`) is a re-export,
