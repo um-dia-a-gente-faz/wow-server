@@ -19,7 +19,7 @@ ExecStart=/usr/bin/python3 /opt/wow-server/tools/agent-runner/runner.py
 Restart=on-failure
 ```
 
-`.env` needs `AGENT_RUNNER_TOKEN` (and `AGENT_PASSWORD` for the agents). The
+`.env` needs `AGENT_RUNNER_TOKEN` (and `AGENT_PASSWORD` and `WOW_AGENT_TAG`, the agent image's SHA tag, for the agents). The
 runner refuses to start without a token. Locally:
 `AGENT_RUNNER_TOKEN=x python3 tools/agent-runner/runner.py`.
 
