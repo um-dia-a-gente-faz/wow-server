@@ -2,12 +2,14 @@
 (PIN 0x01, matrix 0x02, authenticator token 0x04) is refused before any proof byte or
 SRP6 work, and a flags=0 challenge still reaches the proof step."""
 
+import struct
 import unittest
 from unittest import mock
 
 from agent import __main__ as main_mod
 from agent import auth
 from agent.auth import AuthRejected, AuthSecurityUnsupported
+from agent.wire import PacketTruncated
 
 USERNAME = "playerx"
 PASSWORD = "hunter2"
@@ -92,6 +94,29 @@ class SecurityFlagsTest(unittest.TestCase):
         self.assertNotIsInstance(cm.exception, AuthSecurityUnsupported)
         fake_srp6.assert_called_once()
         self.assertEqual(sock.sent[1][0], 0x01)  # LOGON_PROOF was sent
+
+
+class TruncatedReplyTest(unittest.TestCase):
+    """#517: the challenge and realm-list parsers read through wire.Reader, so a reply whose
+    lengths run past its bytes raises PacketTruncated at the failed read, not IndexError."""
+
+    def test_challenge_with_a_group_length_past_the_reply_is_truncated(self):
+        bad = bytearray(challenge(0x00))
+        bad[35] = 0xFF  # g_len: 255 bytes claimed, 83 left in the 119-byte reply
+        with mock.patch.object(auth, "compute_srp6", side_effect=no_srp6):
+            with self.assertRaises(PacketTruncated) as cm:
+                auth._handshake(FakeSocket(bytes(bad)), USERNAME, PASSWORD)
+        self.assertEqual((cm.exception.offset, cm.exception.wanted), (36, 255))
+
+    def test_realm_list_with_a_realm_missing_its_fields_is_truncated(self):
+        srp = mock.Mock(return_value=(b"A" * 32, b"M" * 20, b"C" * 20, b"K" * 40))
+        body = struct.pack('<IH', 0, 1)  # unknown uint32, one realm, but no realm record
+        sock = FakeSocket(challenge(0x00), bytes([0x01, 0x00]) + bytes(30),
+                          bytes([0x10]) + struct.pack('<H', len(body)) + body)
+        with mock.patch.object(auth, "compute_srp6", srp):
+            with self.assertRaises(PacketTruncated) as cm:
+                auth._handshake(sock, USERNAME, PASSWORD)
+        self.assertEqual((cm.exception.offset, cm.exception.wanted), (6, 1))
 
 
 class SupervisorSecurityFlagsTest(unittest.TestCase):

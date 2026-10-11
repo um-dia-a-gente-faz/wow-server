@@ -30,8 +30,8 @@ FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 ITERATIONS = int(os.environ.get("FUZZ_ITERATIONS", "20"))  # per seed; nightly raises it
 MAX_SECONDS = 1.0
 MAX_BYTES = 32 * 1024 * 1024
-# A malformed packet may raise ProtocolError (the router converts raw struct/index/value/zlib
-# errors, #364); anything else is a bug. An opcode that cannot be fixed yet goes here with its
+# A malformed packet may raise ProtocolError (parsers read through wire.Reader, #517; the router
+# no longer converts raw errors); anything else is a bug. An opcode that cannot be fixed yet goes here with its
 # issue number, so the list can only shrink.
 KNOWN_EXCEPTIONS: dict[int, str] = {}
 EXTREME = (b'\xff\xff\xff\xff', b'\x00\x00\x00\x80', b'\xff\xff\x00\x00', b'\x00\x00\x00\x00')

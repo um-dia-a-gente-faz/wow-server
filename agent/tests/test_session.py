@@ -980,6 +980,24 @@ class CharEnumRealPayloadTest(unittest.TestCase):
         self.assertEqual(first["map"], 530)
         self.assertAlmostEqual(first["x"], 9918.8, places=1)
 
+    def test_every_cut_of_the_payload_raises_packet_truncated(self):
+        # #517: enum_characters reads through wire.Reader, so no cut point escapes as IndexError.
+        payload = self.FIXTURE.read_bytes()
+        for cut in range(len(payload)):
+            with self.subTest(cut=cut):
+                sess = make_session(server_packet(se.SMSG_CHAR_ENUM, payload[:cut]))
+                with self.assertRaises(PacketTruncated):
+                    sess.enum_characters()
+
+    def test_truncation_names_the_read_that_failed(self):
+        # count=1, one guid, then the name runs to the end of the payload with no NUL.
+        payload = b'\x01' + struct.pack('<Q', 5) + b'Name'
+        sess = make_session(server_packet(se.SMSG_CHAR_ENUM, payload))
+        with self.assertRaises(PacketTruncated) as cm:
+            sess.enum_characters()
+        self.assertEqual((cm.exception.opcode, cm.exception.offset, cm.exception.wanted),
+                         (se.SMSG_CHAR_ENUM, 9, 1))
+
 
 if __name__ == '__main__':
     unittest.main()
