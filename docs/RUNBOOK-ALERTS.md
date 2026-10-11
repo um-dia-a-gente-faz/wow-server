@@ -63,8 +63,9 @@ fire this rule.
 
 ## AgentReconnectLoop
 
-**What it means.** One agent logged more than 5 reconnect waits in 15 minutes, for 15 minutes. The
-supervisor (`agent/__main__.py`, `_supervise_connection`) waits between attempts and counts each
+**What it means.** One agent logged at least 2 reconnect waits in 15 minutes (`increase(...[15m]) > 1`)
+for 25 minutes. An agent that keeps failing logs waits for as long as it keeps failing, so this rule
+fires on a sustained failure, not on a blip. The supervisor (`agent/__main__.py`, `_supervise_connection`) waits between attempts and counts each
 wait in `wow_agent_reconnect_attempts_total{agent,reason}`. The `reason` label says why:
 `connect_failed` (login or connect raised), `auth_rejected` (a transient auth refusal),
 `disconnected` (a drop after a good connect). A permanent refusal stops the agent and is not counted,
@@ -79,27 +80,44 @@ so a stopped container shows up in the logs, not here.
 **Tune or silence.** If restarts after a deploy are normal, raise the threshold. The count is per
 agent, so a fleet-wide cause is the storm alert below, not this one.
 
-**Threshold.** The backoff starts at 5 s, doubles, and caps at 5 min. An agent that never gets back
-in logs one wait per step, so more than 5 waits in 15 minutes means several minutes of continuous
-failure. Waits are jittered, so the count is approximate.
+**Threshold.** The backoff starts at 5 s, doubles, and caps at 5 min; each wait is jittered between
+half and all of its step. Simulated from the supervisor's model (`agent/__main__.py`,
+`_supervise_connection`, a 10 s connect timeout per failed attempt), not run against Prometheus:
+
+- **(a) An agent failing forever.** Waits are counted at 10, 25, 45, 75, 125, 215, 385 and 695 s
+  (all-maximum jitter). From 25 s the trailing 15 minutes always hold two or more waits; at the 5-minute
+  cap the steady state is 2 to 6 waits per 15 minutes, never fewer than 2. The expression is therefore
+  continuously true and the alert fires at about 1525 s, 25 minutes after the second wait.
+- **(b) One 5-minute outage (300 s).** The waits fall inside the outage and the agent reconnects at 300 s.
+  The expression is true from 25 s until 1025 s to 1038 s (all-maximum and all-minimum jitter), and at
+  most 1077 s over 400 simulated draws. That is under 25 minutes, so the alert stays silent.
+- **(c) One 10-minute outage (600 s).** At most 1309 s over the same draws, still under 1500 s, so it stays
+  silent with about 190 s to spare.
 
 ## AgentReconnectStorm
 
-**What it means.** More than 50 reconnect waits across all agents in 10 minutes, for 5 minutes. The
+**What it means.** More than 50 reconnect waits across all agents in 10 minutes, for 15 minutes. The
 cause is shared: the worldserver, auth or the network. Per-agent rules stay quiet when each agent
 logs only a few waits.
 
 **Check first.**
 
 1. Realm health: Grafana, "WoW — Saúde do Realm". Is the worldserver up and are players counted?
-2. On VM201's host: `docker compose ps` in `/opt/wow-server` (worldserver and auth containers).
+2. On the wow-server VM (192.168.1.64): `docker compose ps` in `/opt/wow-server` (worldserver and auth containers).
 3. A sample agent's log, `docker logs --since 15m wow-agent-<name>`, for the error text all agents share.
 
 **Tune or silence.** Critical, so it goes to a person. Do not restart the worldserver from an alert
 response; the owner decides (`CLAUDE.md`).
 
-**Threshold.** 50 waits in 10 minutes is about two per agent across 25 agents. It is a fleet signal,
-so it sums across agents.
+**Threshold.** More than 50 waits in 10 minutes. The threshold assumes about 20 or more failing agents:
+a failing agent logs about 2.3 to 3.1 waits per 10 minutes at the cap, so more than 50 needs roughly
+16 to 22 agents failing together. Fewer agents than that are the per-agent rule's job.
+
+`for: 15m` is longer than the 10-minute window on purpose. The counts stay inside the window for 10
+minutes after the agents are back: a 3, 5 or 10-minute outage holds `> 50` for 626, 661 and 787 s, and a
+30 s drop of the whole fleet holds it for about 595 s. With `for: 5m` every worldserver restart that
+drops the fleet would page after the agents had already recovered. With 15 minutes all three cases stay
+silent, and a lasting outage still fires.
 
 ## AgentNoDecisions
 
@@ -111,12 +129,14 @@ audit path is broken (the pull from `wow-agents` or the textfile cron). Because 
 
 **Check first.**
 
-1. On VM201, the newest row: `tail -n 3 /opt/wow-server-metrics/audit/<agent>/$(date -u +%F).jsonl`.
+1. On the wow-server VM (192.168.1.64), the newest row:
+   `tail -n 3 /opt/wow-server-metrics/audit/<agent>/$(date -u +%F).jsonl`.
    If its `ts` is recent, the agent is fine and the path is at fault.
 2. On the `wow-agents` guest: `docker ps -a --filter name=wow-agent-<name>` and
    `docker logs --tail 100 wow-agent-<name>`.
-3. `scripts/wow-agents/audit-pull-status.sh` for the last pull, and the mtime of
-   `/opt/wow-server-metrics/textfile/wow_agent.prom` (the textfile cron, `monitoring/README-agent-metrics.md`).
+3. On the wow-server VM (192.168.1.64): `scripts/wow-agents/audit-pull-status.sh` for the last pull, and
+   the mtime of `/opt/wow-server-metrics/textfile/wow_agent.prom` (the textfile cron,
+   `monitoring/README-agent-metrics.md`).
 
 **Tune or silence.** The windows are the cost of the signal: a stopped agent fires after about 30
 minutes, which suits a player-facing realm. Do not shorten them below the textfile cron period.
@@ -177,11 +197,11 @@ never fires. An agent whose every Jev call fails has errors but no successes, so
 
 **Check first.**
 
-1. `grep -h -o 'jev_status[^,]*' /opt/wow-server-metrics/audit/<agent>/$(date -u +%F).jsonl | sort | uniq -c`
+1. On the wow-server VM (192.168.1.64): `grep -h -o 'jev_status[^,]*' /opt/wow-server-metrics/audit/<agent>/$(date -u +%F).jsonl | sort | uniq -c`
    for the status mix today.
 2. Grafana, "Jev — decision usage", panel "Jev errors / sec".
-3. For `budget_exhausted`, the Jev budget setting in `/opt/wow-server/.env`. Read the key only; never
-   paste its value anywhere.
+3. For `budget_exhausted`, the Jev budget setting in `/opt/wow-server/.env` on the wow-server VM. Read
+   the key only; never paste its value anywhere.
 
 **Tune or silence.** Failed Jev calls fall back to the LLM brain (`docs/AGENT-DIRECTION.md`), so this
 is a cost and quality signal, not an outage. Whether to change the brain is the owner's decision.
@@ -192,23 +212,28 @@ provider blip.
 ## JevCostBurnHigh
 
 **What it means.** The fleet's reported Jev cost (`wow_agent_jev_cost_usd_total`, summed over
-agents) rose by more than 1 USD in the last hour, for 15 minutes. It is the provider's reported
-cost in the retained audit rows, not a bill.
+agents) rose by more than 1 USD in the last hour, for 15 minutes, with no counter reset in that hour.
+It is the provider's reported cost in the retained audit rows, not a bill.
 
 **Check first.**
 
 1. Grafana, "Jev — decision usage", panels "Spend total, last 24h" and "Spend per agent, last 24h".
 2. Which agent drives it: the per-agent panel, then its audit rows for today.
-3. Whether a rotation happened just before the spike (below).
+3. Whether a retention drop happened in the last hour (below). If so the rule is silent by design.
 
-**Rotation caveat.** Retention drops old rows, so the counter can fall and Prometheus reads the drop
-as a reset. `increase()` then counts the whole remaining window as new spend. A spike at rotation
-time is not spend (`monitoring/README-agent-metrics.md`).
+**Retention caveat.** Retention deletes audit rows older than the window (14 days by default), so once
+a day an agent's counter falls. Prometheus reads a fall as a counter reset, and `increase()` then counts
+the whole remaining retained total as new spend. Without a guard the rule would page daily for about an
+hour (`monitoring/README-agent-metrics.md`). The expression therefore adds
+`and sum(resets(...[1h])) == 0`: for up to 1 hour after any agent's drop, the rule is silent. The same
+guard also silences real spend in that hour, which is the trade for not paging on every rotation; read
+the panels for that hour instead.
 
 **Tune or silence.** The owner decides on the brain or the budget. The threshold is a starting value;
 compare it with the expected daily spend before changing it.
 
-**Threshold.** More than 1 USD in an hour across the fleet, sustained 15 minutes.
+**Threshold.** More than 1 USD in an hour across the fleet, sustained 15 minutes, and no counter reset
+in the same hour.
 
 ## WowExporterDown
 
@@ -219,10 +244,10 @@ failed. Both fire this rule. While it fires, the game metrics and the backup met
 
 **Check first.**
 
-1. On the VM, in `/opt/wow-server`: `docker compose -f monitoring/docker-compose.yml ps wow-exporter`,
-   then `docker logs --tail 50 wow-exporter`.
+1. On the wow-server VM (192.168.1.64), in `/opt/wow-server`:
+   `docker compose -f monitoring/docker-compose.yml ps wow-exporter`, then `docker logs --tail 50 wow-exporter`.
 2. If the container is up but `wow_exporter_up` is 0: is the `trinitycore-db` container up?
-   (`docker compose ps` in `/opt/wow-server`.)
+   (`docker compose ps` in `/opt/wow-server` on the wow-server VM.)
 3. Prometheus on VM201, the target for the wow-exporter job on port 9300 (`/api/v1/targets`).
 
 **Tune or silence.** Critical, and it should reach a person. Do not silence it while the game
@@ -238,8 +263,8 @@ there is none (`wow_backup_newest_timestamp_seconds` is 0), or the metric is mis
 
 **Check first.**
 
-1. `ls -lt /opt/wow-server-backups | head` on the VM: is there a dump from the last day?
-2. `tail -n 50 /var/log/wow-backup.log`: the nightly job is `scripts/backup-db.sh`, scheduled by
+1. On the wow-server VM (192.168.1.64): `ls -lt /opt/wow-server-backups | head`. Is there a dump from the last day?
+2. On the wow-server VM: `tail -n 50 /var/log/wow-backup.log`. The nightly job is `scripts/backup-db.sh`, scheduled by
    `/etc/cron.d/wow-backup` at 04:30 (`docs/DEPLOYMENT.md`).
 3. Grafana, "WoW — Saúde do Realm", the "Backups" row.
 

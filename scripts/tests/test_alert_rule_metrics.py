@@ -115,13 +115,17 @@ def runbook_problems(rules_text: str, runbook_text: str) -> list[str]:
     return out
 
 
+BLOCK_INDICATOR = re.compile(r"[|>][+-]?\d*[+-]?")  # a block scalar header, as the whole value
+
+
 def yaml_problems(text: str) -> list[str]:
     """The subset the rules file uses, checked by line (no YAML library in CI): no tabs, indents in
-    steps of two, quoted scalars and flow maps closed, and no expr: left empty."""
+    steps of two, quoted scalars and flow maps closed, and each expr: holds its whole query on its
+    line (no empty value, no block scalar header, no continuation line indented under it)."""
     out = []
-    for n, line in enumerate(text.splitlines(), 1):
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
+    lines = text.splitlines()
+    content = [(n, line) for n, line in enumerate(lines, 1) if line.strip() and not line.lstrip().startswith("#")]
+    for i, (n, line) in enumerate(content):
         if "\t" in line:
             out.append(f"line {n}: tab")
         if (len(line) - len(line.lstrip(" "))) % 2:
@@ -130,8 +134,18 @@ def yaml_problems(text: str) -> list[str]:
             out.append(f"line {n}: unclosed quote")
         if line.count("{") != line.count("}"):
             out.append(f"line {n}: unbalanced braces")
-        if re.match(r"\s*expr:\s*$", line):
+        m = re.match(r"(\s*)expr:\s*(.*?)\s*$", line)
+        if not m:
+            continue
+        value = m.group(2)
+        if not value:
             out.append(f"line {n}: expr is empty")
+        elif BLOCK_INDICATOR.fullmatch(value):
+            out.append(f"line {n}: expr is a block scalar")
+        if i + 1 < len(content):
+            next_line = content[i + 1][1]
+            if len(next_line) - len(next_line.lstrip(" ")) > len(m.group(1)):
+                out.append(f"line {n}: expr continues on the next line")
     return out
 
 
@@ -168,7 +182,7 @@ RULE_TEMPLATE = """groups:
   - name: synthetic
     rules:
       - alert: {name}
-        expr: up == 0
+        expr: {expr}
         for: 5m
         labels: {{severity: warning}}
         annotations:
@@ -178,8 +192,8 @@ RULE_TEMPLATE = """groups:
 """
 
 
-def synthetic(name="AgentX", runbook="docs/RUNBOOK-ALERTS.md#agentx", without=None) -> str:
-    lines = RULE_TEMPLATE.format(name=name, runbook=runbook).splitlines()
+def synthetic(name="AgentX", runbook="docs/RUNBOOK-ALERTS.md#agentx", without=None, expr="up == 0") -> str:
+    lines = RULE_TEMPLATE.format(name=name, runbook=runbook, expr=expr).splitlines()
     return "\n".join(line for line in lines if not without or not line.strip().startswith(f"{without}:")) + "\n"
 
 
@@ -198,6 +212,25 @@ class AlertRuleCheckerSelfTest(unittest.TestCase):
 
     def test_duplicate_name_is_reported(self):
         self.assertEqual(name_problems(synthetic() + synthetic()), ["AgentX: name used by more than one rule"])
+
+    def test_folded_block_scalar_expr_is_reported(self):
+        # reviewer mutation 1: `expr: >-` with the query on the next line
+        problems = yaml_problems(synthetic(expr=">-\n          up == 0"))
+        self.assertIn("line 5: expr is a block scalar", problems)
+
+    def test_plain_continuation_line_is_reported(self):
+        # reviewer mutation 2: a plain multi-line scalar
+        problems = yaml_problems(synthetic(expr="up == 0\n          or up == 1"))
+        self.assertIn("line 5: expr continues on the next line", problems)
+
+    def test_continuation_hiding_a_misspelled_metric_is_reported(self):
+        # reviewer mutation 3: the drift guard reads only the first line, so this name escapes it
+        expr = "sum by (agent) (rate(wow_agent_router_truncated_total[10m])) > 0\n          or wow_agent_router_truncatedd_total > 0"
+        problems = yaml_problems(synthetic(expr=expr))
+        self.assertIn("line 5: expr continues on the next line", problems)
+
+    def test_one_line_expr_with_a_comparison_is_not_reported(self):
+        self.assertEqual(yaml_problems(synthetic(expr="up > 0")), [])
 
 
 if __name__ == "__main__":

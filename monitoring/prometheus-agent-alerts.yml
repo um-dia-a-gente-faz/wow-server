@@ -19,20 +19,20 @@ groups:
           description: "Job wow_agent_http has no healthy target for 15m: wrong host or port in prometheus-agents-scrape.yml, or the whole fleet is stopped."
           runbook: "docs/RUNBOOK-ALERTS.md#agentmetricsscrapedown"
       - alert: AgentReconnectLoop
-        expr: sum by (agent) (increase(wow_agent_reconnect_attempts_total[15m])) > 5
-        for: 15m
+        expr: sum by (agent) (increase(wow_agent_reconnect_attempts_total[15m])) > 1
+        for: 25m
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.agent }} keeps reconnecting"
-          description: "More than 5 reconnect waits in 15m, for 15m: the agent cannot hold its session. The reason label says why (connect_failed, auth_rejected, disconnected)."
+          description: "At least 2 reconnect waits in 15m, for 25m: the agent has not held a session for 25m. Query wow_agent_reconnect_attempts_total by reason to see why."
           runbook: "docs/RUNBOOK-ALERTS.md#agentreconnectloop"
       - alert: AgentReconnectStorm
         expr: sum(increase(wow_agent_reconnect_attempts_total[10m])) > 50
-        for: 5m
+        for: 15m
         labels: {severity: critical}
         annotations:
           summary: "Reconnect storm across the agent fleet"
-          description: "More than 50 reconnect waits across all agents in 10m, for 5m: a realm-side or auth-side outage, not one bad agent."
+          description: "More than 50 reconnect waits across all agents in 10m, for 15m: a realm-side or auth-side outage across about 20 or more failing agents, not one bad agent."
           runbook: "docs/RUNBOOK-ALERTS.md#agentreconnectstorm"
       - alert: AgentNoDecisions
         expr: sum by (agent) (rate(wow_agent_audit_cycles_total[15m])) == 0
@@ -48,7 +48,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.agent }} has packet handlers raising errors"
-          description: "A packet handler raised a non-truncation exception for 10m. The opcode label names the packet. Read the agent log for the traceback."
+          description: "A packet handler raised a non-truncation exception for 10m. Query wow_agent_router_handler_errors_total by opcode to see which packet. Read the agent log for the traceback."
           runbook: "docs/RUNBOOK-ALERTS.md#agentrouterhandlererrors"
       - alert: AgentRouterTruncatedPackets
         expr: sum by (agent) (rate(wow_agent_router_truncated_total[10m])) > 0
@@ -56,7 +56,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.agent }} is receiving truncated packets"
-          description: "A handler raised PacketTruncated for 10m: the parser read past the end of a packet. The opcode label names the packet, which usually means a layout drift."
+          description: "A handler raised PacketTruncated for 10m: the parser read past the end of a packet. Query wow_agent_router_truncated_total by opcode to see which packet; this usually means a layout drift."
           runbook: "docs/RUNBOOK-ALERTS.md#agentroutertruncatedpackets"
       - alert: JevErrorRatioHigh
         expr: sum by (agent) (rate(wow_agent_jev_errors_total[15m])) / sum by (agent) (rate(wow_agent_jev_calls_total[15m])) > 0.2
@@ -64,15 +64,15 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.agent }}: Jev errors exceed 20% of successful calls"
-          description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. The status label gives the class (http_4xx, http_5xx, error, budget_exhausted)."
+          description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. Query wow_agent_jev_errors_total by status for the class (http_4xx, http_5xx, error, budget_exhausted)."
           runbook: "docs/RUNBOOK-ALERTS.md#jeverrorratiohigh"
       - alert: JevCostBurnHigh
-        expr: sum(increase(wow_agent_jev_cost_usd_total[1h])) > 1
+        expr: sum(increase(wow_agent_jev_cost_usd_total[1h])) > 1 and sum(resets(wow_agent_jev_cost_usd_total[1h])) == 0
         for: 15m
         labels: {severity: warning}
         annotations:
           summary: "Jev spend is above 1 USD in the last hour"
-          description: "The fleet's reported Jev cost rose by more than 1 USD in 1h, for 15m. The cost is the provider's report in retained audit rows, not a bill."
+          description: "The fleet's reported Jev cost rose by more than 1 USD in 1h, for 15m, with no counter reset in that hour. The rule is silent for up to 1h after an audit retention drop. The cost is the provider's report in retained audit rows, not a bill."
           runbook: "docs/RUNBOOK-ALERTS.md#jevcostburnhigh"
   - name: wow-backup
     rules:
