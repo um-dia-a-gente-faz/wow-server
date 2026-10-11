@@ -4,7 +4,8 @@ A handler takes a Request and returns `(status, body)` or `(status, body, ctype,
 body is a dict/list (sent as JSON), str or bytes. app.Handler is the only code that
 touches a socket.
 """
-from typing import Callable, Mapping, NamedTuple
+from typing import NamedTuple
+from collections.abc import Callable, Mapping
 
 NO_STORE = "no-store"
 

@@ -359,7 +359,7 @@ class _Handler(BaseHTTPRequestHandler):
                     out.append(("decision", d))
                 for kind, payload in out:
                     data = json.dumps(_jsonable(payload), separators=(",", ":"))
-                    self.wfile.write(f"event: {kind}\ndata: {data}\n\n".encode("utf-8"))
+                    self.wfile.write(f"event: {kind}\ndata: {data}\n\n".encode())
                 if out:
                     self.wfile.flush()
                     last_write = time.monotonic()

@@ -11,8 +11,7 @@ A scenario asserts two things:
 Add one after a live incident: copy the snapshot, state what must never
 happen. `known_gap=True` marks a scenario the code does not yet satisfy; the
 test then asserts it still fails, so fixing the code forces the flag off.
-ponytail: model tier (N samples per scenario against Jev/LLM) and the audit
-record -> scenario capture command are not built yet.
+The model tier (N samples per scenario against Jev/LLM) is #541.
 """
 
 import unittest
@@ -20,6 +19,7 @@ import unittest
 from agent import brain as br
 from agent import candidates as cand
 from agent import death  # noqa: F401  registers release_spirit/reclaim_corpse
+from agent.handles import UnknownHandle
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
 
 ME = 1
@@ -47,6 +47,10 @@ def first_is(action, **params):
 
 def not_offering_guid(guid):
     return lambda cs: all(c["params"].get("guid") != guid for c in cs)
+
+
+def offering_attack_on(guid):
+    return lambda cs: any(c["action"] == "auto_attack" and c["params"].get("guid") == guid for c in cs)
 
 
 def failed(action, args, error):
@@ -113,11 +117,15 @@ SCENARIOS = {
         history=[failed("loot", {"guid": 10}, "bad params: guid")]
         + [{"action": "idle", "args": {}, "ok": True, "changed": True}] * 4,
         chosen=first_is("loot", guid=10)),
-    # Gap found writing this suite: nothing stops an unprovoked pull at 20% HP
-    # when no consumable is on hand. Drop known_gap when candidates.py fixes it.
     "low_health_does_not_pull_a_mob": dict(
         snapshot=snap([unit(10, 4, level=1)], me=HURT),
-        offered=not_offering_guid(10), known_gap=True),
+        offered=not_offering_guid(10)),
+    "hurt_still_fights_back": dict(  # the rule stops pulls, not defence
+        snapshot=snap([unit(10, 4, level=1, target_guid=ME, in_combat=True)], me=HURT),
+        offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),
+    "healthy_pulls_the_idle_mob": dict(
+        snapshot=snap([unit(10, 4, level=1)]),
+        offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),
 }
 
 
@@ -129,10 +137,30 @@ class FirstCandidateJev:
         return options[0]["action"], options[0]["params"]
 
 
+class _Handles:
+    """Stands in for agent.handles.HandleMap: resolves the handle strings of a captured scenario
+    through its `handles` literal (handle -> GUID), as the live map resolves its own."""
+
+    def __init__(self, table):
+        self.table = table
+
+    def resolve(self, handle):
+        if handle not in self.table:
+            raise UnknownHandle(f"unknown handle {handle!r}")
+        return self.table[handle]
+
+
+def offered_for(s):
+    """The candidate list the brain is given for scenario `s` (`my_guid` and `handles` optional)."""
+    handles = _Handles(s["handles"]) if "handles" in s else None
+    return cand.generate(s["snapshot"], my_guid=s.get("my_guid", ME), history=s.get("history"), handles=handles)
+
+
 def violations(s):
     snapshot, history = s["snapshot"], s.get("history")
-    offered = cand.generate(snapshot, my_guid=ME, history=history)
-    d = br.Brain(jev=FirstCandidateJev()).decide(snapshot, my_guid=ME, history=history)
+    offered = offered_for(s)
+    d = br.Brain(jev=FirstCandidateJev()).decide(snapshot, my_guid=s.get("my_guid", ME), history=history,
+                                                 handles=_Handles(s["handles"]) if "handles" in s else None)
     out = []
     if "offered" in s and not s["offered"](offered):
         out.append(f"offered {[c['id'] for c in offered]}")

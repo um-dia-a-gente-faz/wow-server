@@ -58,7 +58,7 @@ def make_session(position=(530, 10.0, 20.0, 30.0, 0.0), real_sleep=None):
                            unexpected_disconnect=False, _sent=sent,
                            _send_packet=lambda opcode, payload=b"": sent.append(opcode))
     fc = FakeClock()
-    sess._mover = mv.Mover(sess, ws, clock=fc.clock, sleep=real_sleep or fc.sleep)
+    sess.mover = mv.Mover(sess, ws, clock=fc.clock, sleep=real_sleep or fc.sleep)
     return sess
 
 
@@ -193,7 +193,7 @@ class WalkTest(unittest.TestCase):
         sess = make_session(real_sleep=lambda dt: time.sleep(0.02))
         # This test uses real sleeping, so its movement clock must advance in
         # real time too (the default fake clock only advances via fake sleep).
-        sess._mover._clock = time.monotonic
+        sess.mover._clock = time.monotonic
         started = time.monotonic()
         status, out = control.walk(make_observer(sess), {"x": 1000.0, "y": 20.0, "timeout_s": 1})
         self.assertLess(time.monotonic() - started, 5)

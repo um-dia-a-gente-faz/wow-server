@@ -231,7 +231,7 @@ class _BrainSeamCase(ServerCase):
         from types import SimpleNamespace
         from unittest import mock
         world = per.WorldState()
-        sess = SimpleNamespace(_send_packet=lambda *a: None)
+        sess = SimpleNamespace(_send_packet=lambda *a: None, spellbook=())
         action = _Recording()
         records = []
         audit = SimpleNamespace(record=lambda **kw: records.append(kw))

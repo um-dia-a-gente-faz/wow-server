@@ -13,6 +13,7 @@ import logging
 import time
 
 from . import actions as ac
+from . import ports
 from . import spells as sp
 from . import trade as tr
 from . import update_fields as uf
@@ -49,14 +50,14 @@ def _maybe_cancel_idle_trade(session, world):
     trade["last_activity_at"] = time.monotonic()
 
 
-def _self_status(session, world, snapshot: Snapshot) -> None:
+def _self_status(session: ports.PlayerView, world, snapshot: Snapshot) -> None:
     """Add own level/health/power/xp (`me`) and castable spells (`spells`) to
     `snapshot`: the goal prompt needs them ("mobs of your level", "rest when
     low", "cast_spell from your spellbook") and WorldState.snapshot() doesn't
     carry them."""
     me = world.get_my_object()
     if me is not None:
-        mine: Me = {"level": me.level, "class_id": getattr(session, "class_", None)}
+        mine: Me = {"level": me.level, "class_id": session.class_}
         if me.health is not None and me.max_health:
             mine["health"] = f"{me.health}/{me.max_health}"
         for name, cur in (me.power or {}).items():
@@ -69,7 +70,7 @@ def _self_status(session, world, snapshot: Snapshot) -> None:
         if uf.PLAYER_NEXT_LEVEL_XP in raw:
             mine["next_level_xp"] = raw[uf.PLAYER_NEXT_LEVEL_XP]
         snapshot["me"] = mine
-    known = getattr(session, "spellbook", None) or ()
+    known = session.spellbook or ()
     # Only spells agent.spells has metadata for: the raw spellbook is
     # mostly passives (languages, weapon skills) that would waste tokens.
     spell_list: list[KnownSpell] = [

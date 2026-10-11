@@ -20,7 +20,8 @@ AREA = int(sys.argv[1]) if len(sys.argv) > 1 else 3524
 
 
 def read_dbc(path):
-    d = open(path, "rb").read()
+    with open(path, "rb") as f:
+        d = f.read()
     _, nrec, nf, _, ss = struct.unpack("<4sIIII", d[:20])
     pos, recs = 20, []
     for _ in range(nrec):
@@ -42,7 +43,9 @@ W, H = im.size
 px = im.load()
 
 pts = []
-for tok in open(PTS).read().strip().split(";"):
+with open(PTS) as f:
+    points_text = f.read()
+for tok in points_text.strip().split(";"):
     if not tok.strip():
         continue
     a, b = tok.split(",")[:2]

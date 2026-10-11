@@ -35,8 +35,8 @@ Selection rules, briefly: units attacking the agent come first; lootable
 corpses and quest givers worth visiting (quest available / reward ready)
 within APPROACH_MAX_YD; unprovoked attack options only for units with no
 npc_flags, not in someone else's fight, and at most ATTACK_LEVEL_MARGIN
-levels above the agent (so none at all while the agent's own level is
-unknown). Anything out of reach becomes a short `move_towards` hop.
+levels above the agent (none at all while its level is unknown; while hurt
+(needs_health) only units already in combat). Anything out of reach becomes a short `move_towards` hop.
 
 `snapshot` is what agent/think.py builds: `world.snapshot(...)` updated with
 `_self_status()` (the `me` key). `my_guid` (session.my_guid / world.my_guid)
@@ -74,16 +74,16 @@ reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
 chosen candidate is executed, so a stale candidate fails safely.
 """
 
-import logging
 from collections.abc import Callable
 from typing import Literal
 
 from .handles import UnknownHandle
 from . import action_names as A, item_compare
 from .action_specs import cap_of
+from .candidate_history import finish, history_effects
+from .candidate_history import HISTORY_DEMOTE_REPEATS, HISTORY_DROP_WINDOW  # noqa: F401 (re-exported)
 from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
 from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
-from .metrics import swallowed
 
 MAX_CANDIDATES = 15
 
@@ -455,16 +455,16 @@ def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
 
 @offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
 def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
-    my_guid, my_level = ctx.my_guid, ctx.my_level
     targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
-               and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none")
-               and _dist(u) <= APPROACH_MAX_YD
+               and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
+               # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays)
+               and not (ctx.needs_health and not u.get("in_combat"))
                # unprovoked pulls only when both levels are known and the mob isn't too strong
-               and my_level is not None and isinstance(u.get("level"), int)
-               and u["level"] <= my_level + ATTACK_LEVEL_MARGIN
+               and ctx.my_level is not None and isinstance(u.get("level"), int)
+               and u["level"] <= ctx.my_level + ATTACK_LEVEL_MARGIN
                # someone else's fight: not ours to take (only knowable with my_guid)
-               and not (my_guid is not None and u.get("in_combat")
-                        and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, my_guid))]
+               and not (ctx.my_guid is not None and u.get("in_combat")
+                        and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, ctx.my_guid))]
     for u in targets[:MAX_ATTACK]:
         out.append(_engage(u, ""))
 
@@ -514,87 +514,11 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
     for provider in DEAD_PROVIDERS if ctx.dead else ALIVE_PROVIDERS:
         provider(ctx, out)
     if ctx.dead:  # history is about the living options
-        return _finish(out, idle, limit)
+        return finish(out, idle, limit)
 
-    drop, demote = _history_effects(history)
+    drop, demote = history_effects(history, candidate)
     # Params carry the snapshot's own guid values, as do threat_guids.
     protected = {c["id"] for c in out
                  if c["params"].get("guid") in ctx.threat_guids
                  or c["params"].get("target_guid") in ctx.threat_guids}
-    return _finish(out, idle, limit, drop, demote, protected, notes)
-
-
-HISTORY_DROP_WINDOW = 4     # only the most recent entries can drop an option
-HISTORY_DEMOTE_REPEATS = 2  # consecutive no-effect successes before demotion
-# Error text (agent/think.py, agent/handles.py) that retrying the same args cannot fix.
-_DETERMINISTIC_ERRORS = ("missing required params", "bad params", "unknown handle", "unknown action")
-
-
-def _history_effects(history: list[ActionRecord] | None) -> tuple[dict, dict]:
-    """({id: reason} to drop, {id: reason} to demote) from ThinkState history.
-    Tolerates malformed entries (skipped); never raises."""
-    entries = []
-    for h in history or []:
-        if not isinstance(h, dict) or not isinstance(h.get("action"), str):
-            continue
-        args = h.get("args")
-        args = args if isinstance(args, dict) else {}
-        try:
-            cid = candidate(h["action"], args, "")["id"]
-        except Exception:
-            swallowed("candidates.history", logging.getLogger("agent.candidates"), h["action"],
-                      level=logging.WARNING)
-            continue
-        entries.append((cid, h))
-    drop, demote = {}, {}
-
-    recent = entries[-HISTORY_DROP_WINDOW:]
-    by_id: dict[str, list[ActionRecord]] = {}
-    for cid, h in recent:
-        by_id.setdefault(cid, []).append(h)
-    for cid, hs in by_id.items():
-        last = hs[-1]
-        if last.get("ok") is not False:
-            continue
-        err = str(last.get("error") or "")
-        if any(m in err.lower() for m in _DETERMINISTIC_ERRORS):
-            drop[cid] = f"rejected: {err}"
-        elif len(hs) >= 2 and hs[-2].get("ok") is False and hs[-2].get("error") == last.get("error"):
-            drop[cid] = f"failed twice in a row: {err}"
-
-    if entries:
-        tail_id = entries[-1][0]
-        run = 0
-        for cid, h in reversed(entries):
-            if cid != tail_id or h.get("ok") is not True or h.get("changed") is not False:
-                break
-            run += 1
-        if run >= HISTORY_DEMOTE_REPEATS and tail_id not in drop:
-            demote[tail_id] = f"repeated {run}x with no effect"
-    return drop, demote
-
-
-def _finish(out: list[Candidate], idle: Candidate, limit: int, drop: dict | None = None,
-            demote: dict | None = None, protected: set | frozenset = frozenset(),
-            notes: list | None = None) -> list[Candidate]:
-    """De-duplicate by id (first, highest-priority wins), apply the history
-    `drop`/`demote` maps ({id: reason}; `protected` ids are exempt), cap, end
-    with idle."""
-    drop, demote = drop or {}, demote or {}
-    seen, unique, demoted = set(), [], []
-    for c in out:
-        if c["id"] in seen:
-            continue
-        seen.add(c["id"])
-        if c["id"] not in protected:
-            if c["id"] in drop:
-                if notes is not None:
-                    notes.append({"id": c["id"], "effect": "dropped", "reason": drop[c["id"]]})
-                continue
-            if c["id"] in demote:
-                if notes is not None:
-                    notes.append({"id": c["id"], "effect": "demoted", "reason": demote[c["id"]]})
-                demoted.append(c)
-                continue
-        unique.append(c)
-    return (unique + demoted)[:limit - 1] + [idle]
+    return finish(out, idle, limit, drop, demote, protected, notes)

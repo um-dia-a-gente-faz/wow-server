@@ -245,7 +245,7 @@ class WoWSession(Transport, GameState):
             self.sock.settimeout(LOGIN_POLL_S)
             try:
                 opcode, payload = self._recv_packet()
-            except (socket.timeout, TimeoutError):
+            except TimeoutError:
                 self._send_packet(CMSG_KEEP_ALIVE)
                 continue
 
@@ -410,7 +410,7 @@ class WoWSession(Transport, GameState):
             self.sock.settimeout(0.5)
             try:
                 opcode, payload = self._recv_packet()
-            except (socket.timeout, TimeoutError):
+            except TimeoutError:
                 now = time.monotonic()
                 if now - last_rx > DEAD_SOCKET_TIMEOUT_S:
                     # #404: connection open, nothing arrives, not even SMSG_PONG.

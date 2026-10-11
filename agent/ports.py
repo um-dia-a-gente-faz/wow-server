@@ -75,6 +75,17 @@ class PlayerView(Protocol):
     @property
     def group(self) -> dict | None: ...
 
+    # #411: read by agent.death, agent.control and agent.think. Plain attributes, set by the session.
+    # (map_id, x, y, z) from MSG_CORPSE_QUERY's response, or None.
+    corpse_position: tuple | None
+    # time.monotonic() deadline from SMSG_CORPSE_RECLAIM_DELAY, or None.
+    corpse_reclaim_ready_at: float | None
+    # True once the socket died without a requested logout.
+    unexpected_disconnect: bool
+    # The world model, agent.perception.WorldState; typed Any because this module imports
+    # nothing from agent/.
+    world_state: Any
+
 
 @runtime_checkable
 class Inbox(Protocol):
@@ -89,11 +100,13 @@ class Inbox(Protocol):
 
 @runtime_checkable
 class ReflexSlots(Protocol):
-    """Where a session keeps its one reflex of each kind. A slot is None until
-    `agent.reflexes` fills it; typed `Any` because this module imports no reflex."""
+    """Where a session keeps its one reflex of each kind, and its movement engine. A slot is
+    None until `agent.reflexes` (or `agent.movement.get_mover`, for `mover`) fills it; typed
+    `Any` because this module imports no reflex or mover."""
 
     follow_reflex: Any
     rest_reflex: Any
+    mover: Any
 
 
 @runtime_checkable
