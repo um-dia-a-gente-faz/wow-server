@@ -32,7 +32,11 @@ lint()      { ruff check .; }
 SNAPSHOT_TYPED="agent/model.py agent/candidates.py agent/brain.py agent/think.py agent/audit.py
   agent/perception/snapshot.py agent/perception/nearby.py agent/perception/inventory.py
   agent/perception/quest_log.py"
-types()     { mypy && mypy $SNAPSHOT_TYPED; }
+# #410: tests are excluded from the mypy scope, except this one. Its _static_contract()
+# assigns the real session and the shared fake to ports.ActionSession, so a port change
+# the session or the fake does not follow is a type error.
+CONTRACT_TESTS="agent/tests/test_ports.py"
+types()     { mypy && mypy $SNAPSHOT_TYPED && mypy $CONTRACT_TESTS; }
 generated() {
   local rc=0 f
   python3 scripts/generate.py --check || rc=1   # every generated file, #297
