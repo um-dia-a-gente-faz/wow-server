@@ -321,6 +321,9 @@ class SelfCombatStateTest(unittest.TestCase):
     def test_absent_when_unit_flags_are_unknown(self):
         self.assertNotIn("in_combat", self._me({}))
 
+    def test_absent_when_only_other_flags_are_set(self):
+        self.assertNotIn("in_combat", self._me({uf.UNIT_FIELD_FLAGS: 0xFFFFFFFF & ~uf.UNIT_FLAG_IN_COMBAT}))
+
 
 class LoopGuardTest(unittest.TestCase):
     """UM-90: the same failed/no-op call N times in a row is not executed again."""
