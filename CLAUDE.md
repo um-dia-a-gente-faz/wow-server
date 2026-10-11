@@ -62,8 +62,9 @@ decides who may merge, not the account.
   opinion. Its open change request blocks the merge until answered. The author never
   approves its own PR.
 - **Every merge is a deploy** that disconnects players, so merges happen one at a
-  time and only on purpose. A PR touching `docker-compose.yml`, `scripts/`, worldserver
-  config or the deploy workflow waits for the owner's go-ahead.
+  time and only on purpose. A PR touching `docker-compose.yml`, `tools/common/`, `scripts/`,
+  worldserver config or the deploy workflow waits for the owner's go-ahead (`stacks_for` in
+  `scripts/deploy.sh` is the source of truth for which paths recreate the game stack).
 - **PRs can depend on each other.** When one changes a signature another PR also
   uses, say so in both PR bodies. The PR that merges second carries the follow-up.
 - **Shelved PRs stay open** until the owner decides. A coordinator comment saying
