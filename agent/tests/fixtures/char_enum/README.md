@@ -1,5 +1,7 @@
 # SMSG_CHAR_ENUM fixtures
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Real, live-captured `SMSG_CHAR_ENUM` (`0x03B`) payloads from `192.168.1.64`.
 
 Each file is the raw application payload — the bytes `WoWSession.enum_characters()`

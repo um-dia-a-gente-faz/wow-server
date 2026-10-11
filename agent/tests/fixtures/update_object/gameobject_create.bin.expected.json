@@ -1,0 +1,15 @@
+{
+  "opcode": "SMSG_UPDATE_OBJECT",
+  "source": "src/server/game/Entities/Object/Updates/UpdateData.cpp UpdateData::BuildPacket (payload <= 100 bytes is sent as SMSG_UPDATE_OBJECT); src/server/game/Entities/Object/Object.cpp Object::BuildCreateUpdateBlockForPlayer, BuildMovementUpdate, BuildValuesUpdate; src/server/game/Entities/Unit/Unit.cpp Unit::BuildMovementPacket; src/server/game/Server/Packets/MovementPackets.cpp CommonMovement::WriteCreateObjectSplineDataBlock",
+  "expect": {
+    "block_count": 1,
+    "blocks.0.update_type": 2,
+    "blocks.0.guid": "0x1fc0000000000009",
+    "blocks.0.object_type": 5,
+    "blocks.0.entry": 181646,
+    "blocks.0.x": -3800.21484375,
+    "blocks.0.y": -10932.8095703125,
+    "blocks.0.z": 0.0,
+    "blocks.0.o": 0.8299965858459473
+  }
+}

@@ -2,6 +2,7 @@
 hand-built bytes matching the layout cited in agent/names.py), and NameCache
 (dedupe, budget, persistence)."""
 
+import itertools
 import json
 import os
 import struct
@@ -180,6 +181,81 @@ class NameCacheBudgetTest(unittest.TestCase):
         for i in range(5):
             c.want_creature(i, 0x1)
         self.assertEqual(len(c.drain(max_items=2)), 2)
+
+
+class NameCacheBoundsTest(unittest.TestCase):
+    """#569: queries that are never answered must not grow the cache without bound.
+    Fake clock throughout (never the real one, never a sleep)."""
+
+    def setUp(self):
+        self.now = [0.0]
+        self.c = nm.NameCache(clock=lambda: self.now[0], cache_path="/nonexistent/should-not-write")
+
+    def test_unanswered_queries_keep_both_collections_bounded(self):
+        for guid in range(1, 2001):
+            self.c.want_player(guid)
+        self.assertLessEqual(len(self.c._pending), nm.MAX_PENDING)
+        self.assertLessEqual(len(self.c._in_flight), nm.MAX_PENDING)
+        self.assertEqual(self.c.dropped_queries, 2000 - nm.MAX_PENDING)
+        self.assertEqual(self.c.expired_queries, 0)
+
+    def test_sent_query_expires_and_is_asked_again(self):
+        for entry in range(1, 11):
+            self.c.want_creature(entry, 0x1)
+        self.assertEqual(len(self.c.drain()), 10)  # all ten sent at t=0
+        self.now[0] = nm.QUERY_TIMEOUT_S + 1.0
+        self.assertEqual(self.c.drain(), [])
+        self.assertEqual(self.c.expired_queries, 10)
+        self.assertEqual(len(self.c._in_flight), 0)
+        self.assertNotIn(3, self.c.creatures)  # an expiry is not a "not found" answer
+        self.c.want_creature(3, 0x1)
+        self.assertEqual(self.c.drain(), [("creature", 3, 0x1)])
+
+    def test_answer_inside_timeout_clears_token_and_fills_cache(self):
+        self.c.want_player(7)
+        self.c.drain()
+        self.now[0] = 5.0
+        self.c.on_name_query_response({"guid": 7, "found": True, "name": "Rubens"})
+        self.assertEqual(self.c.players[7], "Rubens")
+        self.assertEqual(len(self.c._in_flight), 0)
+        self.now[0] = 60.0
+        self.c.drain()
+        self.assertEqual(self.c.expired_queries, 0)  # the answered token never expires
+
+    def test_answer_after_expiry_still_fills_cache(self):
+        self.c.want_player(8)
+        self.c.drain()
+        self.now[0] = nm.QUERY_TIMEOUT_S + 1.0
+        self.c.drain()
+        self.assertEqual(self.c.expired_queries, 1)
+        self.c.on_name_query_response({"guid": 8, "found": True, "name": "Late"})  # must not raise
+        self.assertEqual(self.c.players[8], "Late")
+
+    def test_cap_drops_the_oldest_pending_query_and_it_can_be_wanted_again(self):
+        c = nm.NameCache(budget_per_second=10**6, clock=lambda: self.now[0],
+                         cache_path="/nonexistent/should-not-write")
+        for guid in range(1, nm.MAX_PENDING + 2):  # one over the cap: guid 1 is dropped
+            c.want_player(guid)
+        self.assertEqual(c.dropped_queries, 1)
+        c.want_player(1)  # not in flight any more, so this queues it again (and drops guid 2)
+        self.assertEqual(c.duplicate_queries, 0)
+        self.assertEqual(c.dropped_queries, 2)
+        sent = {item[1] for item in c.drain()}
+        self.assertIn(1, sent)
+        self.assertNotIn(2, sent)
+
+    def test_steady_stream_with_drain_every_100ms_stays_bounded(self):
+        c = nm.NameCache(budget_per_second=10, clock=lambda: self.now[0],
+                         cache_path="/nonexistent/should-not-write")
+        limit = nm.MAX_PENDING + 10 * nm.QUERY_TIMEOUT_S
+        guids = iter(range(1, 10001))
+        for step in range(1200):  # 120 simulated seconds, a drain every 100 ms
+            self.now[0] = step * 0.1
+            for guid in itertools.islice(guids, 9):
+                c.want_player(guid)
+            c.drain()
+            self.assertLessEqual(len(c._pending), limit)
+            self.assertLessEqual(len(c._in_flight), limit)
 
 
 class NameCachePersistenceTest(unittest.TestCase):

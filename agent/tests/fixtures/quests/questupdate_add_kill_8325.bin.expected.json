@@ -1,0 +1,12 @@
+{
+  "opcode": "SMSG_QUESTUPDATE_ADD_KILL",
+  "source": "src/server/game/Entities/Player/Player.cpp Player::SendQuestUpdateAddCreatureOrGo",
+  "expect": {
+    "quest_id": 8325,
+    "entry": 15274,
+    "gameobject": false,
+    "count": 1,
+    "required": 8,
+    "victim_guid": "0xf130003baa002500"
+  }
+}
