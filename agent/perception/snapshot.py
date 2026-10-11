@@ -2,6 +2,7 @@
 
 from .. import group as group_mod
 from ..model import Snapshot
+from .caps import SECTION_CAPS, apply_caps
 from .nearby import nearby_sections, position_dict
 
 
@@ -39,4 +40,5 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
         out["nearby_units"] = near["nearby_units"]
         out["nearby_players"] = near["nearby_players"]
         out["nearby_objects"] = near["nearby_objects"]
-    return out
+    caps = {**SECTION_CAPS, "nearby_units": limit, "nearby_players": limit, "nearby_objects": limit}
+    return apply_caps(out, caps)
