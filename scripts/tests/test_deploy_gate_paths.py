@@ -18,6 +18,8 @@ def game_patterns(script):
         raise AssertionError("stacks_for not found in deploy.sh")
     patterns, arms = [], 0
     body = [line.split("#")[0] for line in m.group(1).splitlines()]  # comments do not count
+    if any(re.search(r";;\s*\S", line) for line in body):
+        raise AssertionError("two case arms on one line in stacks_for: put each arm on its own line")
     for line in body:
         arm = re.match(r"\s*([^()\s]+(?:\|[^()\s]+)*)\)(.*)$", line)
         if arm and re.search(r"\bgame=1\b", arm.group(2)):
@@ -77,9 +79,14 @@ class GatePathsTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             game_patterns("stacks_for() {\n  :\n}\n")
 
+    def test_trailing_comment_after_arm_terminator_is_fine(self):
+        script = SYNTHETIC.replace("      foo/*) game=1 ;;", "      foo/*) game=1 ;;  # note")
+        self.assertIn("foo/*", game_patterns(script))
+
     def test_game_assignment_no_arm_regex_matches_fails(self):
         # the game=1 is still in stacks_for; the arm line is not one the regex can attach it to
-        for arm in ("foo/*)\n      game=1 ;;", "foo/* ) game=1 ;;", "a/* | b/*) game=1 ;;"):
+        for arm in ("foo/*)\n      game=1 ;;", "foo/* ) game=1 ;;", "a/* | b/*) game=1 ;;",
+                    "zip/*) mon=1 ;; foo/*) game=1 ;;", "tools/common/*) mon=1 ;; foo/*) game=1 ;;"):
             with self.subTest(arm=arm):
                 script = SYNTHETIC.replace("      foo/*) game=1 ;;", "      " + arm)
                 with self.assertRaises(AssertionError):
