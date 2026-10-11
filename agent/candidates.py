@@ -87,7 +87,6 @@ from .metrics import swallowed
 
 MAX_CANDIDATES = 15
 
-
 MAX_THREATS = 3
 MAX_LOOT = cap_of(A.LOOT)
 MAX_QUEST_GIVERS = cap_of(A.INTERACT)
@@ -270,14 +269,16 @@ def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
 
 
 class _Context:
-    """What every provider reads: the snapshot plus the values several providers share, derived
-    once per call. Providers never mutate it."""
+    """What every provider reads, derived once per call and never mutated; a dead snapshot gets only plain fields."""
 
     def __init__(self, snapshot: Snapshot, my_guid: int | None, reflex_state: dict | None, handles) -> None:
         self.snapshot = snapshot
         self.my_guid = my_guid
         self.reflex_state = reflex_state
         self.handles = handles
+        self.dead = bool(snapshot.get("is_dead") or snapshot.get("is_ghost"))
+        if self.dead:
+            return
         self.me = snapshot.get("me")
         health_pct, mana_pct = _resource_pct(self.me, "health"), _resource_pct(self.me, "mana")
         self.needs_health = health_pct is not None and health_pct < 0.7
@@ -509,11 +510,10 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
     limit = max(1, limit)
     idle = candidate(A.IDLE, {}, "do nothing this cycle")
     ctx = _Context(snapshot, my_guid, reflex_state, handles)
-    dead = bool(snapshot.get("is_dead") or snapshot.get("is_ghost"))
     out: list[Candidate] = []
-    for provider in DEAD_PROVIDERS if dead else ALIVE_PROVIDERS:
+    for provider in DEAD_PROVIDERS if ctx.dead else ALIVE_PROVIDERS:
         provider(ctx, out)
-    if dead:  # history is about the living options
+    if ctx.dead:  # history is about the living options
         return _finish(out, idle, limit)
 
     drop, demote = _history_effects(history)
