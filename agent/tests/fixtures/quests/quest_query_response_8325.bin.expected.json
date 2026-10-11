@@ -1,0 +1,23 @@
+{
+  "opcode": "SMSG_QUEST_QUERY_RESPONSE",
+  "source": "src/server/game/Server/Packets/QuestPackets.cpp WorldPackets::Quest::QueryQuestInfoResponse::Write; src/server/game/Quests/QuestDef.h QUEST_*_COUNT constants",
+  "expect": {
+    "quest_id": 8325,
+    "level": 1,
+    "min_level": 1,
+    "sort_id": 3431,
+    "flags": 524424,
+    "reward_money": 30,
+    "title": "Reclaiming Sunstrider Isle",
+    "objectives": "Kill 8 Mana Wyrms; they are located close to the Burning Crystals that are adjacent to the tower and gazebo.",
+    "details": "The sooner you begin your education, $N, the better for us all.  There is little room for error, so listen closely.$B$BThe Burning Crystals - the green floating objects to the west of the Sunspire here - have long been used to power the isle's experimentations.  The mana wyrms were their guardians, but the Scourge invasion of Quel'Thalas has driven them errant from our lack of magical control over them.$B$BThere is little choice but to thin their numbers for reclamation.  Do this, then return to me.",
+    "completion_text": "Return to Magistrix Erona at Sunstrider Isle in Eversong Woods.",
+    "reward_choice_items.0.entry": 20997,
+    "reward_choice_items.1.entry": 20998,
+    "reward_reputations.0.faction": 911,
+    "reward_reputations.0.value": 5,
+    "required_credit.0.entry": 15274,
+    "required_credit.0.count": 8,
+    "required_credit.0.gameobject": false
+  }
+}

@@ -1,5 +1,7 @@
 # SMSG_SEND_MAIL_RESULT / SMSG_MAIL_LIST_RESULT fixtures
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Real, live-captured payloads from `192.168.1.64`, character **Luaprata**
 (account `AGENT01`, paladin), 2026-09-17. Captured with `AGENT_DUMP_PACKETS`
 driving `agent.actions.REGISTRY`/raw `session._send_packet` calls against
