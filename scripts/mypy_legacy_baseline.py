@@ -102,18 +102,25 @@ def compare(baseline, now):
     return failures, notes
 
 
+def mypy_command(config, cache):
+    """The mypy call. --no-site-packages: no installed package (Pillow, PyMySQL...) is seen,
+    so the counts match the CI lint job, which installs only requirements-dev.txt."""
+    return ["mypy", "--config-file", config, "--cache-dir", cache, "--no-site-packages"]
+
+
 def run_mypy(ini_text):
     """mypy's output on the un-legacied config, run from the repo root. Exit unless mypy ran in full.
 
-    PYTHONNOUSERSITE=1 keeps the developer's ~/.local packages (Pillow, PyMySQL) out, as in the
-    CI lint job, which installs only requirements-dev.txt: they change the wowmap counts.
+    The error counts do not depend on installed packages: --no-site-packages hides every
+    installed package from mypy, and PYTHONNOUSERSITE=1 keeps the user site out of mypy's own
+    process.
     """
     env = {**os.environ, "PYTHONNOUSERSITE": "1"}
     with tempfile.TemporaryDirectory() as tmp:
         config = Path(tmp, "mypy.ini")
         config.write_text(unlegacy_config(ini_text))
         proc = subprocess.run(
-            ["mypy", "--config-file", str(config), "--cache-dir", str(Path(tmp, "cache"))],
+            mypy_command(str(config), str(Path(tmp, "cache"))),
             cwd=ROOT, capture_output=True, text=True, env=env,
         )
     return full_run(proc.returncode, proc.stdout, proc.stderr)

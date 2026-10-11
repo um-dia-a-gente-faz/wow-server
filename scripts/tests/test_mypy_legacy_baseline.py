@@ -142,6 +142,19 @@ class Compare(unittest.TestCase):
         self.assertEqual(mlb.compare({"agent.names": 3}, {"agent.names": 3}), ([], []))
 
 
+class MypyCommand(unittest.TestCase):
+    """The counts must not depend on installed packages (review round 1 of #565)."""
+
+    def test_command_ignores_site_packages(self):
+        self.assertIn("--no-site-packages", mlb.mypy_command("cfg.ini", "cache"))
+
+    def test_command_pins_config_and_cache(self):
+        cmd = mlb.mypy_command("cfg.ini", "cache")
+        self.assertEqual(cmd[:1], ["mypy"])
+        self.assertEqual(cmd[cmd.index("--config-file") + 1], "cfg.ini")
+        self.assertEqual(cmd[cmd.index("--cache-dir") + 1], "cache")
+
+
 class CheckShWiring(unittest.TestCase):
     """The types target must run the legacy baseline too (CI's lint job calls only `types`)."""
 
