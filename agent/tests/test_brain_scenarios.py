@@ -11,8 +11,7 @@ A scenario asserts two things:
 Add one after a live incident: copy the snapshot, state what must never
 happen. `known_gap=True` marks a scenario the code does not yet satisfy; the
 test then asserts it still fails, so fixing the code forces the flag off.
-ponytail: model tier (N samples per scenario against Jev/LLM) and the audit
-record -> scenario capture command are not built yet.
+The model tier (N samples per scenario against Jev/LLM) is #541.
 """
 
 import unittest
@@ -47,6 +46,10 @@ def first_is(action, **params):
 
 def not_offering_guid(guid):
     return lambda cs: all(c["params"].get("guid") != guid for c in cs)
+
+
+def offering_attack_on(guid):
+    return lambda cs: any(c["action"] == "auto_attack" and c["params"].get("guid") == guid for c in cs)
 
 
 def failed(action, args, error):
@@ -113,11 +116,15 @@ SCENARIOS = {
         history=[failed("loot", {"guid": 10}, "bad params: guid")]
         + [{"action": "idle", "args": {}, "ok": True, "changed": True}] * 4,
         chosen=first_is("loot", guid=10)),
-    # Gap found writing this suite: nothing stops an unprovoked pull at 20% HP
-    # when no consumable is on hand. Drop known_gap when candidates.py fixes it.
     "low_health_does_not_pull_a_mob": dict(
         snapshot=snap([unit(10, 4, level=1)], me=HURT),
-        offered=not_offering_guid(10), known_gap=True),
+        offered=not_offering_guid(10)),
+    "hurt_still_fights_back": dict(  # the rule stops pulls, not defence
+        snapshot=snap([unit(10, 4, level=1, target_guid=ME, in_combat=True)], me=HURT),
+        offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),
+    "healthy_pulls_the_idle_mob": dict(
+        snapshot=snap([unit(10, 4, level=1)]),
+        offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),
 }
 
 

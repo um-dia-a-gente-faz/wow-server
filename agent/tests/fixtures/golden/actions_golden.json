@@ -77,15 +77,6 @@
     }
    },
    {
-    "action": "move_towards",
-    "id": "move_towards:guid=4663,stop_distance=3.0",
-    "label": "move to attack Mana Wyrm (level 2, 14.2 yd)",
-    "params": {
-     "guid": 4663,
-     "stop_distance": 3.0
-    }
-   },
-   {
     "action": "idle",
     "id": "idle",
     "label": "do nothing this cycle",

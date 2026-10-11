@@ -29,6 +29,13 @@ def ids(cands) -> list:
     return [c["id"] for c in cands]
 
 
+def healthy_combat() -> dict:
+    """The combat fixture at full health: at 40/90 the hurt rule (gh-475) drops the idle-wyrm pull."""
+    snap = load("combat")
+    snap["me"]["health"] = "90/90"
+    return snap
+
+
 def _strings(value, out: set):
     if isinstance(value, str):
         out.add(value)
@@ -80,7 +87,7 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
         self.assertEqual(ids(cands), [
             "auto_attack:guid=4660",                    # attacking us, in melee range: first
             "loot:guid=4661",
-            "move_towards:guid=4663,stop_distance=3.0",  # idle wyrm 14 yd away
+            # no pull of the idle wyrm 14 yd away: at 40/90 health the agent does not start fights (gh-475)
             "idle",
         ])
         self.assertIn("attacking you", cands[0]["label"])
@@ -95,9 +102,19 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
                          ["auto_attack:guid=4660", "loot:guid=4661", "idle"])
 
     def test_without_my_guid_threats_are_plain_targets(self):
-        cands = cand.generate(load("combat"))
+        cands = cand.generate(healthy_combat())
         self.assertIn("auto_attack:guid=4660", ids(cands))
         self.assertNotIn("attacking you", cands[ids(cands).index("auto_attack:guid=4660")]["label"])
+
+    def test_hurt_offers_no_unprovoked_pull_but_still_defends(self):
+        # gh-475: below 70% health nothing starts a fight; unknown health (None) changes nothing.
+        idle_mob = {"guid": 2, "distance": 4, "level": 1, "name": "rat", "health_pct": 1}
+        snap = {"me": {"level": 3, "health": "18/90"}, "nearby_units": [idle_mob], "window": None}
+        self.assertNotIn("auto_attack:guid=2", ids(cand.generate(snap, my_guid=MY_GUID)))
+        unknown = {"me": {"level": 3, "health": None}, "nearby_units": [idle_mob], "window": None}
+        self.assertIn("auto_attack:guid=2", ids(cand.generate(unknown, my_guid=MY_GUID)))
+        attacker = dict(idle_mob, in_combat=True, target_guid=MY_GUID)
+        self.assertIn("auto_attack:guid=2", ids(cand.generate(dict(snap, nearby_units=[attacker]), my_guid=MY_GUID)))
 
 
 class QuestScenarioTest(CandidateShapeMixin, unittest.TestCase):
@@ -531,7 +548,7 @@ class HistoryAwareTest(unittest.TestCase):
             "move_towards:guid=4663,stop_distance=3.0", "idle"]
 
     def gen(self, history, notes=None):
-        return cand.generate(load("combat"), my_guid=MY_GUID, history=history, notes=notes)
+        return cand.generate(healthy_combat(), my_guid=MY_GUID, history=history, notes=notes)
 
     @staticmethod
     def entry(action, args, ok=True, error=None, changed=None):
@@ -543,7 +560,7 @@ class HistoryAwareTest(unittest.TestCase):
         return e
 
     def test_no_history_matches_baseline(self):
-        base = ids(cand.generate(load("combat"), my_guid=MY_GUID))
+        base = ids(cand.generate(healthy_combat(), my_guid=MY_GUID))
         self.assertEqual(base, self.BASE)
         for h in (None, [], [None, "x", {}, {"action": 3}]):
             self.assertEqual(ids(self.gen(h)), base)
