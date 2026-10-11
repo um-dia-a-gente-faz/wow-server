@@ -980,6 +980,39 @@ class CharEnumRealPayloadTest(unittest.TestCase):
         self.assertEqual(first["map"], 530)
         self.assertAlmostEqual(first["x"], 9918.8, places=1)
 
+    def test_every_cut_of_the_payload_raises_packet_truncated(self):
+        # #517: enum_characters reads through wire.Reader, so no cut point escapes as IndexError.
+        payload = self.FIXTURE.read_bytes()
+        for cut in range(len(payload)):
+            with self.subTest(cut=cut):
+                sess = make_session(server_packet(se.SMSG_CHAR_ENUM, payload[:cut]))
+                with self.assertRaises(PacketTruncated):
+                    sess.enum_characters()
+
+    def test_multibyte_name_does_not_shift_the_next_record(self):
+        # #517 review: the old loop advanced by len(str) + 1, so a name with a multi-byte UTF-8
+        # character (É is 2 bytes, 1 character) left the cursor inside the name and shifted every
+        # later field. The name is read by its bytes, so both records parse.
+        def record(guid, name: bytes, map_id: int) -> bytes:
+            return (struct.pack('<Q', guid) + name + bytes([1, 2, 0]) + bytes(5) + bytes([1]) + bytes(4)
+                    + struct.pack('<I', map_id) + struct.pack('<3f', 1.0, 2.0, 3.0) + bytes(4)
+                    + bytes(4) + bytes(4) + bytes(1) + bytes(12) + bytes(23 * 9))
+        payload = bytes([2]) + record(0x11, b'\xc3\x89vora\x00', 1) + record(0x22, b'Second\x00', 530)
+        sess = make_session(server_packet(se.SMSG_CHAR_ENUM, payload))
+        chars = sess.enum_characters()
+        self.assertEqual([c["name"] for c in chars], ['Évora', 'Second'])
+        self.assertEqual([c["guid"] for c in chars], [0x11, 0x22])
+        self.assertEqual(chars[1]["map"], 530)
+
+    def test_truncation_names_the_read_that_failed(self):
+        # count=1, one guid, then the name runs to the end of the payload with no NUL.
+        payload = b'\x01' + struct.pack('<Q', 5) + b'Name'
+        sess = make_session(server_packet(se.SMSG_CHAR_ENUM, payload))
+        with self.assertRaises(PacketTruncated) as cm:
+            sess.enum_characters()
+        self.assertEqual((cm.exception.opcode, cm.exception.offset, cm.exception.wanted),
+                         (se.SMSG_CHAR_ENUM, 9, 1))
+
 
 if __name__ == '__main__':
     unittest.main()

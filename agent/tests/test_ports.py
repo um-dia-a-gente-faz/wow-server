@@ -9,6 +9,7 @@ import pathlib
 import unittest
 
 from agent import ports, session, state
+from agent import update_object as uo
 from agent.tests import builders
 
 AGENT = pathlib.Path(__file__).resolve().parents[1]
@@ -27,6 +28,15 @@ def _static_contract(real: session.WoWSession, fake: builders.FakeSession) -> No
     the session or the fake lacks is a type error."""
     _real: ports.ActionSession = real
     _fake: ports.ActionSession = fake
+
+
+def _update_object_return_types() -> None:
+    """Never called (#517). Each assignment must fail to type-check, so its ignore is used: if the
+    update_object decorator ever made a parser return Any again, mypy's warn_unused_ignores would
+    report the ignore as unused and `scripts/check.sh types` would fail."""
+    _blocks: int = uo.parse_update_object(b'')  # type: ignore[assignment]
+    _info: str = uo.parse_movement_info(b'', 0)  # type: ignore[assignment]
+    _move: int = uo.parse_monster_move(b'')  # type: ignore[assignment]
 
 
 class PortConformanceTests(unittest.TestCase):

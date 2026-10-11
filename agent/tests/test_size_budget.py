@@ -31,7 +31,7 @@ BASELINE = {
     "agent/loot.py::parse_item_query_response": 128,
     "agent/movement.py::_simulate": 125,
     "tools/agent_dev/ab.py::run": 101,
-    "agent/update_object.py::parse_monster_move": 88,
+    "agent/update_object.py::parse_monster_move": 85,
     "tools/dbc/names.py::GameNames.__init__": 147,
     "tools/dbc/spelltext.py::render": 82,
     "tools/wowmap/wowmap/activity.py::diff_snapshots": 87,

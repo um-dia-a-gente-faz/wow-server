@@ -6,6 +6,7 @@ import socket
 import struct
 
 from . import packets as pk
+from .wire import Reader
 
 AUTH_CMD_LOGON_CHALLENGE = 0x00
 AUTH_CMD_LOGON_PROOF     = 0x01
@@ -149,15 +150,16 @@ def _handshake(sock: socket.socket, username: str, password: str):
 
     # Success is 119 bytes (3 + B 32 + g 2 + N 33 + s 32 + crc 16 + security flags 1).
     resp = _reply(sock, AUTH_CMD_LOGON_CHALLENGE, 2, 116, "logon challenge")
-    off = 3
-    B = resp[off:off+32]; off += 32
-    g_len = pk.u8(resp, off); off += 1
-    _g_val = resp[off:off+g_len]; off += g_len
-    n_len = pk.u8(resp, off); off += 1
-    N = resp[off:off+n_len]; off += n_len
-    s = resp[off:off+32]; off += 32
-    _crc_srv = resp[off:off+16]; off += 16
-    security_flags = pk.u8(resp, off); off += 1
+    r = Reader(resp, AUTH_CMD_LOGON_CHALLENGE)
+    r.skip(3)  # cmd, error, result (checked by _reply)
+    B = r.bytes(32)
+    g_len = r.u8()
+    _g_val = r.bytes(g_len)
+    n_len = r.u8()
+    N = r.bytes(n_len)
+    s = r.bytes(32)
+    _crc_srv = r.bytes(16)
+    security_flags = r.u8()
     if security_flags:  # #431: PIN/matrix/token extra bytes follow; refuse before any proof byte
         raise AuthSecurityUnsupported(security_flags)
 
@@ -179,22 +181,22 @@ def _handshake(sock: socket.socket, username: str, password: str):
         raise pk.ProtocolError(f"auth realm list: expected command 0x10, got 0x{rcmd:02X}")
     body = _recvn(sock, rsize)
 
-    off = 0
-    _unk = pk.u32(body, off); off += 4
-    realm_count = pk.u16(body, off); off += 2
+    r = Reader(body, AUTH_CMD_REALM_LIST)
+    r.skip(4)  # unknown uint32
+    realm_count = r.u16()
     realm_info = {}
     for i in range(realm_count):
-        _rtype = pk.u8(body, off); off += 1
-        _locked = pk.u8(body, off); off += 1
-        rflags = pk.u8(body, off); off += 1
-        rname, off = pk.cstring(body, off)
-        raddr, off = pk.cstring(body, off)
-        _rpop = pk.f32(body, off); off += 4
-        _rchars = pk.u8(body, off); off += 1
-        _rtz = pk.u8(body, off); off += 1
-        rid = pk.u8(body, off); off += 1
+        _rtype = r.u8()
+        _locked = r.u8()
+        rflags = r.u8()
+        rname = r.cstring()
+        raddr = r.cstring()
+        _rpop = r.f32()
+        _rchars = r.u8()
+        _rtz = r.u8()
+        rid = r.u8()
         if rflags & 0x04:
-            off += 5  # build info
+            r.skip(5)  # build info
         realm_info[rid] = {'name': rname, 'address': raddr, 'id': rid}
 
     return username.upper(), session_key, realm_info
