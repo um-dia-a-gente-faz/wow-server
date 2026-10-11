@@ -234,3 +234,37 @@ machine that can reach the server:
 python3 -m agent --list-chars
 docker build -t wow-agent .
 ```
+
+## Add a brain scenario after a brain bug
+
+A live brain mistake gets a golden scenario in
+[`agent/tests/test_brain_scenarios.py`](agent/tests/test_brain_scenarios.py), so the fix stays
+fixed (#388, #475).
+
+1. Find the bad cycle in the agent's audit log on the VM,
+   `/opt/wow-server-metrics/audit/<agent>/<YYYY-MM-DD>.jsonl`:
+   `python3 -m tools.agent_dev.replay <file> --failures` lists the invalid or failed cycles.
+   Full snapshots are written only every 20th cycle and on invalid or failed cycles, so
+   capture a cycle that carries one.
+2. Capture it: `python3 -m tools.agent_dev.capture_scenario <file> --cycle <N> --me <handle>`
+   prints a `"captured_<agent>_<N>": dict(...)` entry. The audit log keeps GUIDs as handle
+   strings (`u1`, `p3`) and not the handle table, so the entry carries its own: `handles` maps
+   each handle to an integer, and `my_guid` is the number of the player's own handle, given by
+   `--me`. `--me` must be the PLAYER's handle, the `p<n>` that units attacking you show as
+   their `target_guid`; the tool cannot tell a mob's handle from the player's, so a mob's
+   handle (`u<n>`) would be accepted and give a wrong scenario. `--me` must match a handle in
+   the snapshot exactly (case-sensitive) or the tool exits 2 naming it.
+   If no unit targets the player, omit `--me` and set `my_guid` by hand to an integer that is
+   not in `handles` (for example one more than the largest number there); `my_guid=...` is
+   otherwise left for you to fill in, and the predicates are `...` until you write them.
+   The action the brain chose is a comment. The agent does not write `history` to the audit
+   log; add it by hand if the scenario needs it.
+3. Paste the entry into `SCENARIOS` and write `offered` (what the candidate list must never
+   contain) and `chosen` (what the brain must never pick). State what must never happen, not
+   the one right answer. The predicate helpers at the top of the file cover the common cases.
+   Refer to units by the handle string in the entry (`offering_attack_on("u1")`).
+4. Run `python3 -m unittest agent.tests.test_brain_scenarios`; the new scenario must fail on
+   the bug.
+5. Fix the code and see it pass. Keep the scenario: it is the regression test. If the fix has
+   to wait, mark it `known_gap=True` with its issue number; the test then fails as soon as the
+   gap closes, so the flag comes off with the fix.

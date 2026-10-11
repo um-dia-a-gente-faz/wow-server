@@ -21,9 +21,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "follow:player_name=Bob",
   "follow:player_name=Ann",
   "idle"
@@ -50,9 +47,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "stop_following",
   "assist:on=True",
   "idle"
@@ -83,9 +77,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "follow:player_name=Bob",
   "follow:player_name=Ann",
   "idle"
@@ -116,9 +107,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "stop_following",
   "assist:on=True",
   "idle"
@@ -149,9 +137,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "follow:player_name=Bob",
   "follow:player_name=Ann",
   "idle"
@@ -182,9 +167,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "stop_following",
   "assist:on=True",
   "idle"
@@ -217,9 +199,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "follow:player_name=Bob",
   "follow:player_name=Ann",
   "idle"
@@ -252,9 +231,6 @@
   "move_towards:guid=32,stop_distance=3.0",
   "abandon_quest:slot=0",
   "abandon_quest:slot=1",
-  "move_towards:guid=40,stop_distance=3.0",
-  "move_towards:guid=41,stop_distance=3.0",
-  "move_towards:guid=42,stop_distance=3.0",
   "stop_following",
   "assist:on=True",
   "idle"
