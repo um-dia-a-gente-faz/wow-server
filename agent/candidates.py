@@ -35,8 +35,8 @@ Selection rules, briefly: units attacking the agent come first; lootable
 corpses and quest givers worth visiting (quest available / reward ready)
 within APPROACH_MAX_YD; unprovoked attack options only for units with no
 npc_flags, not in someone else's fight, and at most ATTACK_LEVEL_MARGIN
-levels above the agent (so none at all while the agent's own level is
-unknown). Anything out of reach becomes a short `move_towards` hop.
+levels above the agent (none at all while its level is unknown; while hurt
+(needs_health) only units already in combat). Anything out of reach becomes a short `move_towards` hop.
 
 `snapshot` is what agent/think.py builds: `world.snapshot(...)` updated with
 `_self_status()` (the `me` key). `my_guid` (session.my_guid / world.my_guid)
@@ -455,16 +455,16 @@ def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
 
 @offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
 def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
-    my_guid, my_level = ctx.my_guid, ctx.my_level
     targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
-               and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none")
-               and _dist(u) <= APPROACH_MAX_YD
+               and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
+               # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays)
+               and not (ctx.needs_health and not u.get("in_combat"))
                # unprovoked pulls only when both levels are known and the mob isn't too strong
-               and my_level is not None and isinstance(u.get("level"), int)
-               and u["level"] <= my_level + ATTACK_LEVEL_MARGIN
+               and ctx.my_level is not None and isinstance(u.get("level"), int)
+               and u["level"] <= ctx.my_level + ATTACK_LEVEL_MARGIN
                # someone else's fight: not ours to take (only knowable with my_guid)
-               and not (my_guid is not None and u.get("in_combat")
-                        and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, my_guid))]
+               and not (ctx.my_guid is not None and u.get("in_combat")
+                        and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, ctx.my_guid))]
     for u in targets[:MAX_ATTACK]:
         out.append(_engage(u, ""))
 
