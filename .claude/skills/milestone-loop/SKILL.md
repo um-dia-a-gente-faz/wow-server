@@ -209,7 +209,8 @@ Merge when all hold:
    game stack, and with it the worldserver (`docker compose up -d --build`, in the game
    `case` of the main body). `tools/common/*` is copied into the chat-feed image (ADR
    0014), so an edit there recreates the worldserver too. `stacks_for` in `scripts/deploy.sh`
-   is the source of truth for this list.
+   is the source of truth for those four. `scripts/*` and `.github/workflows/*` are not in
+   `stacks_for`: they are gated for the reasons below.
    `docker-compose.yml` also holds the worldserver config: no `worldserver.conf` is
    tracked, the `TC_WORLD__*` entries are the config. `scripts/deploy.sh` and
    `scripts/auto-deploy.sh` run on the VM at every poll (`docs/DEPLOYMENT.md`, "Automatic
