@@ -75,6 +75,7 @@ chosen candidate is executed, so a stale candidate fails safely.
 """
 
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 from .handles import UnknownHandle
@@ -143,16 +144,9 @@ NOT_OFFERED = {
     A.DECLINE_GROUP: "Jev accepts invites; declining is an LLM-brain decision (GH-71)",
     A.LEAVE_GROUP: "group management is an LLM-brain decision (GH-71)",
     A.PROMOTE_LEADER: "group management is an LLM-brain decision (GH-71)",
-    A.OPEN_TRADE: "trade family is out of scope",
-    A.ACCEPT_TRADE_REQUEST: "trade family is out of scope",
-    A.OFFER_ITEM: "trade family is out of scope",
-    A.OFFER_GOLD: "trade family is out of scope",
-    A.ACCEPT_TRADE: "trade family is out of scope",
-    A.CANCEL_TRADE: "trade family is out of scope",
-    A.OPEN_MAILBOX: "mail family is out of scope",
-    A.SEND_MAIL: "mail family is out of scope",
-    A.TAKE_MAIL: "mail family is out of scope",
-    A.DELETE_MAIL: "mail family is out of scope",
+    **dict.fromkeys((A.OPEN_TRADE, A.ACCEPT_TRADE_REQUEST, A.OFFER_ITEM, A.OFFER_GOLD, A.ACCEPT_TRADE,
+                     A.CANCEL_TRADE), "trade family is out of scope"),
+    **dict.fromkeys((A.OPEN_MAILBOX, A.SEND_MAIL, A.TAKE_MAIL, A.DELETE_MAIL), "mail family is out of scope"),
 }
 
 # agent.quests.QUEST_GIVER_STATUS_NAMES values worth walking over for.
@@ -275,94 +269,123 @@ def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
     return out
 
 
-def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: dict | None = None,
-             history: list[ActionRecord] | None = None,
-             limit: int = MAX_CANDIDATES, handles=None,
-             notes: list | None = None) -> list[Candidate]:
-    """Concrete candidates for this think cycle; see the module docstring.
-    `handles` (world.handles) resolves handle-string GUIDs (UM-89) for the
-    unit comparisons; without it only raw-int snapshots are understood.
-    `history` (ThinkState.for_prompt()) drops/demotes options the agent just
-    failed or repeated to no effect; `notes`, if given, collects what was
-    changed and why."""
-    limit = max(1, limit)
-    idle = candidate(A.IDLE, {}, "do nothing this cycle")
-    out = []
+class _Context:
+    """What every provider reads: the snapshot plus the values several providers share, derived
+    once per call. Providers never mutate it."""
 
-    # Dead: release, then reclaim. No reflex does either (gh-208), and
-    # corpse_position may be unknown, so reclaim_corpse is always offered to a
-    # ghost; it queries the server for the corpse itself.
-    if snapshot.get("is_dead") or snapshot.get("is_ghost"):
-        if snapshot.get("is_ghost"):
-            out.append(candidate(A.RECLAIM_CORPSE, {}, "run back to your corpse and resurrect"))
-            corpse = snapshot.get("corpse_position")
-            if isinstance(corpse, dict):
-                out.append(candidate(A.MOVE_TO, {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
-                                     "run back to your corpse"))
-        else:
-            out.append(candidate(A.RELEASE_SPIRIT, {}, "release your spirit to become a ghost"))
-        return _finish(out, idle, limit)
+    def __init__(self, snapshot: Snapshot, my_guid: int | None, reflex_state: dict | None, handles) -> None:
+        self.snapshot = snapshot
+        self.my_guid = my_guid
+        self.reflex_state = reflex_state
+        self.handles = handles
+        self.me = snapshot.get("me")
+        health_pct, mana_pct = _resource_pct(self.me, "health"), _resource_pct(self.me, "mana")
+        self.needs_health = health_pct is not None and health_pct < 0.7
+        self.needs_mana = mana_pct is not None and mana_pct < 0.5
+        # Combat threats in snapshot order (for spells); handles pass through unchanged (UM-89).
+        self.spell_threats = [u for u in snapshot.get("nearby_units") or [] if self._attacks_me(u)]
+        self.units = sorted((u for u in snapshot.get("nearby_units") or []
+                             if _guid_value(u, "guid", handles) is not None), key=_dist)
+        self.my_level = _my_level(snapshot)
+        self.threats = [u for u in self.units if self._attacks_me(u)]
+        self.threat_guids = {u["guid"] for u in self.threats}
 
-    out.extend(_window_candidates(snapshot))
+    def _attacks_me(self, unit: Unit) -> bool:
+        return bool(_alive(unit) and unit.get("in_combat") and self.my_guid is not None
+                    and _guid_value(unit, "target_guid", self.handles) == self.my_guid)
 
-    # Known, metadata-backed spells only; only combat threats, and pass their
-    # snapshot handle through unchanged for UM-89 resolution at execution.
-    threats_snapshot = [u for u in snapshot.get("nearby_units") or []
-                        if _alive(u) and u.get("in_combat") and my_guid is not None
-                        and _guid_value(u, "target_guid", handles) == my_guid]
-    # Damaging spells are offered against threats below; prefer the highest
-    # known rank for a spell family. Heals are offered separately (self-cast,
-    # when health is low); buffs and utility spells are still not offered.
-    offensive_ids = {20271: "judgement", 2812: "holy_wrath", 2973: "raptor",
-                     1978: "serpent_sting", 1752: "sinister_strike", 2098: "eviscerate",
-                     585: "smite", 589: "shadow_word_pain", 133: "fireball",
-                     116: "frostbolt", 143: "fireball"}
-    rank = {133: 1, 143: 2}
+
+Provider = Callable[[_Context, list[Candidate]], None]
+
+
+def offers(*actions: str) -> Callable[[Provider], Provider]:
+    """Tag a provider with the action names it can emit (a test checks each has an ActionSpec)."""
+    def mark(provider: Provider) -> Provider:
+        provider.actions = actions  # type: ignore[attr-defined]
+        return provider
+    return mark
+
+
+@offers(A.RELEASE_SPIRIT, A.RECLAIM_CORPSE, A.MOVE_TO)
+def _dead_candidates(ctx: _Context, out: list[Candidate]) -> None:
+    # Release, then reclaim (no reflex does either, gh-208). corpse_position may be unknown, so a
+    # ghost is always offered reclaim_corpse; it queries the server for the corpse itself.
+    if ctx.snapshot.get("is_ghost"):
+        out.append(candidate(A.RECLAIM_CORPSE, {}, "run back to your corpse and resurrect"))
+        corpse = ctx.snapshot.get("corpse_position")
+        if isinstance(corpse, dict):
+            out.append(candidate(A.MOVE_TO, {"x": corpse["x"], "y": corpse["y"], "z": corpse["z"]},
+                                 "run back to your corpse"))
+    else:
+        out.append(candidate(A.RELEASE_SPIRIT, {}, "release your spirit to become a ghost"))
+
+
+@offers(A.TRAIN_SPELL, A.SELL_ITEM, A.ACCEPT_QUEST, A.COMPLETE_QUEST, A.GOSSIP_SELECT, A.TURN_IN_QUEST,
+        A.CLOSE_WINDOW)
+def _window_provider(ctx: _Context, out: list[Candidate]) -> None:
+    out.extend(_window_candidates(ctx.snapshot))
+
+
+# Damaging spells only (highest known rank per family); buffs and utility spells are not offered.
+_OFFENSIVE_SPELL_FAMILY = {20271: "judgement", 2812: "holy_wrath", 2973: "raptor",
+                           1978: "serpent_sting", 1752: "sinister_strike", 2098: "eviscerate",
+                           585: "smite", 589: "shadow_word_pain", 133: "fireball",
+                           116: "frostbolt", 143: "fireball"}
+_SPELL_RANK = {133: 1, 143: 2}
+
+
+@offers(A.CAST_SPELL)
+def _offensive_spell_provider(ctx: _Context, out: list[Candidate]) -> None:
     spell_by_family: dict[str, KnownSpell] = {}
-    for spell in snapshot.get("spells") or []:
-        family = offensive_ids.get(spell.get("id", 0))
-        if family and (family not in spell_by_family or rank.get(spell["id"], 1) >
-                       rank.get(spell_by_family[family]["id"], 1)):
+    for spell in ctx.snapshot.get("spells") or []:
+        family = _OFFENSIVE_SPELL_FAMILY.get(spell.get("id", 0))
+        if family and (family not in spell_by_family or _SPELL_RANK.get(spell["id"], 1) >
+                       _SPELL_RANK.get(spell_by_family[family]["id"], 1)):
             spell_by_family[family] = spell
     for spell in list(spell_by_family.values())[:MAX_SPELLS]:
-        if threats_snapshot:
+        if ctx.spell_threats:
             out.append(candidate(A.CAST_SPELL, {"spell_id": spell["id"],
-                                                  "target_guid": threats_snapshot[0]["guid"]},
-                                 f"cast {spell.get('name') or spell['id']} at {_name(threats_snapshot[0])}"))
+                                                  "target_guid": ctx.spell_threats[0]["guid"]},
+                                 f"cast {spell.get('name') or spell['id']} at {_name(ctx.spell_threats[0])}"))
 
-    # Offer on-use consumables only when a health or mana resource is low.
-    # Quest items aren't consumables and remain available to quest actions.
-    me = snapshot.get("me")
-    health_pct = _resource_pct(me, "health")
-    mana_pct = _resource_pct(me, "mana")
-    needs_health, needs_mana = health_pct is not None and health_pct < 0.7, mana_pct is not None and mana_pct < 0.5
-    # Heals are offered as a self-cast (no target) when health is low, so a
-    # character whose only known spell is a heal (level-1 Paladin: Holy Light)
-    # can still cast and save itself.
-    if needs_health:
-        known_heals = [s for s in snapshot.get("spells") or [] if s.get("id") in HEAL_SPELL_IDS]
+
+@offers(A.CAST_SPELL)
+def _heal_provider(ctx: _Context, out: list[Candidate]) -> None:
+    # A self-cast (no target) when health is low, so a character whose only known spell is a heal
+    # (level-1 Paladin: Holy Light) can still cast and save itself. Heals go in front of everything
+    # offered so far.
+    if ctx.needs_health:
+        known_heals = [s for s in ctx.snapshot.get("spells") or [] if s.get("id") in HEAL_SPELL_IDS]
         for spell in known_heals[:MAX_SPELLS]:
             out.insert(0, candidate(A.CAST_SPELL, {"spell_id": spell["id"]},
                                     f"cast {spell.get('name') or spell['id']} on yourself"))
 
+
+@offers(A.USE_ITEM)
+def _consumable_provider(ctx: _Context, out: list[Candidate]) -> None:
+    # On-use consumables only when a health or mana resource is low. Quest items aren't
+    # consumables and remain available to quest actions.
     use_count = 0
-    for item in sorted((snapshot.get("inventory") or []),
+    for item in sorted((ctx.snapshot.get("inventory") or []),
                        key=lambda it: (-it.get("template", {}).get("quality", 0), it.get("slot", 999))):
         template = item.get("template") or {}
         spells = template.get("spells") or []
         usable = any(s.get("trigger") == 0 for s in spells)
-        if usable and _backpack(item) and (needs_health or needs_mana):
+        if usable and _backpack(item) and (ctx.needs_health or ctx.needs_mana):
             out.append(candidate(A.USE_ITEM, {"bag": 255, "slot": item["slot"]},
                                  f"use {item.get('name') or item.get('entry')}"))
             use_count += 1
             if use_count >= MAX_USE_ITEMS:
                 break
 
-    # Only offer an item if its cached template proves it scores above the
-    # currently equipped item in the same slot and is usable by this class.
-    class_id = me.get("class_id") if me else None
-    equipment = snapshot.get("equipment") or {}
-    for item in (snapshot.get("inventory") or []):
+
+@offers(A.EQUIP_ITEM)
+def _equip_provider(ctx: _Context, out: list[Candidate]) -> None:
+    # Only an item whose cached template proves it scores above the currently equipped item in the
+    # same slot and is usable by this class.
+    class_id = ctx.me.get("class_id") if ctx.me else None
+    equipment = ctx.snapshot.get("equipment") or {}
+    for item in (ctx.snapshot.get("inventory") or []):
         tpl = item.get("template")
         if not tpl or class_id not in item_compare.CLASS_PRIMARY_STAT or not _backpack(item):
             continue
@@ -383,22 +406,24 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
             if sum(c["action"] == A.EQUIP_ITEM for c in out) >= MAX_EQUIP:
                 break
 
-    invite = snapshot.get("pending_invite")
+
+@offers(A.ACCEPT_GROUP)
+def _group_invite_provider(ctx: _Context, out: list[Candidate]) -> None:
+    invite = ctx.snapshot.get("pending_invite")
     if invite:  # session.pending_invite: {"inviter_name": str}
         inviter = invite.get("inviter_name") if isinstance(invite, dict) else None
         out.append(candidate(A.ACCEPT_GROUP, {}, f"accept the group invite{' from ' + inviter if inviter else ''}"))
 
-    units = sorted((u for u in snapshot.get("nearby_units") or []
-                    if _guid_value(u, "guid", handles) is not None), key=_dist)
-    my_level = _my_level(snapshot)
 
-    threats = [u for u in units if _alive(u) and u.get("in_combat") and my_guid is not None
-               and _guid_value(u, "target_guid", handles) == my_guid]
-    for u in threats[:MAX_THREATS]:
+@offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
+def _threat_provider(ctx: _Context, out: list[Candidate]) -> None:
+    for u in ctx.threats[:MAX_THREATS]:
         out.append(_engage(u, "attacking you"))
-    threat_guids = {u["guid"] for u in threats}
 
-    loot = [u for u in units if u.get("lootable") and _dist(u) <= APPROACH_MAX_YD]
+
+@offers(A.LOOT, A.MOVE_TOWARDS)
+def _loot_provider(ctx: _Context, out: list[Candidate]) -> None:
+    loot = [u for u in ctx.units if u.get("lootable") and _dist(u) <= APPROACH_MAX_YD]
     for u in loot[:MAX_LOOT]:
         if _dist(u) <= INTERACT_RANGE_YD:
             out.append(candidate(A.LOOT, {"guid": u["guid"]}, f"loot {_name(u)} ({_dist(u):.1f} yd)"))
@@ -406,7 +431,10 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
             out.append(candidate(A.MOVE_TOWARDS, {"guid": u["guid"], "stop_distance": 2.0},
                                  f"move to loot {_name(u)} ({_dist(u):.1f} yd)"))
 
-    givers = [u for u in units if u.get("quest_giver_status") in _QUEST_GIVER_WORTH_VISITING
+
+@offers(A.INTERACT, A.MOVE_TOWARDS)
+def _quest_giver_provider(ctx: _Context, out: list[Candidate]) -> None:
+    givers = [u for u in ctx.units if u.get("quest_giver_status") in _QUEST_GIVER_WORTH_VISITING
               and _dist(u) <= APPROACH_MAX_YD]
     for u in givers[:MAX_QUEST_GIVERS]:
         why = _QUEST_GIVER_WORTH_VISITING[str(u["quest_giver_status"])]
@@ -416,11 +444,18 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
             out.append(candidate(A.MOVE_TOWARDS, {"guid": u["guid"], "stop_distance": 3.0},
                                  f"walk to {_name(u)} ({why}, {_dist(u):.1f} yd)"))
 
-    for q in [q for q in snapshot.get("quest_log") or [] if q.get("state_name") == "failed"][:MAX_ABANDON]:
+
+@offers(A.ABANDON_QUEST)
+def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
+    for q in [q for q in ctx.snapshot.get("quest_log") or [] if q.get("state_name") == "failed"][:MAX_ABANDON]:
         out.append(candidate(A.ABANDON_QUEST, {"slot": q["slot"]},
                              f"abandon failed quest {q.get('title') or q.get('quest_id')}"))
 
-    targets = [u for u in units if u["guid"] not in threat_guids and _alive(u) and not u.get("lootable")
+
+@offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
+def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
+    my_guid, my_level = ctx.my_guid, ctx.my_level
+    targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
                and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none")
                and _dist(u) <= APPROACH_MAX_YD
                # unprovoked pulls only when both levels are known and the mob isn't too strong
@@ -428,11 +463,16 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
                and u["level"] <= my_level + ATTACK_LEVEL_MARGIN
                # someone else's fight: not ours to take (only knowable with my_guid)
                and not (my_guid is not None and u.get("in_combat")
-                        and _guid_value(u, "target_guid", handles) not in (None, 0, my_guid))]
+                        and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, my_guid))]
     for u in targets[:MAX_ATTACK]:
         out.append(_engage(u, ""))
 
-    follow = (reflex_state or {}).get("follow") or {}
+
+# follow/assist/stop_following are driven by the follow reflex's state, not by the snapshot; they
+# stay together behind this one provider until their specs carry it (gh-515).
+@offers(A.FOLLOW, A.ASSIST, A.STOP_FOLLOWING)
+def _follow_reflex_provider(ctx: _Context, out: list[Candidate]) -> None:
+    follow = (ctx.reflex_state or {}).get("follow") or {}
     if follow.get("enabled"):
         leader = follow.get("leader_name") or "the leader"
         out.append(candidate(A.STOP_FOLLOWING, {}, f"stop following {leader}"))
@@ -440,16 +480,47 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
         out.append(candidate(A.ASSIST, {"on": on},
                              f"{'start' if on else 'stop'} assisting {leader}'s target"))
     else:
-        players = sorted((p for p in snapshot.get("nearby_players") or [] if p.get("name")), key=_dist)
+        players = sorted((p for p in ctx.snapshot.get("nearby_players") or [] if p.get("name")), key=_dist)
         for p in players[:MAX_FOLLOW]:
             out.append(candidate(A.FOLLOW, {"player_name": p["name"]},
                                  f"follow {p['name']} ({_dist(p):.1f} yd)"))
 
+
+# Priority order: a provider's candidates go after the earlier providers' (heals are the one
+# exception, they jump the queue themselves). Caps are counted over the shared list.
+ALIVE_PROVIDERS: tuple[Provider, ...] = (
+    _window_provider, _offensive_spell_provider, _heal_provider, _consumable_provider, _equip_provider,
+    _group_invite_provider, _threat_provider, _loot_provider, _quest_giver_provider,
+    _abandon_quest_provider, _attack_provider, _follow_reflex_provider,
+)
+DEAD_PROVIDERS: tuple[Provider, ...] = (_dead_candidates,)
+
+
+def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: dict | None = None,
+             history: list[ActionRecord] | None = None,
+             limit: int = MAX_CANDIDATES, handles=None,
+             notes: list | None = None) -> list[Candidate]:
+    """Concrete candidates for this think cycle; see the module docstring.
+    `handles` (world.handles) resolves handle-string GUIDs (UM-89) for the
+    unit comparisons; without it only raw-int snapshots are understood.
+    `history` (ThinkState.for_prompt()) drops/demotes options the agent just
+    failed or repeated to no effect; `notes`, if given, collects what was
+    changed and why."""
+    limit = max(1, limit)
+    idle = candidate(A.IDLE, {}, "do nothing this cycle")
+    ctx = _Context(snapshot, my_guid, reflex_state, handles)
+    dead = bool(snapshot.get("is_dead") or snapshot.get("is_ghost"))
+    out: list[Candidate] = []
+    for provider in DEAD_PROVIDERS if dead else ALIVE_PROVIDERS:
+        provider(ctx, out)
+    if dead:  # history is about the living options
+        return _finish(out, idle, limit)
+
     drop, demote = _history_effects(history)
     # Params carry the snapshot's own guid values, as do threat_guids.
     protected = {c["id"] for c in out
-                 if c["params"].get("guid") in threat_guids
-                 or c["params"].get("target_guid") in threat_guids}
+                 if c["params"].get("guid") in ctx.threat_guids
+                 or c["params"].get("target_guid") in ctx.threat_guids}
     return _finish(out, idle, limit, drop, demote, protected, notes)
 
 
