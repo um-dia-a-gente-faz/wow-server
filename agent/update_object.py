@@ -13,6 +13,7 @@ file. Verify against that source, not against the old handoff doc
 
 import functools
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -111,15 +112,15 @@ class UpdateBlock:
     guids: list = field(default_factory=list)   # only OUT_OF_RANGE_OBJECTS / NEAR_OBJECTS
 
 
-def _protocol_errors(opcode: int):
+def _protocol_errors(opcode: int) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for the public parsers (#459): a raw struct.error/IndexError becomes
     PacketTruncated, a ValueError (bad update_type, leftover bytes) PacketMalformed, so a caller
     only ever sees a ProtocolError and the router need not guess. The bodies stay as they are
     (hot path); a try block costs nothing when nothing is raised. The raw reads do not know
     their offset, so a truncation reports the payload size: the read ran past that end."""
-    def decorate(parse):
+    def decorate(parse: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(parse)
-        def wrapper(data, *args):
+        def wrapper(data: bytes, *args: Any) -> Any:
             try:
                 return parse(data, *args)
             except pk.ProtocolError:
