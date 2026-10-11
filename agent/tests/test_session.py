@@ -8,6 +8,7 @@ import pathlib
 import socket
 import struct
 import tempfile
+import threading
 import time
 import unittest
 
@@ -275,6 +276,51 @@ class NameQueryTest(unittest.TestCase):
         sess = make_session()
         hworld.send_name_queries(sess.ctx)
         self.assertEqual(sess.sock.sent, b'')
+
+    def test_send_name_queries_drains_under_world_lock_and_sends_outside_it(self):
+        # #577: NameCache.drain() runs on the recv thread while want_*() runs from the
+        # chat-relay thread, so the drain must go through WorldState's lock. The send must
+        # not hold it. A real lock wrapped so it records who holds it.
+        sess = make_session()
+        hworld.parse_update_object(sess.ctx, update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE,
+                                                               values=values_body({0x03: 17213}))))
+        ws = sess.world_state
+        lock = RecordingLock()
+        ws._lock = lock
+        seen = []
+        real_drain = ws.names.drain
+        ws.names.drain = lambda *a, **k: (seen.append(("drain", lock.held_by_current_thread())),
+                                          real_drain(*a, **k))[1]
+        real_send = sess._send_packet
+
+        def probe_send(opcode, payload=b''):
+            seen.append(("send", lock.held_by_current_thread()))
+            real_send(opcode, payload)
+
+        sess._send_packet = probe_send
+        hworld.send_name_queries(sess.ctx)
+        self.assertEqual(seen, [("drain", True), ("send", False)])
+        self.assertIn(nm.build_creature_query(17213, CREATURE), sess.sock.sent)
+
+
+class RecordingLock:
+    """A real threading.Lock that records which thread holds it (#577)."""
+
+    def __init__(self):
+        self._inner = threading.Lock()
+        self._owner = None
+
+    def __enter__(self):
+        self._inner.acquire()
+        self._owner = threading.get_ident()
+        return self
+
+    def __exit__(self, *exc):
+        self._owner = None
+        self._inner.release()
+
+    def held_by_current_thread(self) -> bool:
+        return self._owner == threading.get_ident()
 
 
 class NpcInteractionDispatchTest(unittest.TestCase):
