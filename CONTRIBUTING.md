@@ -249,8 +249,14 @@ fixed (#388, #475).
 2. Capture it: `python3 -m tools.agent_dev.capture_scenario <file> --cycle <N> --me <handle>`
    prints a `"captured_<agent>_<N>": dict(...)` entry. The audit log keeps GUIDs as handle
    strings (`u1`, `p3`) and not the handle table, so the entry carries its own: `handles` maps
-   each handle to an integer, and `my_guid` is the player's own handle, given by `--me` (the
-   `p<n>` the attacking mobs target). Without `--me`, `my_guid` is `...` and must be filled in.
+   each handle to an integer, and `my_guid` is the number of the player's own handle, given by
+   `--me`. `--me` must be the PLAYER's handle, the `p<n>` that units attacking you show as
+   their `target_guid`; the tool cannot tell a mob's handle from the player's, so a mob's
+   handle (`u<n>`) would be accepted and give a wrong scenario. `--me` must match a handle in
+   the snapshot exactly (case-sensitive) or the tool exits 2 naming it.
+   If no unit targets the player, omit `--me` and set `my_guid` by hand to an integer that is
+   not in `handles` (for example one more than the largest number there); `my_guid=...` is
+   otherwise left for you to fill in, and the predicates are `...` until you write them.
    The action the brain chose is a comment. The agent does not write `history` to the audit
    log; add it by hand if the scenario needs it.
 3. Paste the entry into `SCENARIOS` and write `offered` (what the candidate list must never

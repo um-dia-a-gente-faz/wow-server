@@ -21,7 +21,9 @@ from tools.agent_dev import capture_scenario, replay
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "audit", "v2.jsonl")
 PLAYER = 1                    # high bits 0: a player, handle "p<n>"
 IDLE_MOB = 0xF130 << 48 | 5   # HighGuid Unit: handle "u<n>"
-ATTACKER = 0xF130 << 48 | 6
+ATTACKER = 0xF130 << 48 | 6   # attacks the player
+FIGHTING_MOB = 0xF130 << 48 | 7   # in combat with another player: not ours to take
+OTHER_PLAYER = 2
 
 
 def run(argv):
@@ -46,6 +48,16 @@ def scenario_from(text):
     (key, value), = entries.items()
     assert key.startswith("captured_"), key
     return dict(value)
+
+
+def assert_one_line_exit_2(test, argv):
+    """The capture command refuses `argv` with exit 2, empty stdout, one stderr line, no traceback."""
+    code, out, err = run(argv)
+    test.assertEqual(code, 2)
+    test.assertEqual(out, "")
+    test.assertEqual(len(err.splitlines()), 1, err)
+    test.assertNotIn("Traceback", err)
+    return err
 
 
 def write_lines(*lines):
@@ -92,20 +104,23 @@ class LiveShapedRecordTest(unittest.TestCase):
     def setUp(self):
         self.hm = HandleMap()
         live = bs.snap([bs.unit(IDLE_MOB, 4, level=1),
-                        bs.unit(ATTACKER, 3, level=1, target_guid=PLAYER, in_combat=True)])
+                        bs.unit(ATTACKER, 3, level=1, target_guid=PLAYER, in_combat=True),
+                        bs.unit(FIGHTING_MOB, 5, level=1, target_guid=OTHER_PLAYER, in_combat=True)])
         rec = AuditRecord(agent="Jev1", cycle=7, snapshot=self.hm.encode(live),
                           tool_call={"name": "idle", "args": {}}, valid=True, result={"ok": True, "error": None})
         self.path = write_lines(json.dumps(rec.to_json()))
         self.addCleanup(os.remove, self.path)
-        self.idle_h, self.att_h, self.me_h = (self.hm.handle_for(g) for g in (IDLE_MOB, ATTACKER, PLAYER))
+        self.idle_h, self.att_h, self.me_h, self.other_h = (
+            self.hm.handle_for(g) for g in (IDLE_MOB, ATTACKER, PLAYER, FIGHTING_MOB))
 
     def test_captured_scenario_offers_the_attack_and_labels_the_attacker(self):
         code, out, err = run([self.path, "--me", self.me_h])
         self.assertEqual(code, 0, err)
         s = scenario_from(out)
         self.assertEqual(s["my_guid"], s["handles"][self.me_h])
-        s["offered"], s["chosen"] = bs.offering_attack_on(self.idle_h), (lambda action, params: True)
+        s["offered"], s["chosen"] = bs.offering_attack_on(self.idle_h), bs.first_is("auto_attack", guid=self.att_h)
         self.assertEqual(bs.violations(s), [])
+        self.assertNotIn(self.other_h, [c["params"].get("guid") for c in bs.offered_for(s)])
         labels = {c["params"].get("guid"): c["label"] for c in bs.offered_for(s) if c["action"] == "auto_attack"}
         self.assertIn("attacking you", labels[self.att_h])
         self.assertNotIn("attacking you", labels[self.idle_h])
@@ -115,6 +130,14 @@ class LiveShapedRecordTest(unittest.TestCase):
         with open(self.path, encoding="utf-8") as f:
             snapshot = json.loads(f.read())["snapshot"]
         self.assertEqual([c["action"] for c in cand.generate(snapshot, my_guid=PLAYER)], ["idle"])
+
+    def test_me_the_snapshot_does_not_contain_exits_2_naming_it(self):
+        known = {self.idle_h, self.att_h, self.me_h, self.other_h}
+        for bad in ("p99", self.me_h.upper()):
+            with self.subTest(bad):
+                self.assertNotIn(bad, known)
+                err = assert_one_line_exit_2(self, [self.path, "--me", bad])
+                self.assertIn(bad, err)
 
     def test_without_me_the_entry_leaves_my_guid_for_the_author(self):
         code, out, _ = run([self.path])
@@ -126,12 +149,7 @@ class BadInputTest(unittest.TestCase):
     """Each of these exits 2 with one stderr line and no traceback."""
 
     def assert_one_line_exit_2(self, argv):
-        code, out, err = run(argv)
-        self.assertEqual(code, 2)
-        self.assertEqual(out, "")
-        self.assertEqual(len(err.splitlines()), 1, err)
-        self.assertNotIn("Traceback", err)
-        return err
+        return assert_one_line_exit_2(self, argv)
 
     def test_missing_path(self):
         with tempfile.TemporaryDirectory() as d:

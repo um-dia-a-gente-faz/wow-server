@@ -14,7 +14,8 @@ author, with the action the brain chose in that record as a comment. Stdlib only
   --me H      the player's own handle (the one the attacking mobs target); without it my_guid is `...`
 
 Exits 2 with a one-line message when the file cannot be read, a line is not a JSON object, there
-is no such record, or the record has no snapshot or a non-object tool_call.
+is no such record, the record has no snapshot or a non-object tool_call, or --me is not a handle
+in the snapshot (exact match).
 """
 
 import argparse
@@ -81,7 +82,8 @@ def scenario_text(rec: dict, me: str | None = None) -> str:
     chosen = f"{call.get('name')!r} {(call.get('args') or {})!r}"
     handles = _handles_in(rec["snapshot"], {})
     if me is not None and me not in handles:
-        handles[me] = len(handles) + 1
+        raise CaptureError(f"--me {me!r} is not a handle in cycle {rec.get('cycle')}'s snapshot "
+                           "(exact match; use the player's handle, the target of the units attacking you)")
     lines = [f"{key}: dict(",
              f"    snapshot={pprint.pformat(rec['snapshot'], width=100)},"]
     if handles:
@@ -128,7 +130,11 @@ def main(argv=None) -> int:
     if rec.get("tool_call") is not None and not isinstance(rec["tool_call"], dict):
         print(f"capture: cycle {rec.get('cycle')} tool_call is not an object", file=sys.stderr)
         return 2
-    print(scenario_text(rec, args.me))
+    try:
+        print(scenario_text(rec, args.me))
+    except CaptureError as e:
+        print(f"capture: {e}", file=sys.stderr)
+        return 2
     return 0
 
 
