@@ -1,0 +1,9 @@
+{
+  "opcode": "SMSG_TRADE_STATUS",
+  "source": "src/server/game/Handlers/TradeHandler.cpp WorldSession::SendTradeStatus; src/server/shared/SharedDefines.h enum TradeStatus",
+  "expect": {
+    "status": 1,
+    "status_name": "begin_trade",
+    "trader_guid": "0x0000000000000003"
+  }
+}

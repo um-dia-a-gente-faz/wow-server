@@ -32,6 +32,7 @@ backticked repo path in the docs (archived spikes: links only), `README.md`, `CL
 
 | Doc | Contents |
 |---|---|
+| [RUNBOOK-ALERTS.md](RUNBOOK-ALERTS.md) | One section per Prometheus alert rule: what it means, what to check, how to tune it |
 | [WOW-AGENTS-PROVISIONING.md](WOW-AGENTS-PROVISIONING.md) | Provisioning the `wow-agents` VM |
 | [AGENT-RUN-1-10.md](AGENT-RUN-1-10.md) | Unattended level 1 to N evaluation run (UM-55) |
 | [REPRODUCE-PROMPT.md](REPRODUCE-PROMPT.md) | Prompt to rebuild the whole environment on Proxmox (in Portuguese) |

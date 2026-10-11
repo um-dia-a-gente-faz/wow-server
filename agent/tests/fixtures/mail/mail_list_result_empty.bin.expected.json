@@ -1,0 +1,8 @@
+{
+  "opcode": "SMSG_MAIL_LIST_RESULT",
+  "source": "src/server/game/Server/Packets/MailPackets.cpp WorldPackets::Mail::MailListResult::Write",
+  "expect": {
+    "total_records": 0,
+    "mails": []
+  }
+}

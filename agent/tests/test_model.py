@@ -45,6 +45,7 @@ class ModelMatchesProducersTest(unittest.TestCase):
             world = golden.build_world()
         me = world.get_my_object()
         me.level, me.health, me.max_health = 5, 40, 50
+        me.unit_flags = uf.UNIT_FLAG_IN_COMBAT  # so the only-when-true key `in_combat` is produced too (#544)
         me.power, me.max_power = {name: 1 for name in uf.POWER_NAMES}, {"mana": 10}
         me.raw_fields.update({uf.PLAYER_XP: 1, uf.PLAYER_NEXT_LEVEL_XP: 2})
         session = fake_session()

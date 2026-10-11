@@ -1,5 +1,7 @@
 # Quest fixtures
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Real payloads captured live from `192.168.1.64` on 2026-09-24. Character: **Sunspeaker**
 (account `AGENT04`, priest, level 1, Sunstrider Isle start area, map 530). The script
 logged in, used `interact` on Magistrix Erona, ran `accept_quest` for quest 8325

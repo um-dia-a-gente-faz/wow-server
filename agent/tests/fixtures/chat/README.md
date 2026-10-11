@@ -1,5 +1,7 @@
 # SMSG_MESSAGECHAT captures (UM-47)
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Raw, decrypted `SMSG_MESSAGECHAT` (0x096) payloads — everything after the
 6-byte world header — captured off the live realm (192.168.1.64, TrinityCore
 3.3.5a build 12340) on 2026-09-25. Hex, whitespace-insensitive; everything
