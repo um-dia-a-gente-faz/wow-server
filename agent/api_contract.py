@@ -2,14 +2,19 @@
 
 One schema describes every response of agent/http_api.py. Producer tests validate real
 responses against it, consumer tests (wowmap, agent-runner) build their fixtures from it
-with sample(), and docs/AGENT-API.md is generated from it (python -m agent.api_contract).
+with sample(), and docs/AGENT-API.md is generated from it (python -m agent.api_contract). The doc's
+action catalog section (#504) is rendered from agent/action_specs.py, the one place action params live.
 Only the integer API_VERSION is needed at runtime, so no image has to ship the JSON.
 """
 import json
 import pathlib
 import sys
 
+from agent import action_specs
+
 SCHEMA_PATH = pathlib.Path(__file__).with_name("api_schema.json")
+CATALOG_BEGIN = "<!-- BEGIN GENERATED catalog: agent/action_specs.py (scripts/generate.py) -->"
+CATALOG_END = "<!-- END GENERATED catalog -->"
 
 
 def load() -> dict:
@@ -67,6 +72,37 @@ def response_schema(endpoint: str, response: str, contract: dict | None = None) 
     return (contract or load())["endpoints"][endpoint]["responses"][response]
 
 
+def _cell(text) -> str:
+    return str(text).replace("|", "\\|").replace("\n", " ")
+
+
+def _type(schema: dict) -> str:
+    if schema.get("type") == "array" and "items" in schema:
+        return f"array of {schema['items'].get('type', 'any')}"
+    return str(schema.get("type", "any"))
+
+
+def render_catalog(specs=None) -> list[str]:
+    """The action catalog section, from agent/action_specs.py (#504). Specs are read at call time."""
+    specs = action_specs.all_specs if specs is None else specs
+    out = [CATALOG_BEGIN, "## Action catalog", "",
+           "One entry per action spec in `agent/action_specs.py`, in spec order: every action the agent can take, "
+           "including the ones the death, rest and follow reflexes take. `cap` is the most candidates of that action "
+           "offered per snapshot (`none`: the spec has no cap).", ""]
+    for spec in specs:
+        out += [f"### `{spec.name}`", "", f"cap: {spec.cap if spec.cap is not None else 'none'}", ""]
+        if not spec.params:
+            out += ["No parameters.", ""]
+            continue
+        out += ["| param | type | required | description |", "|---|---|---|---|"]
+        for name, schema in spec.params.items():
+            req = "yes" if name in spec.required else ""
+            out.append(f"| `{name}` | {_type(schema)} | {req} | {_cell(schema.get('description', ''))} |")
+        out.append("")
+    out += [CATALOG_END]
+    return out
+
+
 def render_markdown(contract: dict | None = None) -> str:
     c = contract or load()
 
@@ -80,7 +116,7 @@ def render_markdown(contract: dict | None = None) -> str:
             elif s.get("type") == "array" and s.get("items", {}).get("properties"):
                 yield from rows(s["items"], f"{prefix}{k}[].")
 
-    out = ["<!-- Generated from agent/api_schema.json by `python -m agent.api_contract`; do not edit. -->",
+    out = ["<!-- Generated from agent/api_schema.json and agent/action_specs.py by `python -m agent.api_contract`; do not edit. -->",
            f"# {c['title']} (api_version {c['api_version']})", "", c["description"], ""]
     for ep, spec in c["endpoints"].items():
         out += [f"## `{ep if ' ' in ep else 'GET ' + ep}`", "", spec["summary"], ""]
@@ -88,6 +124,7 @@ def render_markdown(contract: dict | None = None) -> str:
             out += [f"Response: {name}", "", "| field | type | always present |", "|---|---|---|", *rows(schema), ""]
     out += ["## Errors", "", c["errors"]["summary"], ""]
     out += ["## Notes", "", *[f"- {n}" for n in c["notes"]], ""]
+    out += [*render_catalog(), ""]
     return "\n".join(out)
 
 

@@ -14,7 +14,7 @@ backticked repo path in the docs (archived spikes: links only), `README.md`, `CL
 | [DEPLOYMENT.md](DEPLOYMENT.md) | How the VM is deployed and updated, gotchas, troubleshooting |
 | [DEV-STACK.md](DEV-STACK.md) | One-command local stack on mocks and a fixture DB (`dev/dev.sh up`), no live server |
 | [PROTOCOL-NOTES.md](PROTOCOL-NOTES.md) | 3.3.5a wire formats, each checked against TrinityCore source |
-| [AGENT-API.md](AGENT-API.md) | Agent observability API (generated from `agent/api_schema.json`) |
+| [AGENT-API.md](AGENT-API.md) | Agent observability API and action catalog (generated from `agent/api_schema.json` and `agent/action_specs.py`) |
 | [LIVE-MAP.md](LIVE-MAP.md) | Live map: how it was built, DBC layout, alignment |
 | [CLIENT-SETUP.md](CLIENT-SETUP.md) | Game client configuration |
 | [GM-COMMANDS.md](GM-COMMANDS.md) | Useful GM commands |
