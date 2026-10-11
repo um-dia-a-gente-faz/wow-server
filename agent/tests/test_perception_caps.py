@@ -108,6 +108,18 @@ class SnapshotCapsTest(unittest.TestCase):
         for section in ("nearby_units", "nearby_players", "nearby_objects"):
             self.assertEqual(len(snap[section]), 5, section)
 
+    def test_limit_zero_gives_empty_nearby_sections_without_raising(self):
+        # #367 Decision 2: nearby_sections already enforces `limit`, so limit=0 keeps working as on main.
+        ws = WorldState()
+        ws.set_my_guid(1)
+        ws.set_my_map(530)
+        ws.update_object(create_block(1, object_type=uo.TYPEID_PLAYER, x=0, y=0, z=0))
+        ws.update_object(create_block(2, object_type=uo.TYPEID_UNIT, x=5, y=0, z=0, fields={0x03: 2}))
+        snap = ws.snapshot(max_range=50, limit=0)
+        self.assertEqual(snap["nearby_units"], [])
+        self.assertEqual(snap["nearby_players"], [])
+        self.assertEqual(snap["nearby_objects"], [])
+
     def test_absent_mailbox_and_group_are_not_truncated(self):
         ws = WorldState()
         snap = ws.snapshot()

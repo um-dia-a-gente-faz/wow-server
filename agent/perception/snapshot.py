@@ -40,5 +40,6 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
         out["nearby_units"] = near["nearby_units"]
         out["nearby_players"] = near["nearby_players"]
         out["nearby_objects"] = near["nearby_objects"]
-    caps = {**SECTION_CAPS, "nearby_units": limit, "nearby_players": limit, "nearby_objects": limit}
+    # The nearby_* sections are already cut to `limit` by nearby_sections, so they are not capped here.
+    caps = {k: v for k, v in SECTION_CAPS.items() if not k.startswith("nearby_")}
     return apply_caps(out, caps)

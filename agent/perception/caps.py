@@ -12,8 +12,8 @@ from typing import Any, cast
 from ..model import Snapshot
 
 # A plain key names a top-level list; a dotted key `a.b` names list `b` inside
-# dict snapshot["a"]. The nearby_* caps are overridden by compose_snapshot's
-# `limit` argument.
+# dict snapshot["a"]. compose_snapshot skips the nearby_* keys: nearby_sections
+# already cuts them to its `limit` argument.
 SECTION_CAPS: dict[str, int] = {
     "nearby_units": 40, "nearby_players": 40, "nearby_objects": 40,
     "inventory": 20,        # slots 19-38
