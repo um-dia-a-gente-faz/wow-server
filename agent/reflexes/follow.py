@@ -333,12 +333,6 @@ class FollowAction(actions.Action):
     description = ("Follow a nearby party member/player by name, keeping roughly `distance` "
                     "yards away and matching their target if assist is on, until "
                     "stop_following is called or the leader is lost.")
-    params = {
-        "player_name": {"type": "string", "description": "Name of a nearby player to follow (case-insensitive)."},
-        "distance": {"type": "number",
-                     "description": f"How close to stay, in yards. Default {DEFAULT_DISTANCE_YD}."},
-    }
-    required = ("player_name",)
 
     def check(self, session, world, player_name: str, distance: float = DEFAULT_DISTANCE_YD, **_) -> str | None:
         error = actions.player_name_error(player_name, field="player_name")
@@ -366,10 +360,6 @@ class FollowAction(actions.Action):
 class AssistAction(actions.Action):
     name = "assist"
     description = "Turn assisting the followed leader's current combat target on or off."
-    params = {
-        "on": {"type": "boolean", "description": "True to assist, false to stop assisting."},
-    }
-    required = ("on",)
 
     def check(self, session, world, on: bool, **_) -> str | None:
         if not get_follow_reflex(session).enabled:
@@ -388,8 +378,6 @@ class AssistAction(actions.Action):
 class StopFollowingAction(actions.Action):
     name = "stop_following"
     description = "Stop following the current leader and stop assisting."
-    params = {}
-    required = ()
 
     def execute(self, session, world, **_) -> actions.ActionResult:
         reflex = get_follow_reflex(session)

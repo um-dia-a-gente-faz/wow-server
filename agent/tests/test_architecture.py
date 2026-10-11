@@ -87,7 +87,7 @@ LAYERS = {
     "llm": {"httpjson", "prompts"},
     "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},
+    "brain": {"action_specs", "actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
