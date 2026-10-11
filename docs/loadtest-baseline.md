@@ -66,3 +66,34 @@ here). Treat any decision that needs those as unmeasured (#421).
 as `--compare` input for a run with `--agents 25 --duration 60 --think-interval 0.1`;
 `--compare` refuses any other shape.
 The 6 GB VM budget is **not** verified here; re-run on the VM and replace these numbers.
+
+## Stream soaks (#486)
+
+Four 600 s soaks, `--agents 25 --duration 600 --stream-hz 20`, one after another, on the same
+local host as above (Linux, Python 3.14.4, **not the VM**), loopback only, commit `67fd0be`,
+2026-10-11. Runs 2 and 4 use the README fault spec. "End" is the last sample taken with the
+agents still connected (t ~ 600 s); the report's own `end` sample comes after teardown.
+
+| run | stream_pool | faults | container_items 60 s / 300 s / end | RSS kB 60 s / 300 s / end (peak) | threads before -> end | reconnects | tracebacks |
+|---|---|---|---|---|---|---|---|
+| 1 | 50 | none | 3850 / 3850 / 3850 | 42644 / 42736 / 42880 (42880) | 1 -> 1 | 0 | 0 |
+| 2 | 50 | README spec | 3234 / 3234 / 3234 | 44268 / 54348 / 117940 (121988) | 1 -> 1 | 4 | 1 |
+| 3 | 0 | none | 76499 / 377666 / 751372 | 96676 / 337640 / 621896 (621896) | 1 -> 1 | 0 | 0 |
+| 4 | 0 | README spec | 60130 / 313229 / 628956 | 87472 / 298604 / 583820 (590772) | 1 -> 1 | 4 | 1 |
+
+Reading it:
+
+- **Object table with `--stream-pool 0`** (runs 3, 4): grows one unit per tick, as designed. A
+  scratch probe of one session (60 s, pool 0) gave `world_state.objects` = 600 at 30 s and 1203 at
+  60 s. Tick p99 stays ~107 ms but the max reaches 332-350 ms and CPU rises to 45-57 % of one core.
+- **`world_state.names._in_flight` and `_pending`** also grow with pool 0 (1202 and 605 at 60 s, one
+  per tick): the chat senders' name queries are never answered by the mock, so nothing clears them.
+  The default pool (50) bounds them, which is why runs 1 and 2 are flat. Whether a real server
+  answers every query is not checked here.
+- **RSS in run 2** (default pool, faults) rises from 44 MB at 60 s to 118 MB at the end, starting
+  around 400 s. The probed collections stay flat (3234 at all three points), so the growth is not
+  in them. Not attributed; the mock's own `received` list grows for the whole run and is a candidate.
+  Run 1 without faults stays flat at ~42.7 MB.
+- **Threads**: no leak in any run (1 before, 1 after; 78 at peak = 3 per agent plus the mock).
+- **Tracebacks** (runs 2 and 4): one `ConnectionResetError` on `sendall` during login. The supervisor
+  retried; four reconnects per run, recovery p50 ~0.3 s. Every agent came back.
