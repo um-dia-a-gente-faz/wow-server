@@ -5,7 +5,7 @@
 name: wow-dev
 
 x-py: &py
-  image: python:3.12-slim
+  image: python:3.12.15-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
   working_dir: /repo
   volumes: ["..:/repo:ro"]
   environment: &py-env
@@ -62,7 +62,7 @@ services:
       LOG_PATH: /tmp/Server.log
 
   database:
-    image: mysql:8.4.4
+    image: mysql:8.4.4@sha256:23818b7d7de427096ab1427b2e3d9d5e14a5b933f9a4431a482d6414bc879091
     environment:
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"   # throwaway fixture DB, not published
     volumes: ["./fixture:/docker-entrypoint-initdb.d:ro"]

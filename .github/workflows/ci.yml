@@ -95,7 +95,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: tools/wowmap/requirements.txt
-      - run: pip install -r tools/wowmap/requirements.txt Pillow
+      - run: pip install -r tools/wowmap/requirements.txt
       - run: scripts/check.sh generated test
 
       # UM-100: the real JevClient against jev-mock as a separate process, over
@@ -170,6 +170,11 @@ jobs:
       # example (dummy values) once one exists so interpolation resolves.
       - name: Dummy env file
         run: if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+      - name: No :latest images (#291)
+        run: |
+          if git grep -nE '^\s*(image:|FROM)\s.*:latest(\s|$)' -- ':(glob)**/docker-compose*.yml' ':(glob)**/Dockerfile'; then
+            echo "::error::pin images by version and digest, never :latest (docs/DEPLOYMENT.md, Bumping pins)"; exit 1
+          fi
       - name: Validate compose files
         # --project-directory . keeps the project dir (and thus .env lookup)
         # at the repo root even for compose files in subdirectories;
@@ -246,7 +251,7 @@ jobs:
     # backup-db.sh / restore-db.sh run unmodified; they docker-exec into DB_CONTAINER.
     services:
       mysql:
-        image: mysql:8.4.4  # same as the VM (docker-compose.yml)
+        image: mysql:8.4.4@sha256:23818b7d7de427096ab1427b2e3d9d5e14a5b933f9a4431a482d6414bc879091  # same as the VM (docker-compose.yml)
         env:
           MYSQL_ROOT_PASSWORD: ci-backup-test
         # -h127.0.0.1: the entrypoint's temporary init server has no TCP, so only the real one is "healthy"

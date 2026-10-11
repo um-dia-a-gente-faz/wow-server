@@ -13,7 +13,7 @@
 
 x-agent: &agent-defaults
   build: .
-  image: wow-agent:latest
+  image: wow-agent:${WOW_AGENT_TAG:?set WOW_AGENT_TAG in .env (a git SHA; see docs/DEPLOYMENT.md)}
   restart: unless-stopped
   # Per-container limits so 25 agents fit on a small VM. An agent is a stdlib
   # Python process that mostly waits on the network and the LLM.
@@ -486,7 +486,7 @@ services:
   #   JEV_BASE_URL=http://jev-mock:8090/api/alpha \
   #     docker compose -f docker-compose.agents.yml --profile jev-mock up -d jev-mock agent-luaprata
   jev-mock:
-    image: python:3.12-slim
+    image: python:3.12.15-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
     container_name: wow-jev-mock
     profiles: [jev-mock]
     restart: unless-stopped
