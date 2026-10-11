@@ -130,6 +130,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class RouterCountersRenderTest(unittest.TestCase):
+    def setUp(self):
+        from agent import metrics, opcodes
+        self.m, self.op = metrics, opcodes
+        metrics.ROUTER_COUNTS.clear()
+        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+
+    def test_count_router_event_and_render_with_names(self):
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.m.count_router_event(kind, self.op.SMSG_LOGOUT_COMPLETE)
+        self.m.count_router_event("packets", 0xFFFE)   # no name: 0x%03X
+        text = self.m.render_router("A")
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f'wow_agent_router_{kind}_total{{agent="A",opcode="SMSG_LOGOUT_COMPLETE"}} 1', text)
+        self.assertIn('wow_agent_router_packets_total{agent="A",opcode="0xFFFE"} 1', text)
+        self.assertIn("# TYPE wow_agent_router_handler_errors_total counter", text)
+
+    def test_router_names_are_literals_in_the_producer_source(self):
+        # the #280 dashboards-vs-producers test scans agent/metrics.py as text with this regex
+        import re
+        with open(self.m.__file__, encoding="utf-8") as f:
+            found = set(re.findall(r"\b(?:wow|jev)_[a-z0-9_]+\b", f.read()))
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f"wow_agent_router_{kind}_total", found)
+
+    def test_names_present_even_with_no_events(self):
+        text = self.m.render_router("A")
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f"# TYPE wow_agent_router_{kind}_total counter", text)
+
+
 class SwallowedTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics
@@ -151,3 +182,60 @@ class SwallowedTest(unittest.TestCase):
         self.assertIn("unit.site (ctx 7): ValueError: boom", cm.output[0])
         text = self.m.render_swallowed("A")
         self.assertIn('wow_agent_swallowed_errors_total{agent="A",where="unit.site"} 3', text)
+
+
+class DecisionsByPromptTest(unittest.TestCase):
+    """#476: wow_agent_decisions_by_prompt_total{agent,prompt_id}, derived from the audit
+    records by the textfile exporter only; 8 newest ids keep a label, older ones are `other`."""
+
+    def render(self, recs):
+        text = render_prometheus_text(derive_metrics(recs))
+        return [ln for ln in text.splitlines() if ln.startswith("wow_agent_decisions_by_prompt_total{")]
+
+    def test_counts_per_prompt_id(self):
+        recs = [{"agent": "A", "ts": 1.0, "prompt_id": "system@1a2b3c4d"},
+                {"agent": "A", "ts": 2.0, "prompt_id": "system@1a2b3c4d"},
+                {"agent": "A", "ts": 3.0, "prompt_id": "system@5e6f7a8b"}]
+        self.assertEqual(self.render(recs), [
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@1a2b3c4d"} 2',
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@5e6f7a8b"} 1'])
+
+    def test_ten_ids_over_increasing_timestamps_keep_the_eight_newest(self):
+        recs = [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(10)]
+        counts = derive_metrics(recs)["A"].decisions_by_prompt
+        self.assertEqual(counts["other"], 2)
+        self.assertEqual({k for k in counts if k != "other"}, {f"p{i}" for i in range(2, 10)})
+        # shuffled file order: the bound follows the timestamps, not the order of the lines
+        counts = derive_metrics(list(reversed(recs)))["A"].decisions_by_prompt
+        self.assertEqual({k for k in counts if k != "other"}, {f"p{i}" for i in range(2, 10)})
+
+    def test_older_id_seen_again_recently_stays_labelled(self):
+        recs = [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(9)]
+        recs.append({"agent": "A", "ts": 99.0, "prompt_id": "p0"})
+        counts = derive_metrics(recs)["A"].decisions_by_prompt
+        self.assertEqual(counts["p0"], 2)
+        self.assertEqual(counts["other"], 1)      # p1 is now the oldest
+
+    def test_bound_is_per_agent(self):
+        recs = [{"agent": a, "ts": float(i), "prompt_id": f"p{i}"} for a in "AB" for i in range(10)]
+        for m in derive_metrics(recs).values():
+            self.assertEqual(m.decisions_by_prompt["other"], 2)
+
+    def test_missing_empty_and_null_id_is_none_and_not_counted_against_the_eight(self):
+        recs = [{"agent": "A", "ts": 0.0}, {"agent": "A", "prompt_id": ""}, {"agent": "A", "prompt_id": None}]
+        recs += [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(8)]
+        counts = derive_metrics(recs)["A"].decisions_by_prompt
+        self.assertEqual(counts["none"], 3)
+        self.assertNotIn("other", counts)
+
+    def test_non_string_ids_render_as_none(self):
+        recs = [{"agent": "A", "prompt_id": ["a"]}, {"agent": "A", "prompt_id": {"a": 1}},
+                {"agent": "A", "prompt_id": 7}, {"agent": "A", "prompt_id": "system@1"}]
+        self.assertEqual(self.render(recs), [
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="none"} 3',
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@1"} 1'])
+
+    def test_quote_backslash_newline_are_escaped_and_samples_stay_on_one_line(self):
+        recs = [{"agent": "A", "prompt_id": 'sys"te\\m\n@1'}]
+        self.assertEqual(self.render(recs), [
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="sys\\"te\\\\m\\n@1"} 1'])

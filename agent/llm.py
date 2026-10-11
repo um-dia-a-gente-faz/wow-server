@@ -2,7 +2,7 @@
 """LLM client for the agent's think step (UM-44).
 
 Talks to any OpenAI-compatible `/chat/completions` endpoint (function/tool
-calling) over stdlib `urllib` — no extra pip dependency, per CONTRIBUTING.md's
+calling) through agent/httpjson.py — no extra pip dependency, per CONTRIBUTING.md's
 "no external framework" rule and `docs/AGENT-DIRECTION.md`'s "free models
 only" constraint: the primary target is FreeLLMAPI
 (https://github.com/tashfeenahmed/freellmapi), which fronts free
@@ -17,16 +17,12 @@ The system prompt is built from the perception snapshot
 adding a new Action automatically extends what the model can choose from.
 """
 
-import email.utils
-import http.client
 import json
 import logging
-import re
 import time
-import urllib.error
-import urllib.request
 
-from . import prompts
+from . import httpjson, prompts
+from .httpjson import retry_after_seconds as _retry_after_seconds  # noqa: F401 (tests, #454)
 
 log = logging.getLogger("agent.llm")
 
@@ -179,50 +175,23 @@ class LLMClient:
         self.last_prompt_id: str | None = None  # agent.prompts ids of the last request (#395)
 
     def _post(self, path: str, body: dict) -> dict:
-        url = f"{self.base_url}{path}"
-        data = json.dumps(body).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read()
-        except urllib.error.HTTPError as e:
-            try:
-                err_body = e.read()[:500] if e.fp is not None else b""
-            except (OSError, http.client.HTTPException):
-                err_body = b""
-            # 404: FreeLLMAPI's "model not found or removed upstream" for a
-            # stale catalog entry (seen for gemini-2.5-flash in the UM-94
-            # probe) — specific to that model, so fall through to the next.
-            retryable = e.code in (404, 429) or 500 <= e.code < 600
-            retry_after = _retry_after_seconds(
-                e.headers.get("Retry-After") if e.headers is not None else None,
-                err_body.decode("utf-8", "replace"))
-            raise LLMUnavailable(f"HTTP {e.code} from {url}: {err_body!r}",
-                                 status=e.code, retry_after=retry_after,
-                                 retryable=retryable) from e
-        except urllib.error.URLError as e:
-            raise LLMUnavailable(f"request to {url} failed: {e.reason}") from e
-        except (OSError, http.client.HTTPException) as e:
-            # urllib only wraps OSError as URLError around the request-send
-            # phase (urllib.request.AbstractHTTPHandler.do_open). A timeout
-            # while reading the response body (http.client.HTTPConnection
-            # .getresponse() -> socket.recv_into()) raises a bare
-            # TimeoutError/socket.timeout that neither except above catches,
-            # so it would otherwise kill the whole agent process (UM-81).
-            # http.client.HTTPException (e.g. IncompleteRead, BadStatusLine)
-            # is caught alongside it for the same reason: resp.read() can
-            # raise that instead of an OSError if the connection drops after
-            # the headers arrive but before the promised body is complete —
-            # found in review, not OSError's MRO, so the original except
-            # OSError alone still missed it.
-            raise LLMUnavailable(f"request to {url} failed: {e}") from e
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise LLMUnavailable(f"non-JSON response from {url}: {raw[:500]!r}") from e
+            # error_body_limit: the first 500 bytes of an error body feed both the
+            # message and the "Soonest reset" hint (UM-94).
+            return httpjson.post_json(f"{self.base_url}{path}", body, api_key=self.api_key,
+                                      timeout=self.timeout, error_body_limit=500)  # type: ignore[return-value]
+        except httpjson.HttpJsonError as e:
+            if e.kind == "http":
+                # 404: FreeLLMAPI's "model not found or removed upstream" for a
+                # stale catalog entry (seen for gemini-2.5-flash in the UM-94
+                # probe) — specific to that model, so fall through to the next.
+                status = e.status or 0
+                raise LLMUnavailable(f"HTTP {status} from {e.url}: {(e.body or b'')!r}",
+                                     status=e.status, retry_after=e.retry_after,
+                                     retryable=status in (404, 429) or 500 <= status < 600) from None
+            if e.kind == "network":
+                raise LLMUnavailable(f"request to {e.url} failed: {e.detail}") from None
+            raise LLMUnavailable(f"non-JSON response from {e.url}: {(e.body or b'')[:500]!r}") from None
 
     def cooldowns(self) -> dict[str, float]:
         """Seconds left on each model's cooldown (only models still cooling)."""
@@ -324,41 +293,6 @@ def parse_model_list(model: str) -> list[str]:
         if part and part not in out:
             out.append(part)
     return out
-
-
-# FreeLLMAPI's 429 body: "... Soonest reset ~82s." Units other than seconds
-# are accepted defensively; an unknown/missing unit means seconds.
-_SOONEST_RESET_RE = re.compile(
-    r"reset\D{0,10}?(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hours?)?\b",
-    re.IGNORECASE)
-
-
-def _retry_after_seconds(header: str | None, body: str) -> float | None:
-    """Seconds until the gateway says to retry: the Retry-After header
-    (delta-seconds or an HTTP date), else FreeLLMAPI's "Soonest reset ~82s"
-    hint in the error message. None if neither is present/parseable."""
-    if header:
-        header = header.strip()
-        try:
-            return max(0.0, float(header))
-        except ValueError:
-            try:
-                when = email.utils.parsedate_to_datetime(header)
-                return max(0.0, when.timestamp() - time.time())
-            except (TypeError, ValueError, IndexError, OverflowError):
-                pass
-    match = _SOONEST_RESET_RE.search(body or "")
-    if match is None:
-        return None
-    value = float(match.group(1))
-    unit = (match.group(2) or "s").lower()
-    if unit == "ms" or unit.startswith("milli"):
-        return value / 1000.0
-    if unit.startswith("h"):
-        return value * 3600.0
-    if unit.startswith("m"):
-        return value * 60.0
-    return value
 
 
 def _extract_tool_call(response: dict) -> tuple[str, dict]:

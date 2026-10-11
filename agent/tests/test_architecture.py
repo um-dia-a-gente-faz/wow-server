@@ -40,7 +40,7 @@ LAYERS = {
     "handles": set(),
     "lines": set(),
     "known_targets": set(),
-    "metrics": {"audit_schema", "transport"},   # swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
+    "metrics": {"audit_schema", "opcodes", "transport"},   # opcode names for the router counters (#494); swallowed() reuses transport's log throttle (#306); reads audit lines (#277)
     "api_contract": set(),
     "memory": set(),   # durable agent memory store (#276); stdlib sqlite3 only
     "model": set(),
@@ -68,7 +68,7 @@ LAYERS = {
                    "update_fields", "update_object"},
     "state": {"changes", "perception"},
     # routing: handlers parse and update state, they never act (ADR 0006)
-    "router": {"packets"},
+    "router": {"packets", "wire"},   # PacketTruncated is counted apart from other handler errors (#494)
     "handlers": {"channels", "group", "loot", "mail", "metrics", "names", "npc", "opcodes", "packets", "perception",
                  "quests", "router", "spells", "trade", "update_fields", "update_object"},
     # acting: actions never import reflexes (the follow reflex registers a hook instead)
@@ -82,10 +82,12 @@ LAYERS = {
     "candidates": {"action_names", "action_specs", "handles", "item_compare", "metrics", "model", "rules"},
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
-    "llm": {"prompts"},
-    "jev": {"llm"},
+    "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
+    "tokenbudget": set(),   # the one AGENT_MAX_TOKENS_PER_HOUR implementation (#454)
+    "llm": {"httpjson", "prompts"},
+    "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model"},
+    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
@@ -213,6 +215,13 @@ class AgentArchitectureTests(unittest.TestCase):
         ignored = (ROOT / ".dockerignore").read_text().splitlines()
         self.assertIn("agent/tests/", ignored)
         self.assertFalse((AGENT / "tools").exists(), "dev tools belong in tools/agent_dev")
+
+    def test_brain_has_no_transport_code(self):
+        # #454: Brain talks to a Decider; urllib and http live in agent/httpjson.py only.
+        bad = [f"{path.relative_to(ROOT)} imports {m}" for path, unit, package in _agent_files()
+               if unit.startswith("brain")
+               for m in _imports(path, package) if m.split(".")[0] in {"urllib", "http"}]
+        self.assertEqual(bad, [], "agent/brain* must not import urllib or http")
 
     def test_nothing_imports_main(self):
         offenders = [u for u, edges in self.graph.items() if "__main__" in edges]

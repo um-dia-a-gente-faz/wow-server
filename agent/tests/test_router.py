@@ -6,6 +6,7 @@ import unittest
 
 from agent import session as se
 from agent.packets import ProtocolError
+from agent.wire import PacketTruncated
 from agent import handlers
 from agent.router import Context, PacketRouter
 from agent.tests.builders import make_session
@@ -52,6 +53,62 @@ class PacketRouterTest(unittest.TestCase):
                 sent.append((op, payload))
         Context("state", T()).send(0x1, b'x')
         self.assertEqual(sent, [(0x1, b'x')])
+
+
+class RouterCountersTest(unittest.TestCase):
+    """The sink gets (kind, opcode) once per event; it never changes dispatch."""
+
+    def setUp(self):
+        self.events = []
+        self.r = PacketRouter(count=lambda kind, op: self.events.append((kind, op)))
+
+    def test_packets_counts_every_dispatched_packet(self):
+        self.r.register(0x10, lambda c, p: None)
+        self.r.dispatch("ctx", 0x10, b'')
+        self.r.dispatch("ctx", 0x10, b'')
+        self.assertEqual(self.events, [("packets", 0x10)] * 2)
+
+    def test_unhandled_counts_and_also_counts_as_a_packet(self):
+        self.assertFalse(self.r.dispatch("ctx", 0x99, b''))
+        self.assertEqual(self.events, [("packets", 0x99), ("unhandled", 0x99)])
+
+    def test_truncated_counts_and_still_raises(self):
+        def h(c, p):
+            raise PacketTruncated(0x10, 0, 4)
+        self.r.register(0x10, h)
+        with self.assertRaises(PacketTruncated):
+            self.r.dispatch("ctx", 0x10, b'')
+        self.assertEqual(self.events, [("packets", 0x10), ("truncated", 0x10)])
+
+    def test_truncated_does_not_bump_handler_errors(self):
+        def h(c, p):
+            raise PacketTruncated(0x10, 0, 4)
+        self.r.register(0x10, h)
+        with self.assertRaises(PacketTruncated):
+            self.r.dispatch("ctx", 0x10, b'')
+        self.assertNotIn(("handler_errors", 0x10), self.events)
+
+    def test_handler_errors_count_raw_parse_errors_and_logic_bugs(self):
+        def protocol_error(c, p):
+            raise ProtocolError("x")
+        self.r.register(0x10, lambda c, p: struct.unpack('<I', p))
+        self.r.register(0x11, lambda c, p: None.missing)
+        self.r.register(0x12, protocol_error)
+        with self.assertRaises(ProtocolError):
+            self.r.dispatch("ctx", 0x10, b'ab')
+        with self.assertRaises(AttributeError):
+            self.r.dispatch("ctx", 0x11, b'')
+        with self.assertRaises(ProtocolError):
+            self.r.dispatch("ctx", 0x12, b'')
+        self.assertEqual([e for e in self.events if e[0] == "handler_errors"],
+                         [("handler_errors", 0x10), ("handler_errors", 0x11), ("handler_errors", 0x12)])
+
+    def test_build_router_feeds_the_process_metrics(self):
+        from agent import metrics
+        metrics.ROUTER_COUNTS.clear()
+        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+        handlers.build_router().dispatch("ctx", 0xFFFE, b'')
+        self.assertEqual(metrics.ROUTER_COUNTS, {("packets", 0xFFFE): 1, ("unhandled", 0xFFFE): 1})
 
 
 class SessionDispatchTest(unittest.TestCase):
