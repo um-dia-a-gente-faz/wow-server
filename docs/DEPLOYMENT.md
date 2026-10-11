@@ -202,8 +202,14 @@ docker rm -f wow-scratch
 
 Same for `auth` / `auth.account`. A real restore into the live DB needs `CONFIRM_LIVE=1`
 and the worldserver stopped by the owner. `scripts/tests/test_backup_restore.py` covers
-the scripts with a fake `docker` (CI has no MySQL). Not done yet: backup-age metric in
-`wow-exporter` + Grafana stale alert.
+the scripts with a fake `docker` (CI has no MySQL).
+
+Backup age is monitored: `wow-exporter` reads `/opt/wow-server-backups` (read-only mount) and
+exposes `wow_backup_count`, `wow_backup_newest_timestamp_seconds` and
+`wow_backup_newest_size_bytes`; the realm-health dashboard has a "Backups" row. The
+`BackupStale` rule in `monitoring/prometheus-agent-alerts.yml` fires when the newest dump is
+older than 26 h or there is none. Nothing ships that file to Prometheus: copy it to VM201, keep
+it in `rule_files` of `prometheus.yml`, and reload Prometheus, or the alert does not exist.
 
 ## Updating
 
@@ -433,9 +439,20 @@ the sha256 of every file listed on PyPI for the new version (`/pypi/<name>/<vers
 including transitive dependencies. Merging a compose change recreates the affected
 containers, so follow the usual deploy rules.
 
-**Not done here.** `danielsilvestre37/trinitycore-docker:3.3.5` is pinned to the digest
-the registry served on 2026-10-10; confirm it is what the VM runs (`docker image inspect`)
-before merging. Mirroring it or building from source is a separate spike and ADR.
+**Changing a service's `image:` text recreates its container, even when the digest names the
+same content.** Compose hashes the `image:` text, so adding or editing `@sha256:...` recreates
+that service whatever the digest is. Comparing `docker image inspect <image> --format
+'{{.RepoDigests}}'` on the VM with the pin only tells whether the image *content* changes
+(a new TrinityCore build), not whether the containers restart.
+
+**What `deploy.sh` does with a merge that changes these files.** It defers only the game stack
+(`trinitycore-wowserver`, `trinitycore-db`, chat-feed) until 0 characters are online, and also
+while the count cannot be read; `FORCE=1` overrides the wait. The monitoring stack
+(node-exporter, cadvisor, wow-exporter, wowmap) is not deferred: when a merge touches its files
+it is recreated on the next 5-minute run.
+
+**Not done here.** Mirroring the TrinityCore image or building it from source is a
+separate spike and ADR.
 
 ### wowmap's `AGENT_API_URLS`
 

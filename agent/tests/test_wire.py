@@ -8,12 +8,18 @@ import unittest
 
 from agent import loot, mail, trade
 from agent import packets as pk
-from agent.wire import PacketTruncated, Reader, Writer
+from agent.wire import PacketMalformed, PacketTruncated, Reader, Writer
 
 
 class PacketTruncatedTest(unittest.TestCase):
     def test_is_a_protocol_error(self):
         self.assertTrue(issubclass(PacketTruncated, pk.ProtocolError))
+
+    def test_wanted_is_optional_for_a_wrapped_raw_error(self):
+        err = PacketTruncated(0xA9, 12)
+        self.assertEqual((err.offset, err.wanted), (12, None))
+        self.assertIn("offset 12", str(err))
+        self.assertNotIn("wanted", str(err))
 
     def test_message_names_opcode_offset_and_wanted(self):
         err = PacketTruncated(0x23B, 7, 4)
@@ -22,6 +28,53 @@ class PacketTruncatedTest(unittest.TestCase):
         self.assertIn("0x23b", msg)
         self.assertIn("7", msg)
         self.assertIn("4", msg)
+
+
+class PacketMalformedTest(unittest.TestCase):
+    def test_is_a_protocol_error_and_a_value_error(self):
+        # ValueError too: the leftover-bytes checks it replaces raised ValueError, callers may still catch that.
+        self.assertTrue(issubclass(PacketMalformed, pk.ProtocolError))
+        self.assertTrue(issubclass(PacketMalformed, ValueError))
+
+    def test_done_passes_when_everything_was_read(self):
+        r = Reader(b'\x01\x02')
+        r.skip(2)
+        r.done()
+
+    def test_done_raises_on_leftover_bytes_naming_the_opcode(self):
+        r = Reader(b'\x01\x02\x03', opcode=0x1A5)
+        r.u8()
+        with self.assertRaises(PacketMalformed) as cm:
+            r.done()
+        self.assertIn("0x1a5", str(cm.exception))
+        self.assertIn("2 leftover", str(cm.exception))
+
+
+class NegativeCountTest(unittest.TestCase):
+    """A negative skip/bytes count is a caller bug, not bad wire data: ValueError, and not a ProtocolError."""
+
+    def test_negative_skip_and_bytes_raise_value_error_and_keep_the_cursor(self):
+        for call in (lambda r: r.skip(-1), lambda r: r.bytes(-1)):
+            r = Reader(b'abcd')
+            r.skip(2)
+            with self.assertRaises(ValueError) as cm:
+                call(r)
+            self.assertNotIsInstance(cm.exception, pk.ProtocolError)
+            self.assertEqual(r.offset, 2)
+
+    def test_zero_count_is_fine(self):
+        r = Reader(b'ab')
+        r.skip(0)
+        self.assertEqual(r.bytes(0), b'')
+        self.assertEqual(r.offset, 0)
+
+
+class SignedByteTest(unittest.TestCase):
+    def test_i8_is_signed_and_truncates(self):
+        self.assertEqual(Reader(b'\xff').i8(), -1)
+        self.assertEqual(Reader(b'\x7f').i8(), 127)
+        with self.assertRaises(PacketTruncated):
+            Reader(b'').i8()
 
 
 class ReaderTruncationTest(unittest.TestCase):
@@ -147,6 +200,11 @@ class CStringTest(unittest.TestCase):
 
     def test_undecodable_bytes_are_replaced_not_raised(self):
         self.assertEqual(Reader(b'\xff\x00').cstring(), '�')
+
+    def test_utf8_decoding_on_request(self):
+        data = 'Pão'.encode('utf-8') + b'\x00'
+        self.assertEqual(Reader(data).cstring(encoding='utf-8'), 'Pão')
+        self.assertNotEqual(Reader(data).cstring(), 'Pão')   # the default stays ascii, like pk.cstring
 
 
 class WriterRoundTripTest(unittest.TestCase):

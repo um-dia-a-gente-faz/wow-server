@@ -27,7 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agent.metrics import derive_metrics, find_audit_files, iter_records, render_prometheus_text  # noqa: E402
+from agent.metrics import derive_metrics, find_audit_files, read_audit, render_prometheus_text  # noqa: E402
 
 
 def main(argv=None):
@@ -36,12 +36,9 @@ def main(argv=None):
     p.add_argument("--out", default="/var/lib/node_exporter/textfile/wow_agent.prom")
     args = p.parse_args(argv)
 
-    files = find_audit_files(args.audit_dir)
-    records = []
-    for path in files:
-        records.extend(iter_records(path))
-
-    by_agent = derive_metrics(records)
+    # bad lines (not JSON, not an object, not UTF-8) are skipped and counted, never fatal (#513)
+    records, bad_lines = read_audit(find_audit_files(args.audit_dir))
+    by_agent = derive_metrics(records, bad_lines)
     text = render_prometheus_text(by_agent)
 
     tmp = args.out + ".tmp"
@@ -49,7 +46,7 @@ def main(argv=None):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, args.out)
-    print(f"wrote {len(by_agent)} agent(s), {len(records)} record(s) -> {args.out}")
+    print(f"wrote {len(by_agent)} agent(s), {len(records)} record(s), {sum(bad_lines.values())} bad line(s) -> {args.out}")
     return 0
 
 

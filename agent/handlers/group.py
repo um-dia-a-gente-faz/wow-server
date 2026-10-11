@@ -1,10 +1,10 @@
 """Party/group list and decline packets (GH-71). The invite itself is in handlers/chat.py."""
 
 import logging
-import struct
 
 from .. import group as grp
 from .. import packets as pk
+from ..wire import Reader
 from ..opcodes import (
     SMSG_GROUP_DECLINE,
     SMSG_GROUP_DESTROYED,
@@ -23,7 +23,7 @@ def _left_group(state):
 def handle_group_list(ctx, payload: bytes):
     try:
         group = grp.parse_group_list(payload)
-    except (struct.error, ValueError, IndexError):
+    except pk.ProtocolError:
         log.warning("unparseable SMSG_GROUP_LIST (%d bytes)", len(payload))
         return
     if group is None:
@@ -40,7 +40,7 @@ def handle_group_gone(ctx, payload: bytes):
 
 
 def handle_group_decline(ctx, payload: bytes):
-    name, _ = pk.cstring(payload, 0)
+    name = Reader(payload, SMSG_GROUP_DECLINE).cstring()
     ctx.state.record_event("group_invite_declined", target_name=name)
 
 

@@ -16,3 +16,12 @@ groups:
         annotations:
           summary: "No agent /metrics target is up"
           description: "Job wow_agent_http has no healthy target for 15m: wrong host or port in prometheus-agents-scrape.yml, or the whole fleet is stopped."
+  - name: wow-backup
+    rules:
+      - alert: BackupStale
+        expr: time() - wow_backup_newest_timestamp_seconds > 26 * 3600 or absent(wow_backup_newest_timestamp_seconds)
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Newest database backup is older than 26h, or there is none"
+          description: "wow-exporter sees no finished dump in /opt/wow-server-backups newer than 26h (timestamp 0 = no dump), or the metric is missing because wow-exporter is down. Check the backup timer and scripts/backup-db.sh."
