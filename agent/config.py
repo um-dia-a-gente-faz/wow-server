@@ -47,6 +47,9 @@ SETTINGS: tuple[Setting, ...] = (
     _s("WOW_CHAR_GUID", int, 0, "character guid; wins over the name, so one global value would point "
        "every service at the same character", compose=False),
     _s("AGENT_NAME", str, "Agent", "agent name (set per service by compose)"),
+    _s("AGENT_ROSTER", str, "", "character names of all agents, comma-separated: the follow rule "
+       "(#318) never follows an agent that is not the party leader; empty = every character counts as human",
+       compose=False),
     _s("AGENT_THINK_INTERVAL_S", float, 3.0, "minimum delay between think-loop decisions, seconds"),
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),
     _s("AGENT_PERSONA", str, "", "persona text for the LLM"),

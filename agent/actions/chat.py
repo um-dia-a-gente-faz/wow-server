@@ -31,6 +31,9 @@ from .base import (
 
 # ChatMsg (SharedDefines.h) — the values here previously mapped 'say' to 0,
 # which is CHAT_MSG_SYSTEM; players can't legitimately send that type.
+# #318: how long after accepting an invite the follow reflex waits for the server's party list.
+FOLLOW_ON_ACCEPT_WINDOW_S = 30.0
+
 CHAT_MSG_SAY = 0x01
 CHAT_MSG_PARTY = 0x02
 CHAT_MSG_GUILD = 0x04
@@ -121,6 +124,8 @@ def invite_to_group(session, name: str):
 
 def accept_group(session):
     # HandleGroupAcceptOpcode (GroupHandler.cpp) only read_skip<uint32>()s the payload.
+    inviter = (session.pending_invite or {}).get("inviter_name")
+    session.follow_on_accept = (inviter, time.monotonic() + FOLLOW_ON_ACCEPT_WINDOW_S) if inviter else None
     send(session, CMSG_GROUP_ACCEPT, struct.pack("<I", 0))
     session.pending_invite = None
 

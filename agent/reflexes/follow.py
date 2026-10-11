@@ -36,6 +36,7 @@ Reflex tick, per the card:
 """
 
 import logging
+import time
 
 from .. import actions
 from .. import movement
@@ -46,6 +47,69 @@ log = logging.getLogger("agent.reflexes.follow")
 DEFAULT_DISTANCE_YD = 3.0
 RANGE_MARGIN_YD = 1.0  # start walking once farther than distance + this
 UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask agent/perception/nearby.py uses for in_combat
+
+
+def _group_member_name(group: dict | None, guid: int) -> str:
+    for m in (group or {}).get("members", ()):
+        if m["guid"] == guid:
+            return m["name"]
+    return ""
+
+
+def follow_target_error(session, world, guid: int, name: str = "") -> str | None:
+    """Why `guid` may not be followed, or None when it may (#318). Valid: a human, or the
+    party leader. Not valid: the agent itself; anything while this agent leads the party;
+    another agent that is not the party leader.
+
+    The rule as implemented: main cannot tell whether another agent is currently following
+    (nothing publishes it), so every agent that is not the party leader is rejected. A leader
+    agent is safe to follow because it never follows a member itself (the second rule), so a
+    chain or a pair of agents following each other cannot form inside a party. Which characters
+    are agents comes from session.agent_names (config AGENT_ROSTER); with no roster configured
+    every non-leader is treated as a human."""
+    name = name or world_player_name(world, guid) or _group_member_name(session.group, guid)
+    mine = (session.player_name or "").lower()
+    if (guid and guid == session.player_guid) or (name and mine and name.lower() == mine):
+        return "an agent cannot follow itself"
+    group = session.group
+    if group and group["leader_guid"] == session.player_guid:
+        return "this agent leads the party; a party leader never follows a member"
+    if group and guid and group["leader_guid"] == guid:
+        return None
+    if name and name.lower() in session.agent_names:
+        return (f"{name} is an agent but not the party leader; it may itself be following, "
+                "so following it could form a chain or a cycle")
+    return None
+
+
+def world_player_name(world, guid: int) -> str:
+    obj = world.get_object(guid)
+    return (obj.name or "") if obj is not None else ""
+
+
+def begin_follow(session, world, guid: int, name: str, *, reason: str,
+                 distance: float = DEFAULT_DISTANCE_YD) -> str | None:
+    """The one place a follow starts. Validates the target, then starts the reflex and
+    records `follow_started` with why; an invalid target records `follow_rejected` and
+    returns the reason. Callers: an accepted party invite (FollowReflex.tick), the
+    escort-mission hook below and the brain's `follow` action."""
+    error = follow_target_error(session, world, guid, name)
+    if error is not None:
+        session.record_event("follow_rejected", target_name=name, reason=error)
+        return error
+    group = session.group
+    in_party = bool(group) and (guid == group["leader_guid"]
+                                or any(m["guid"] == guid for m in group["members"]))
+    get_follow_reflex(session).start(guid, leader_name=name, distance=distance, party_bound=in_party)
+    session.record_event("follow_started", target_name=name, reason=reason)
+    return None
+
+
+def start_for_escort_mission(session, world, guid: int, name: str,
+                             distance: float = DEFAULT_DISTANCE_YD) -> str | None:
+    """Hook for the escort mission (#314, not on main yet): the mission calls this to start
+    following its escortee. Same validation as every other start; nothing calls it yet."""
+    return begin_follow(session, world, guid, name, reason="escort_mission", distance=distance)
 
 
 class FollowReflex:
@@ -61,11 +125,13 @@ class FollowReflex:
         self.distance: float = DEFAULT_DISTANCE_YD
         self.assist: bool = False
         self._assist_target_guid: int | None = None
+        self.party_bound = False  # started on a party member: leaving the party ends it
 
     # ── LLM-facing controls (see the registered actions below) ───────────
     def start(self, leader_guid: int, leader_name: str | None = None,
-              distance: float = DEFAULT_DISTANCE_YD):
+              distance: float = DEFAULT_DISTANCE_YD, party_bound: bool = False):
         self.enabled = True
+        self.party_bound = party_bound
         self.leader_guid = leader_guid
         self.leader_name = leader_name
         self.distance = distance
@@ -104,12 +170,22 @@ class FollowReflex:
         """One reflex step. Safe to call repeatedly — production:
         agent/__main__.py's loop, between LLM think cycles; tests: call
         directly with a fake session/world. No-op if not enabled."""
+        self._settle_accepted_invite(session, world)
         if not self.enabled or self.leader_guid is None:
+            return
+
+        reason = self._stop_reason(session, world)
+        if reason is not None:
+            self.stop(session, world, reason=reason)
             return
 
         leader = world.get_object(self.leader_guid)
         if leader is None or leader.position is None or session.player_position is None:
             self._lost(session, world, "leader out of perception range or on another map")
+            return
+
+        if leader.is_dead():
+            self.stop(session, world, reason="target_died")
             return
 
         distance = leader.distance_to(session.player_position)
@@ -134,6 +210,45 @@ class FollowReflex:
 
         if self.assist:
             self._tick_assist(session, world, leader)
+
+    def _settle_accepted_invite(self, session, world):
+        """The party path (#318): an accepted invite whose leader is a valid target starts
+        following once the server has sent the party list. The pending accept is settled
+        exactly once: when the list arrives (a running follow is kept, not restarted) or
+        when its window ends, whatever the group state. It never outlives either."""
+        pending = session.follow_on_accept
+        if pending is None:
+            return
+        inviter, deadline = pending
+        group = session.group
+        if time.monotonic() > deadline:
+            session.follow_on_accept = None
+            return
+        if group is None:
+            return
+        session.follow_on_accept = None
+        if self.enabled:
+            return
+        leader_guid = group["leader_guid"]
+        if _group_member_name(group, leader_guid).lower() == inviter.lower():
+            begin_follow(session, world, leader_guid, inviter, reason="party_invite")
+
+    def _stop_reason(self, session, world) -> str | None:
+        """Why following must end now, from session state alone (#318), or None."""
+        if not session.is_alive:
+            return "self_died"
+        if follow_target_error(session, world, self.leader_guid, self.leader_name or "") is not None:
+            return "target_invalid"
+        if self.party_bound:
+            group = session.group
+            if group is None:
+                return "left_party"
+            if self.leader_guid != group["leader_guid"] and \
+                    all(m["guid"] != self.leader_guid for m in group["members"]):
+                return "target_left_party"
+            if any(m["guid"] == self.leader_guid and not m["online"] for m in group["members"]):
+                return "target_offline"
+        return None
 
     def _lost(self, session: ActionSession, world, reason: str):
         self.stop(session, world, reason="leader_lost")
@@ -235,13 +350,15 @@ class FollowAction(actions.Action):
             return f"no nearby player named {player_name!r} in perception"
         if distance <= 0:
             return "distance must be positive"
-        return None
+        leader = _find_player_by_name(world, player_name)
+        return follow_target_error(session, world, leader.guid, player_name)
 
     def execute(self, session, world, player_name: str, distance: float = DEFAULT_DISTANCE_YD,
                 **_) -> actions.ActionResult:
         leader = _find_player_by_name(world, player_name)
-        reflex = get_follow_reflex(session)
-        reflex.start(leader.guid, leader_name=player_name, distance=distance)
+        error = begin_follow(session, world, leader.guid, player_name, reason="llm_requested", distance=distance)
+        if error is not None:
+            return actions.ActionResult(ok=False, error=error)
         return actions.ActionResult(ok=True, detail={"following": player_name, "distance": distance})
 
 
