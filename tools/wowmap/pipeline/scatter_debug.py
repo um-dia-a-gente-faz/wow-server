@@ -35,7 +35,8 @@ def main():
     W, H = im.size
     d = ImageDraw.Draw(im, "RGBA")
 
-    raw = open(args.points_file).read().strip()
+    with open(args.points_file) as f:
+        raw = f.read().strip()
     pts = [p for p in raw.split(";") if p.strip()]
     n_ok = n_out = 0
     for p in pts:

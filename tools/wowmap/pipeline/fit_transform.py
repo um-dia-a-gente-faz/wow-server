@@ -23,7 +23,8 @@ PTS = sys.argv[2] if len(sys.argv) > 2 else "/tmp/pts530.txt"
 
 
 def read_dbc(path):
-    d = open(path, "rb").read()
+    with open(path, "rb") as f:
+        d = f.read()
     _, nrec, nf, _, ss = struct.unpack("<4sIIII", d[:20])
     pos, recs = 20, []
     for _ in range(nrec):
@@ -56,7 +57,9 @@ thresh = sorted(sd.getdata())[int(W * H * 0.55)]  # top 45% = "textured"
 print(f"mask threshold={thresh}")
 
 pts = []
-for tok in open(PTS).read().strip().split(";"):
+with open(PTS) as f:
+    points_text = f.read()
+for tok in points_text.strip().split(";"):
     if tok.strip():
         a, b = tok.split(",")[:2]
         pts.append((float(a), float(b)))
