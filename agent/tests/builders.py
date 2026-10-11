@@ -75,6 +75,9 @@ class FakeSocket:
     def sendall(self, b):
         self.sent += b
 
+    def shutdown(self, how):
+        pass
+
     def close(self):
         pass
 
