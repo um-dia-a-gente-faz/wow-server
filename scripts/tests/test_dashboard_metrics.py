@@ -7,6 +7,7 @@ import ast
 import json
 import pathlib
 import re
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -198,6 +199,19 @@ class SourceNamesTest(unittest.TestCase):
     def test_plain_string_literal_in_nested_table_is_produced(self):
         src = 'ROUTER = {"packets": ("wow_plain_literal_total", "help text")}\n'
         self.assertEqual(source_names(src), {"wow_plain_literal_total"})
+
+    def test_name_continued_by_a_leading_interpolation_is_not_produced(self):
+        self.assertEqual(source_names("line = f'{prefix}wow_tail_total'\n"), set())
+
+    def test_name_only_in_async_function_docstring_is_not_produced(self):
+        src = 'async def f():\n    """Counts wow_doc_async_total."""\n    return 1\n'
+        self.assertEqual(source_names(src), set())
+
+    def test_producer_files_are_read_as_literals_not_as_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "producer.py"
+            path.write_text('"""Mentions wow_doc_only_total."""\n# wow_comment_only_total\nNAME = "wow_real_total"\n')
+            self.assertEqual(producer_names([path]), {"wow_real_total"})
 
 
 class ExtractionTest(unittest.TestCase):
