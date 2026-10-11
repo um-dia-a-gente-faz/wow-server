@@ -33,6 +33,7 @@ lint()      { ruff check .; }
 # the session or the fake does not follow is a type error.
 CONTRACT_TESTS="agent/tests/test_ports.py"
 types()     { mypy && mypy $CONTRACT_TESTS; }
+types_legacy() { python3 scripts/mypy_legacy_baseline.py --check; }   # #378
 generated() {
   local rc=0 f
   python3 scripts/generate.py --check || rc=1   # every generated file, #297
@@ -56,10 +57,11 @@ test_all()  { local s; for s in "${SUITES[@]}"; do suite "${s%%|*}"; done; }
 for t in "$@"; do
   case "$t" in
     compile|lint|types|generated) "$t" ;;
+    types-legacy) types_legacy ;;
     test) test_all ;;
     test-stdlib) for s in $STDLIB_SUITES; do suite "$s"; done ;;
     test-*) suite "${t#test-}" ;;
-    all) compile; lint; types; generated; test_all ;;
+    all) compile; lint; types; types_legacy; generated; test_all ;;
     list) for s in "${SUITES[@]}"; do echo "${s%%|*}"; done ;;
     *) echo "usage: $0 compile|lint|types|generated|test|test-<suite>|test-stdlib|list|all" >&2; exit 2 ;;
   esac
