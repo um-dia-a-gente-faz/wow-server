@@ -324,6 +324,10 @@ class SelfCombatStateTest(unittest.TestCase):
     def test_absent_when_only_other_flags_are_set(self):
         self.assertNotIn("in_combat", self._me({uf.UNIT_FIELD_FLAGS: 0xFFFFFFFF & ~uf.UNIT_FLAG_IN_COMBAT}))
 
+    def test_present_and_true_with_the_combat_bit_and_other_flags(self):
+        # A live player always carries other bits (UNIT_FLAG_PLAYER_CONTROLLED 0x8).
+        self.assertIs(self._me({uf.UNIT_FIELD_FLAGS: uf.UNIT_FLAG_IN_COMBAT | 0x8})["in_combat"], True)
+
 
 class LoopGuardTest(unittest.TestCase):
     """UM-90: the same failed/no-op call N times in a row is not executed again."""
