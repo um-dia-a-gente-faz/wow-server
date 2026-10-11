@@ -110,6 +110,9 @@ class FakeSession(state.GameState):
         for name, value in attrs.items():
             setattr(self, name, value)
 
+    def send_packet(self, opcode: int, payload: bytes = b'') -> None:
+        self._send_packet(opcode, payload)
+
     def _send_packet(self, opcode: int, payload: bytes = b'') -> None:
         self.sent.append((opcode, payload))
 
