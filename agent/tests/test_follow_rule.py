@@ -34,9 +34,17 @@ def check_follow(sess, world, who):
 
 
 class FollowTargetRuleTest(unittest.TestCase):
-    def test_self_is_rejected_with_reason(self):
-        sess, world = make(players=[(ME, "Ana")])
-        self.assertIn("itself", check_follow(sess, world, "Ana"))
+    SELF = "an agent cannot follow itself"
+
+    def test_self_by_guid_is_rejected_with_reason(self):
+        # the target's name differs from ours: only the guid says it is us
+        sess, world = make(agents=("Bia",), players=[(ME, "Mirror")])
+        self.assertEqual(check_follow(sess, world, "Mirror"), self.SELF)
+
+    def test_self_by_name_is_rejected_with_reason(self):
+        # the perceived object has another guid: only the name says it is us
+        sess, world = make(agents=("Bia",), players=[(MEMBER, "ana")])
+        self.assertEqual(check_follow(sess, world, "ana"), self.SELF)
 
     def test_agent_chain_is_rejected_with_reason(self):
         # Ana would follow Bia, who may follow Cai: Bia is an agent and not Ana's leader.

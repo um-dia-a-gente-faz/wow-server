@@ -170,8 +170,7 @@ class FollowReflex:
         """One reflex step. Safe to call repeatedly — production:
         agent/__main__.py's loop, between LLM think cycles; tests: call
         directly with a fake session/world. No-op if not enabled."""
-        if not self.enabled:
-            self._start_after_accepted_invite(session, world)
+        self._settle_accepted_invite(session, world)
         if not self.enabled or self.leader_guid is None:
             return
 
@@ -212,20 +211,24 @@ class FollowReflex:
         if self.assist:
             self._tick_assist(session, world, leader)
 
-    def _start_after_accepted_invite(self, session, world):
+    def _settle_accepted_invite(self, session, world):
         """The party path (#318): an accepted invite whose leader is a valid target starts
-        following once the server has sent the party list. The pending accept is consumed
-        either way, and dropped after its window if no party ever arrives."""
+        following once the server has sent the party list. The pending accept is settled
+        exactly once: when the list arrives (a running follow is kept, not restarted) or
+        when its window ends, whatever the group state. It never outlives either."""
         pending = session.follow_on_accept
         if pending is None:
             return
         inviter, deadline = pending
         group = session.group
+        if time.monotonic() > deadline:
+            session.follow_on_accept = None
+            return
         if group is None:
-            if time.monotonic() > deadline:
-                session.follow_on_accept = None
             return
         session.follow_on_accept = None
+        if self.enabled:
+            return
         leader_guid = group["leader_guid"]
         if _group_member_name(group, leader_guid).lower() == inviter.lower():
             begin_follow(session, world, leader_guid, inviter, reason="party_invite")

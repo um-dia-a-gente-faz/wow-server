@@ -9,6 +9,7 @@ Each cycle the worst-case brain is played: both agents try to follow the other, 
 reflexes tick. Allowed outcomes per cycle: neither follows, or exactly one does."""
 
 import struct
+import time
 import unittest
 
 from agent import actions as ac
@@ -123,6 +124,52 @@ class TwoAgentsInOnePartyTest(unittest.TestCase):
         for _ in range(CYCLES):
             fl.get_follow_reflex(self.bia).tick(self.bia, self.bia_world)
         self.assertFalse(fl.get_follow_reflex(self.bia).enabled)
+
+
+HUMAN = 0x2001
+
+
+def group_view(leader, name):
+    return {"guid": 1, "counter": 1, "raid": False, "leader_guid": leader, "loot_method": None,
+            "members": [{"name": name, "guid": leader, "online": True, "subgroup": 0,
+                         "assistant": False, "roles": 0}]}
+
+
+class PendingAcceptTest(unittest.TestCase):
+    def test_a_settled_accept_does_not_restart_follow_after_stop(self):
+        sess, world = fast_session(guid=ANA)
+        sess.player_name = "Ana"
+        world.update_object(object_at(HUMAN, 1.0, 0.0, 0.0, object_type="player"))
+        world.get_object(HUMAN).name = "Rubens"
+        reflex = fl.get_follow_reflex(sess)
+        self.assertTrue(ac.REGISTRY["follow"].run(sess, world, player_name="Rubens").ok)
+        sess.pending_invite = {"inviter_name": "Rubens"}
+        ac.accept_group(sess)
+        sess.group = group_view(HUMAN, "Rubens")
+        reflex.tick(sess, world)
+        self.assertTrue(reflex.enabled)
+        ac.REGISTRY["stop_following"].run(sess, world)
+        reflex.tick(sess, world)
+        self.assertFalse(reflex.enabled)
+
+    def test_an_accept_with_no_party_list_is_dropped_after_the_window(self):
+        sess, world = fast_session(guid=ANA)
+        sess.pending_invite = {"inviter_name": "Rubens"}
+        ac.accept_group(sess)
+        reflex = fl.get_follow_reflex(sess)
+        reflex.tick(sess, world)
+        self.assertIsNotNone(sess.follow_on_accept)  # still inside the window
+        sess.follow_on_accept = ("Rubens", time.monotonic() - 1)
+        reflex.tick(sess, world)
+        self.assertIsNone(sess.follow_on_accept)
+
+    def test_an_expired_accept_is_dropped_even_when_a_group_exists(self):
+        sess, world = fast_session(guid=ANA)
+        sess.follow_on_accept = ("Rubens", time.monotonic() - 1)
+        sess.group = group_view(HUMAN, "Rubens")
+        fl.get_follow_reflex(sess).tick(sess, world)
+        self.assertIsNone(sess.follow_on_accept)
+        self.assertEqual([e for e in sess.events if e["kind"] == "follow_started"], [])
 
 
 if __name__ == "__main__":
