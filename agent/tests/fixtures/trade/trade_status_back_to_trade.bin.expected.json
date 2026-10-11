@@ -1,0 +1,8 @@
+{
+  "opcode": "SMSG_TRADE_STATUS",
+  "source": "src/server/game/Handlers/TradeHandler.cpp WorldSession::SendTradeStatus; src/server/shared/SharedDefines.h enum TradeStatus",
+  "expect": {
+    "status": 7,
+    "status_name": "back_to_trade"
+  }
+}

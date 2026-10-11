@@ -1,5 +1,7 @@
 # SMSG_UPDATE_OBJECT fixtures
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Real, live-captured payloads from `192.168.1.64` (character **Luaprata**, account
 `AGENT01`, Blood Elf Paladin, map 530 "Outland" / zone 3430 "Eversong Woods" /
 area 3431 "Sunstrider Isle" per `.gps`). Each file is the raw application

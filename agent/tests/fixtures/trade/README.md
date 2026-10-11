@@ -1,5 +1,7 @@
 # SMSG_TRADE_STATUS / SMSG_TRADE_STATUS_EXTENDED fixtures
 
+Expected values: each capture has a `<capture>.expected.json` sidecar (written from TrinityCore, not from the parser), checked by `agent/tests/test_golden_conformance.py` (gh-349).
+
 Real, live-captured payloads from `192.168.1.64`, characters **Farstrider**
 (account `AGENT02`, hunter) and **Shadowblade** (account `AGENT03`, rogue),
 both at the Sunstrider Isle start area (map 530), 2026-09-17. Captured with
