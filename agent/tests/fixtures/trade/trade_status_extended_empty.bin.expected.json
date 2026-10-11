@@ -5,6 +5,9 @@
     "is_trader_data": true,
     "money": 0,
     "spell": 0,
-    "item_slots": []
+    "item_slots": [],
+    "trade_id": 0,
+    "slot_count_a": 7,
+    "slot_count_b": 7
   }
 }

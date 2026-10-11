@@ -18,6 +18,14 @@
     "reward_reputations.0.value": 5,
     "required_credit.0.entry": 15274,
     "required_credit.0.count": 8,
-    "required_credit.0.gameobject": false
+    "required_credit.0.gameobject": false,
+    "quest_type": 2,
+    "next_quest_in_chain": 0,
+    "reward_xp_difficulty": 6,
+    "reward_bonus_money": 60,
+    "reward_display_spell": 0,
+    "reward_arena_points": 0,
+    "reward_faction_flags": 1,
+    "reward_choice_items.0.count": 1
   }
 }

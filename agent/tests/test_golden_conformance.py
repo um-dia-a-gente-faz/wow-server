@@ -44,6 +44,8 @@ def _update_block(block: uo.UpdateBlock) -> dict:
     for key in ("x", "y", "z", "o"):
         if key in movement:
             out[key] = movement[key]
+    if "speeds" in movement:
+        out["speeds"] = movement["speeds"]
     if "spline" in movement:
         out["spline"] = movement["spline"]
     if block.fields is not None:
@@ -201,11 +203,11 @@ class DiscoveryTest(unittest.TestCase):
     def test_capture_without_sidecar_is_named(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
-            (root / "trade").mkdir()
-            (root / "trade" / "lonely.bin").write_bytes(b"\x01")
+            (root / "chat").mkdir()
+            (root / "chat" / "lonely.hex").write_text("01\n")
             problems = find_problems(root)
         self.assertEqual(len(problems), 1, problems)
-        self.assertIn("lonely.bin", problems[0])
+        self.assertIn("lonely.hex", problems[0])
         self.assertIn("no sidecar", problems[0])
 
     def test_sidecar_without_capture_is_named(self):
@@ -238,6 +240,37 @@ class DiscoveryTest(unittest.TestCase):
                 self.assertTrue(sidecar["source"].strip())
                 self.assertIsInstance(sidecar["expect"], dict)
                 self.assertTrue(sidecar["expect"])
+
+
+class CheckExpectTest(unittest.TestCase):
+    """The comparator on a hand-made decoded value: each wrong expectation must fail."""
+
+    DECODED = {"n": 5, "pos": [1.0, 2.0, 3.0], "guid": 0x2, "items": {0: {"entry": 7}}}
+
+    def assertRejected(self, expect: dict) -> None:
+        with self.assertRaises(AssertionError):
+            check_expect(self, self.DECODED, expect)
+
+    def test_matching_expectations_pass(self):
+        check_expect(self, self.DECODED, {
+            "n": 5, "pos": [1.0, 2.0, 3.0], "pos.1": 2.0004, "guid": "0x0000000000000002",
+            "items.0.entry": 7,
+        })
+
+    def test_wrong_int_is_rejected(self):
+        self.assertRejected({"n": 6})
+
+    def test_float_off_by_a_hundredth_is_rejected(self):
+        self.assertRejected({"pos.0": 1.01})
+
+    def test_wrong_guid_is_rejected(self):
+        self.assertRejected({"guid": "0x0000000000000003"})
+
+    def test_list_one_element_short_is_rejected(self):
+        self.assertRejected({"pos": [1.0, 2.0]})
+
+    def test_key_the_decoded_value_lacks_is_rejected(self):
+        self.assertRejected({"nope": 1})
 
 
 class GoldenConformanceTest(unittest.TestCase):

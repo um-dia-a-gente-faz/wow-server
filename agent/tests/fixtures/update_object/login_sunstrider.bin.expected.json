@@ -49,6 +49,8 @@
       10421.3125,
       -6331.10302734375,
       35.572418212890625
-    ]
+    ],
+    "blocks.3.spline.spline_flags": 4096,
+    "blocks.3.spline.time_passed": 2659
   }
 }
