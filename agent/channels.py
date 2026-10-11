@@ -29,7 +29,6 @@ ChatChannels.dbc (/opt/wowmap-data/dbc/ChatChannels.dbc).
 
 import struct
 
-from . import packets as pk
 from .wire import PacketMalformed, Reader
 
 from .opcodes import (  # noqa: F401  (re-exported: callers use channels.CMSG_*/SMSG_*)
