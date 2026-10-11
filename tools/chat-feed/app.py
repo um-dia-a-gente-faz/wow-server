@@ -77,7 +77,7 @@ WHISPER_RE = re.compile(
 
 
 def now_iso8601():
-    return dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def parse_chat_line(line, event_id="", at=None):
@@ -342,7 +342,7 @@ class LogTailer:
         inode = (path_stat.st_dev, path_stat.st_ino)
         if self.handle is None or self.inode != inode or path_stat.st_size < self.position:
             self.close()
-            self.handle = open(self.path, encoding="utf-8", errors="replace")
+            self.handle = open(self.path, "r", encoding="utf-8", errors="replace")
             self.inode = inode
             # Only the very first open skips what is already there; a rotated
             # or truncated file is new content and is read from its start.
@@ -455,7 +455,7 @@ class Handler(JsonHandler):
 
     def send_event(self, event):
         data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-        self.wfile.write(f"id: {event['id']}\nevent: chat\ndata: {data}\n\n".encode())
+        self.wfile.write(f"id: {event['id']}\nevent: chat\ndata: {data}\n\n".encode("utf-8"))
         self.wfile.flush()
 
     def do_GET(self):  # noqa: N802
