@@ -171,8 +171,11 @@ class NameCache:
     only — a player's name never changes, but caching it across sessions
     buys nothing and the file would grow without bound).
 
-    Not thread-safe on its own; agent/perception/world.py::WorldState (which owns
-    an instance) guards every call with its own lock.
+    Not thread-safe on its own. agent/perception/world.py::WorldState (which owns
+    an instance) guards the want_*/on_*_response calls with its lock, but drain()
+    runs on the recv thread without it (agent/handlers/world.py send_name_queries),
+    so it can overlap a want_*() from the chat-relay thread. That is why the expiry
+    sweep iterates a snapshot of _in_flight and tolerates a token already removed.
     """
 
     def __init__(self, budget_per_second: int = 10, clock=time.monotonic,
@@ -223,10 +226,13 @@ class NameCache:
         now = self._clock()
         while self._sent_times and now - self._sent_times[0] >= 1.0:
             self._sent_times.popleft()
-        expired = [token for token, sent in self._in_flight.items()
+        # drain() runs on the recv thread without WorldState's lock, while want_*() can add
+        # keys from the chat-relay thread: iterate a snapshot, and tolerate a token that
+        # another thread already removed.
+        expired = [token for token, sent in list(self._in_flight.items())
                    if sent is not None and now - sent >= QUERY_TIMEOUT_S]
         for token in expired:
-            del self._in_flight[token]
+            self._in_flight.pop(token, None)
         self.expired_queries += len(expired)
         available = self._budget_per_second - len(self._sent_times)
         if max_items is not None:
