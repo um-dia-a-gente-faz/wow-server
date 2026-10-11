@@ -56,24 +56,46 @@ class AgentMetrics:
     jev_latency_count: int = 0
     jev_latency_sum_ms: float = 0.0
     jev_latency_buckets: dict = field(default_factory=lambda: {b: 0 for b in LATENCY_BUCKETS_MS})
-    decisions_by_prompt: dict = field(default_factory=dict)  # bounded label -> count (#476)
+    prompt_stats: dict = field(default_factory=dict)  # prompt_id -> [count, last ts, last line] (#476)
+    prompt_none: int = 0                               # cycles with no usable prompt_id
 
     def outcome_pairs(self):
         return sorted(self.actions_total.items())
 
+    @property
+    def decisions_by_prompt(self) -> dict:
+        """label -> count: the MAX_PROMPT_IDS ids with the newest record keep their own
+        label, older ones are summed under `other`, no usable id is `none`."""
+        newest = sorted(self.prompt_stats, key=lambda k: self.prompt_stats[k][1:], reverse=True)
+        out = {k: self.prompt_stats[k][0] for k in newest[:MAX_PROMPT_IDS]}
+        if len(newest) > MAX_PROMPT_IDS:
+            out["other"] = sum(self.prompt_stats[k][0] for k in newest[MAX_PROMPT_IDS:])
+        if self.prompt_none:
+            out["none"] = self.prompt_none
+        return out
 
-MAX_PROMPT_IDS = 8  # distinct prompt_id label values per process/agent; the rest are "other" (#476)
+
+MAX_PROMPT_IDS = 8  # distinct prompt_id labels per agent; the older ones are "other" (#476)
+DECISIONS_BY_PROMPT_NAME = "wow_agent_decisions_by_prompt_total"
+DECISIONS_BY_PROMPT_HELP = "Decision cycles by prompt id (newest 8 ids per agent, then other; none = no LLM prompt)"
 
 
-def _prompt_label(counts: dict, prompt_id) -> str:
-    """The bounded label for `prompt_id` given the label->count dict so far.
-    Not thread-safe by itself: the in-process caller holds its lock."""
-    if not prompt_id:
-        return "none"
-    if prompt_id in counts:
-        return prompt_id
-    own = sum(1 for k in counts if k not in ("none", "other"))
-    return prompt_id if own < MAX_PROMPT_IDS else "other"
+def _count_prompt(m: AgentMetrics, rec: dict) -> None:
+    pid = rec.get("prompt_id")
+    if not isinstance(pid, str) or not pid:
+        m.prompt_none += 1
+        return
+    ts = rec.get("ts")
+    ts = ts if isinstance(ts, (int, float)) else float("-inf")
+    stat = m.prompt_stats.setdefault(pid, [0, float("-inf"), 0])
+    stat[0] += 1
+    # newest first by record ts; the line number breaks ties and covers records without ts
+    stat[1:] = max(stat[1:], [ts, m.cycles_total])
+
+
+def _label_value(v: str) -> str:
+    """Escape a label value per the Prometheus text format."""
+    return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _bucket_for(latency_ms: float) -> int | None:
@@ -106,11 +128,6 @@ def find_audit_files(base_dir: str, agent: str | None = None) -> list[str]:
     files = glob.glob(os.path.join(base_dir, pattern_dir, "*.jsonl"))
     files += glob.glob(os.path.join(base_dir, pattern_dir, "*.jsonl.*"))
     return sorted(files)
-
-
-def _bump_prompt(counts: dict, prompt_id) -> None:
-    label = _prompt_label(counts, prompt_id)
-    counts[label] = counts.get(label, 0) + 1
 
 
 def _derive_jev(m: AgentMetrics, rec: dict, ts, now: float) -> None:
@@ -171,7 +188,7 @@ def derive_metrics(records) -> dict:
             m.last_ts = ts if m.last_ts is None else max(m.last_ts, ts)
 
         _derive_jev(m, rec, ts, now)
-        _bump_prompt(m.decisions_by_prompt, rec.get("prompt_id"))
+        _count_prompt(m, rec)
 
         valid = bool(rec.get("valid", False))
         result = rec.get("result") or {}
@@ -326,32 +343,8 @@ def render_prometheus_text(by_agent: dict) -> str:
     emit(DECISIONS_BY_PROMPT_NAME, DECISIONS_BY_PROMPT_HELP, "counter")
     for m in by_agent.values():
         for pid, count in sorted(m.decisions_by_prompt.items()):
-            lines.append(f'{DECISIONS_BY_PROMPT_NAME}{{agent="{m.agent}",prompt_id="{pid}"}} {count}')
+            lines.append(f'{DECISIONS_BY_PROMPT_NAME}{{agent="{m.agent}",prompt_id="{_label_value(pid)}"}} {count}')
 
-    return "\n".join(lines) + "\n"
-
-
-# ── Decisions by prompt (#476) ────────────────────────────────────────────
-# Live, in-process twin of the audit-derived series above (same name, same
-# bound). Incremented once per decision cycle with the prompt_id that cycle's
-# audit record carries; rendered by the agent's GET /metrics.
-DECISIONS_BY_PROMPT_NAME = "wow_agent_decisions_by_prompt_total"
-DECISIONS_BY_PROMPT_HELP = "Decision cycles by prompt id (at most 8 ids, then other; none = no LLM prompt)"
-DECISIONS_BY_PROMPT: dict[str, int] = {}
-_decisions_lock = threading.Lock()
-
-
-def count_decision(prompt_id) -> None:
-    with _decisions_lock:
-        _bump_prompt(DECISIONS_BY_PROMPT, prompt_id)
-
-
-def render_decisions_by_prompt(agent: str) -> str:
-    with _decisions_lock:
-        items = sorted(DECISIONS_BY_PROMPT.items())
-    lines = [f"# HELP {DECISIONS_BY_PROMPT_NAME} {DECISIONS_BY_PROMPT_HELP}",
-             f"# TYPE {DECISIONS_BY_PROMPT_NAME} counter"]
-    lines += [f'{DECISIONS_BY_PROMPT_NAME}{{agent="{agent}",prompt_id="{p}"}} {n}' for p, n in items]
     return "\n".join(lines) + "\n"
 
 

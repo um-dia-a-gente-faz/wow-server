@@ -154,62 +154,57 @@ class SwallowedTest(unittest.TestCase):
 
 
 class DecisionsByPromptTest(unittest.TestCase):
-    """#476: wow_agent_decisions_by_prompt_total{prompt_id}, bounded to 8 ids + other."""
+    """#476: wow_agent_decisions_by_prompt_total{agent,prompt_id}, derived from the audit
+    records by the textfile exporter only; 8 newest ids keep a label, older ones are `other`."""
 
-    def setUp(self):
-        from agent import metrics
-        self.m = metrics
-        metrics.DECISIONS_BY_PROMPT.clear()
-        self.addCleanup(metrics.DECISIONS_BY_PROMPT.clear)
+    def render(self, recs):
+        text = render_prometheus_text(derive_metrics(recs))
+        return [ln for ln in text.splitlines() if ln.startswith("wow_agent_decisions_by_prompt_total{")]
 
-    def test_counts_per_prompt_id_and_renders(self):
-        for pid in ("system@1a2b3c4d", "system@1a2b3c4d", "system@5e6f7a8b"):
-            self.m.count_decision(pid)
-        text = self.m.render_decisions_by_prompt("A")
-        self.assertIn("# TYPE wow_agent_decisions_by_prompt_total counter", text)
-        self.assertIn('wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@1a2b3c4d"} 2', text)
-        self.assertIn('wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@5e6f7a8b"} 1', text)
+    def test_counts_per_prompt_id(self):
+        recs = [{"agent": "A", "ts": 1.0, "prompt_id": "system@1a2b3c4d"},
+                {"agent": "A", "ts": 2.0, "prompt_id": "system@1a2b3c4d"},
+                {"agent": "A", "ts": 3.0, "prompt_id": "system@5e6f7a8b"}]
+        self.assertEqual(self.render(recs), [
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@1a2b3c4d"} 2',
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@5e6f7a8b"} 1'])
 
-    def test_ten_distinct_ids_make_eight_labels_and_other_is_two(self):
-        for i in range(10):
-            self.m.count_decision(f"system@{i:08x}")
-        counts = dict(self.m.DECISIONS_BY_PROMPT)
-        self.assertEqual(len(counts), 9)
+    def test_ten_ids_over_increasing_timestamps_keep_the_eight_newest(self):
+        recs = [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(10)]
+        counts = derive_metrics(recs)["A"].decisions_by_prompt
         self.assertEqual(counts["other"], 2)
-        self.assertEqual(sum(1 for k in counts if k != "other"), 8)
-        self.m.count_decision("system@00000000")        # already-known id keeps its own label
-        self.assertEqual(self.m.DECISIONS_BY_PROMPT["system@00000000"], 2)
-        self.assertEqual(self.m.DECISIONS_BY_PROMPT["other"], 2)
+        self.assertEqual({k for k in counts if k != "other"}, {f"p{i}" for i in range(2, 10)})
+        # shuffled file order: the bound follows the timestamps, not the order of the lines
+        counts = derive_metrics(list(reversed(recs)))["A"].decisions_by_prompt
+        self.assertEqual({k for k in counts if k != "other"}, {f"p{i}" for i in range(2, 10)})
 
-    def test_missing_or_empty_id_is_none(self):
-        self.m.count_decision(None)
-        self.m.count_decision("")
-        self.assertEqual(dict(self.m.DECISIONS_BY_PROMPT), {"none": 2})
+    def test_older_id_seen_again_recently_stays_labelled(self):
+        recs = [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(9)]
+        recs.append({"agent": "A", "ts": 99.0, "prompt_id": "p0"})
+        counts = derive_metrics(recs)["A"].decisions_by_prompt
+        self.assertEqual(counts["p0"], 2)
+        self.assertEqual(counts["other"], 1)      # p1 is now the oldest
 
-    def test_none_does_not_use_up_one_of_the_eight(self):
-        self.m.count_decision(None)
-        for i in range(8):
-            self.m.count_decision(f"p{i}")
-        self.assertNotIn("other", self.m.DECISIONS_BY_PROMPT)
+    def test_bound_is_per_agent(self):
+        recs = [{"agent": a, "ts": float(i), "prompt_id": f"p{i}"} for a in "AB" for i in range(10)]
+        for m in derive_metrics(recs).values():
+            self.assertEqual(m.decisions_by_prompt["other"], 2)
 
-    def test_threads_cannot_exceed_the_bound(self):
-        import threading
-        ts = [threading.Thread(target=lambda i=i: [self.m.count_decision(f"p{i}-{j}") for j in range(20)])
-              for i in range(8)]
-        for t in ts:
-            t.start()
-        for t in ts:
-            t.join()
-        self.assertEqual(len(self.m.DECISIONS_BY_PROMPT), 9)
-        self.assertEqual(sum(self.m.DECISIONS_BY_PROMPT.values()), 160)
+    def test_missing_empty_and_null_id_is_none_and_not_counted_against_the_eight(self):
+        recs = [{"agent": "A", "ts": 0.0}, {"agent": "A", "prompt_id": ""}, {"agent": "A", "prompt_id": None}]
+        recs += [{"agent": "A", "ts": float(i), "prompt_id": f"p{i}"} for i in range(8)]
+        counts = derive_metrics(recs)["A"].decisions_by_prompt
+        self.assertEqual(counts["none"], 3)
+        self.assertNotIn("other", counts)
 
-    def test_textfile_derives_same_series_from_audit_records(self):
-        recs = [{"agent": "A", "prompt_id": f"system@{i:08x}"} for i in range(10)]
-        recs += [{"agent": "A", "prompt_id": None}, {"agent": "B"}]
-        by_agent = self.m.derive_metrics(recs)
-        self.assertEqual(by_agent["A"].decisions_by_prompt["other"], 2)
-        self.assertEqual(by_agent["A"].decisions_by_prompt["none"], 1)
-        self.assertEqual(by_agent["B"].decisions_by_prompt, {"none": 1})
-        text = self.m.render_prometheus_text(by_agent)
-        self.assertIn('wow_agent_decisions_by_prompt_total{agent="A",prompt_id="other"} 2', text)
-        self.assertIn('wow_agent_decisions_by_prompt_total{agent="B",prompt_id="none"} 1', text)
+    def test_non_string_ids_render_as_none(self):
+        recs = [{"agent": "A", "prompt_id": ["a"]}, {"agent": "A", "prompt_id": {"a": 1}},
+                {"agent": "A", "prompt_id": 7}, {"agent": "A", "prompt_id": "system@1"}]
+        self.assertEqual(self.render(recs), [
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="none"} 3',
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="system@1"} 1'])
+
+    def test_quote_backslash_newline_are_escaped_and_samples_stay_on_one_line(self):
+        recs = [{"agent": "A", "prompt_id": 'sys"te\\m\n@1'}]
+        self.assertEqual(self.render(recs), [
+            'wow_agent_decisions_by_prompt_total{agent="A",prompt_id="sys\\"te\\\\m\\n@1"} 1'])

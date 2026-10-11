@@ -27,7 +27,7 @@ import time
 
 from . import config
 from .audit_schema import AuditRecord
-from .metrics import count_decision, swallowed
+from .metrics import swallowed
 from .model import Snapshot
 
 log = logging.getLogger("agent.audit")
@@ -148,7 +148,6 @@ class AuditLogger:
             snapshot=snap if include_full else None,
         )
 
-        count_decision(rec.prompt_id)  # #476: the counter and the record share this prompt_id
         d = _redact(rec.to_json())
         if self.on_record is not None:
             try:
