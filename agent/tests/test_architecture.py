@@ -48,6 +48,7 @@ LAYERS = {
     "auth": {"packets", "wire"},   # the logon challenge and realm list read through Reader (#517)
     "rules": set(),
     "ports": set(),
+    "lifecycle": set(),   # connection lifecycle state machine (#584); stdlib only, nothing wired yet
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "wire"},
     "quests": {"opcodes", "wire"},
