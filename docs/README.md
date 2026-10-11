@@ -25,7 +25,7 @@ backticked repo path in the docs (archived spikes: links only), `README.md`, `CL
 
 | Path | Contents |
 |---|---|
-| [adr/](adr/) | Architecture decision records, `0001` to `0013` |
+| [adr/](adr/) | Architecture decision records, `0001` to `0015` |
 | [agents/](agents/) | Config for the engineering skills: issue tracker, triage labels, domain docs |
 
 ## Runbooks
