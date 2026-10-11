@@ -6,6 +6,7 @@ the server's confirmation, all over real localhost sockets."""
 import collections
 import inspect
 import logging
+import os
 import struct
 import zlib
 import pathlib
@@ -13,6 +14,7 @@ import sys
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock as umock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -22,6 +24,8 @@ from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
 from agent import packets as pk  # noqa: E402
 from agent import quests as qu  # noqa: E402
+from agent import update_fields as uf  # noqa: E402
+from agent.update_object import parse_update_object  # noqa: E402
 from agent.__main__ import _authenticate_and_login  # noqa: E402
 from agent.auth import AuthRejected, auth_logon  # noqa: E402
 
@@ -150,6 +154,23 @@ class StreamTest(unittest.TestCase):
         self.assertEqual(pk.unpack_packed_guid(server.stream_packets(7, pool=0)[1][1], 0)[0],
                          server.STREAM_UNIT_BASE + 7)
 
+    def test_stream_pool_takes_n_for_entry_and_chat_sender_too(self):
+        """#486: pool=0 uses n itself for the unit guid, OBJECT_FIELD_ENTRY and the chat sender;
+        the default pool cycles all three on 50. Read back from the packets, not from the code."""
+        def identity(pool, n):
+            (_, update), (_, move), (_, chat) = server.stream_packets(n, pool=pool)
+            block = parse_update_object(zlib.decompress(update[4:]))[0]
+            return (pk.unpack_packed_guid(move, 0)[0], block.guid, block.fields[uf.OBJECT_FIELD_ENTRY],
+                    struct.unpack_from('<BiQ', chat, 0)[2])
+        for n in (57, 120):
+            with self.subTest(pool=0, n=n):
+                self.assertEqual(identity(0, n), (server.STREAM_UNIT_BASE + n, server.STREAM_UNIT_BASE + n,
+                                                  server.STREAM_UNIT_ENTRY + n, server.STREAM_PLAYER_BASE + n))
+            with self.subTest(pool=server.STREAM_POOL, n=n):
+                k = n % server.STREAM_POOL
+                self.assertEqual(identity(server.STREAM_POOL, n), (server.STREAM_UNIT_BASE + k, server.STREAM_UNIT_BASE + k,
+                                                                   server.STREAM_UNIT_ENTRY + k, server.STREAM_PLAYER_BASE + k))
+
     def test_default_pool_bytes_are_the_same_as_without_the_argument(self):
         """#486: the default path must not change guid, entry or chat sender (packets stay byte-equal)."""
         for n in range(100):
@@ -160,8 +181,20 @@ class StreamTest(unittest.TestCase):
         self.addCleanup(mock.close)
         self.assertEqual(mock.stream_pool, 0)
         sent = []
-        mock._stream(lambda opcode, payload: sent.append((opcode, payload)), 7)
-        self.assertEqual(sent, server.stream_packets(7, pool=0))
+        mock._stream(lambda opcode, payload: sent.append((opcode, payload)), 57)   # 57 >= 50: pools differ
+        self.assertEqual(sent, server.stream_packets(57, pool=0))
+        self.assertNotEqual(sent, server.stream_packets(57))   # a stream that ignores the pool fails here
+
+    def test_main_reads_the_stream_pool_from_the_environment(self):
+        for env, want in (({"MOCK_STREAM_POOL": "0"}, 0), ({}, server.STREAM_POOL)):
+            with self.subTest(env=env), umock.patch.dict(os.environ):
+                os.environ.pop("MOCK_STREAM_POOL", None)
+                os.environ.update(env)
+                with umock.patch.object(server, "WorldMock") as world, \
+                        umock.patch.object(server.threading, "Event"), \
+                        umock.patch.object(server.logging, "basicConfig"):
+                    server.main()
+                self.assertEqual(world.call_args.kwargs["stream_pool"], want)
 
     def test_no_stream_by_default(self):
         params = inspect.signature(server.WorldMock).parameters
