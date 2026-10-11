@@ -25,9 +25,6 @@ class DeathRegistrationTest(unittest.TestCase):
     def test_entry_point_registers_death_actions(self):
         self.assertLessEqual({"release_spirit", "reclaim_corpse"}, _registry_in_fresh_process("agent.__main__"))
 
-    def test_think_alone_registers_death_actions(self):
-        self.assertLessEqual({"release_spirit", "reclaim_corpse"}, _registry_in_fresh_process("agent.think"))
-
 
 if __name__ == "__main__":
     unittest.main()

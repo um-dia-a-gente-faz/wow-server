@@ -95,8 +95,8 @@ LAYERS = {
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
-    "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "http_api",
-                 "metrics", "reflexes", "session", "think"},
+    "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "death", "http_api",
+                 "metrics", "reflexes", "session", "think"},   # death: imported so its actions register (#321)
 }
 
 ADR = {
