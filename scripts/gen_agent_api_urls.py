@@ -41,7 +41,8 @@ def render(agents: list[dict], host: str) -> str:
     names = [a["character"] for a in agents]
     if len({n.lower() for n in names}) != len(names):
         raise ValueError("duplicate character name in roster")
-    return ",".join(f"{name}=http://{host}:{gen.FIRST_PORT + i}" for i, name in enumerate(names))
+    derived = [gen.derive(i, a) for i, a in enumerate(agents)]
+    return ",".join(f"{d.character}=http://{host}:{d.api_port}" for d in derived)
 
 
 def main(argv=None) -> int:

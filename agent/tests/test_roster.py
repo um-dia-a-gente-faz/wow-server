@@ -19,7 +19,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
 
 import create_agent_roster as car  # noqa: E402
+import gen_agent_api_urls as urls  # noqa: E402
 import gen_agents_compose as gen   # noqa: E402
+from agents import roster          # noqa: E402
 
 DEATH_KNIGHT = 6
 HORDE_RACES = {2, 5, 6, 8, 10}     # orc, undead, tauren, troll, blood elf
@@ -352,6 +354,39 @@ class CommittedFilesTests(unittest.TestCase):
         a = {"account": "AGENT01", "character": "Same"}
         with self.assertRaises(ValueError):
             gen.render([a, dict(a, account="AGENT02")])
+
+    def test_render_ignores_the_runner_retired_key(self):
+        plain = gen.load_roster()
+        flagged = [dict(a, retired=True) if i == 0 else a for i, a in enumerate(plain)]
+        self.assertEqual(len(flagged), 25)
+        self.assertEqual(gen.render(flagged), gen.render(plain))
+
+    def test_load_roster_validates_with_the_library(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "roster.json"
+            agents = json.loads((REPO / "agents" / "roster.json").read_text())["agents"]
+            agents[0]["charcter"] = agents[0].pop("character")
+            path.write_text(json.dumps({"agents": agents}))
+            with self.assertRaisesRegex(roster.RosterError, "entry 1"):
+                gen.load_roster(path)
+
+    def test_script_constants_are_the_library_values(self):
+        self.assertEqual(gen.FIRST_PORT, roster.FIRST_PORT)
+        self.assertEqual(gen.PARTY_SIZE, roster.PARTY_SIZE)
+
+    def test_render_publishes_the_library_first_port(self):
+        with mock.patch.object(roster, "FIRST_PORT", 9701):
+            text = gen.render(gen.load_roster())
+        ports = [int(line.split(":")[-1]) for line in text.splitlines() if "AGENT_HTTP_PORT:" in line
+                 and not line.lstrip().startswith("#")]
+        self.assertEqual(ports, list(range(9701, 9726)))
+
+    def test_api_urls_publish_the_library_first_port(self):
+        with mock.patch.object(roster, "FIRST_PORT", 9701):
+            value = urls.render(gen.load_roster(), "10.0.0.7")
+        self.assertTrue(value.startswith("Luaprata=http://10.0.0.7:9701,"), value)
+        last = roster.load_roster()[-1].character
+        self.assertTrue(value.endswith(f",{last}=http://10.0.0.7:9725"), value)
 
     def test_port_range_is_not_used_elsewhere_in_the_compose_files(self):
         for f in ("docker-compose.yml", "monitoring/docker-compose.yml"):
