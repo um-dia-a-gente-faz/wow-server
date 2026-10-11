@@ -10,6 +10,7 @@ guard cannot catch. Opcodes with no captured fixture get synthetic seeds."""
 import logging
 import os
 import random
+import struct
 import time
 import tempfile
 import tracemalloc
@@ -24,14 +25,25 @@ from agent.packets import ProtocolError
 from agent.tests import builders as b
 from agent.tests.builders import make_session
 from agent.tests.test_perception_golden import build_world
+# Test modules imported as namespaces, so their TestCase classes are not collected twice.
+from agent import loot as lo
+from agent.handlers.chat import CHAT_MSG_SAY
+from agent.handlers.world import MSG_MOVE_OPCODES
+from agent.tests import test_channels as tc
+from agent.tests import test_loot as tl
+from agent.tests import test_names as tn
+from agent.tests import test_npc as tnpc
+from agent.tests import test_quests as tq
+from agent.tests import test_session as tse
+from agent.tests import test_spells as tsp
 
 _router = build_session_router()
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 ITERATIONS = int(os.environ.get("FUZZ_ITERATIONS", "20"))  # per seed; nightly raises it
 MAX_SECONDS = 1.0
 MAX_BYTES = 32 * 1024 * 1024
-# A malformed packet may raise ProtocolError (the router converts raw struct/index/value/zlib
-# errors, #364); anything else is a bug. An opcode that cannot be fixed yet goes here with its
+# A malformed packet may raise ProtocolError (parsers read through wire.Reader, #517; the router
+# no longer converts raw errors); anything else is a bug. An opcode that cannot be fixed yet goes here with its
 # issue number, so the list can only shrink.
 KNOWN_EXCEPTIONS: dict[int, str] = {}
 EXTREME = (b'\xff\xff\xff\xff', b'\x00\x00\x00\x80', b'\xff\xff\x00\x00', b'\x00\x00\x00\x00')
@@ -46,6 +58,7 @@ FIXTURE_OPCODES = {
     "mail/send_mail": (0x239,),
     "mail/mail_list": (0x23B,),
     "chat/": (op.SMSG_MESSAGECHAT,),
+    "monster_move/": (op.SMSG_MONSTER_MOVE,),
 }
 
 
@@ -79,7 +92,58 @@ def builder_seeds(opcode):
         op.SMSG_COMPRESSED_UPDATE_OBJECT: [b.compressed(b.update_object(blk))],
         op.SMSG_QUESTGIVER_OFFER_REWARD: [b.offer_reward_payload(1, 2, "t", "x", [(3, 1, 4)], [(5, 1, 6)])],
         op.SMSG_QUESTGIVER_QUEST_COMPLETE: [b.quest_complete_payload(2, 10, 20)],
+        **valid_payloads(),
     }.get(opcode, [])
+
+
+def valid_payloads() -> dict:
+    """#517 review: one or more valid payloads for each opcode the fixtures and builders above do
+    not cover. Without one, a fuzzed variant never parses, so the code after a successful parse is
+    never fuzzed. Each layout is copied from the named existing test (namespace imports above)."""
+    guid = 0xF130000000001234
+    gossip = (struct.pack('<Q', guid) + struct.pack('<ii', 42, 999) + struct.pack('<I', 1)
+              + tnpc.gossip_option_bytes(text="Train me") + struct.pack('<I', 0))   # test_npc ParseGossipMessageTest
+    loot = (struct.pack('<Q', guid) + bytes([lo.LOOT_CORPSE]) + struct.pack('<IB', 55, 1)   # test_loot ParseLootResponseTest
+            + struct.pack('<BIIIii', 0, 2589, 1, 12345, 0, -1) + bytes([0]))
+    initial_spells = (bytes([1]) + struct.pack('<H', 2) + struct.pack('<IH', 635, 0)   # test_spells InitialSpellsTest
+                      + struct.pack('<IH', 21084, 1) + struct.pack('<H', 1)
+                      + struct.pack('<IHHii', 20271, 0, 0, 1500, 0))
+    quest_list = (struct.pack('<Q', 0x1234) + tq.cstring("Greetings!")   # test_quests ParseQuestgiverQuestListTest
+                  + struct.pack('<II', 0, 1) + bytes([1])   # one quest (the test has two)
+                  + struct.pack('<IIiI', 100, 2, 10, 8) + bytes([0]) + tq.cstring("Quest A"))
+    quest_details = (struct.pack('<QQI', 0x1234, 0, 8325)   # test_quests ParseQuestgiverQuestDetailsTest
+                     + tq.cstring("Reclaiming Sunstrider Isle") + tq.cstring("Details here.")
+                     + tq.cstring("Kill 8 wyrms.") + bytes([1]) + struct.pack('<II', 0x80088, 0) + bytes([0])
+                     + tq.reward_list([(20997, 1, 111), (20998, 1, 222)]) + tq.reward_list([])
+                     + struct.pack('<III', 30, 45, 0) + struct.pack('<f', 0.0)
+                     + struct.pack('<IiIIII', 0, 0, 0, 0, 0, 1) + struct.pack('<5I', 911, 0, 0, 0, 0)
+                     + struct.pack('<5i', 5, 0, 0, 0, 0) + struct.pack('<5i', 0, 0, 0, 0, 0)
+                     + struct.pack('<i', 2) + struct.pack('<IIII', 1, 0, 0, 0))
+    request_items = (struct.pack('<Qi', 0x1234, 100)   # test_quests ParseQuestgiverRequestItemsTest
+                     + tq.cstring("Quest A") + tq.cstring("Bring me items.")
+                     + struct.pack('<iiiIii', 0, 1, 0, 0, 0, 0) + struct.pack('<I', 1)
+                     + struct.pack('<iiI', 2589, 5, 1234) + struct.pack('<IIII', 0, 4, 8, 16))
+    trainer = (struct.pack('<Q', 0xF130000000009999) + struct.pack('<ii', 0, 1)   # test_npc ParseTrainerListTest
+               + tnpc.trainer_spell_bytes(spell_id=587, req_level=10) + tq.cstring("Welcome, mage."))
+    levelup = struct.pack('<II', 5, 20) + struct.pack('<7I', *range(7)) + struct.pack('<5I', *range(5))   # test_spells LevelUpInfoTest
+    gm_chat = tse.messagechat_payload(CHAT_MSG_SAY, "hi", sender_guid=1, sender_name="Sender")   # test_session GM chat
+    return {
+        op.SMSG_ITEM_QUERY_SINGLE_RESPONSE: [tl.ParseItemQueryResponseTest._build(None)],   # test_loot _build
+        op.SMSG_GAMEOBJECT_QUERY_RESPONSE: [struct.pack('<I', 181646) + tn.gameobject_response_body(name="Ship")],
+        op.SMSG_CREATURE_QUERY_RESPONSE: [struct.pack('<I', 17213) + tn.creature_response_body(name="Broom")],
+        op.SMSG_CHANNEL_NOTIFY: [tc.you_joined("General", 1)],   # test_channels
+        op.SMSG_INITIAL_SPELLS: [initial_spells],
+        op.SMSG_ATTACKERSTATEUPDATE: [tsp.attacker_state_update_body()],   # test_spells
+        op.SMSG_LOOT_RESPONSE: [loot],
+        op.SMSG_GOSSIP_MESSAGE: [gossip],
+        op.SMSG_QUESTGIVER_QUEST_LIST: [quest_list],
+        op.SMSG_QUESTGIVER_QUEST_DETAILS: [quest_details],
+        op.SMSG_QUESTGIVER_REQUEST_ITEMS: [request_items],
+        op.SMSG_TRAINER_LIST: [trainer],
+        op.SMSG_LEVELUP_INFO: [levelup],
+        op.SMSG_GM_MESSAGECHAT: [gm_chat],
+        **{mv: [tse.heartbeat_payload(guid)] for mv in MSG_MOVE_OPCODES},   # MOVE: packed guid + 30-byte MovementInfo
+    }
 
 
 _SCALARS = {int, float, str, bytes, bool, type(None)}
@@ -191,6 +255,26 @@ class ParserFuzzTest(unittest.TestCase):
         paths += [c.args[1] for c in replace.call_args_list]
         self.assertTrue(paths)
         self.assertTrue(all(p.startswith(tempfile.gettempdir()) for p in paths), paths)
+
+    def test_every_registered_opcode_has_a_seed_that_parses(self):
+        """#517 review: the fuzz walks truncations and flips of each seed, but an opcode whose
+        seeds all fail never reaches the code after a successful parse. Each registered opcode
+        needs one non-empty seed that dispatches on a fresh session without raising."""
+        names = {v: k for k, v in vars(op).items() if isinstance(v, int) and k.split("_")[0] in ("SMSG", "MSG", "CMSG")}
+        uncovered = []
+        for opcode in sorted(_router._handlers):
+            for seed in seeds_for(opcode):
+                if not seed:
+                    continue
+                try:
+                    _router.dispatch(make_session().ctx, opcode, seed)
+                except Exception:
+                    continue
+                break
+            else:
+                uncovered.append(f"{opcode:#05x} {names.get(opcode, '?')}")
+        self.assertEqual(uncovered, [], f"{len(uncovered)} registered opcodes with no non-empty seed "
+                                        "that parses: " + ", ".join(uncovered))
 
     def test_every_handler_survives_malformed_payloads(self):
         tracemalloc.start()

@@ -7,8 +7,9 @@ import struct
 
 class ProtocolError(Exception):
     """A server packet is malformed (truncated, bad count, undecodable text).
-    The one family a handler may raise on bad wire data; the router converts
-    the raw parse errors into it (#364)."""
+    The one family a handler may raise on bad wire data: parsers read through
+    wire.Reader, which raises PacketTruncated/PacketMalformed. The router does not
+    convert other exceptions into it (#517)."""
 
 
 def sha1(*parts: bytes) -> bytes:

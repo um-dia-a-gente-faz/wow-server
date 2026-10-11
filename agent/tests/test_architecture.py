@@ -45,7 +45,7 @@ LAYERS = {
     "memory": set(),   # durable agent memory store (#276); stdlib sqlite3 only
     "model": set(),
     "audit_schema": {"model"},   # the audit record's versioned on-disk shape (#277)
-    "auth": {"packets"},
+    "auth": {"packets", "wire"},   # the logon challenge and realm list read through Reader (#517)
     "rules": set(),
     "ports": set(),
     # parsers are pure: wire helpers only
@@ -92,7 +92,7 @@ LAYERS = {
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
-                "transport"},
+                "transport", "wire"},   # enum_characters and handle_time_sync read through Reader (#517)
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},

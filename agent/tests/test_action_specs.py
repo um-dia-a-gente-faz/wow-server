@@ -160,6 +160,11 @@ class FollowActionsReadSpecTest(unittest.TestCase):
                 self.assertIs(cls.params, spec.params)
                 self.assertIs(cls.required, spec.required)
 
+    def test_follow_distance_text_names_the_reflex_default(self):
+        # action_specs must not import reflexes (layer table), so the tie to the constant is this test.
+        description = specs.specs_by_name[specs.FOLLOW].params["distance"]["description"]
+        self.assertIn(f"Default {follow.DEFAULT_DISTANCE_YD}.", description)
+
 
 class ValidationReadsSpecTest(unittest.TestCase):
     def test_missing_required_param_text(self):
