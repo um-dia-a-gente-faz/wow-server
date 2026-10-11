@@ -114,6 +114,17 @@ class PostJsonTest(unittest.TestCase):
             self.post(http_error(500, b"x" * 900), error_body_limit=500)
         self.assertEqual(len(cm.exception.body), 500)
 
+    def test_retry_hint_inside_error_body_limit_is_honoured(self):
+        with self.assertRaises(httpjson.HttpJsonError) as cm:
+            self.post(http_error(429, b"x" * 100 + b" Soonest reset ~82s"), error_body_limit=500)
+        self.assertEqual(cm.exception.retry_after, 82.0)
+
+    def test_retry_hint_beyond_error_body_limit_is_not_honoured(self):
+        # The hint is read from the first error_body_limit raw bytes only (#505).
+        with self.assertRaises(httpjson.HttpJsonError) as cm:
+            self.post(http_error(429, b"x" * 600 + b" Soonest reset ~82s"), error_body_limit=500)
+        self.assertIsNone(cm.exception.retry_after)
+
     def test_no_retry_by_default(self):
         with self.assertRaises(httpjson.HttpJsonError) as cm:
             self.post(http_error(503), http_error(503))
