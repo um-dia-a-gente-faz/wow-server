@@ -104,7 +104,8 @@ never creates or overwrites `.env`**; it checks `.env` and prints what is missin
 ### `.env` on the guest (human)
 
 Create `/opt/wow-server/.env`, mode 600, owner root, from the wow-server VM's `.env`
-over a trusted channel or by hand. The agents need `AGENT_PASSWORD` (required),
+over a trusted channel or by hand. The agents need `AGENT_PASSWORD` and `WOW_AGENT_TAG` (both required; the tag is
+the commit SHA that `scripts/build-agent-image.sh` prints, see section 3),
 `AGENT_BRAIN` (`llm` default, or `jev`) with that brain's own settings,
 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` or `JEV_BASE_URL`/`JEV_API_KEY`/`JEV_MODEL`, optionally `AGENT_HTTP_PUBLISH_IP`. The guest does **not** need
 `MYSQL_ROOT_PASSWORD` or `ACCESS_PASSWORD`; leave them out. Do not copy
@@ -119,16 +120,15 @@ git -C /opt/wow-server check-ignore .env                           # prints ".en
 
 ## 3. Build the image from current `main` (on `wow-agents`)
 
-`docker compose up -d` does **not** rebuild an existing `wow-agent:latest`, so a
+`docker compose up -d` does **not** rebuild an existing `wow-agent:<WOW_AGENT_TAG>`, so a
 stale image keeps running after `git pull`. Build explicitly, every time `main`
 moves:
 
 ```bash
 cd /opt/wow-server
 git pull --ff-only
-docker build -t wow-agent:latest .
-docker image inspect wow-agent:latest --format '{{.Created}} {{.Id}}'
-git rev-parse --short HEAD     # note it: this is the commit the image was built from
+scripts/build-agent-image.sh   # builds wow-agent:<sha> and prints the SHA
+# set WOW_AGENT_TAG=<that sha> in /opt/wow-server/.env (the previous value is the rollback)
 # later, to roll the fleet onto a new build:
 #   docker compose -f docker-compose.agents.yml up -d --build --force-recreate agent-luaprata
 ```
@@ -309,7 +309,7 @@ verdict: <fits / needs more RAM / over-provisioned>; extrapolated to 25 agents: 
 ## Acceptance (issue #135): all human steps, none done by this PR
 
 - [ ] Guest boots, Docker runs, checkout present, `.env` in place, gitignored (sections 1-2)
-- [ ] `wow-agent:latest` built on the guest from current `main` (section 3)
+- [ ] `wow-agent:<sha>` built on the guest from current `main` and `WOW_AGENT_TAG` set to it in `.env` (section 3)
 - [ ] One agent runs at least 10 min on the guest with audit output and a working `/healthz` and `/state` (section 4)
 - [ ] No agent containers start on the wow-server VM any more (section 4, `docker ps` there)
 - [ ] Audit files show up on the wow-server VM within about a minute and `curl -s http://192.168.1.64:9400/api/character/<name>/activity` lists the agent's events (sections 5 and 6)

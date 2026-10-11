@@ -433,9 +433,15 @@ the sha256 of every file listed on PyPI for the new version (`/pypi/<name>/<vers
 including transitive dependencies. Merging a compose change recreates the affected
 containers, so follow the usual deploy rules.
 
-**Not done here.** `danielsilvestre37/trinitycore-docker:3.3.5` is pinned to the digest
-the registry served on 2026-10-10; confirm it is what the VM runs (`docker image inspect`)
-before merging. Mirroring it or building from source is a separate spike and ADR.
+**Merging this change always recreates containers.** Compose hashes the `image:` text,
+so adding `@sha256:...` recreates `trinitycore-wowserver`, `trinitycore-db`, chat-feed,
+node-exporter, cadvisor, wow-exporter and wowmap whatever the digest is (`deploy.sh`
+waits for 0 characters online first). Comparing `docker image inspect <image> --format
+'{{.RepoDigests}}'` on the VM with the pin only tells whether the image *content* changes
+(a new TrinityCore build), not whether the containers restart.
+
+**Not done here.** Mirroring the TrinityCore image or building it from source is a
+separate spike and ADR.
 
 ### wowmap's `AGENT_API_URLS`
 
