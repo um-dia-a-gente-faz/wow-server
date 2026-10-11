@@ -300,7 +300,7 @@ class WorldMock:
             s.close()
         with self._lock:
             handlers = list(self._handlers)
-        for t, conn in handlers:
+        for _t, conn in handlers:
             try:
                 conn.shutdown(socket.SHUT_RDWR)   # wakes a handler blocked in recv/send (#485)
             except OSError:
