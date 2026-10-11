@@ -210,6 +210,9 @@ exposes `wow_backup_count`, `wow_backup_newest_timestamp_seconds` and
 `BackupStale` rule in `monitoring/prometheus-agent-alerts.yml` fires when the newest dump is
 older than 26 h or there is none. Nothing ships that file to Prometheus: copy it to VM201, keep
 it in `rule_files` of `prometheus.yml`, and reload Prometheus, or the alert does not exist.
+The file holds the fleet rules as well (reconnects, decisions, router errors, Jev, `wow-exporter`);
+each rule's `runbook` annotation links to its section in [RUNBOOK-ALERTS.md](RUNBOOK-ALERTS.md),
+which says what to check and how to tune it.
 
 ## Updating
 
