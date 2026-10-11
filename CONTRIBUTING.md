@@ -234,3 +234,26 @@ machine that can reach the server:
 python3 -m agent --list-chars
 docker build -t wow-agent .
 ```
+
+## Add a brain scenario after a brain bug
+
+A live brain mistake gets a golden scenario in
+[`agent/tests/test_brain_scenarios.py`](agent/tests/test_brain_scenarios.py), so the fix stays
+fixed (#388, #475).
+
+1. Find the bad cycle in the agent's audit log on the VM,
+   `/opt/wow-server-metrics/audit/<agent>/<YYYY-MM-DD>.jsonl`:
+   `python3 -m tools.agent_dev.replay <file> --failures` lists the invalid or failed cycles.
+   Full snapshots are written only every 20th cycle and on invalid or failed cycles, so
+   capture a cycle that carries one.
+2. Capture it: `python3 -m tools.agent_dev.capture_scenario <file> --cycle <N>` prints a
+   `"captured_<agent>_<N>": dict(...)` entry. The snapshot is a literal; the action the brain
+   chose is a comment.
+3. Paste the entry into `SCENARIOS` and write `offered` (what the candidate list must never
+   contain) and `chosen` (what the brain must never pick). State what must never happen, not
+   the one right answer. The predicate helpers at the top of the file cover the common cases.
+4. Run `python3 -m unittest agent.tests.test_brain_scenarios`; the new scenario must fail on
+   the bug.
+5. Fix the code and see it pass. Keep the scenario: it is the regression test. If the fix has
+   to wait, mark it `known_gap=True` with its issue number; the test then fails as soon as the
+   gap closes, so the flag comes off with the fix.
