@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import app  # noqa: E402
 import assets  # noqa: E402
 import models  # noqa: E402

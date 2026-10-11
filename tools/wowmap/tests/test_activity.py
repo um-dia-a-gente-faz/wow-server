@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import activity  # noqa: E402
 import pagesrc  # noqa: E402
 import routes  # noqa: E402

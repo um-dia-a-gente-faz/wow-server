@@ -18,6 +18,7 @@ from agent import quests as qu
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.tests.builders import FakeSession, make_session, reward_list
+from agent.wire import PacketTruncated
 
 
 def cstring(s: str) -> bytes:
@@ -149,7 +150,7 @@ class ParseQuestQueryResponseTest(unittest.TestCase):
                          [{"entry": 3741, "count": 1}, {"entry": 3742, "count": 2}])
 
     def test_truncated_payload_raises(self):
-        with self.assertRaises((IndexError, struct.error, ValueError)):
+        with self.assertRaises(PacketTruncated):
             qu.parse_quest_query_response(fixture("quest_query_response_8325.bin")[:-3])
 
     def test_trailing_bytes_raise(self):

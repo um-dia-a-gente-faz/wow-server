@@ -1,9 +1,10 @@
 """Composes the JSON-serialisable snapshot the LLM sees from the per-section builders."""
 
-from .. import group as group_mod
 from ..model import Snapshot
 from .caps import SECTION_CAPS, apply_caps
-from .nearby import nearby_sections, position_dict
+from .group_state import group_member_guids, group_section
+from .nearby import nearby_sections
+from .self_state import resolved_position, self_section
 
 
 def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
@@ -13,12 +14,9 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
     `channels`, `equipment`, `inventory`, `quest_log`. Returns the raw dict
     (GUIDs not yet turned into handles)."""
     me = view["me"]
-    pos = my_position or (me.position if me else None)
+    pos = resolved_position(me, my_position)
     out: Snapshot = {
-        "position": position_dict(pos),
-        "is_dead": bool(me is not None and me.is_dead()),
-        "is_ghost": bool(me is not None and me.is_ghost()),
-        "corpse_position": position_dict(corpse_position) if corpse_position is not None else None,
+        **self_section(me, my_position, corpse_position),
         "nearby_units": [],
         "nearby_players": [],
         "nearby_objects": [],
@@ -28,15 +26,14 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
         "has_new_mail": view["has_new_mail"],
         "equipment": view["equipment"],
         "inventory": view["inventory"],
-        "pending_invite": pending_invite,
-        "group": group_mod.snapshot_view(group, view["my_guid"]),
+        **group_section(group, view["my_guid"], pending_invite),
         "chat_inbox": list(chat_inbox) if chat_inbox is not None else [],
         "channels": view["channels"],  # UM-93: joined chat channels, for channel_say
         "quest_log": view["quest_log"],
     }
     if pos is not None:
-        group_guids = {m["guid"] for m in (group or {}).get("members", ())}
-        near = nearby_sections(view["objects"], view["my_guid"], pos, max_range, limit, group_guids)
+        near = nearby_sections(view["objects"], view["my_guid"], pos, max_range, limit,
+                               group_member_guids(group))
         out["nearby_units"] = near["nearby_units"]
         out["nearby_players"] = near["nearby_players"]
         out["nearby_objects"] = near["nearby_objects"]

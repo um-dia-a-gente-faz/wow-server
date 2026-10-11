@@ -24,21 +24,19 @@ MODULE_MAX = 600
 BASELINE = {
     # modules
     "tools/agent_dev/probe.py": 769,
-    "tools/wowmap/activity.py": 639,
+    "tools/wowmap/wowmap/activity.py": 639,
     # functions
     "agent/__main__.py::main": 93,
     "agent/candidates.py::generate": 176,
     "agent/handlers/chat.py::handle_messagechat": 84,
     "agent/loot.py::parse_item_query_response": 128,
-    "agent/metrics.py::derive_metrics": 101,
-    "agent/metrics.py::render_prometheus_text": 87,
     "agent/movement.py::_simulate": 125,
     "tools/agent_dev/ab.py::run": 101,
     "agent/update_object.py::parse_monster_move": 88,
     "tools/dbc/names.py::GameNames.__init__": 147,
     "tools/dbc/spelltext.py::render": 82,
-    "tools/wowmap/activity.py::diff_snapshots": 87,
-    "tools/wowmap/item_tooltip.py::tooltip": 111,
+    "tools/wowmap/wowmap/activity.py::diff_snapshots": 87,
+    "tools/wowmap/wowmap/item_tooltip.py::tooltip": 111,
 }
 
 

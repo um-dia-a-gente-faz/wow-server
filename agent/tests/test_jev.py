@@ -184,6 +184,43 @@ class ChooseActionTest(unittest.TestCase):
         self.assertIsNone(self.client.last_confidence)
 
 
+class OddValue:
+    """Not JSON-serialisable; json_default=str must turn it into its text."""
+
+    def __str__(self):
+        return "odd-value"
+
+
+class TransportParametersTest(unittest.TestCase):
+    """#505: the parameters jev.py hands to httpjson.post_json, pinned through
+    a patched urlopen (no network, no sleeping)."""
+
+    def setUp(self):
+        self.client = jev.JevClient("http://jev.test/api/alpha", "typesafe/jev-1.13",
+                                    api_key="sk-test", timeout=7.5)
+
+    def test_non_json_value_in_payload_is_stringified(self):
+        history = [{"action": "loot", "params": {"guid": OddValue()}}]
+        with fake_urlopen(decisions_response("attack(guid=4660)")) as urlopen:
+            self.client.choose_action({}, CANDIDATES, history=history)
+        sent = json.loads(urlopen.call_args[0][0].data)
+        self.assertEqual(sent["state"]["history"], [{"action": "loot", "params": {"guid": "odd-value"}}])
+
+    def test_request_uses_the_client_timeout(self):
+        with fake_urlopen(decisions_response("attack(guid=4660)")) as urlopen:
+            self.client.choose_action({}, CANDIDATES)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 7.5)
+
+    def test_server_500_is_sent_once_and_not_retried(self):
+        err = urllib.error.HTTPError("http://jev.test/api/alpha/decisions", 500,
+                                     "Internal Server Error", {}, io.BytesIO(b"boom"))
+        with mock.patch("urllib.request.urlopen", side_effect=err) as urlopen:
+            with self.assertRaises(jev.JevError) as cm:
+                self.client.choose_action({}, CANDIDATES)
+        self.assertEqual(cm.exception.status, 500)
+        self.assertEqual(urlopen.call_count, 1)
+
+
 class FakeDecisionsHandler(http.server.BaseHTTPRequestHandler):
     """Answers POST /api/alpha/decisions like the documented API, choosing a
     random criteria key. Records the last request for assertions."""

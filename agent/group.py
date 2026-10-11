@@ -24,9 +24,8 @@ The leave form is `0x10 0 0 0, guid, counter, uint32 0, uint64 0` (no loot tail)
 which parses to a zero leader — that is how "not in a group" is recognised.
 """
 
-import struct
-
-from . import packets as pk
+from .opcodes import SMSG_GROUP_LIST
+from .wire import Reader
 
 GROUPTYPE_RAID = 0x02
 GROUPTYPE_LFG = 0x08
@@ -41,30 +40,36 @@ LOOT_METHOD_NAMES = {0: "free_for_all", 1: "round_robin", 2: "master_loot",
 def parse_group_list(payload: bytes) -> dict | None:
     """Decode SMSG_GROUP_LIST. Returns None for the "left the group" form
     (zero leader); otherwise a dict with raw guids (the snapshot turns them
-    into handles) and the member list. Raises struct.error/IndexError on a
+    into handles) and the member list. Raises PacketTruncated on a
     truncated payload — the caller logs and keeps the previous state."""
-    group_type, _subgroup, _flags, _roles = struct.unpack_from("<BBBB", payload, 0)
-    off = 4
+    r = Reader(payload, SMSG_GROUP_LIST)
+    group_type = r.u8()
+    r.skip(3)  # subgroup, member_flags, roles
     if group_type & GROUPTYPE_LFG:
-        off += 5  # uint8 state + uint32 dungeon
-    group_guid, counter, count = struct.unpack_from("<QII", payload, off)
-    off += 16
+        r.skip(5)  # uint8 state + uint32 dungeon
+    group_guid = r.guid()
+    counter = r.u32()
+    count = r.u32()
     members = []
     for _ in range(count):
-        name, off = pk.cstring(payload, off)
-        guid, online, subgroup, mflags, roles = struct.unpack_from("<QBBBB", payload, off)
-        off += 12
+        name = r.cstring()
+        guid = r.guid()
+        online = r.u8()
+        subgroup = r.u8()
+        mflags = r.u8()
+        roles = r.u8()
         members.append({"name": name, "guid": guid, "online": bool(online & MEMBER_STATUS_ONLINE),
                         "subgroup": subgroup, "assistant": bool(mflags & 0x01), "roles": roles})
-    (leader_guid,) = struct.unpack_from("<Q", payload, off)
-    off += 8
+    leader_guid = r.guid()
     if not leader_guid:
         return None
     group = {"guid": group_guid, "counter": counter, "raid": bool(group_type & GROUPTYPE_RAID),
              "leader_guid": leader_guid, "members": members, "loot_method": None,
              "loot_threshold": None, "master_looter_guid": None}
     if count:
-        loot, master, threshold = struct.unpack_from("<BQB", payload, off)
+        loot = r.u8()
+        master = r.guid()
+        threshold = r.u8()
         group["loot_method"] = LOOT_METHOD_NAMES.get(loot, f"loot_{loot}")
         group["loot_threshold"] = threshold
         group["master_looter_guid"] = master or None

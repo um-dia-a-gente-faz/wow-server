@@ -46,7 +46,8 @@ Record here once created:
    Set `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` in
    `.env` (see Preflight below; `LLM_MODEL` is a pinned ordered list, `auto` last) — record the exact model name in the results log, settings don't
    transfer between runs.
-3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited). It is
+3. Set `AGENT_MAX_TOKENS_PER_HOUR` to a real budget (not `0`/unlimited). It caps Jev
+   tokens only; the LLM brain and LLM fallback are not metered. It is
    enforced per agent over a rolling hour (`agent/brain.py`, #213); on breach the
    cycle fails with audit `jev_status: budget_exhausted`. The last hour's spend
    is reloaded from the audit log on start, so a restart does not reset it. See `.env.example` for

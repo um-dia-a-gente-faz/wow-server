@@ -25,6 +25,7 @@ import math
 import struct
 import time
 
+from . import action_names as an
 from . import actions
 from . import movement
 from .rules import SPIRIT_HEALER_SEARCH_RANGE_YD
@@ -179,11 +180,9 @@ def _activate_spirit_healer(session, world, guid: int) -> actions.ActionResult:
 
 @actions.register
 class ReleaseSpiritAction(actions.Action):
-    name = "release_spirit"
+    name = an.RELEASE_SPIRIT
     description = ("After dying, release your spirit to become a ghost at the graveyard. "
                     "Required before a corpse run/reclaim_corpse.")
-    params = {}
-    required = ()
 
     def check(self, session, world, **_):
         me = world.get_my_object()
@@ -207,13 +206,11 @@ class ReleaseSpiritAction(actions.Action):
 
 @actions.register
 class ReclaimCorpseAction(actions.Action):
-    name = "reclaim_corpse"
+    name = an.RECLAIM_CORPSE
     description = ("Walk to your corpse and resurrect there. Falls back to the nearest "
                     "spirit healer if the corpse can't be reached (obstacle, out of range, "
                     "or no corpse perceived). Asks the server for the corpse position if unknown. "
                     "Requires release_spirit first.")
-    params = {}
-    required = ()
 
     def check(self, session, world, **_):
         me = world.get_my_object()

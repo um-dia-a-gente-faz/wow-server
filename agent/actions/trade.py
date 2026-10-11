@@ -5,6 +5,7 @@ Split out of the former agent/actions.py (issue #248).
 
 import time
 
+from .. import action_names as an
 from .. import trade as tr
 from .. import update_fields as uf
 from .base import (
@@ -82,13 +83,9 @@ def _resolve_offered_item(world, bag: int, slot: int):
 
 @register
 class OpenTradeAction(Action):
-    name = "open_trade"
+    name = an.OPEN_TRADE
     description = (f"Request a trade with a nearby player. Must be within {tr.TRADE_DISTANCE_YD:.1f} "
                     "yd. The other side sees the request and decides via accept_trade_request.")
-    params = {
-        "guid": {"type": "string", "description": "Snapshot handle (a string like \"u3\") of the player to trade with."},
-    }
-    required = ("guid",)
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -122,10 +119,8 @@ class OpenTradeAction(Action):
 
 @register
 class AcceptTradeRequestAction(Action):
-    name = "accept_trade_request"
+    name = an.ACCEPT_TRADE_REQUEST
     description = "Accept a pending incoming trade request (see the trade window's `phase`: 'requested')."
-    params = {}
-    required = ()
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -151,18 +146,11 @@ class AcceptTradeRequestAction(Action):
 
 @register
 class OfferItemAction(Action):
-    name = "offer_item"
+    name = an.OFFER_ITEM
     description = ("Put an item from your bag/slot into the open trade's next free slot "
                     "(0-5; pass trade_slot to pick a specific one). Offers the item's whole "
                     "stack — trade doesn't support splitting a partial count. Rejected if the "
                     "item is soulbound.")
-    params = {
-        "bag": {"type": "integer", "description": "Bag byte of the item (255 = equipped items/backpack)."},
-        "slot": {"type": "integer", "description": "Inventory slot of the item."},
-        "trade_slot": {"type": "integer", "description": "Which of the 6 trade slots (0-5) to put "
-                                                           "it in. Default: the first free one."},
-    }
-    required = ("bag", "slot")
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -238,13 +226,8 @@ class OfferItemAction(Action):
 
 @register
 class OfferGoldAction(Action):
-    name = "offer_gold"
+    name = an.OFFER_GOLD
     description = "Set the gold (in copper) offered in the open trade. Replaces any previous amount."
-    params = {
-        "amount": {"type": "integer", "description": "Copper to offer (100 copper = 1 silver, "
-                                                       "10000 = 1 gold). 0 clears a previous offer."},
-    }
-    required = ("amount",)
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -293,22 +276,13 @@ class OfferGoldAction(Action):
 
 @register
 class AcceptTradeAction(Action):
-    name = "accept_trade"
+    name = an.ACCEPT_TRADE
     description = ("Accept the open trade — but only given what you currently believe the other "
                     "side is offering (from the trade window's `their_gold`/`their_items`). "
                     "Rejected if that no longer matches the live offer, so re-check the window "
                     "before calling this again; a change on either side after an accept un-accepts "
                     "both sides automatically (server behavior), so this never lets a stale offer "
                     "through silently.")
-    params = {
-        "expected_their_gold": {"type": "integer", "description": "Gold you believe the other "
-                                                                    "side has offered. Default 0."},
-        "expected_their_item_entries": {"type": "array", "items": {"type": "integer"},
-                                         "description": "Item entries you believe the other side "
-                                                         "has offered (any order). Omit/empty if "
-                                                         "you believe they're offering no items."},
-    }
-    required = ()
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -352,10 +326,8 @@ class AcceptTradeAction(Action):
 
 @register
 class CancelTradeAction(Action):
-    name = "cancel_trade"
+    name = an.CANCEL_TRADE
     description = "Cancel/decline the pending or open trade."
-    params = {}
-    required = ()
     confirm_timeout = TRADE_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 

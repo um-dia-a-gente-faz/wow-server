@@ -1,9 +1,8 @@
 """Death and corpse packets (UM-43), plus the health>0 -> 0 death-event detection."""
 
-import struct
 import time
 
-from .. import packets as pk
+from ..wire import Reader
 
 # Death/resurrection (UM-43). Verified against TrinityCore branch `3.3.5`:
 #   src/server/game/Server/Protocol/Opcodes.h
@@ -64,7 +63,7 @@ def handle_corpse_reclaim_delay(ctx, payload: bytes):
     Player.cpp): uint32 Remaining, milliseconds until CMSG_RECLAIM_CORPSE
     will be accepted (server enforces this too; kept here so
     reclaim_corpse's check() can fail fast instead of round-tripping)."""
-    remaining_ms = pk.u32(payload, 0)
+    remaining_ms = Reader(payload, SMSG_CORPSE_RECLAIM_DELAY).u32()
     ctx.state.corpse_reclaim_ready_at = time.monotonic() + remaining_ms / 1000.0
 
 
@@ -74,10 +73,11 @@ def handle_death_release_loc(ctx, payload: bytes):
     also sends this opcode with MapID=-1 as a "clear the release marker"
     signal (no real position follows it in that case) — skip storing
     that sentinel rather than mistake it for a graveyard position."""
-    map_id = struct.unpack_from('<i', payload, 0)[0]
+    r = Reader(payload, SMSG_DEATH_RELEASE_LOC)
+    map_id = r.i32()
     if map_id < 0:
         return
-    x, y, z = struct.unpack_from('<3f', payload, 4)
+    x, y, z = r.f32(), r.f32(), r.f32()
     ctx.state.graveyard_position = (map_id, x, y, z)
 
 
@@ -90,12 +90,14 @@ def handle_corpse_query_response(ctx, payload: bytes):
     entrance map/position there, per WorldSession::HandleQueryCorpseLocation
     (QueryHandler.cpp). Transport offsets are unused — the agent doesn't
     ride transports yet (same limitation as agent/movement.py)."""
-    valid = payload[0]
+    r = Reader(payload, MSG_CORPSE_QUERY)
+    valid = r.u8()
     if not valid:
         ctx.state.corpse_position = None
         return
-    x, y, z = struct.unpack_from('<3f', payload, 5)
-    actual_map_id = struct.unpack_from('<i', payload, 17)[0]
+    r.skip(4)  # MapID
+    x, y, z = r.f32(), r.f32(), r.f32()
+    actual_map_id = r.i32()
     ctx.state.corpse_position = (actual_map_id, x, y, z)
 
 

@@ -19,7 +19,7 @@ are checked against live captures in agent/tests/fixtures/quests/.
 import struct
 import time
 
-from . import packets as pk
+from .wire import Reader
 
 # ── Opcodes ───────────────────────────────────────────────────────────────
 from .opcodes import (  # noqa: F401  (re-exported: callers use quests.CMSG_*/SMSG_*)
@@ -146,44 +146,6 @@ def build_questlog_remove_quest(slot: int) -> bytes:
 # 48128f325ac5f1b597ab86b6b410d9eed1024bb1), cited per parser. Parsers that
 # have a live capture in agent/tests/fixtures/quests/ are tested against it.
 
-class _Reader:
-    """Sequential little-endian reader over one payload; `done()` checks
-    the whole payload was consumed (a layout mistake shows up as leftover
-    or missing bytes instead of silently shifted fields — UM-91)."""
-
-    def __init__(self, payload: bytes):
-        self.payload = payload
-        self.off = 0
-
-    def u8(self) -> int:
-        v = self.payload[self.off]; self.off += 1
-        return v
-
-    def u32(self) -> int:
-        v = struct.unpack_from('<I', self.payload, self.off)[0]; self.off += 4
-        return v
-
-    def i32(self) -> int:
-        v = struct.unpack_from('<i', self.payload, self.off)[0]; self.off += 4
-        return v
-
-    def f32(self) -> float:
-        v = struct.unpack_from('<f', self.payload, self.off)[0]; self.off += 4
-        return v
-
-    def u64(self) -> int:
-        v = struct.unpack_from('<Q', self.payload, self.off)[0]; self.off += 8
-        return v
-
-    def cstring(self) -> str:
-        s, self.off = pk.cstring(self.payload, self.off)
-        return s
-
-    def done(self):
-        if self.off != len(self.payload):
-            raise ValueError(f"parsed {self.off} of {len(self.payload)} bytes")
-
-
 def _npc_or_go(raw: int) -> tuple[int, bool]:
     """A RequiredNpcOrGo entry on the wire: creature entry, or gameobject
     entry | 0x80000000 (QueryQuestInfoResponse::Write,
@@ -193,7 +155,7 @@ def _npc_or_go(raw: int) -> tuple[int, bool]:
     return raw, False
 
 
-def _reward_list(r: _Reader) -> list:
+def _reward_list(r: Reader) -> list:
     """uint32 count, then count x (uint32 item, uint32 quantity, uint32
     display id) — QuestGiverQuestDetails/QuestGiverOfferRewardMessage::Write.
     Only non-empty slots are sent (Quest::BuildQuestRewards)."""
@@ -213,7 +175,7 @@ def parse_quest_query_response(payload: bytes) -> dict:
     have count 0) because the quest log's counter i belongs to slot i;
     `required_items` likewise keeps all QUEST_ITEM_OBJECTIVES_COUNT slots.
     """
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUEST_QUERY_RESPONSE)
     info = {
         "quest_id": r.u32(),
         "quest_type": r.u32(),          # QuestType: 0 = auto-complete
@@ -279,8 +241,9 @@ def parse_questgiver_status(payload: bytes) -> dict:
     (QuestGiverStatus) — matches TrinityCore 3.3.5's
     QuestGiverStatus::Write() in QuestPackets.cpp (guid + single status
     byte, 9 bytes total)."""
-    guid = pk.u64(payload, 0)
-    status = pk.u8(payload, 8)
+    r = Reader(payload, SMSG_QUESTGIVER_STATUS)
+    guid = r.u64()
+    status = r.u8()
     return {"guid": guid, "status": status,
             "status_name": QUEST_GIVER_STATUS_NAMES.get(status, f"status_{status}")}
 
@@ -291,7 +254,7 @@ def parse_questgiver_quest_list(payload: bytes) -> dict:
     uint32 emote delay, uint32 emote, uint8 count, then per quest: uint32
     quest id, uint32 icon, int32 level, uint32 flags, uint8 repeatable,
     cstring title."""
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUESTGIVER_QUEST_LIST)
     npc_guid = r.u64()
     title = r.cstring()
     emote_delay = r.u32()
@@ -313,7 +276,7 @@ def parse_questgiver_quest_details(payload: bytes) -> dict:
     suggested players, uint8 start cheat, reward choice/reward item lists,
     money/xp/honor/spell/title/talents/arena/faction-flags, 5x3 reputation
     ints, then uint32 emote count + (type, delay) pairs."""
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUESTGIVER_QUEST_DETAILS)
     info = {"npc_guid": r.u64(), "inform_unit": r.u64(), "quest_id": r.u32(),
             "title": r.cstring(), "details": r.cstring(), "objectives": r.cstring(),
             "auto_launched": bool(r.u8()), "flags": r.u32(), "suggested_players": r.u32(),
@@ -330,7 +293,7 @@ def parse_questgiver_quest_details(payload: bytes) -> dict:
     info["reward_talents"] = r.u32()
     info["reward_arena_points"] = r.u32()
     info["reward_faction_flags"] = r.u32()
-    r.off += 4 * 3 * QUEST_REWARD_REPUTATIONS_COUNT
+    r.skip(4 * 3 * QUEST_REWARD_REPUTATIONS_COUNT)
     info["emotes"] = [{"type": r.u32(), "delay": r.u32()} for _ in range(r.i32())]
     r.done()
     return info
@@ -345,7 +308,7 @@ def parse_questgiver_request_items(payload: bytes) -> dict:
     then uint32 explored/has-items/has-faction/has-money flags. Only sent
     when the quest needs items or can't be completed yet (else the server
     goes straight to OFFER_REWARD — PlayerMenu::SendQuestGiverRequestItems)."""
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUESTGIVER_REQUEST_ITEMS)
     info = {"npc_guid": r.u64(), "quest_id": r.i32(), "title": r.cstring(),
             "request_items_text": r.cstring(), "emote_delay": r.i32(), "emote": r.i32(),
             "auto_launched": bool(r.i32()), "flags": r.u32(), "suggested_players": r.i32(),
@@ -353,7 +316,7 @@ def parse_questgiver_request_items(payload: bytes) -> dict:
     info["required_items"] = [{"entry": r.i32(), "count": r.i32(), "display_id": r.u32()}
                               for _ in range(r.u32())]
     explored = r.u32()
-    r.off += 12                            # has_items/has_faction/has_money: constant 0x04/0x08/0x10
+    r.skip(12)                             # has_items/has_faction/has_money: constant 0x04/0x08/0x10
     info["can_complete"] = explored == 0x03  # `Explored = canComplete ? 0x03 : 0x00`
     r.done()
     return info
@@ -368,7 +331,7 @@ def parse_questgiver_offer_reward(payload: bytes) -> dict:
     unused, display spell, spell, title, talents, arena, faction flags, then
     5x3 reputation ints. CMSG_QUESTGIVER_CHOOSE_REWARD's index picks from
     `reward_choice_items`."""
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUESTGIVER_OFFER_REWARD)
     info = {"npc_guid": r.u64(), "quest_id": r.u32(), "title": r.cstring(),
             "offer_reward_text": r.cstring(), "auto_launched": bool(r.u8()),
             "flags": r.u32(), "suggested_players": r.u32()}
@@ -386,7 +349,7 @@ def parse_questgiver_offer_reward(payload: bytes) -> dict:
     info["reward_talents"] = r.u32()
     info["reward_arena_points"] = r.u32()
     info["reward_faction_flags"] = r.u32()
-    r.off += 4 * 3 * QUEST_REWARD_REPUTATIONS_COUNT
+    r.skip(4 * 3 * QUEST_REWARD_REPUTATIONS_COUNT)
     r.done()
     return info
 
@@ -395,7 +358,7 @@ def parse_questgiver_quest_complete(payload: bytes) -> dict:
     """SMSG_QUESTGIVER_QUEST_COMPLETE (0x191) — Player::SendQuestReward
     (Entities/Player/Player.cpp): uint32 quest id, xp, money, honor, bonus
     talents, arena points. Its arrival is the turn-in success signal."""
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUESTGIVER_QUEST_COMPLETE)
     info = {"quest_id": r.u32(), "xp_reward": r.u32(), "money_reward": r.u32(),
             "honor_reward": r.u32(), "talent_reward": r.u32(), "arena_reward": r.u32()}
     r.done()
@@ -405,8 +368,9 @@ def parse_questgiver_quest_complete(payload: bytes) -> dict:
 def parse_questgiver_quest_failed(payload: bytes) -> dict:
     """SMSG_QUESTGIVER_QUEST_FAILED (0x192) — Player::SendQuestFailed:
     uint32 quest id, uint32 reason (InventoryResult)."""
-    quest_id = pk.u32(payload, 0)
-    reason = pk.u32(payload, 4) if len(payload) >= 8 else 0
+    r = Reader(payload, SMSG_QUESTGIVER_QUEST_FAILED)
+    quest_id = r.u32()
+    reason = r.u32() if r.remaining() >= 4 else 0
     return {"quest_id": quest_id, "reason": reason}
 
 
@@ -415,7 +379,7 @@ def parse_questupdate_add_kill(payload: bytes) -> dict:
     (Player.cpp): uint32 quest id, uint32 entry (gameobjects as
     entry | 0x80000000), uint32 new count, uint32 required count, raw
     uint64 victim guid."""
-    r = _Reader(payload)
+    r = Reader(payload, SMSG_QUESTUPDATE_ADD_KILL)
     quest_id = r.u32()
     entry, is_go = _npc_or_go(r.u32())
     info = {"quest_id": quest_id, "entry": entry, "gameobject": is_go,
@@ -436,7 +400,7 @@ def parse_questupdate_complete(payload: bytes) -> dict:
     """SMSG_QUESTUPDATE_COMPLETE (0x198) — Player::SendQuestComplete:
     uint32 quest id. Every objective is satisfied; still needs
     CMSG_QUESTGIVER_COMPLETE_QUEST at the questgiver to hand it in."""
-    return {"quest_id": pk.u32(payload, 0)}
+    return {"quest_id": Reader(payload, SMSG_QUESTUPDATE_COMPLETE).u32()}
 
 
 class QuestCache:

@@ -47,6 +47,9 @@ SETTINGS: tuple[Setting, ...] = (
     _s("WOW_CHAR_GUID", int, 0, "character guid; wins over the name, so one global value would point "
        "every service at the same character", compose=False),
     _s("AGENT_NAME", str, "Agent", "agent name (set per service by compose)"),
+    _s("AGENT_ROSTER", str, "", "character names of all agents, comma-separated: the follow rule "
+       "(#318) never follows an agent that is not the party leader; empty = every character counts as human",
+       compose=False),
     _s("AGENT_THINK_INTERVAL_S", float, 3.0, "minimum delay between think-loop decisions, seconds"),
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),
     _s("AGENT_PERSONA", str, "", "persona text for the LLM"),
@@ -63,7 +66,7 @@ SETTINGS: tuple[Setting, ...] = (
     _s("JEV_MODEL", str, "typesafe/jev-1.13", "Jev model id"),
     _s("JEV_MIN_CONFIDENCE", float, 0.0, "below this confidence the safe candidate runs; 0 = rule off"),
     _s("OPENROUTER_API_KEY", str, "", "only read when JEV_PROVIDER=openrouter", secret=True),
-    _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "Jev token spend cap per agent per rolling hour; 0 = unlimited"),
+    _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "caps Jev tokens per agent per rolling hour (LLM brain and fallback not metered); 0 = unlimited"),
     _s("LOG_LEVEL", str, "INFO", "python logging level"),
     _s("VERBOSE_PACKETS", bool, False, "log every packet"),
     _s("AGENT_DUMP_PACKETS", str, "", "directory for raw SMSG_UPDATE_OBJECT dumps; empty = off"),

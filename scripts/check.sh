@@ -15,6 +15,7 @@ SUITES=(
   "loadtest|python3 -m unittest discover -s tools/loadtest/tests"
   "jev-mock|python3 -m unittest discover -s tools/jev-mock/tests"
   "agent-runner|python3 -m unittest discover -s tools/agent-runner/tests"
+  "wow-exporter|python3 -m unittest discover -s exporters/wow-exporter/tests"
   "wow-agents|python3 -m unittest discover -s scripts/wow-agents/tests"
   "scripts|python3 -m unittest discover -s scripts/tests"
   # needs tools/wowmap/requirements.txt + Pillow (the tools CI job installs them)

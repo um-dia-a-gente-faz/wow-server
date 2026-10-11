@@ -1,97 +1,61 @@
 """Quest packets (UM-41)."""
 
-import struct
-
-from .. import perception as per
 from .. import quests as qu
 
 
 def handle_quest_query_response(ctx, payload: bytes):
-    try:
-        data = qu.parse_quest_query_response(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUEST_QUERY_RESPONSE ({len(payload)} B): {e}") from e
+    data = qu.parse_quest_query_response(payload)
     ctx.state.world_state.apply_quest_query_response(data)
 
 
 def handle_questgiver_status(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_status(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_STATUS ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_status(payload)
     ctx.state.world_state.apply_questgiver_status(data)
 
 
 def handle_questgiver_quest_list(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_quest_list(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_LIST ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_quest_list(payload)
     ctx.state.world_state.apply_questgiver_quest_list(data)
 
 
 def handle_questgiver_quest_details(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_quest_details(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_DETAILS ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_quest_details(payload)
     ctx.state.world_state.apply_questgiver_quest_details(data)
 
 
 def handle_questgiver_request_items(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_request_items(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_REQUEST_ITEMS ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_request_items(payload)
     ctx.state.world_state.apply_questgiver_request_items(data)
 
 
 def handle_questgiver_offer_reward(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_offer_reward(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_OFFER_REWARD ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_offer_reward(payload)
     ctx.state.world_state.apply_questgiver_offer_reward(data)
 
 
 def handle_questgiver_quest_complete(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_quest_complete(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_COMPLETE ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_quest_complete(payload)
     ctx.state.world_state.close_window()
     ctx.state.record_event("quest_turned_in", **data)
 
 
 def handle_questgiver_quest_failed(ctx, payload: bytes):
-    try:
-        data = qu.parse_questgiver_quest_failed(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTGIVER_QUEST_FAILED ({len(payload)} B): {e}") from e
+    data = qu.parse_questgiver_quest_failed(payload)
     ctx.state.record_event("quest_failed", **data)
 
 
 def handle_questupdate_add_kill(ctx, payload: bytes):
-    try:
-        data = qu.parse_questupdate_add_kill(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_KILL ({len(payload)} B): {e}") from e
+    data = qu.parse_questupdate_add_kill(payload)
     ctx.state.record_event("quest_progress", objective="kill", **data)
 
 
 def handle_questupdate_add_item(ctx, payload: bytes):
-    try:
-        data = qu.parse_questupdate_add_item(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_ADD_ITEM ({len(payload)} B): {e}") from e
+    data = qu.parse_questupdate_add_item(payload)
     ctx.state.record_event("quest_progress", objective="item", **data)
 
 
 def handle_questupdate_complete(ctx, payload: bytes):
-    try:
-        data = qu.parse_questupdate_complete(payload)
-    except (IndexError, struct.error) as e:
-        raise per.PerceptionParseError(f"malformed SMSG_QUESTUPDATE_COMPLETE ({len(payload)} B): {e}") from e
+    data = qu.parse_questupdate_complete(payload)
     ctx.state.record_event("quest_complete", **data)
 
 

@@ -5,8 +5,6 @@ import math
 import time
 from dataclasses import dataclass, field
 
-from ..packets import ProtocolError
-
 
 UNIT_NPC_FLAG_GOSSIP = 0x00000001
 UNIT_NPC_FLAG_QUESTGIVER = 0x00000002
@@ -28,14 +26,6 @@ PLAYER_FLAGS_GHOST = 0x00000010
 # UnitDefines.h POWER_MANA (enum Powers) — used by UM-43's rest reflex to tell
 # "no mana bar" classes (warrior/rogue/...) from "low on mana" ones.
 POWER_MANA = 0
-
-
-class PerceptionParseError(ProtocolError):
-    """A server packet could not be parsed into world state.
-
-    Raised for truncated or malformed update-object data. The session drops
-    the offending packet and keeps the connection alive.
-    """
 
 
 @dataclass

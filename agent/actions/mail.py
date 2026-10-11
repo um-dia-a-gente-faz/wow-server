@@ -5,6 +5,7 @@ Split out of the former agent/actions.py (issue #248).
 
 import time
 
+from .. import action_names as an
 from .. import mail as mailmod
 from .. import update_fields as uf
 from ..rules import INTERACT_RANGE_YD
@@ -67,12 +68,10 @@ def _mail_item_flags(world, bag: int, slot: int):
 
 @register
 class OpenMailboxAction(Action):
-    name = "open_mailbox"
+    name = an.OPEN_MAILBOX
     description = (f"Open the nearest mailbox within {INTERACT_RANGE_YD:.0f} yd "
                     "and request its inbox (check the perception snapshot's `mailbox` after "
                     "calling this).")
-    params = {}
-    required = ()
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -108,22 +107,11 @@ class OpenMailboxAction(Action):
 
 @register
 class SendMailAction(Action):
-    name = "send_mail"
+    name = an.SEND_MAIL
     description = ("Send mail (with optional gold and one optional item) to a player by name — "
                     "works even if they're offline or far away. Costs "
                     f"{mailmod.MAIL_POSTAGE_COPPER} copper postage in addition to any gold sent. "
                     "Requires a nearby mailbox.")
-    params = {
-        "to": {"type": "string", "description": "Recipient character name."},
-        "subject": {"type": "string", "description": "Mail subject."},
-        "body": {"type": "string", "description": "Mail body text."},
-        "gold": {"type": "integer", "description": "Copper to send. Default 0."},
-        "bag": {"type": "integer", "description": "Bag byte of an item to attach (255 = equipped "
-                                                    "items/backpack). Omit to send no item."},
-        "slot": {"type": "integer", "description": "Inventory slot of the item to attach — "
-                                                     "required together with bag."},
-    }
-    required = ("to", "subject", "body")
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -201,15 +189,10 @@ class SendMailAction(Action):
 
 @register
 class TakeMailAction(Action):
-    name = "take_mail"
+    name = an.TAKE_MAIL
     description = ("Take all money and every item attached to mail_id from the currently open "
                     "mailbox window (call open_mailbox first) — v1 take-everything, no selective "
                     "taking, same as loot().")
-    params = {
-        "mail_id": {"type": "integer", "description": "Mail id, from the open mailbox window's "
-                                                        "`mails` list."},
-    }
-    required = ("mail_id",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 
@@ -288,14 +271,9 @@ class TakeMailAction(Action):
 
 @register
 class DeleteMailAction(Action):
-    name = "delete_mail"
+    name = an.DELETE_MAIL
     description = ("Delete mail_id from the currently open mailbox window (call open_mailbox "
                     "first). Irreversible — take any attachments first, they're lost otherwise.")
-    params = {
-        "mail_id": {"type": "integer", "description": "Mail id, from the open mailbox window's "
-                                                        "`mails` list."},
-    }
-    required = ("mail_id",)
     confirm_timeout = DEFAULT_CONFIRM_TIMEOUT_S
     confirm_interval = DEFAULT_CONFIRM_POLL_S
 

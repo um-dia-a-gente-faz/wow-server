@@ -20,6 +20,7 @@ all mean rest() just sits, per this card.
 import logging
 import struct
 
+from .. import action_names as an
 from .. import actions
 from .. import update_fields as uf
 from ..ports import ActionSession, ReflexSlots
@@ -149,13 +150,11 @@ def get_rest_reflex(session: ReflexSlots) -> RestReflex:
 
 @actions.register
 class RestAction(actions.Action):
-    name = "rest"
+    name = an.REST
     description = ("Rest to recover HP/mana: eats/drinks if inventory has food, otherwise "
                     "sits. Stops automatically once healed or attacked. This also runs as an "
                     "automatic reflex whenever HP/mana drop low out of combat, so this action "
                     "is mainly for resting proactively before a fight you can see coming.")
-    params = {}
-    required = ()
 
     def check(self, session, world, **_):
         if _in_combat(world.get_my_object()):
