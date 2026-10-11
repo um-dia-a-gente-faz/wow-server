@@ -1,0 +1,56 @@
+{
+  "opcode": "SMSG_COMPRESSED_UPDATE_OBJECT",
+  "source": "src/server/game/Entities/Object/Updates/UpdateData.cpp UpdateData::BuildPacket (payload > 100 bytes is sent deflated as SMSG_COMPRESSED_UPDATE_OBJECT); src/server/game/Entities/Object/Object.cpp Object::BuildCreateUpdateBlockForPlayer, BuildMovementUpdate, BuildValuesUpdate; src/server/game/Entities/Unit/Unit.cpp Unit::BuildMovementPacket; src/server/game/Server/Packets/MovementPackets.cpp CommonMovement::WriteCreateObjectSplineDataBlock",
+  "expect": {
+    "block_count": 55,
+    "blocks.0.guid": "0x0000000000000001",
+    "blocks.0.object_type": 4,
+    "blocks.0.health": 76,
+    "blocks.0.level": 2,
+    "blocks.1.entry": 6368,
+    "blocks.3.spline.mode": 0,
+    "blocks.3.spline.spline_id": 34590,
+    "blocks.3.spline.duration": 2703,
+    "blocks.3.spline.destination": [
+      10353.2998046875,
+      -6381.0,
+      38.510581970214844
+    ],
+    "blocks.3.spline.points": [
+      [
+        10352.65234375,
+        -6388.3876953125,
+        38.52783203125
+      ],
+      [
+        10352.0,
+        -6387.6298828125,
+        38.52783203125
+      ],
+      [
+        10352.76953125,
+        -6383.70458984375,
+        38.527618408203125
+      ],
+      [
+        10353.2998046875,
+        -6381.0,
+        38.510581970214844
+      ],
+      [
+        10353.2998046875,
+        -6381.0,
+        38.510581970214844
+      ]
+    ],
+    "blocks.54.guid": "0xf1300018e00004e9",
+    "blocks.54.entry": 6368,
+    "blocks.54.spline.destination": [
+      10421.3125,
+      -6331.10302734375,
+      35.572418212890625
+    ],
+    "blocks.3.spline.spline_flags": 4096,
+    "blocks.3.spline.time_passed": 2659
+  }
+}

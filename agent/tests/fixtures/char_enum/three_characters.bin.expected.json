@@ -1,0 +1,25 @@
+{
+  "opcode": "SMSG_CHAR_ENUM",
+  "source": "src/server/game/Handlers/CharacterHandler.cpp WorldSession::HandleCharEnum; src/server/game/Entities/Player/Player.cpp Player::BuildEnumData",
+  "expect": {
+    "0.guid": "0x0000000000000002",
+    "0.name": "Luaprata",
+    "0.race": 10,
+    "0.class_": 2,
+    "0.level": 1,
+    "0.map": 530,
+    "0.x": 9918.849609375,
+    "0.y": -7226.41015625,
+    "0.z": 30.73390007019043,
+    "1.name": "Dawnrunner",
+    "1.guid": "0x0000000000000007",
+    "2.guid": "0x0000000000000008",
+    "2.name": "Jevrun",
+    "2.map": 530,
+    "2.x": 10349.599609375,
+    "2.y": -6357.2900390625,
+    "2.z": 33.4025993347168,
+    "0.gender": 0,
+    "1.gender": 1
+  }
+}
