@@ -12,6 +12,7 @@ python3 -m tools.loadtest --agents 25 --duration 60 --out run.json --compare doc
 python3 -m tools.loadtest --agents 25 --duration 600 \
   --faults ';;;drop_after=8,reset;;stall=20,stall_at=6;bad_crypt_from=6'
 python3 -m tools.loadtest --agents 25 --duration 60 --stream-hz 20      # with per-client traffic (#421)
+python3 -m tools.loadtest --agents 25 --duration 600 --stream-hz 20 --stream-pool 0   # unbounded unit guids (#486)
 python3 -m unittest discover -s tools/loadtest/tests                   # CI: 3 agents, 5 s smoke
 ```
 
@@ -47,6 +48,8 @@ exits unless `--allow-non-loopback` is given (the mock still runs locally).
 - `recv_packets_per_s_per_agent`, `recv_packets_per_agent`, `recv_packets_total`: packets the
   recv loop read (counted by wrapping each session's `_recv_packet`) over the run duration,
   login burst and reconnects included. `stream_hz` echoes the setting.
+- `stream_pool`: the mock's guid cycle length (`--stream-pool`, default 50; 0 = every tick is a new unit,
+  so the object table grows by design, #486).
 - `threads_end` should equal `threads_before` (no leaked threads).
 - `samples`: one row per second.
 

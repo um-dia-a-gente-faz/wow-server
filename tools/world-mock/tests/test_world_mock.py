@@ -4,6 +4,7 @@ Covers the #253 acceptance: login, update objects, a quest turn-in action and
 the server's confirmation, all over real localhost sockets."""
 
 import collections
+import inspect
 import logging
 import struct
 import zlib
@@ -19,6 +20,7 @@ import server  # noqa: E402
 
 from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
+from agent import packets as pk  # noqa: E402
 from agent import quests as qu  # noqa: E402
 from agent.__main__ import _authenticate_and_login  # noqa: E402
 from agent.auth import AuthRejected, auth_logon  # noqa: E402
@@ -139,8 +141,32 @@ class StreamTest(unittest.TestCase):
         # values: 1+3*4 mask bytes, then 8 uint32 (fields 2,3,4,level,health,maxhealth,faction,display)
         self.assertEqual(len(raw), len(head) + 68 + 1 + 3 * 4 + 8 * 4)
 
+    def test_stream_pool_bounds_or_grows_the_unit_guids(self):
+        """#486: the default pool cycles 50 unit guids; pool=0 gives every tick its own."""
+        def unit_guids(pool, ticks=200):
+            return {pk.unpack_packed_guid(server.stream_packets(n, pool=pool)[1][1], 0)[0] for n in range(ticks)}
+        self.assertEqual(len(unit_guids(server.STREAM_POOL)), 50)
+        self.assertEqual(len(unit_guids(0)), 200)
+        self.assertEqual(pk.unpack_packed_guid(server.stream_packets(7, pool=0)[1][1], 0)[0],
+                         server.STREAM_UNIT_BASE + 7)
+
+    def test_default_pool_bytes_are_the_same_as_without_the_argument(self):
+        """#486: the default path must not change guid, entry or chat sender (packets stay byte-equal)."""
+        for n in range(100):
+            self.assertEqual(server.stream_packets(n), server.stream_packets(n, pool=server.STREAM_POOL))
+
+    def test_mock_passes_its_stream_pool_to_every_tick(self):
+        mock = server.WorldMock(stream_pool=0)
+        self.addCleanup(mock.close)
+        self.assertEqual(mock.stream_pool, 0)
+        sent = []
+        mock._stream(lambda opcode, payload: sent.append((opcode, payload)), 7)
+        self.assertEqual(sent, server.stream_packets(7, pool=0))
+
     def test_no_stream_by_default(self):
-        self.assertEqual(server.WorldMock.__init__.__defaults__[-1], 0.0)
+        params = inspect.signature(server.WorldMock).parameters
+        self.assertEqual(params["stream_hz"].default, 0.0)
+        self.assertEqual(params["stream_pool"].default, server.STREAM_POOL)
 
 
 if __name__ == "__main__":
