@@ -20,6 +20,7 @@ from .router import Context, PacketRouter
 from .metrics import swallowed
 from .state import GameState
 from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
+from .wire import Reader
 
 from .handlers import build_router
 from .handlers import world as _world
@@ -191,22 +192,22 @@ class WoWSession(Transport, GameState):
         opcode, payload = self._recv_packet()
         assert opcode == SMSG_CHAR_ENUM
 
-        count = payload[0]
-        off = 1
+        r = Reader(payload, SMSG_CHAR_ENUM)
+        count = r.u8()
         chars = []
         for _ in range(count):
-            guid = struct.unpack_from('<Q', payload, off)[0]; off += 8
-            name = payload[off:payload.index(0, off)].decode(); off += len(name) + 1
-            race = payload[off]; cls = payload[off+1]; gender = payload[off+2]
-            off += 3 + 5  # gender + cosmetics
-            level = payload[off]; off += 1
-            off += 4  # zone
-            map_id = struct.unpack_from('<I', payload, off)[0]; off += 4
-            x = struct.unpack_from('<f', payload, off)[0]; off += 4
-            y = struct.unpack_from('<f', payload, off)[0]; off += 4
-            z = struct.unpack_from('<f', payload, off)[0]; off += 4
-            off += 4  # guild
-            _char_flags = struct.unpack_from('<I', payload, off)[0]; off += 4
+            guid = r.u64()
+            name = r.cstring('utf-8')
+            race = r.u8(); cls = r.u8(); gender = r.u8()
+            r.skip(5)  # cosmetics: skin, face, hair style, hair color, facial hair
+            level = r.u8()
+            r.skip(4)  # zone
+            map_id = r.u32()
+            x = r.f32()
+            y = r.f32()
+            z = r.f32()
+            r.skip(4)  # guild
+            _char_flags = r.u32()
             # Everything after the flags, exactly as TrinityCore 3.3.5's
             # Player::BuildEnumData() writes it (Player.cpp, branch 3.3.5):
             # a uint32 customizeFlags that is ALWAYS present (the old
@@ -218,10 +219,10 @@ class WoWSession(Transport, GameState):
             # started every character after the first 47 bytes early, so on an
             # account holding 2+ characters the agent could not find the one it
             # was told to play and logged into the wrong one (gh-199).
-            off += 4       # customizeFlags
-            off += 1       # firstLogin
-            off += 12      # pet displayId, level, family
-            off += 23 * 9  # equipment: displayId(u32), inventoryType(u8), enchantVisual(u32)
+            r.skip(4)       # customizeFlags
+            r.skip(1)       # firstLogin
+            r.skip(12)      # pet displayId, level, family
+            r.skip(23 * 9)  # equipment: displayId(u32), inventoryType(u8), enchantVisual(u32)
             chars.append({
                 'guid': guid, 'name': name, 'race': race, 'class_': cls,
                 'gender': gender, 'level': level, 'map': map_id,
@@ -244,7 +245,7 @@ class WoWSession(Transport, GameState):
             self.sock.settimeout(LOGIN_POLL_S)
             try:
                 opcode, payload = self._recv_packet()
-            except (socket.timeout, TimeoutError):
+            except TimeoutError:
                 self._send_packet(CMSG_KEEP_ALIVE)
                 continue
 
@@ -409,7 +410,7 @@ class WoWSession(Transport, GameState):
             self.sock.settimeout(0.5)
             try:
                 opcode, payload = self._recv_packet()
-            except (socket.timeout, TimeoutError):
+            except TimeoutError:
                 now = time.monotonic()
                 if now - last_rx > DEAD_SOCKET_TIMEOUT_S:
                     # #404: connection open, nothing arrives, not even SMSG_PONG.
@@ -435,7 +436,7 @@ class WoWSession(Transport, GameState):
 # ── Connection-lifecycle packets (the only handlers that live here) ─────────
 
 def handle_time_sync(ctx, payload):
-    counter = struct.unpack_from('<I', payload, 0)[0]
+    counter = Reader(payload, SMSG_TIME_SYNC_REQ).u32()
     ctx.send(CMSG_TIME_SYNC_RESP, struct.pack('<II', counter, 0))
 
 

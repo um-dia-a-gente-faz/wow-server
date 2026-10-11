@@ -6,16 +6,9 @@ owns and calls .dispatch() on.
 Unknown opcodes return False. Handlers get a Context (game state + send/dump),
 not the whole session."""
 
-import struct
-import zlib
-from typing import Callable
+from collections.abc import Callable
 
-from .packets import ProtocolError
 from .wire import PacketTruncated
-
-# What reading a truncated or garbled payload raises (UnicodeError is a ValueError; zlib.error is a bad compressed update).
-# ponytail: a logic bug raising one of these is also folded in; #274's Reader narrows it.
-RAW_PARSE_ERRORS = (struct.error, IndexError, ValueError, zlib.error)
 
 
 class Context:
@@ -71,9 +64,6 @@ class PacketRouter:
         except PacketTruncated:
             count("truncated", opcode)
             raise
-        except RAW_PARSE_ERRORS as e:
-            count("handler_errors", opcode)
-            raise ProtocolError(f"malformed {opcode:#05x} ({len(payload)} B): {e!r}") from e
         except Exception:
             count("handler_errors", opcode)
             raise

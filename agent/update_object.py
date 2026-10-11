@@ -15,11 +15,11 @@ import functools
 import struct
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 
 from . import packets as pk
 from .opcodes import SMSG_MONSTER_MOVE, SMSG_UPDATE_OBJECT
-from .wire import PacketMalformed, PacketTruncated
+from .wire import PacketMalformed, Reader
 
 # OBJECT_UPDATE_TYPE
 # src/server/game/Entities/Object/Updates/UpdateData.h
@@ -112,23 +112,34 @@ class UpdateBlock:
     guids: list = field(default_factory=list)   # only OUT_OF_RANGE_OBJECTS / NEAR_OBJECTS
 
 
-def _protocol_errors(opcode: int) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Decorator for the public parsers (#459): a raw struct.error/IndexError becomes
-    PacketTruncated, a ValueError (bad update_type, leftover bytes) PacketMalformed, so a caller
-    only ever sees a ProtocolError and the router need not guess. The bodies stay as they are
-    (hot path); a try block costs nothing when nothing is raised. The raw reads do not know
-    their offset, so a truncation reports the payload size: the read ran past that end."""
-    def decorate(parse: Callable[..., Any]) -> Callable[..., Any]:
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def _cursor(data: bytes, off: int) -> Reader:
+    """A Reader positioned at `off`, for the parsers that take an offset (the callers of
+    movement and MovementInfo parsing in handlers/world.py and the tests)."""
+    r = Reader(data, SMSG_UPDATE_OBJECT)
+    r.skip(off)
+    return r
+
+
+def _protocol_errors(opcode: int) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Decorator for the public parsers (#459, #517). The bodies read through a Reader, which
+    raises PacketTruncated at the offset of the read that failed and PacketMalformed for
+    leftover bytes, so a caller sees the real offset. The except clause is a backstop for a raw
+    struct/index/value error that no read path should raise (a non-bytes argument, say): it
+    keeps the ProtocolError contract. The ParamSpec/TypeVar signature keeps each parser's real
+    return type for mypy."""
+    def decorate(parse: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(parse)
-        def wrapper(data: bytes, *args: Any) -> Any:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             try:
-                return parse(data, *args)
+                return parse(*args, **kwargs)
             except pk.ProtocolError:
                 raise   # an inner public parser already converted it
             except (struct.error, IndexError, ValueError) as e:
-                if isinstance(e, ValueError):
-                    raise PacketMalformed(f"opcode {opcode:#x}: {e}") from e
-                raise PacketTruncated(opcode, len(data)) from e
+                raise PacketMalformed(f"opcode {opcode:#x}: {e}") from e
         return wrapper
     return decorate
 
@@ -141,60 +152,60 @@ def parse_update_object(data: bytes) -> list[UpdateBlock]:
         uint32 block_count
         block*: uint8 update_type, ...  (shape depends on update_type)
 
-    Raises PacketTruncated on truncated data, PacketMalformed (also a ValueError) on an
-    update_type outside 0-5; both are ProtocolErrors.
+    Raises PacketTruncated on truncated data (at the offset of the failed read), PacketMalformed
+    (also a ValueError) on an update_type outside 0-5 or leftover bytes; both are ProtocolErrors.
     """
-    off = 0
-    block_count = pk.u32(data, off); off += 4
+    r = Reader(data, SMSG_UPDATE_OBJECT)
+    block_count = r.u32()
     blocks = []
     for _ in range(block_count):
-        update_type = data[off]; off += 1
+        update_type = r.u8()
 
         if update_type in (UPDATETYPE_OUT_OF_RANGE_OBJECTS, UPDATETYPE_NEAR_OBJECTS):
-            guid_count = pk.u32(data, off); off += 4
-            guids = []
-            for _ in range(guid_count):
-                guid, off = pk.unpack_packed_guid(data, off)
-                guids.append(guid)
+            guid_count = r.u32()
+            guids = [r.packed_guid() for _ in range(guid_count)]
             blocks.append(UpdateBlock(update_type=update_type, guids=guids))
             continue
 
         if update_type == UPDATETYPE_VALUES:
-            guid, off = pk.unpack_packed_guid(data, off)
-            fields, off = _parse_values_update(data, off)
+            guid = r.packed_guid()
+            fields = _read_values_update(r)
             blocks.append(UpdateBlock(update_type=update_type, guid=guid, fields=fields))
             continue
 
         if update_type == UPDATETYPE_MOVEMENT:
-            guid, off = pk.unpack_packed_guid(data, off)
-            movement, off = _parse_movement_update(data, off)
+            guid = r.packed_guid()
+            movement = _read_movement_update(r)
             blocks.append(UpdateBlock(update_type=update_type, guid=guid, movement=movement))
             continue
 
         if update_type in (UPDATETYPE_CREATE_OBJECT, UPDATETYPE_CREATE_OBJECT2):
             # Object::BuildCreateUpdateBlockForPlayer (Object.cpp):
             # packed guid, uint8 objectTypeId, movement update, values update.
-            guid, off = pk.unpack_packed_guid(data, off)
-            object_type = data[off]; off += 1
-            movement, off = _parse_movement_update(data, off)
-            fields, off = _parse_values_update(data, off)
+            guid = r.packed_guid()
+            object_type = r.u8()
+            movement = _read_movement_update(r)
+            fields = _read_values_update(r)
             blocks.append(UpdateBlock(update_type=update_type, guid=guid, object_type=object_type,
                                        movement=movement, fields=fields))
             continue
 
-        raise ValueError(f"unknown update_type {update_type} at offset {off - 1}")
+        raise PacketMalformed(f"opcode {SMSG_UPDATE_OBJECT:#x}: unknown update_type {update_type} "
+                              f"at offset {r.offset - 1}")
 
-    if off != len(data):
-        # A real SMSG_UPDATE_OBJECT payload is exactly block_count blocks,
-        # back to back, no padding (UpdateData::BuildPacket). Leftover bytes
-        # mean a block above under-consumed — a parser bug, not something to
-        # silently ignore.
-        raise ValueError(f"parsed {off} of {len(data)} bytes after {block_count} block(s) "
-                          f"({len(data) - off} leftover)")
+    # A real SMSG_UPDATE_OBJECT payload is exactly block_count blocks, back to back, no padding
+    # (UpdateData::BuildPacket). Leftover bytes mean a block above under-consumed.
+    r.done()
     return blocks
 
 
 def _parse_movement_update(data: bytes, off: int) -> tuple[dict, int]:
+    """_read_movement_update at an offset: (info, offset after it). Kept for the tests."""
+    r = _cursor(data, off)
+    return _read_movement_update(r), r.offset
+
+
+def _read_movement_update(r: Reader) -> dict:
     """The movement portion of a MOVEMENT or CREATE_OBJECT[2] block.
 
     Object::BuildMovementUpdate (Object.cpp): uint16 update_flags, then at
@@ -203,59 +214,58 @@ def _parse_movement_update(data: bytes, off: int) -> tuple[dict, int]:
     only if its bit is set, in this fixed order: UNKNOWN, LOWGUID, HAS_TARGET,
     TRANSPORT, VEHICLE, ROTATION.
     """
-    update_flags = pk.u16(data, off); off += 2
+    update_flags = r.u16()
     info: dict[str, Any] = {"update_flags": update_flags}
 
     if update_flags & UPDATEFLAG_LIVING:
         # Unit::BuildMovementPacket (Unit.cpp): MovementInfo, then 9 speeds,
         # then spline data if MOVEMENTFLAG_SPLINE_ENABLED.
-        move_info, off = parse_movement_info(data, off)
+        move_info = _read_movement_info(r)
         info.update(move_info)
 
-        info["speeds"] = struct.unpack_from('<9f', data, off); off += 4 * 9
+        info["speeds"] = struct.unpack('<9f', r.bytes(4 * 9))
 
         if move_info["move_flags"] & MOVEMENTFLAG_SPLINE_ENABLED:
-            info["spline"], off = _parse_create_object_spline_block(data, off)
+            info["spline"] = _parse_create_object_spline_block(r)
 
     elif update_flags & UPDATEFLAG_POSITION:
         # packed transport guid (a lone 0x00 byte when not on a transport,
         # itself a valid packed GUID for 0), x/y/z, then a *second* x/y/z
         # (transport-relative offset if on a transport, the same absolute
         # position again otherwise), o, then o again (ditto).
-        transport_guid, off = pk.unpack_packed_guid(data, off)
-        x = pk.f32(data, off); off += 4
-        y = pk.f32(data, off); off += 4
-        z = pk.f32(data, off); off += 4
-        off += 4 * 3  # second x/y/z (transport offset, or a duplicate — not needed yet)
-        o = pk.f32(data, off); off += 4
-        off += 4  # second o (ditto)
+        transport_guid = r.packed_guid()
+        x = r.f32()
+        y = r.f32()
+        z = r.f32()
+        r.skip(4 * 3)  # second x/y/z (transport offset, or a duplicate — not needed yet)
+        o = r.f32()
+        r.skip(4)  # second o (ditto)
         info.update(transport_guid=transport_guid, x=x, y=y, z=z, o=o)
 
     elif update_flags & UPDATEFLAG_STATIONARY_POSITION:
-        x = pk.f32(data, off); off += 4
-        y = pk.f32(data, off); off += 4
-        z = pk.f32(data, off); off += 4
-        o = pk.f32(data, off); off += 4
+        x = r.f32()
+        y = r.f32()
+        z = r.f32()
+        o = r.f32()
         info.update(x=x, y=y, z=z, o=o)
 
     if update_flags & UPDATEFLAG_UNKNOWN:
-        off += 4
+        r.skip(4)
     if update_flags & UPDATEFLAG_LOWGUID:
-        off += 4
+        r.skip(4)
     if update_flags & UPDATEFLAG_HAS_TARGET:
-        target_guid, off = pk.unpack_packed_guid(data, off)
-        info["target_guid"] = target_guid
+        info["target_guid"] = r.packed_guid()
     if update_flags & UPDATEFLAG_TRANSPORT:
-        off += 4
+        r.skip(4)
     if update_flags & UPDATEFLAG_VEHICLE:
-        off += 4 + 4
+        r.skip(4 + 4)
     if update_flags & UPDATEFLAG_ROTATION:
-        off += 8
+        r.skip(8)
 
-    return info, off
+    return info
 
 
-def _parse_create_object_spline_block(data: bytes, off: int) -> tuple[dict, int]:
+def _parse_create_object_spline_block(r: Reader) -> dict:
     """Spline data appended to a LIVING movement block when
     MOVEMENTFLAG_SPLINE_ENABLED is set (a moving NPC or player, mid-CREATE).
 
@@ -271,36 +281,30 @@ def _parse_create_object_spline_block(data: bytes, off: int) -> tuple[dict, int]
     (Spline::EvaluationMode: 0 linear, 1 catmullrom, 2 unused bezier3), then
     float x,y,z final destination (zero if the spline is cyclic).
     """
-    spline_flags = pk.u32(data, off); off += 4
+    spline_flags = r.u32()
     info: dict[str, Any] = {"spline_flags": spline_flags}
 
     if spline_flags & SPLINEFLAG_FINAL_ANGLE:
-        info["final_angle"] = pk.f32(data, off); off += 4
+        info["final_angle"] = r.f32()
     elif spline_flags & SPLINEFLAG_FINAL_TARGET:
-        info["final_target_guid"] = pk.u64(data, off); off += 8
+        info["final_target_guid"] = r.u64()
     elif spline_flags & SPLINEFLAG_FINAL_POINT:
-        info["final_point"] = (pk.f32(data, off), pk.f32(data, off + 4), pk.f32(data, off + 8))
-        off += 12
+        info["final_point"] = (r.f32(), r.f32(), r.f32())
 
-    info["time_passed"] = struct.unpack_from('<i', data, off)[0]; off += 4
-    info["duration"] = pk.u32(data, off); off += 4
-    info["spline_id"] = pk.u32(data, off); off += 4
-    off += 4 * 2  # duration_mod, next_duration_mod (float, always 1.0 on the wire)
-    info["vertical_acceleration"] = pk.f32(data, off); off += 4
-    info["effect_start_time"] = pk.u32(data, off); off += 4
+    info["time_passed"] = r.i32()
+    info["duration"] = r.u32()
+    info["spline_id"] = r.u32()
+    r.skip(4 * 2)  # duration_mod, next_duration_mod (float, always 1.0 on the wire)
+    info["vertical_acceleration"] = r.f32()
+    info["effect_start_time"] = r.u32()
 
-    point_count = pk.u32(data, off); off += 4
-    points = []
-    for _ in range(point_count):
-        points.append((pk.f32(data, off), pk.f32(data, off + 4), pk.f32(data, off + 8)))
-        off += 12
-    info["points"] = points
+    point_count = r.u32()
+    info["points"] = [(r.f32(), r.f32(), r.f32()) for _ in range(point_count)]
 
-    info["mode"] = data[off]; off += 1
-    info["destination"] = (pk.f32(data, off), pk.f32(data, off + 4), pk.f32(data, off + 8))
-    off += 12
+    info["mode"] = r.u8()
+    info["destination"] = (r.f32(), r.f32(), r.f32())
 
-    return info, off
+    return info
 
 
 @_protocol_errors(SMSG_UPDATE_OBJECT)
@@ -317,40 +321,45 @@ def parse_movement_info(data: bytes, off: int) -> tuple[dict, int]:
     carry speeds or spline data (WorldPackets::Movement::MoveUpdate::Write
     just writes guid + MovementInfo, nothing more).
     """
-    move_flags = pk.u32(data, off); off += 4
-    move_flags2 = pk.u16(data, off); off += 2
-    off += 4  # time (uint32) — server tick count, not needed by callers yet
-    x = pk.f32(data, off); off += 4
-    y = pk.f32(data, off); off += 4
-    z = pk.f32(data, off); off += 4
-    o = pk.f32(data, off); off += 4
+    r = _cursor(data, off)
+    return _read_movement_info(r), r.offset
+
+
+def _read_movement_info(r: Reader) -> dict:
+    move_flags = r.u32()
+    move_flags2 = r.u16()
+    r.skip(4)  # time (uint32) — server tick count, not needed by callers yet
+    x = r.f32()
+    y = r.f32()
+    z = r.f32()
+    o = r.f32()
     info = {"move_flags": move_flags, "move_flags2": move_flags2, "x": x, "y": y, "z": z, "o": o}
 
     if move_flags & MOVEMENTFLAG_ONTRANSPORT:
-        transport_guid, off = pk.unpack_packed_guid(data, off)
-        tx = pk.f32(data, off); off += 4
-        ty = pk.f32(data, off); off += 4
-        tz = pk.f32(data, off); off += 4
-        to = pk.f32(data, off); off += 4
-        off += 4  # transport.time (uint32)
-        off += 1  # transport.seat (int8)
+        transport_guid = r.packed_guid()
+        tx = r.f32()
+        ty = r.f32()
+        tz = r.f32()
+        to = r.f32()
+        r.skip(4)  # transport.time (uint32)
+        r.skip(1)  # transport.seat (int8)
         info.update(transport_guid=transport_guid, tx=tx, ty=ty, tz=tz, to=to)
         if move_flags2 & MOVEMENTFLAG2_INTERPOLATED_MOVEMENT:
-            off += 4  # transport.time2 (uint32)
+            r.skip(4)  # transport.time2 (uint32)
 
     if (move_flags & (MOVEMENTFLAG_SWIMMING | MOVEMENTFLAG_FLYING)) \
             or (move_flags2 & MOVEMENTFLAG2_ALWAYS_ALLOW_PITCHING):
-        info["pitch"] = pk.f32(data, off); off += 4
+        info["pitch"] = r.f32()
 
-    off += 4  # fall_time (uint32)
+    r.skip(4)  # fall_time (uint32)
 
     if move_flags & MOVEMENTFLAG_FALLING:
-        off += 4 * 4  # jump: zspeed, sinAngle, cosAngle, xyspeed
+        r.skip(4 * 4)  # jump: zspeed, sinAngle, cosAngle, xyspeed
 
     if move_flags & MOVEMENTFLAG_SPLINE_ELEVATION:
-        off += 4  # splineElevation
+        r.skip(4)  # splineElevation
 
-    return info, off
+    return info
 
 
 def _unpack_xyz_delta(word: int) -> tuple[float, float, float]:
@@ -399,13 +408,13 @@ def parse_monster_move(payload: bytes) -> dict:
     left over after parsing (a parser bug, not something to silently
     ignore — mirrors parse_update_object's own check).
     """
-    off = 0
-    mover_guid, off = pk.unpack_packed_guid(payload, off)
-    vehicle_exit_voluntary = payload[off]; off += 1
-    pos = (pk.f32(payload, off), pk.f32(payload, off + 4), pk.f32(payload, off + 8)); off += 12
+    r = Reader(payload, SMSG_MONSTER_MOVE)
+    mover_guid = r.packed_guid()
+    vehicle_exit_voluntary = r.u8()
+    pos = (r.f32(), r.f32(), r.f32())
 
-    spline_id = pk.u32(payload, off); off += 4
-    move_type = payload[off]; off += 1
+    spline_id = r.u32()
+    move_type = r.u8()
 
     info = {
         "mover_guid": mover_guid,
@@ -417,39 +426,37 @@ def parse_monster_move(payload: bytes) -> dict:
 
     if move_type != MONSTER_MOVE_STOP:
         if move_type == MONSTER_MOVE_FACING_TARGET:
-            info["face_guid"] = pk.u64(payload, off); off += 8
+            info["face_guid"] = r.u64()
         elif move_type == MONSTER_MOVE_FACING_ANGLE:
-            info["face_direction"] = pk.f32(payload, off); off += 4
+            info["face_direction"] = r.f32()
         elif move_type == MONSTER_MOVE_FACING_SPOT:
-            info["face_spot"] = (pk.f32(payload, off), pk.f32(payload, off + 4), pk.f32(payload, off + 8))
-            off += 12
+            info["face_spot"] = (r.f32(), r.f32(), r.f32())
 
-        flags = pk.u32(payload, off); off += 4
+        flags = r.u32()
         info["flags"] = flags
 
         if flags & SPLINEFLAG_ANIMATION:
-            info["anim_tier"] = payload[off]; off += 1
-            info["anim_start_time"] = pk.u32(payload, off); off += 4
+            info["anim_tier"] = r.u8()
+            info["anim_start_time"] = r.u32()
 
-        info["move_time"] = pk.u32(payload, off); off += 4
+        info["move_time"] = r.u32()
 
         if flags & SPLINEFLAG_PARABOLIC:
-            info["jump_gravity"] = pk.f32(payload, off); off += 4
-            info["jump_start_time"] = pk.u32(payload, off); off += 4
+            info["jump_gravity"] = r.f32()
+            info["jump_start_time"] = r.u32()
 
-        point_count = pk.u32(payload, off); off += 4
+        point_count = r.u32()
         points: list[tuple[float, ...]] = []
         if flags & SPLINEFLAG_MASK_CATMULLROM:
             for _ in range(point_count):
-                points.append((pk.f32(payload, off), pk.f32(payload, off + 4), pk.f32(payload, off + 8)))
-                off += 12
+                points.append((r.f32(), r.f32(), r.f32()))
             destination = points[-1] if points else pos
         elif point_count > 0:
-            destination = (pk.f32(payload, off), pk.f32(payload, off + 4), pk.f32(payload, off + 8)); off += 12
+            destination = (r.f32(), r.f32(), r.f32())
             points.append(destination)
             mid = tuple((pos[i] + destination[i]) / 2 for i in range(3))
             for _ in range(point_count - 1):
-                delta = _unpack_xyz_delta(pk.u32(payload, off)); off += 4
+                delta = _unpack_xyz_delta(r.u32())
                 points.append(tuple(mid[i] - delta[i] for i in range(3)))
         else:
             destination = pos
@@ -457,12 +464,17 @@ def parse_monster_move(payload: bytes) -> dict:
         info["points"] = points
         info["destination"] = destination
 
-    if off != len(payload):
-        raise ValueError(f"parsed {off} of {len(payload)} bytes ({len(payload) - off} leftover)")
+    r.done()
     return info
 
 
 def _parse_values_update(data: bytes, off: int) -> tuple[dict, int]:
+    """_read_values_update at an offset: (fields, offset after it). Kept for the tests."""
+    r = _cursor(data, off)
+    return _read_values_update(r), r.offset
+
+
+def _read_values_update(r: Reader) -> dict:
     """A VALUES_UPDATE: uint8 mask_block_count, then mask_block_count
     little-endian uint32 mask words *all together*, then one raw uint32 per
     set bit (ascending field index) *all together* — the values are NOT
@@ -475,15 +487,12 @@ def _parse_values_update(data: bytes, off: int) -> tuple[dict, int]:
     fields need reinterpreting and GUID fields span two slots; see
     agent/update_fields.py::decode_fields for that mapping.
     """
-    mask_block_count = data[off]; off += 1
+    mask_block_count = r.u8()
     set_bits = []
     for word_index in range(mask_block_count):
-        word = pk.u32(data, off); off += 4
+        word = r.u32()
         base = word_index * 32
         for bit in range(32):
             if word & (1 << bit):
                 set_bits.append(base + bit)
-    fields = {}
-    for index in set_bits:
-        fields[index] = pk.u32(data, off); off += 4
-    return fields, off
+    return {index: r.u32() for index in set_bits}

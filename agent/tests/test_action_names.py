@@ -17,7 +17,8 @@ CANDIDATES_PY = HERE.parent / "candidates.py"
 
 
 def _constants() -> dict:
-    return {k: v for k, v in vars(names).items() if k.isupper()}
+    # #531: action_names re-exports every public name of action_specs, including LLM_EXCLUDED_ACTIONS (a set)
+    return {k: v for k, v in vars(names).items() if k.isupper() and isinstance(v, str)}
 
 
 class ActionNamesTest(unittest.TestCase):

@@ -2,10 +2,12 @@
 cap. The registered classes, the tool schema, catalog() and think.py's validation all read it; a
 spec that disagrees with its class fails here."""
 
+import ast
 import dataclasses
 import inspect
 import pathlib
 import re
+import textwrap
 import unittest
 from unittest import mock
 
@@ -133,6 +135,35 @@ class GeneratedFromSpecsTest(unittest.TestCase):
         for path in AGENT.rglob("*.py"):
             if "tests" not in path.parts and path.name != "candidates.py":
                 self.assertNotRegex(path.read_text(), r"^MAX_(SELL|EQUIP|TRAIN|USE_ITEMS|LOOT) = ", str(path))
+
+
+class FollowActionsReadSpecTest(unittest.TestCase):
+    """gh-515: follow, assist and stop_following take params/required from their spec, so a
+    hand-written copy cannot come back."""
+    SPEC_OF = {follow.FollowAction: specs.FOLLOW, follow.AssistAction: specs.ASSIST,
+               follow.StopFollowingAction: specs.STOP_FOLLOWING}
+
+    def test_the_class_bodies_do_not_assign_params_or_required(self):
+        # vars(cls) is no test here: __init_subclass__ sets both on every subclass.
+        for cls in self.SPEC_OF:
+            body = ast.parse(textwrap.dedent(inspect.getsource(cls))).body[0].body
+            assigned = {t.id for node in body if isinstance(node, (ast.Assign, ast.AnnAssign))
+                        for t in ([*node.targets] if isinstance(node, ast.Assign) else [node.target])
+                        if isinstance(t, ast.Name)}
+            with self.subTest(cls=cls.__name__):
+                self.assertFalse(assigned & {"params", "required"})
+
+    def test_params_and_required_are_the_spec_objects(self):
+        for cls, name in self.SPEC_OF.items():
+            spec = specs.specs_by_name[name]
+            with self.subTest(cls=cls.__name__):
+                self.assertIs(cls.params, spec.params)
+                self.assertIs(cls.required, spec.required)
+
+    def test_follow_distance_text_names_the_reflex_default(self):
+        # action_specs must not import reflexes (layer table), so the tie to the constant is this test.
+        description = specs.specs_by_name[specs.FOLLOW].params["distance"]["description"]
+        self.assertIn(f"Default {follow.DEFAULT_DISTANCE_YD}.", description)
 
 
 class ValidationReadsSpecTest(unittest.TestCase):

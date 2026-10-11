@@ -112,7 +112,8 @@ class AuditLoggerWriteTest(unittest.TestCase):
             result={"ok": True, "error": None},
         )
         path = os.path.join(self.tmp.name, "TestAgent", f"{time.strftime('%Y-%m-%d')}.jsonl")
-        raw = open(path).read()
+        with open(path) as f:
+            raw = f.read()
         self.assertNotIn("sk-secret", raw)
         self.assertNotIn("hunter2", raw)
 

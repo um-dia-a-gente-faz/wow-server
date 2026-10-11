@@ -154,10 +154,24 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 - **Ruff rules land in stages (#386),** one small PR per stage, each with a baseline of
   the files that violate it that day. Enabled: `E9`, `F` (baseline cleared, keep it empty),
-  `B` (bugbear), `E722` (bare `except`, no violations). Still to come: `BLE001`, `UP`,
-  `SIM`, `C901`. To add a stage: add the rule to `select` in `ruff.toml`, run
-  `ruff check . --fix` and review what it changed, then list each remaining
-  `ruff check . --output-format concise` hit as `"<file>" = ["<rule>"]`.
+  `B` (bugbear), `E722` (bare `except`, no violations), `BLE001`, `UP`, `SIM` (#413).
+  To add a stage: add the rule to `select` in `ruff.toml`, run
+  `ruff check . --fix` (safe fixes only, never `--unsafe-fixes`) and review every hunk,
+  then list each remaining `ruff check . --output-format concise` hit as
+  `"<file>" = ["<rule>"]`.
+- **`#413` decisions.** `UP038` (`isinstance` with a tuple to `X | Y`) is in `ignore`: the
+  union form is slower at runtime, and ruff's own docs say so for hot paths. `C901`
+  (complexity) is not enabled: the size budget below (80 lines per function, 600 per
+  module, `agent/tests/test_size_budget.py`) is the complexity control, and `C901` at ruff's
+  default 10 would flag 33 functions and add a second, overlapping ratchet. Revisit if the
+  size budget proves too weak. `BLE001` sites are the deliberate catch-and-log sites of the
+  swallowed-error policy (#306): narrowing them is behaviour work, not lint work. `SIM115`
+  is fixed by hand where the handle's lifetime is one read; long-lived handles are baselined.
+  A lint stage baselines, and does not edit, two groups of paths. `docker-compose.yml`,
+  `tdb/*`, `tools/chat-feed/*` and `tools/common/*`: `scripts/deploy.sh` (`stacks_for`)
+  recreates the game stack, and with it the worldserver, when one of them changes
+  (`tools/common/*` is copied into the chat-feed image, ADR 0014). `scripts/*` and
+  `.github/*`: a PR touching them waits for the owner's go-ahead (`CLAUDE.md`, *Working model*).
 - **The baseline is keyed by path.** A file you move keeps its debt: move its line with
   it. A file that is new must be clean, and gets no line.
 - **An import other modules reach through this one** (`npc.CMSG_BUY_ITEM`) is a re-export,
@@ -234,3 +248,37 @@ machine that can reach the server:
 python3 -m agent --list-chars
 docker build -t wow-agent .
 ```
+
+## Add a brain scenario after a brain bug
+
+A live brain mistake gets a golden scenario in
+[`agent/tests/test_brain_scenarios.py`](agent/tests/test_brain_scenarios.py), so the fix stays
+fixed (#388, #475).
+
+1. Find the bad cycle in the agent's audit log on the VM,
+   `/opt/wow-server-metrics/audit/<agent>/<YYYY-MM-DD>.jsonl`:
+   `python3 -m tools.agent_dev.replay <file> --failures` lists the invalid or failed cycles.
+   Full snapshots are written only every 20th cycle and on invalid or failed cycles, so
+   capture a cycle that carries one.
+2. Capture it: `python3 -m tools.agent_dev.capture_scenario <file> --cycle <N> --me <handle>`
+   prints a `"captured_<agent>_<N>": dict(...)` entry. The audit log keeps GUIDs as handle
+   strings (`u1`, `p3`) and not the handle table, so the entry carries its own: `handles` maps
+   each handle to an integer, and `my_guid` is the number of the player's own handle, given by
+   `--me`. `--me` must be the PLAYER's handle, the `p<n>` that units attacking you show as
+   their `target_guid`; the tool cannot tell a mob's handle from the player's, so a mob's
+   handle (`u<n>`) would be accepted and give a wrong scenario. `--me` must match a handle in
+   the snapshot exactly (case-sensitive) or the tool exits 2 naming it.
+   If no unit targets the player, omit `--me` and set `my_guid` by hand to an integer that is
+   not in `handles` (for example one more than the largest number there); `my_guid=...` is
+   otherwise left for you to fill in, and the predicates are `...` until you write them.
+   The action the brain chose is a comment. The agent does not write `history` to the audit
+   log; add it by hand if the scenario needs it.
+3. Paste the entry into `SCENARIOS` and write `offered` (what the candidate list must never
+   contain) and `chosen` (what the brain must never pick). State what must never happen, not
+   the one right answer. The predicate helpers at the top of the file cover the common cases.
+   Refer to units by the handle string in the entry (`offering_attack_on("u1")`).
+4. Run `python3 -m unittest agent.tests.test_brain_scenarios`; the new scenario must fail on
+   the bug.
+5. Fix the code and see it pass. Keep the scenario: it is the regression test. If the fix has
+   to wait, mark it `known_gap=True` with its issue number; the test then fails as soon as the
+   gap closes, so the flag comes off with the fix.

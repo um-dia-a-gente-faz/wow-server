@@ -65,7 +65,7 @@ MAX_TEXT_LEN = 512
 
 
 def _utc_now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return dt.datetime.now(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def dedupe_key(kind: str, sender_guid: int, sender_name: str, channel, target, text: str) -> str:

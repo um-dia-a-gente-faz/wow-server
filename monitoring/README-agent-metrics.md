@@ -78,6 +78,13 @@ Both files are merged by hand into the Prometheus config on VM201. `AgentMetrics
 fires when no agent target is up for 15m (wrong host/port, or the fleet is stopped); individual
 stopped agents do not page. The scrape host `wow-agents.lan` is unconfirmed: set the real address.
 
+`wow_agent_reconnect_attempts_total{agent,reason}` is also live, on the same `GET /metrics`. It counts
+each reconnect wait the supervisor takes (#402), by `reason`: `connect_failed` (login or connect raised),
+`auth_rejected` (a transient auth refusal), `disconnected` (an unexpected drop after a good connect). A
+permanent refusal stops the agent and is not counted. The waits are jittered (equal jitter, between half
+and the full backoff), so a fleet restarted together does not retry in lockstep. All three reasons are
+exposed from 0, so `rate()` works from the first scrape. Process-wide, so it resets when the agent restarts.
+
 The **Jev — decision usage** dashboard is in
 `monitoring/grafana-dashboard-jev-decision-usage.json`. Metrics are rebuilt
 from retained audit rows on each textfile-exporter run, so every `*_total`

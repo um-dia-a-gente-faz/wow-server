@@ -490,3 +490,28 @@ def render_router(agent: str) -> str:
         lines += [f'{name}{{agent="{agent}",opcode="{names.get(op, "0x%03X" % op)}"}} {n}'
                   for (k, op), n in items if k == kind]
     return "\n".join(lines) + "\n"
+
+
+# ── Reconnect attempts (#402) ─────────────────────────────────────────────
+# Process-wide like the router counters: one count per reconnect wait the supervisor
+# (agent.__main__._supervise_connection) takes, by reason. All reasons render, at 0 until
+# they happen, so rate() works from the first scrape.
+RECONNECT_REASONS = ("connect_failed", "auth_rejected", "disconnected")
+RECONNECTS: dict[str, int] = dict.fromkeys(RECONNECT_REASONS, 0)
+_reconnect_lock = threading.Lock()
+
+
+def count_reconnect(reason: str) -> None:
+    with _reconnect_lock:
+        RECONNECTS[reason] += 1   # KeyError on an unknown reason: label values stay bounded
+
+
+def render_reconnects(agent: str) -> str:
+    """wow_agent_reconnect_attempts_total as Prometheus exposition text."""
+    with _reconnect_lock:
+        counts = dict(RECONNECTS)
+    lines = ["# HELP wow_agent_reconnect_attempts_total Reconnect waits by reason (connect_failed, auth_rejected, disconnected)",
+             "# TYPE wow_agent_reconnect_attempts_total counter"]
+    lines += [f'wow_agent_reconnect_attempts_total{{agent="{agent}",reason="{r}"}} {counts[r]}'
+              for r in RECONNECT_REASONS]
+    return "\n".join(lines) + "\n"

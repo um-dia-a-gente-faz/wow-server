@@ -31,6 +31,7 @@ import time
 
 from . import actions as ac
 from . import movement
+from . import ports
 from .metrics import swallowed
 
 DEFAULT_TIMEOUT_S = 60.0
@@ -71,8 +72,8 @@ def _number(body: dict, key: str, lo: float, hi: float, required: bool = False):
     return float(v)
 
 
-def _pos(session):
-    pos = getattr(session, "player_position", None)
+def _pos(session: ports.PlayerView):
+    pos = session.player_position
     return None if pos is None else {"map": pos[0], "x": round(pos[1], 2), "y": round(pos[2], 2),
                                      "z": round(pos[3], 2)}
 
@@ -110,11 +111,11 @@ def validate(body) -> dict:
     return out
 
 
-def resolve(session, req: dict) -> dict:
+def resolve(session: ports.PlayerView | None, req: dict) -> dict:
     """Resolve a validated request against the session's own snapshot -> plan dict, or ControlError."""
-    if session is None or getattr(session, "unexpected_disconnect", False):
+    if session is None or session.unexpected_disconnect:
         raise ControlError(409, "not_connected", "the agent is not logged in to the world")
-    pos = getattr(session, "player_position", None)
+    pos = session.player_position
     if pos is None:
         raise ControlError(409, "no_position", "the agent does not know its own position yet")
     world = session.world_state
@@ -131,7 +132,7 @@ def resolve(session, req: dict) -> dict:
         plan.update(target={"map": pos[0], "x": tx, "y": ty, "z": tz}, guid=None)
     else:
         name = req["name"].lower()
-        own = getattr(session, "player_guid", None)
+        own = session.player_guid
         found = next((o for o in world.get_objects().values()
                       if o.object_type == "player" and o.guid != own and (o.name or "").lower() == name
                       and o.position is not None), None)
@@ -207,7 +208,7 @@ def walk(observer, body, dry_run: bool = False, clock=time.monotonic) -> tuple[i
         return 500, {"ok": False, "outcome": "failed", "code": "internal", "error": f"{type(e).__name__}: {e}"}
 
 
-def _execute(observer, session, plan: dict, base: dict, start: dict, clock) -> tuple[int, dict]:
+def _execute(observer, session: ports.ActionSession, plan: dict, base: dict, start: dict, clock) -> tuple[int, dict]:
     world = session.world_state
     timed_out = threading.Event()
     mover_holder = []

@@ -50,6 +50,8 @@ class GameState:
         # The session's one reflex of each kind, filled by agent.reflexes on first use.
         self.follow_reflex = None
         self.rest_reflex = None
+        # The session's one movement engine (agent.movement.Mover), made by get_mover() on first use.
+        self.mover = None
         self.pending_invite: dict | None = None  # {"inviter_name": str} or None
         self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
         # #318: lower-cased character names of the other agents (config AGENT_ROSTER); empty = unknown.
@@ -63,8 +65,8 @@ class GameState:
         self.loot: dict | None = None  # current open loot session (agent.loot.parse_loot_response()'s dict), or None
 
         # Death/resurrection (UM-43)
-        self.corpse_position = None       # (map_id, x, y, z) from MSG_CORPSE_QUERY's response, or None
-        self.corpse_reclaim_ready_at = None  # time.monotonic() deadline from SMSG_CORPSE_RECLAIM_DELAY, or None
+        self.corpse_position: tuple | None = None  # (map_id, x, y, z) from MSG_CORPSE_QUERY's response, or None
+        self.corpse_reclaim_ready_at: float | None = None  # time.monotonic() deadline from SMSG_CORPSE_RECLAIM_DELAY, or None
         self.graveyard_position = None    # (map_id, x, y, z) from SMSG_DEATH_RELEASE_LOC, informational only
         self._was_alive = True            # tracks health>0 -> 0 for the 'death' event (see handlers/world.py::sync_self_from_block)
 
@@ -80,5 +82,3 @@ class GameState:
         make plain index-based slicing wrong)."""
         self.events.append({"kind": kind, "t": time.monotonic(), **fields})
         changes.notify()
-
-    _record_event = record_event  # historical name, still used by death.py and tests

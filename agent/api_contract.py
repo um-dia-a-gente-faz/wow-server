@@ -15,6 +15,7 @@ from agent import action_specs
 SCHEMA_PATH = pathlib.Path(__file__).with_name("api_schema.json")
 CATALOG_BEGIN = "<!-- BEGIN GENERATED catalog: agent/action_specs.py (scripts/generate.py) -->"
 CATALOG_END = "<!-- END GENERATED catalog -->"
+NOT_OFFERED_MARK = "Not offered to the LLM"  # #531: marks the actions in action_specs.LLM_EXCLUDED_ACTIONS
 
 
 def load() -> dict:
@@ -85,12 +86,18 @@ def _type(schema: dict) -> str:
 def render_catalog(specs=None) -> list[str]:
     """The action catalog section, from agent/action_specs.py (#504). Specs are read at call time."""
     specs = action_specs.all_specs if specs is None else specs
+    excluded = action_specs.LLM_EXCLUDED_ACTIONS
     out = [CATALOG_BEGIN, "## Action catalog", "",
            "One entry per action spec in `agent/action_specs.py`, in spec order: every action the agent can take, "
            "including the ones the death, rest and follow reflexes take. `cap` is the most candidates of that action "
-           "offered per snapshot (`none`: the spec has no cap).", ""]
+           "offered per snapshot (`none`: the spec has no cap). An action marked *Not offered to the LLM* is left out "
+           "of the LLM's tool list (`LLM_EXCLUDED_ACTIONS` in `agent/action_specs.py`); it stays registered and the "
+           "other brain may still choose it.", ""]
     for spec in specs:
-        out += [f"### `{spec.name}`", "", f"cap: {spec.cap if spec.cap is not None else 'none'}", ""]
+        out += [f"### `{spec.name}`", ""]
+        if spec.name in excluded:
+            out += [f"**{NOT_OFFERED_MARK}.**", ""]
+        out += [f"cap: {spec.cap if spec.cap is not None else 'none'}", ""]
         if not spec.params:
             out += ["No parameters.", ""]
             continue

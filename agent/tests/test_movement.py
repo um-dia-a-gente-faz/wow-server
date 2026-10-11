@@ -7,11 +7,13 @@ import threading
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from agent import movement as mv
 from agent import packets as pk
 from agent import perception as per
 from agent import update_object as uo
+from agent.tests.builders import FakeSession
 
 
 class BuildMovementInfoTest(unittest.TestCase):
@@ -70,7 +72,7 @@ class SendSetFacingTest(unittest.TestCase):
     def test_sends_msg_move_set_facing_with_own_guid_and_orientation(self):
         sent = []
         sess = SimpleNamespace(player_guid=0xF130000000000099,
-                                _send_packet=lambda opcode, payload=b'': sent.append((opcode, payload)))
+                                send_packet=lambda opcode, payload=b'': sent.append((opcode, payload)))
         mv.send_set_facing(sess, 10.0, 20.0, 30.0, 1.57)
         self.assertEqual(len(sent), 1)
         opcode, payload = sent[0]
@@ -84,10 +86,22 @@ class SendSetFacingTest(unittest.TestCase):
 
 def fake_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
     sent = []
-    sess = SimpleNamespace(player_guid=guid, player_position=position)
-    sess._send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
+    sess = SimpleNamespace(player_guid=guid, player_position=position, mover=None)
+    sess.send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
     sess._sent = sent
     return sess
+
+
+class SentBytesTest(unittest.TestCase):
+    """#411: moving the movement helpers to session.send_packet changed no packet. The bytes
+    were captured from the code before the rename (client_time_ms pinned to 1000)."""
+
+    def test_send_stop_sends_the_same_bytes(self):
+        sess = FakeSession(player_guid=0xF130000000000099)
+        with mock.patch.object(mv, "client_time_ms", return_value=1000):
+            mv.send_stop(sess, 1.0, 2.0, 3.0, 0.5)
+        self.assertEqual(sess.sent, [(mv.MSG_MOVE_STOP, bytes.fromhex(
+            "c19930f1000000000000e80300000000803f00000040000040400000003f00000000"))])
 
 
 class FakeClock:

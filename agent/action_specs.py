@@ -52,6 +52,12 @@ ASSIST = "assist"
 STOP_FOLLOWING = "stop_following"
 REST = "rest"
 
+# Actions the LLM never sees as tools (#531, moved here from brain so api_contract can mark them in
+# the catalog). `idle` (UM-97) exists so a choice-only brain always has a valid option; offered to a
+# free tool-calling model it is an escape hatch that turns "could not decide" into a successful no-op,
+# which hides exactly the failures UM-44's >=90% valid-call bar measures.
+LLM_EXCLUDED_ACTIONS: frozenset[str] = frozenset({IDLE})
+
 
 @dataclass(frozen=True)
 class ActionSpec:

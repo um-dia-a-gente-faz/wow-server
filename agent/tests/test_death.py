@@ -39,7 +39,7 @@ def fast_session(guid=0xF130000000000099, position=(0, 0.0, 0.0, 0.0, 0.0)):
     if position is not None:
         world.set_my_map(position[0])
     clock = FakeClock()
-    sess._mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
+    sess.mover = mv.Mover(sess, world, clock=clock.clock, sleep=clock.sleep)
     return sess, world, clock
 
 
@@ -112,6 +112,24 @@ class ReleaseSpiritActionTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(sess._sent, [(dt.CMSG_REPOP_REQUEST, struct.pack('<B', 0)), (dt.MSG_CORPSE_QUERY, b'')])
 
+    def test_execute_sends_the_same_bytes_as_before_the_port_rename(self):
+        # #411: the packets captured from the code before session.send_packet replaced
+        # session._send_packet in agent.death. Replaced at the sending end, so the test sees
+        # what reaches the transport, through FakeSession.send_packet.
+        sess, world, _ = fast_session()
+        create_self(world, sess.player_guid, 0, 0, 0, health=1)
+
+        def become_ghost(opcode, payload=b''):
+            sess.sent.append((opcode, payload))
+            if opcode == dt.CMSG_REPOP_REQUEST:
+                set_player_flags(world, sess.player_guid, PLAYER_FLAGS_GHOST)
+
+        sess._send_packet = become_ghost
+        result = ac.REGISTRY["release_spirit"].execute(sess, world)
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(sess.sent, [(dt.CMSG_REPOP_REQUEST, bytes.fromhex("00")),
+                                     (dt.MSG_CORPSE_QUERY, b"")])
+
 
 class CorpseRunTest(unittest.TestCase):
     def test_straight_line_success(self):
@@ -121,7 +139,7 @@ class CorpseRunTest(unittest.TestCase):
 
     def test_detour_recovers_from_a_single_stuck(self):
         sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
-        mover = sess._mover
+        mover = sess.mover
         calls = []
         orig_move_to = mover.move_to
 
@@ -138,7 +156,7 @@ class CorpseRunTest(unittest.TestCase):
 
     def test_gives_up_after_max_detours(self):
         sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
-        mover = sess._mover
+        mover = sess.mover
         mover.move_to = lambda *a, **k: {"ok": False, "error": "stuck", "detail": {}}
         result = dt._corpse_run(sess, world, (0, 10.0, 0.0, 0.0), max_detours=3)
         self.assertFalse(result["ok"])
@@ -146,7 +164,7 @@ class CorpseRunTest(unittest.TestCase):
 
     def test_non_stuck_failure_returns_immediately(self):
         sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
-        mover = sess._mover
+        mover = sess.mover
         calls = []
         mover.move_to = lambda *a, **k: (calls.append(a) or {"ok": False, "error": "target lost", "detail": {}})
         result = dt._corpse_run(sess, world, (0, 10.0, 0.0, 0.0))
@@ -216,7 +234,7 @@ class ReclaimCorpseActionTest(unittest.TestCase):
         sess.corpse_position = (0, 500.0, 0.0, 0.0)  # far/unreachable, no corpse object perceived
         create_spirit_healer(world, 0xEA10, 1.0, 0.0, 0.0)
 
-        sess._mover.move_to = lambda *a, **k: {"ok": False, "error": "stuck", "detail": {}}
+        sess.mover.move_to = lambda *a, **k: {"ok": False, "error": "stuck", "detail": {}}
 
         def resurrect_on_activate(opcode, payload=b''):
             sess._sent.append((opcode, payload))
@@ -278,7 +296,7 @@ class ReclaimCorpseActionTest(unittest.TestCase):
         sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
         create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
         sess.corpse_position = (0, 500.0, 0.0, 0.0)
-        sess._mover.move_to = lambda *a, **k: {"ok": False, "error": "stuck", "detail": {}}
+        sess.mover.move_to = lambda *a, **k: {"ok": False, "error": "stuck", "detail": {}}
 
         action = ac.REGISTRY["reclaim_corpse"]
         result = action.execute(sess, world)

@@ -45,7 +45,7 @@ LAYERS = {
     "memory": set(),   # durable agent memory store (#276); stdlib sqlite3 only
     "model": set(),
     "audit_schema": {"model"},   # the audit record's versioned on-disk shape (#277)
-    "auth": {"packets"},
+    "auth": {"packets", "wire"},   # the logon challenge and realm list read through Reader (#517)
     "rules": set(),
     "ports": set(),
     # parsers are pure: wire helpers only
@@ -62,7 +62,7 @@ LAYERS = {
     "item_compare": set(),
     "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
-    "movement": {"opcodes", "packets", "update_object"},
+    "movement": {"opcodes", "packets", "ports", "update_object"},   # #411: the session contract (ports)
     # state
     "perception": {"changes", "group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
@@ -75,11 +75,12 @@ LAYERS = {
     "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "update_fields"},
-    "control": {"actions", "metrics", "movement"},
-    "death": {"action_names", "actions", "movement", "opcodes", "perception", "rules"},
+    "control": {"actions", "metrics", "movement", "ports"},   # #411: the session contract (ports)
+    "death": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "rules"},   # #411: ports
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
-    "candidates": {"action_names", "action_specs", "handles", "item_compare", "metrics", "model", "rules"},
+    "candidate_history": {"metrics", "model"},   # #550: the history drop/demote and the cap, moved out of candidates
+    "candidates": {"action_names", "action_specs", "candidate_history", "handles", "item_compare", "model", "rules"},   # #550: metrics moved with the history code
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
     "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
@@ -87,12 +88,12 @@ LAYERS = {
     "llm": {"httpjson", "prompts"},
     "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain": {"actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},
+    "brain": {"action_specs", "actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
-    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "spells", "trade", "update_fields"},
+    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "update_fields"},  # #411: ports
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
-                "transport"},
+                "transport", "wire"},   # enum_characters and handle_time_sync read through Reader (#517)
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},

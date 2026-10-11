@@ -175,7 +175,7 @@ the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.
 | State | `state.py` (`GameState`), `perception/` (`WorldState`, one snapshot builder per section), `model.py` (the snapshot contract: `TypedDict`s for `Snapshot`, `Unit`, `Item`, `QuestEntry`, `Me`, `Candidate`, `ActionRecord`, shared by perception, candidates, brain, think and audit), `handles.py` (GUID handles for the LLM), `update_object.py`, `update_fields.py` | what the agent knows. The two update modules are the pure `SMSG_UPDATE_OBJECT` parsers. |
 | Packet routing | `router.py`, `handlers/` | `opcode -> handler(ctx, payload)` table; one handler module per domain (ADR 0006). |
 | Domain builders and parsers | `npc.py`, `quests.py`, `loot.py`, `mail.py`, `trade.py`, `spells.py`, `channels.py`, `names.py`, `items.py`, `item_compare.py`, `death.py`, `movement.py`, `group.py` | pure request builders and response parsers (and `death.py`/`movement.py` flows) used by handlers and actions. |
-| Acting | `ports.py` (the typed contract: the `typing.Protocol` ports `PacketSink`, `EventLog`, `PlayerView`, `Inbox`, `ReflexSlots` that actions and reflexes may use of a session; `WoWSession` and the test fake `agent.tests.builders.FakeSession` both satisfy them), `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
+| Acting | `ports.py` (the typed contract: the `typing.Protocol` ports `PacketSink`, `EventLog`, `PlayerView`, `Inbox`, `ReflexSlots` that actions, reflexes, `movement`, `death`, `control` and `think` may use of a session; `WoWSession` and the test fake `agent.tests.builders.FakeSession` both satisfy them), `actions/` (`base.py` framework and `send` facade; `movement`, `combat`, `vendor`, `chat`, `loot`, `quest`, `trade`, `mail`), `candidates.py`, `candidate_history.py` (the think-history drop/demote and the final cap, split out of candidates for #550), `reflexes/` (`follow.py`, `rest.py`), `control.py`, `lines.py`, `known_targets.py` | what the agent can do: validated actions, the bounded candidate list for Jev, the fast reflexes, the operator walk, the fixed chat lines. |
 | Deciding | `think.py`, `brain.py`, `jev.py`, `llm.py`, `prompts/` (prompt text assets, #395) | one brain decision per think cycle: Jev over candidates or the LLM (ADRs 0001, 0003, 0004). |
 | Observing | `http_api.py`, `audit.py`, `metrics.py`, `chat_relay.py` | read-only HTTP API (:9601..9625), decision audit log, Prometheus-style counters, relay of heard chat to `tools/chat-feed`. |
 | Tests | `tests/` | `python3 -m unittest discover -s agent/tests`. |
@@ -198,6 +198,11 @@ and `mpyq`.
 | `tools/world-mock` | scripted fake auth + world server for end-to-end tests of the agent client (#253) | CI / tests |
 | `tools/dbc` | WDBC reader and name/spell-text helpers shared by wowmap | library |
 | `tools/agent_dev` | developer CLIs that import agent as a library: probe (manual live capability probe), replay, ab, cache_probe, dump_update; run as `python3 -m tools.agent_dev.<name>` from the repo root | dev machine / VM shell |
+
+The import rules for `tools/` are enforced by `tools/tests/test_architecture.py`: tool-to-tool
+edges, the `agent/` modules each tool may import, and the edges inside wowmap, agent-runner and
+the wowmap pipeline are pinned in its tables. The `agent/` rules themselves are in
+`agent/tests/test_architecture.py`.
 
 ### Other top-level directories
 

@@ -30,7 +30,7 @@ def load_records(path: str):
     about) any line that fails to parse rather than aborting the whole
     replay — a partially-written last line (process killed mid-write)
     shouldn't make the rest of the file unreadable."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for lineno, line in enumerate(f, start=1):
             line = line.strip()
             if not line:

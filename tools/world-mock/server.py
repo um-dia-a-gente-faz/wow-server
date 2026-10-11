@@ -286,7 +286,7 @@ class WorldMock:
         conn.settimeout(30)
         try:
             handler(conn)
-        except (ConnectionError, socket.timeout):
+        except (TimeoutError, ConnectionError):
             pass
         except Exception:
             log.exception("world-mock handler crashed")
