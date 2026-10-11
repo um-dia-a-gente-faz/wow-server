@@ -481,5 +481,55 @@ class RetryAfterParsingTest(unittest.TestCase):
         self.assertIn("all models cooling down", str(ctx.exception))
 
 
+class PostTransportTest(unittest.TestCase):
+    """LLMClient._post through a patched urlopen (#454): what is sent and how each
+    status is classified, pinned so a change to the shared transport is noticed."""
+
+    KEY = "sk-fake-llm-0123456789"
+
+    def client(self):
+        return llm.LLMClient("https://free.example/v1", "m", api_key=self.KEY, timeout=7.5)
+
+    def test_status_classification(self):
+        import io
+        import urllib.error
+        from email.message import Message
+
+        cases = {400: False, 401: False, 403: False, 404: True, 429: True, 500: True, 503: True}
+        for status, retryable in cases.items():
+            def fake_urlopen(req, timeout, status=status):
+                raise urllib.error.HTTPError("url", status, "err", Message(), io.BytesIO(b"nope"))
+
+            with self.subTest(status=status), mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                with self.assertRaises(llm.LLMUnavailable) as ctx:
+                    self.client()._post("/chat/completions", {})
+                self.assertEqual(ctx.exception.status, status)
+                self.assertIs(ctx.exception.retryable, retryable)
+
+    def test_success_sends_key_timeout_and_body(self):
+        seen = {}
+
+        def fake_urlopen(req, timeout):
+            seen.update(req=req, timeout=timeout)
+            resp = mock.MagicMock()
+            resp.read.return_value = b'{"ok": 1}'
+            resp.__enter__.return_value = resp
+            return resp
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = self.client()._post("/chat/completions", {"x": 1})
+        self.assertEqual(out, {"ok": 1})
+        self.assertEqual(seen["req"].get_header("Authorization"), f"Bearer {self.KEY}")
+        self.assertEqual(seen["timeout"], 7.5)
+        self.assertEqual(seen["req"].full_url, "https://free.example/v1/chat/completions")
+        self.assertEqual(json.loads(seen["req"].data), {"x": 1})
+
+    def test_non_serialisable_body_raises_type_error(self):
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            with self.assertRaises(TypeError):
+                self.client()._post("/chat/completions", {"x": object()})
+        urlopen.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

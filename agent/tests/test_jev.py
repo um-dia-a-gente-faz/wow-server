@@ -14,7 +14,7 @@ import unittest
 import urllib.error
 from unittest import mock
 
-from agent import config, jev
+from agent import config, httpjson, jev
 
 CANDIDATES = [
     {"action": "attack", "params": {"guid": 0x1234}},
@@ -303,7 +303,7 @@ class EndpointUrlTest(unittest.TestCase):
             seen.append(req.full_url)
             return FakeResponse(json.dumps(decisions_response("idle()")).encode())
 
-        with mock.patch.object(jev.urllib.request, "urlopen", fake_urlopen):
+        with mock.patch.object(httpjson.urllib.request, "urlopen", fake_urlopen):
             client.choose_action({}, self.CANDS)
         return seen[0]
 
