@@ -1,9 +1,17 @@
 """The `position`, `is_dead`, `is_ghost` and `corpse_position` sections of the snapshot (#368)."""
 
-from typing import Any
+from typing import TypedDict
 
+from ..model import Position
 from .nearby import position_dict
 from .objects import ObjectInfo
+
+
+class SelfSection(TypedDict):
+    position: Position | None
+    is_dead: bool
+    is_ghost: bool
+    corpse_position: Position | None
 
 
 def resolved_position(me: ObjectInfo | None, my_position: tuple | None) -> tuple | None:
@@ -13,7 +21,7 @@ def resolved_position(me: ObjectInfo | None, my_position: tuple | None) -> tuple
 
 
 def self_section(me: ObjectInfo | None, my_position: tuple | None,
-                 corpse_position: tuple | None) -> dict[str, Any]:
+                 corpse_position: tuple | None) -> SelfSection:
     pos = resolved_position(me, my_position)
     return {
         "position": position_dict(pos),

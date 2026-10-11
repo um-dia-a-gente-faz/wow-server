@@ -1,7 +1,5 @@
 """Composes the JSON-serialisable snapshot the LLM sees from the per-section builders."""
 
-from typing import Any, cast
-
 from ..model import Snapshot
 from .caps import SECTION_CAPS, apply_caps
 from .group_state import group_member_guids, group_section
@@ -17,8 +15,7 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
     (GUIDs not yet turned into handles)."""
     me = view["me"]
     pos = resolved_position(me, my_position)
-    # Built as a plain dict: the section builders return dict[str, Any], which a TypedDict literal cannot spread.
-    out: dict[str, Any] = {
+    out: Snapshot = {
         **self_section(me, my_position, corpse_position),
         "nearby_units": [],
         "nearby_players": [],
@@ -42,4 +39,4 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
         out["nearby_objects"] = near["nearby_objects"]
     # The nearby_* sections are already cut to `limit` by nearby_sections, so they are not capped here.
     caps = {k: v for k, v in SECTION_CAPS.items() if not k.startswith("nearby_")}
-    return apply_caps(cast(Snapshot, out), caps)
+    return apply_caps(out, caps)

@@ -106,6 +106,11 @@ class GroupSectionTest(unittest.TestCase):
         self.assertEqual(d["group"], group_mod.snapshot_view(GROUP, 1))
         self.assertIs(d["group"]["is_leader"], False)
 
+    def test_grouped_as_leader_is_leader(self):
+        d = group_section(GROUP, 3, None)
+        self.assertIs(d["group"]["is_leader"], True)
+        self.assertEqual(d["group"], group_mod.snapshot_view(GROUP, 3))
+
     def test_pending_invite_is_passed_through(self):
         invite = {"inviter": "Bob"}
         d = group_section(None, 1, invite)
