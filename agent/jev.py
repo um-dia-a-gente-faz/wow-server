@@ -26,15 +26,13 @@ API reference (checked 2026-10-02, not yet against a real call):
                "output_tokens", "cost"?}}
     error:    {"error": {"code", "message"}} with a non-2xx status
 
-stdlib `urllib` only, like agent/llm.py.
+Transport is agent/httpjson.py, shared with agent/llm.py.
 """
 
-import http.client
 import json
 import time
-import urllib.error
-import urllib.request
 
+from agent import httpjson
 from agent.llm import compact_snapshot
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"  # JEV_PROVIDER=openrouter only
@@ -165,28 +163,12 @@ class JevClient:
 
     def _post(self, body: dict) -> dict:
         url = self.url
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(url, data=json.dumps(body, default=str).encode("utf-8"),
-                                     headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read()
-        except urllib.error.HTTPError as e:
-            raise JevError(f"HTTP {e.code} from {url}: {_error_message(e)}", status=e.code) from e
-        except urllib.error.URLError as e:
-            raise JevError(f"request to {url} failed: {e.reason}") from e
-        except (OSError, http.client.HTTPException) as e:
-            # Timeouts / dropped connections while reading the body are not
-            # wrapped in URLError (same trap as UM-81 in agent/llm.py).
-            raise JevError(f"request to {url} failed: {e}") from e
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise JevError(f"non-JSON response from {url}: {raw[:500]!r}") from e
-        if not isinstance(data, dict):
-            raise JevError(f"response is not a JSON object: {raw[:500]!r}")
+            data = httpjson.post_json(url, body, api_key=self.api_key, timeout=self.timeout,
+                                      json_default=str, require_object=True)
+        except httpjson.HttpJsonError as e:
+            raise _jev_error(e) from None
+        assert isinstance(data, dict)
         return data
 
     def choose_action(self, snapshot: dict, candidates: list[dict],
@@ -230,13 +212,21 @@ class JevClient:
         return chosen["action"], dict(chosen.get("params") or {})
 
 
-def _error_message(e: urllib.error.HTTPError) -> str:
+def _error_message(body: bytes | None) -> str:
     """`error.message` from an OpenRouter error body, else the raw body."""
-    try:
-        raw = e.read()
-    except (OSError, http.client.HTTPException):
+    if body is None:
         return "(no body)"
     try:
-        return str(json.loads(raw)["error"]["message"])[:500]
+        return str(json.loads(body)["error"]["message"])[:500]
     except (ValueError, KeyError, TypeError):
-        return repr(raw[:500])
+        return repr(body[:500])
+
+
+def _jev_error(e: httpjson.HttpJsonError) -> JevError:
+    if e.kind == "http":
+        return JevError(f"HTTP {e.status} from {e.url}: {_error_message(e.body)}", status=e.status)
+    if e.kind == "network":
+        return JevError(f"request to {e.url} failed: {e.detail}")
+    if e.detail:
+        return JevError(f"response is not a JSON object: {(e.body or b'')[:500]!r}")
+    return JevError(f"non-JSON response from {e.url}: {(e.body or b'')[:500]!r}")

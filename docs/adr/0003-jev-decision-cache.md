@@ -163,3 +163,13 @@ implementation ticket with sections 1-7 as its acceptance criteria, plus the
   on every audit record so the numbers stop being sampled.
 - Follow-up implementation issue: **not filed**, because the measurements do
   not yet support it.
+
+## Update 2026-10-11 (#454): one transport, one budget
+
+No change to the decision. Both a cache and the probe sit behind the `Decider`
+calls, and those now share the plumbing a cache would hook into:
+`agent/httpjson.py` is the single POST-JSON transport for Jev and the LLM
+(timeout, `Retry-After`, redaction of keys in every message and log line), and
+`agent/tokenbudget.py` is the single `AGENT_MAX_TOKENS_PER_HOUR` implementation.
+A cache hit spends nothing, so it must skip `TokenBudget.record()` as it skips
+the request.

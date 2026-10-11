@@ -130,6 +130,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class RouterCountersRenderTest(unittest.TestCase):
+    def setUp(self):
+        from agent import metrics, opcodes
+        self.m, self.op = metrics, opcodes
+        metrics.ROUTER_COUNTS.clear()
+        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+
+    def test_count_router_event_and_render_with_names(self):
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.m.count_router_event(kind, self.op.SMSG_LOGOUT_COMPLETE)
+        self.m.count_router_event("packets", 0xFFFE)   # no name: 0x%03X
+        text = self.m.render_router("A")
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f'wow_agent_router_{kind}_total{{agent="A",opcode="SMSG_LOGOUT_COMPLETE"}} 1', text)
+        self.assertIn('wow_agent_router_packets_total{agent="A",opcode="0xFFFE"} 1', text)
+        self.assertIn("# TYPE wow_agent_router_handler_errors_total counter", text)
+
+    def test_router_names_are_literals_in_the_producer_source(self):
+        # the #280 dashboards-vs-producers test scans agent/metrics.py as text with this regex
+        import re
+        with open(self.m.__file__, encoding="utf-8") as f:
+            found = set(re.findall(r"\b(?:wow|jev)_[a-z0-9_]+\b", f.read()))
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f"wow_agent_router_{kind}_total", found)
+
+    def test_names_present_even_with_no_events(self):
+        text = self.m.render_router("A")
+        for kind in ("packets", "unhandled", "truncated", "handler_errors"):
+            self.assertIn(f"# TYPE wow_agent_router_{kind}_total counter", text)
+
+
 class SwallowedTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics

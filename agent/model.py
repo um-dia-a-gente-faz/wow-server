@@ -109,6 +109,7 @@ class Snapshot(TypedDict):
     chat_inbox: list[Any]
     channels: list[str]
     quest_log: list[QuestEntry]
+    truncated: NotRequired[dict[str, int]]  # #367: section key -> items dropped by apply_caps; absent when none
     me: NotRequired[Me]
     spells: NotRequired[list[KnownSpell]]
 
