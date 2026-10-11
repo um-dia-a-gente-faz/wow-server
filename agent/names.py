@@ -171,11 +171,12 @@ class NameCache:
     only — a player's name never changes, but caching it across sessions
     buys nothing and the file would grow without bound).
 
-    Not thread-safe on its own. agent/perception/world.py::WorldState (which owns
-    an instance) guards the want_*/on_*_response calls with its lock, but drain()
-    runs on the recv thread without it (agent/handlers/world.py send_name_queries),
-    so it can overlap a want_*() from the chat-relay thread. That is why the expiry
-    sweep iterates a snapshot of _in_flight and tolerates a token already removed.
+    Not thread-safe on its own. Threading rule: every call, drain() included, is made
+    under agent/perception/world.py::WorldState's lock (want_*/on_*_response, and drain()
+    via ResolutionMixin.drain_name_queries, called by agent/handlers/world.py
+    send_name_queries). The recv thread and the chat-relay thread share this cache. The
+    expiry sweep still iterates a snapshot of _in_flight and tolerates a token already
+    removed, which keeps the class safe if used alone.
     """
 
     def __init__(self, budget_per_second: int = 10, clock=time.monotonic,
