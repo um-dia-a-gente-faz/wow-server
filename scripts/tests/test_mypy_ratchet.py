@@ -56,7 +56,7 @@ BASELINE = {
 }
 
 # #380: settings that switch the ratchet off, pinned at their values on main.
-PINNED_EXCLUDE = r"^(agent|tools/[^/]+)/tests/|tools/wowmap/[a-z_]*_test\.py"
+PINNED_EXCLUDE = r"^(agent|tools/[^/]+)/tests/|tools/wowmap/pipeline/[a-z_]*_debug\.py"
 # follow_imports = skip/silent hides imported modules from the check. Only the global
 # `silent` that is already in mypy.ini may stay; any other one is a bypass.
 PINNED_FOLLOW_IMPORTS = {("mypy", "silent")}
