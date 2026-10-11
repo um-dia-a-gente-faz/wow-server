@@ -111,7 +111,7 @@ Appended to a `LIVING` movement block (after the 9 speed floats) when
 `MOVEMENTFLAG_SPLINE_ENABLED` (`0x08000000`) is set — a moving NPC or player,
 caught mid-`CREATE`. Verified against the live `TrinityCore/TrinityCore`
 branch `3.3.5` (`gh api repos/TrinityCore/TrinityCore/contents/... ?ref=3.3.5`)
-and empirically against `login_sunstrider.bin`'s 14 real spline blocks — the
+and empirically against `login_sunstrider.bin`'s 15 real spline blocks — the
 whole 13316 B payload parses to exactly `len(payload)` with this layout.
 
 ```

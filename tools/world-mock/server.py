@@ -207,10 +207,11 @@ def _unit_movement(x, y, z, o) -> bytes:
             + struct.pack('<9f', 2.5, 7.0, 4.5, 4.72, 2.5, 7.0, 4.5, 3.14, 3.14))
 
 
-def stream_packets(n: int) -> list:
-    """(opcode, payload) of stream tick n: a CREATE of a unit (guid cycles through STREAM_POOL, so
-    the world does not grow without bound by construction), a stop-move of it, and a say from a
-    cycling player guid. Layouts, all from TrinityCore 3.3.5 src/server/game/:
+def stream_packets(n: int, pool: int = STREAM_POOL) -> list:
+    """(opcode, payload) of stream tick n: a CREATE of a unit (guid cycles through `pool`, so
+    the world does not grow without bound by construction; pool=0 means no cycling, every tick
+    is a new unit), a stop-move of it, and a say from a cycling player guid. Layouts, all from
+    TrinityCore 3.3.5 src/server/game/:
       update   Entities/Object/Object.cpp BuildCreateUpdateBlockForPlayer + BuildMovementUpdate;
                Entities/Object/Updates/UpdateData.cpp BuildPacket: a payload over 100 bytes (with
                its uint32 block count) is zlib-compressed into SMSG_COMPRESSED_UPDATE_OBJECT.
@@ -220,10 +221,11 @@ def stream_packets(n: int) -> list:
                i32 language, u64 sender, u32 0, u64 target, u32 len + text + NUL, u8 chat tag.
     A real create also carries more fields than the few set here (OBJECT_FIELD_GUID etc.)."""
     x, y, z, o = SELF_POS
-    guid = STREAM_UNIT_BASE + n % STREAM_POOL
+    slot = n % pool if pool else n
+    guid = STREAM_UNIT_BASE + slot
     create = bd.update_object(bd.object_block(
         uo.UPDATETYPE_CREATE_OBJECT2, guid, uo.TYPEID_UNIT, _unit_movement(x + n % 7, y, z, o),
-        bd.values_body({uf.OBJECT_FIELD_TYPE: 9, uf.OBJECT_FIELD_ENTRY: STREAM_UNIT_ENTRY + n % STREAM_POOL,
+        bd.values_body({uf.OBJECT_FIELD_TYPE: 9, uf.OBJECT_FIELD_ENTRY: STREAM_UNIT_ENTRY + slot,
                         uf.OBJECT_FIELD_SCALE_X: 0x3F800000, uf.UNIT_FIELD_LEVEL: 5,
                         uf.UNIT_FIELD_HEALTH: 50, uf.UNIT_FIELD_MAXHEALTH: 50,
                         uf.UNIT_FIELD_FACTIONTEMPLATE: 7, uf.UNIT_FIELD_DISPLAYID: 100})))
@@ -231,20 +233,23 @@ def stream_packets(n: int) -> list:
               else (op.SMSG_UPDATE_OBJECT, create))
     move = pk.pack_packed_guid(guid) + b'\0' + struct.pack('<3fIB', x, y, z, n, uo.MONSTER_MOVE_STOP)
     text = f"stream {n}".encode() + b'\0'
-    chat = (struct.pack('<BiQIQI', 1, 0, STREAM_PLAYER_BASE + n % STREAM_POOL, 0, 0, len(text))
+    chat = (struct.pack('<BiQIQI', 1, 0, STREAM_PLAYER_BASE + slot, 0, 0, len(text))
             + text + b'\0')
     return [update, (op.SMSG_MONSTER_MOVE, move), (op.SMSG_MESSAGECHAT, chat)]
 
 
 class WorldMock:
     def __init__(self, host="127.0.0.1", auth_port=0, world_port=0,
-                 account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD, faults=(), stream_hz=0.0):
+                 account=DEFAULT_ACCOUNT, password=DEFAULT_PASSWORD, faults=(), stream_hz=0.0,
+                 stream_pool=STREAM_POOL):
         """`faults`: an iterable of FaultPlan, one per login attempt in order; attempts
         past its end get no faults (pass itertools.cycle(...) to repeat).
         `stream_hz` (#421): after login, every client gets STREAM_PACKETS_PER_TICK packets
-        (update object, monster move, chat) stream_hz times a second; 0 sends nothing."""
+        (update object, monster move, chat) stream_hz times a second; 0 sends nothing.
+        `stream_pool` (#486): guid cycle length of the stream, 0 = unbounded (see stream_packets)."""
         self.host = host
         self.stream_hz = stream_hz
+        self.stream_pool = stream_pool
         self._faults = iter(faults)
         self._plans = {}           # account -> FaultPlan of its current login attempt
         self.auth_connections = 0
@@ -476,7 +481,7 @@ class WorldMock:
             send(op.SMSG_LOGOUT_COMPLETE)
 
     def _stream(self, send, n: int):
-        for opcode, payload in stream_packets(n):
+        for opcode, payload in stream_packets(n, self.stream_pool):
             send(opcode, payload)
 
     def _enter_world(self, send):
@@ -504,7 +509,8 @@ def main():
                      int(os.environ.get("WORLD_PORT", "18085")),
                      os.environ.get("MOCK_ACCOUNT", DEFAULT_ACCOUNT),
                      os.environ.get("MOCK_PASSWORD", DEFAULT_PASSWORD), faults=faults,
-                     stream_hz=float(os.environ.get("MOCK_STREAM_HZ", "0")))
+                     stream_hz=float(os.environ.get("MOCK_STREAM_HZ", "0")),
+                     stream_pool=int(os.environ.get("MOCK_STREAM_POOL", str(STREAM_POOL))))
     log.info("world-mock: auth %s:%d, world %s:%d", mock.host, mock.auth_port, mock.host, mock.world_port)
     threading.Event().wait()
 

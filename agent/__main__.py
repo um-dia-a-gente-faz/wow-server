@@ -323,8 +323,11 @@ def _supervise_connection(build_session, run_session, log,
                 log.warning("%s — retrying in %.0fs", e, delay)
             else:
                 count_reconnect("connect_failed")
-                swallowed("main.connect", log, f"attempt {attempt}")
-                log.warning("retrying in %.0fs", delay)
+                if isinstance(e, OSError):  # #571: an expected network error is one line, no traceback
+                    log.warning("connect failed (%s: %s), attempt %d; retrying in %.0fs", type(e).__name__, e, attempt, delay)
+                else:
+                    swallowed("main.connect", log, f"attempt {attempt}")
+                    log.warning("retrying in %.0fs", delay)
             sleep(delay)
             if stop.is_set():
                 return

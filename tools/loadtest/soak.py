@@ -189,12 +189,13 @@ def sample(agents, t0, cpu0):
 
 
 def run_soak(agents: int, duration: float, faults: str = "", think_interval: float = 0.1,
-             host: str = "127.0.0.1", sample_every: float = 1.0, allow_non_loopback: bool = False, stream_hz: float = 0.0) -> dict:
+             host: str = "127.0.0.1", sample_every: float = 1.0, allow_non_loopback: bool = False, stream_hz: float = 0.0,
+             stream_pool: int = server.STREAM_POOL) -> dict:
     check_host(host, allow_non_loopback)
     plans = server.FaultPlan.parse(faults) if faults else [server.FaultPlan()]
     ticks = TickRecorder()    # allocated before rss0 is read: the measurement excludes it
     threads0, rss0 = threading.active_count(), read_rss_kb()
-    mock = server.WorldMock(host=host, faults=itertools.cycle(plans), stream_hz=stream_hz)
+    mock = server.WorldMock(host=host, faults=itertools.cycle(plans), stream_hz=stream_hz, stream_pool=stream_pool)
     mock.accounts = {f"SOAK{i}": PASSWORD for i in range(agents)}
     agent_log = logging.getLogger("agent")
     saved = (agent_log.level, agent_log.propagate, agent_log.handlers[:])
@@ -219,7 +220,7 @@ def run_soak(agents: int, duration: float, faults: str = "", think_interval: flo
         agent_log.handlers, agent_log.propagate = saved[2], saved[1]
         agent_log.setLevel(saved[0])
     time.sleep(0.5)    # let the mock's handler threads see the closed sockets and exit
-    return report(pool, mock, ticks, samples, think_interval, duration, threads0, rss0, faults, stream_hz)
+    return report(pool, mock, ticks, samples, think_interval, duration, threads0, rss0, faults, stream_hz, stream_pool)
 
 
 STEADY_FROM_S = 5.0    # skip the login burst (SRP) when taking the steady-state CPU figure
@@ -238,7 +239,8 @@ def cpu_figures(samples) -> dict:
     return {"cpu_pct_total": round(100 * last["cpu_s"] / max(last["t"], 1e-6), 1), "cpu_pct_steady": steady}
 
 
-def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, faults, stream_hz=0.0) -> dict:
+def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, faults, stream_hz=0.0,
+           stream_pool: int = server.STREAM_POOL) -> dict:
     n = len(pool)
     rec = [r for a in pool for r in a.recoveries]
     peak = max((s["rss_kb"] for s in samples), default=rss0)
@@ -259,7 +261,7 @@ def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, fault
         "recovery_s": {"count": len(rec), "p50": round(pct(rec, .5), 2) if rec else None,
                        "max": round(max(rec), 2) if rec else None},
         "dropped_packets": sum(a.dropped for a in pool),
-        "stream_hz": stream_hz, "recv_packets_total": sum(a.packets for a in pool),
+        "stream_hz": stream_hz, "stream_pool": stream_pool, "recv_packets_total": sum(a.packets for a in pool),
         "recv_packets_per_s_per_agent": packet_rate(sum(a.packets for a in pool), n * duration),
         "recv_packets_per_agent": {str(i): packet_rate(a.packets, duration) for i, a in enumerate(pool)},
         "container_items": {"first": items[0] if items else None, "last": items[-1] if items else None,

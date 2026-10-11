@@ -4,9 +4,12 @@ fake that just records durations instead of actually waiting, so backoff
 timing (5s -> 5min cap) is asserted without the test taking minutes."""
 
 import functools
+import logging
 import random
+import ssl
 import threading
 import unittest
+from unittest import mock
 
 from agent import __main__ as main_mod
 from agent.auth import AuthRejected
@@ -111,6 +114,71 @@ class SupervisorAuthRejectTest(unittest.TestCase):
                 self.assertEqual(len(attempts), 2)
                 self.assertEqual(sleep.calls, [5.0])
                 self.assertEqual([level for level, _ in log.lines], ["warning"])
+
+
+class SupervisorConnectErrorLogTest(unittest.TestCase):
+    """#571: a network error at connect is one warning line with no traceback; any other error keeps swallowed()."""
+
+    def setUp(self):
+        from agent import metrics
+        self.m = metrics
+        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        # swallowed() rate-limits per (where, type) for 60 s; a test must log every time
+        patcher = mock.patch.object(metrics, "_swallowed_throttle", _NoThrottle())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def supervise(self, errors):
+        """Login raises each of `errors` in turn, then succeeds. Returns (attempts, sleep, records)."""
+        attempts, sleep = [], FakeSleep()
+        log = logging.getLogger("agent.reconnect.test571")
+
+        def build_session():
+            attempts.append(1)
+            if len(attempts) <= len(errors):
+                raise errors[len(attempts) - 1]
+            return _FakeSession()
+
+        with self.assertLogs(log, level="WARNING") as captured:
+            main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+                                           jitter=lambda b: b, initial_backoff=5.0, max_backoff=300.0)
+        return attempts, sleep, captured.records
+
+    def test_network_error_at_login_is_one_warning_line_with_no_traceback(self):
+        errors = [ConnectionResetError(104, "Connection reset by peer"),
+                  ConnectionRefusedError(111, "Connection refused"),
+                  TimeoutError("timed out"),
+                  BrokenPipeError(32, "Broken pipe"),
+                  ssl.SSLError("bad record mac")]
+        for err in errors:
+            with self.subTest(error=type(err).__name__):
+                self.m.RECONNECTS.update(dict.fromkeys(self.m.RECONNECT_REASONS, 0))
+                attempts, sleep, records = self.supervise([err])
+                self.assertEqual(len(attempts), 2)  # the retry logs in
+                self.assertEqual(sleep.calls, [5.0])
+                self.assertEqual(len(records), 1)
+                self.assertEqual(records[0].levelno, logging.WARNING)
+                self.assertIsNone(records[0].exc_info)
+                self.assertEqual(records[0].getMessage(),
+                                 f"connect failed ({type(err).__name__}: {err}), attempt 1; retrying in 5s")
+                self.assertEqual(self.m.RECONNECTS["connect_failed"], 1)
+
+    def test_other_error_at_login_keeps_the_traceback_through_swallowed(self):
+        attempts, _, records = self.supervise([ValueError("bad frame")])
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual([r.levelno for r in records], [logging.ERROR, logging.WARNING])
+        self.assertIsNotNone(records[0].exc_info)  # swallowed() logs the traceback
+        self.assertIn("swallowed error in main.connect (attempt 1): ValueError: bad frame", records[0].getMessage())
+        self.assertIsNone(records[1].exc_info)
+        self.assertEqual(self.m.RECONNECTS["connect_failed"], 1)
+
+
+class _NoThrottle:
+    """Stands in for the swallowed() throttle: every call logs."""
+
+    def check(self, key):
+        return True, 0
 
 
 class _FakeSession:
