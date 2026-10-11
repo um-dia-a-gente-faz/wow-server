@@ -11,6 +11,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TOP_DIRS = ("agent", "tools", "exporters", "scripts")
 SKIP_NAMES = {"node_modules", "__pycache__", ".claude"}
+
+
 def _array(*entries: str) -> str:
     return "SUITES=(\n" + "".join(f"  {e}\n" for e in entries) + ")\n"
 
@@ -25,9 +27,18 @@ SUITE_ENTRY = re.compile(r'^\s*"[^"|]+\|([^"]*)"')
 
 
 def _suite_span(lines: list[str]) -> tuple[int, int]:
-    # ValueError when SUITES is renamed or reformatted, so the guard fails instead of passing empty.
-    start = lines.index("SUITES=(")
-    return start + 1, lines.index(")", start)
+    # One SUITES=( block, opened on its own line. Between it and the first bare ")" only blank
+    # lines, comments and quoted entries may appear. Anything else is a reformat: ValueError.
+    opens = [i for i, line in enumerate(lines) if "SUITES=(" in line]
+    if len(opens) != 1 or lines[opens[0]] != "SUITES=(":
+        raise ValueError("expected exactly one SUITES=( line, on its own")
+    for end in range(opens[0] + 1, len(lines)):
+        if lines[end] == ")":
+            return opens[0] + 1, end
+        body = lines[end].strip()
+        if body and not body.startswith(("#", '"')):
+            raise ValueError(f"SUITES array has an unexpected line: {lines[end]!r}")
+    raise ValueError("SUITES array is not closed by a bare )")
 
 
 def registered_suites(script_text: str) -> set[tuple[str, str]]:
@@ -89,6 +100,7 @@ class CheckRegistryTest(unittest.TestCase):
         self.assertEqual(sorted(known - found), [], "the walk no longer finds a known suite")
         missing = found - registered_suites(script)
         self.assertEqual(sorted(missing), [], "suite not registered in scripts/check.sh SUITES")
+        self.assertEqual(registered_suites(script), found, "SUITES registers a suite not on disk")
 
     def test_wowmap_python_line_removed_reports_python_suite(self):
         script = "\n".join(
@@ -114,12 +126,15 @@ class CheckRegistryTest(unittest.TestCase):
         self.assertTrue(suite_idx)
         found = find_suites(ROOT)
         for i in suite_idx:
+            # The pair the line itself registers, read from its own text alone.
+            expected = registered_suites(_array(lines[i].strip()))
+            self.assertEqual(len(expected), 1)
             with self.subTest(line=lines[i]):
                 text = "\n".join(lines[:i] + lines[i + 1:])
-                self.assertEqual(len(found - registered_suites(text)), 1)
+                self.assertEqual(found - registered_suites(text), expected)
             with self.subTest(commented=lines[i]):
                 commented = lines[:i] + ["# " + lines[i].lstrip()] + lines[i + 1:]
-                self.assertEqual(len(found - registered_suites("\n".join(commented))), 1)
+                self.assertEqual(found - registered_suites("\n".join(commented)), expected)
 
     def _unregistered_in(self, rel_paths: list[str], script: str = DEFAULT_SCRIPT) -> set:
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,6 +207,31 @@ class CheckRegistryTest(unittest.TestCase):
     def test_script_without_suites_array_is_an_error(self):
         with self.assertRaises(ValueError):
             registered_suites('"a|python3 -m unittest discover -s tools/x/tests"\n')
+
+    def test_entry_shaped_line_after_the_array_does_not_register(self):
+        script = (
+            _array('"a|python3 -m unittest discover -s tools/y/tests"')
+            + 'OTHER=(\n"x|python3 -m unittest discover -s tools/x/tests"\n)\n'
+        )
+        self.assertEqual(
+            self._unregistered_in(["tools/x/tests/test_x.py"], script),
+            {("py", "tools/x/tests")},
+        )
+
+    def test_array_closed_by_indented_or_commented_paren_is_an_error(self):
+        for close in ("  )", ")  # end"):
+            with self.subTest(close=close):
+                script = (
+                    'SUITES=(\n  "a|python3 -m unittest discover -s tools/y/tests"\n'
+                    + close + '\n  "x|python3 -m unittest discover -s tools/x/tests"\n)\n'
+                )
+                with self.assertRaises(ValueError):
+                    registered_suites(script)
+
+    def test_two_suites_arrays_are_an_error(self):
+        script = _array('"a|python3 -m unittest discover -s tools/y/tests"') * 2
+        with self.assertRaises(ValueError):
+            registered_suites(script)
 
     def test_tests_dir_without_test_module_is_not_reported(self):
         self.assertEqual(self._unregistered_in(["tools/x/tests/helper.py"]), set())
