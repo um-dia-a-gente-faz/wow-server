@@ -66,7 +66,7 @@ def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline
         out, _ = p.communicate(timeout=None if deadline is None else max(deadline - time.monotonic(), 1))
     except subprocess.TimeoutExpired:
         # #707: with PYTHONFAULTHANDLER=1 the SIGABRT makes the test process dump every thread's stack.
-        print(f"coverage {cmd[0]} ran past CHECK_STALL_DUMP_S: sending SIGABRT", file=sys.stderr, flush=True)
+        print(f"\ncoverage {cmd[0]} ran past CHECK_STALL_DUMP_S: sending SIGABRT", file=sys.stderr, flush=True)
         p.send_signal(signal.SIGABRT)
         try:
             p.communicate(timeout=10)
