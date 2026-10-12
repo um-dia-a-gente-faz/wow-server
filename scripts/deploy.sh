@@ -84,7 +84,11 @@ case " $STACKS " in *" game "*)
     DEFERRED=1
     STACKS=${STACKS//game/}; STACKS=$(echo $STACKS)
     echo "$(date -Is) DEFERRED: game stack pending at ${TO:0:7}, players online: $ONLINE (FORCE=1 to override)"
-    [ "${DRY_RUN:-0}" = 1 ] || log "DEFERRED game ${TO:0:7}, players online: $ONLINE"
+    # once per pending commit: refs/deployed/game-deferred holds the $TO already logged
+    if [ "${DRY_RUN:-0}" != 1 ] && [ "$(git rev-parse -q --verify refs/deployed/game-deferred || true)" != "$TO" ]; then
+      log "DEFERRED game ${TO:0:7}, players online: $ONLINE"
+      git update-ref refs/deployed/game-deferred "$TO"
+    fi
   fi ;;
 esac
 
@@ -106,6 +110,7 @@ esac
 
 git update-ref refs/deployed/monitoring "$TO"
 [ "$DEFERRED" = 1 ] || git update-ref refs/deployed/game "$TO"
+[ "$DEFERRED" = 1 ] || git update-ref -d refs/deployed/game-deferred 2>/dev/null || true
 [ -n "$STACKS" ] && log "deployed ${TO:0:7}, stacks: $STACKS"
 
 echo "== status =="
