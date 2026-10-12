@@ -33,7 +33,7 @@ class GameState:
         self.player_name = ""
         self.player_position: tuple | None = None  # (map_id, x, y, z, orient)
         self.level = 0
-        self.race = 0  # ChrRaces.dbc ID; set by callers (e.g. __main__.py) from enum_characters()
+        self.race = 0  # ChrRaces.dbc ID; set by callers (e.g. login.py) from enum_characters()
         self.class_ = 0  # ChrClasses.dbc ID (UM-69); set by callers from enum_characters(), same as race
         self.xp = None
         self.next_level_xp = None
@@ -42,7 +42,7 @@ class GameState:
         self.on_update_object = None  # callback(update_type, guid, fields)
         self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
         # UM-47: optional agent.chat_relay.ChatRelay, set by the caller
-        # (agent/__main__.py) — mirrors heard chat to tools/chat-feed.
+        # (agent/login.py) — mirrors heard chat to tools/chat-feed.
         self.chat_relay = None
         # (time.monotonic(), normalised text) of our own recent channel messages:
         # the channel_say action's rate limit and repeat guard.
@@ -70,7 +70,7 @@ class GameState:
         self.graveyard_position = None    # (map_id, x, y, z) from SMSG_DEATH_RELEASE_LOC, informational only
         self._was_alive = True            # tracks health>0 -> 0 for the 'death' event (see handlers/world.py::sync_self_from_block)
 
-        # Reconnect supervisor (UM-43, agent/__main__.py)
+        # Reconnect supervisor (UM-43, agent/supervisor.py)
         self._logout_requested = False    # set by logout() — distinguishes a clean stop from a forced one
         self.unexpected_disconnect = False  # set when the recv thread/socket dies without a requested logout
 

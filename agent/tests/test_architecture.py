@@ -28,7 +28,7 @@ UNLAYERED = {"tests"}
 #       items, item_compare, update_object, update_fields, movement
 #   state: perception, state;  routing: router, handlers (ADR 0005, 0006)
 #   acting: actions, reflexes, control, death, candidates;  deciding: jev, llm, deciders, brain, think
-#   entry and observing: session, http_api, audit, __main__
+#   entry and observing: session, http_api, audit, login, supervisor, runloop, __main__
 LAYERS = {
     "packets": set(),
     "wire": {"packets"},   # cursor Reader/Writer over packets' helpers, PacketTruncated is a ProtocolError (#274)
@@ -98,8 +98,10 @@ LAYERS = {
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
-    "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "death", "http_api",
-                 "metrics", "reflexes", "session", "think"},   # death: imported so its actions register (#321)
+    "login": {"auth", "channels", "config", "death", "session"},   # auth, world connect, character login (#292); death: imported so its actions register (#321)
+    "supervisor": {"auth", "metrics"},   # the reconnect supervisor (#292)
+    "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
+    "__main__": {"audit", "auth", "brain", "chat_relay", "config", "http_api", "login", "runloop", "supervisor"},
 }
 
 ADR = {

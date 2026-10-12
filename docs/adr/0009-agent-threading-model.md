@@ -16,9 +16,9 @@ wrong. This ADR writes the current rules down so a change can be judged against 
 
 | Thread | Started in | Does |
 |---|---|---|
-| main / think loop | `agent/__main__.py::_run_think_loop` | perceive, one brain decision and action per cycle (`think_and_act`), then sleeps to the cycle deadline (`AGENT_THINK_INTERVAL_S`) |
+| main / think loop | `agent/runloop.py::run_think_loop` | perceive, one brain decision and action per cycle (`think_and_act`), then sleeps to the cycle deadline (`AGENT_THINK_INTERVAL_S`) |
 | recv thread | `WoWSession.login_character` (`agent/session.py`), daemon | `_recv_loop`: read a packet, `router.dispatch` via `_dispatch_guarded`, `router.tick`; sends `CMSG_KEEP_ALIVE` after 15 s of silence; on a dead socket sets `unexpected_disconnect` |
-| follow and rest reflexes | `_run_loop` in `__main__.py`, two daemon threads | tick `FollowReflex` / `RestReflex` every 0.3 s on `sess.world_state`; exceptions are logged and swallowed per tick |
+| follow and rest reflexes | `run_loop` in `runloop.py`, two daemon threads | tick `FollowReflex` / `RestReflex` every 0.3 s on `sess.world_state`; exceptions are logged and swallowed per tick |
 | observer HTTP | `agent/http_api.py::start_server`, daemon `ThreadingHTTPServer` (one thread per request), only when `AGENT_HTTP_PORT` is set | read-only GETs; `POST /control/walk` only with `AGENT_CONTROL_TOKEN` |
 | movement worker | `movement.Mover._run` | a short-lived thread that simulates a walk; the caller `join()`s it, so a move is synchronous for its caller |
 | chat relay | `agent/chat_relay.py`, daemon `chat-relay` | posts heard chat to chat-feed from a queue |

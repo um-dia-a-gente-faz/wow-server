@@ -33,15 +33,15 @@ first-session cost, not per-agent cost. So: an idle connected session costs abou
 
 ## What is measured, and what is not
 
-- **Not the real agent.** The harness calls `_run_think_loop` directly with
-  `brain=None`, not `_run_loop`. Absent per agent: the follow and rest reflex threads,
+- **Not the real agent.** The harness calls `run_think_loop` directly with
+  `brain=None`, not `run_loop`. Absent per agent: the follow and rest reflex threads,
   the observer HTTP server, the audit logger and the chat relay. A real agent has at
   least two more threads of its own and these subsystems' memory.
 - **Threads per agent** = agent thread + recv thread + **one mock handler thread per
   agent** (the mock's, not the agent's; included in the count and the 3.1). It is not the
   thread count #252 will see.
 - **Tick period** without a brain is the interval plus scheduler/GIL wake-up jitter,
-  by construction (`_run_think_loop` sleeps to a deadline). It shows that 25 idle
+  by construction (`run_think_loop` sleeps to a deadline). It shows that 25 idle
   sessions do not delay each other's wake-ups. It is not think-cycle latency with a
   brain, and not recv-loop latency.
 - **CPU** is the whole process (mock, sampler, agents) as a share of one core.

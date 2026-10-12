@@ -10,30 +10,21 @@ Modes:
 """
 
 import argparse
-import contextlib
-import functools
-import json
 import logging
-import random
 import signal
 import sys
 import threading
 import time
-from collections.abc import Callable
 
-from .channels import parse_channel_spec
 from .chat_relay import ChatRelay
-from .config import ConfigError, load_config, get as config_get
-from .auth import PERMANENT_AUTH_CODES, AuthRejected, auth_logon
-from .session import WoWSession
+from .config import ConfigError, load_config
+from .auth import AuthRejected
 from .brain import Brain
-from .think import ThinkState, think_and_act
 from .audit import AuditLogger
 from .http_api import AgentObserver, start_server
-from .metrics import count_reconnect, swallowed
-from . import death  # noqa: F401  registers release_spirit/reclaim_corpse (gh-321: nothing else imported it)
-from .reflexes.follow import get_follow_reflex
-from .reflexes.rest import get_rest_reflex
+from .login import authenticate_and_login, connect_and_login
+from .runloop import run_loop
+from .supervisor import supervise_connection
 
 
 def _setup_logging(level: str):
@@ -86,7 +77,7 @@ def main():
 
     if args.list_chars:
         try:
-            sess, _chars = _authenticate_and_login(cfg, log)
+            sess, _chars = authenticate_and_login(cfg, log)
         except RuntimeError as e:
             log.critical("%s", e)
             sys.exit(1)
@@ -104,7 +95,7 @@ def main():
 
     if args.dry_run:
         try:
-            sess = _connect_and_login(cfg, log, chat_relay)
+            sess = connect_and_login(cfg, log, chat_relay)
         except RuntimeError as e:
             log.critical("%s", e)
             sys.exit(1)
@@ -141,9 +132,9 @@ def main():
     stop = _install_stop_signals()
     log.info("entering agent loop (SIGTERM or ctrl+c to stop) ...")
     try:
-        _supervise_connection(
-            build_session=lambda: _connect_and_login(cfg, log, chat_relay),
-            run_session=lambda sess: _run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
+        supervise_connection(
+            build_session=lambda: connect_and_login(cfg, log, chat_relay),
+            run_session=lambda sess: run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
                                                brain=brain, audit_logger=audit_logger, observer=observer,
                                                stop=stop),
             log=log, stop=stop,
@@ -187,45 +178,6 @@ def _start_observer(cfg, audit_logger, log, brain=None):
     return observer, server
 
 
-def _authenticate_and_login(cfg, log) -> tuple:
-    """Auth against the auth server, connect to the world server, and list
-    characters. Returns (session, chars) with the session logged in only as
-    far as the world connection — no character selected yet. Raises on any
-    failure (AuthRejected, a socket error, ...) —
-    callers decide how to react (main()'s --list-chars path exits;
-    _connect_and_login()/the reconnect supervisor propagate it up)."""
-    log.info("authenticating to %s:%d as %s", cfg.wow_host, cfg.wow_auth_port, cfg.account)
-    account, session_key, realms = auth_logon(cfg.wow_host, cfg.wow_auth_port,
-                                               cfg.account, cfg.password)
-
-    r = list(realms.values())[0]
-    world_host, port_s = r['address'].rsplit(':', 1)
-    world_port = int(port_s)
-    log.info("realm: %s @ %s:%d", r['name'], world_host, world_port)
-
-    sess = WoWSession(world_host, world_port, account, session_key, r['id'],
-                      verbose_packets=cfg.verbose_packets,
-                      dump_packets_dir=cfg.dump_packets_dir)
-    sess.connect()
-    chars = sess.enum_characters()
-    for c in chars:
-        log.info("  [%d] %-16s L%-2d class=%-2d race=%-2d",
-                 c['guid'], c['name'], c['level'], c['class_'], c['race'])
-    return sess, chars
-
-
-def _resolve_character(cfg, chars: list) -> dict:
-    choice = None
-    if cfg.char_guid:
-        choice = next((c for c in chars if c['guid'] == cfg.char_guid), None)
-    if not choice and cfg.character:
-        choice = next((c for c in chars if c['name'].lower() == cfg.character.lower()), None)
-    if not choice and chars:
-        choice = chars[0]
-    if not choice:
-        raise RuntimeError("no characters on realm (and nothing to pick)")
-    return choice
-
 
 def _build_chat_relay(cfg, log) -> ChatRelay:
     """UM-47: one relay per agent process, shared by every (re)connected
@@ -236,263 +188,6 @@ def _build_chat_relay(cfg, log) -> ChatRelay:
         relay.start()
         log.info("chat relay: %s", relay.url)
     return relay
-
-
-def _connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
-    """Full auth -> connect -> character login sequence, returning a
-    WoWSession already logged in as the configured (or first available)
-    character. Raises on failure. Used directly by main() for --dry-run,
-    and as the reconnect supervisor's build_session() for the default
-    run-forever mode (UM-43) — each call builds a brand-new WoWSession, and
-    therefore a brand-new WorldState (agent.perception), from scratch."""
-    sess, chars = _authenticate_and_login(cfg, log)
-    sess.chat_relay = chat_relay  # UM-47 — attached before login so nothing is missed
-    choice = _resolve_character(cfg, chars)
-    log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
-    sess.agent_names = frozenset(n.strip().lower() for n in config_get('AGENT_ROSTER').split(',') if n.strip())  # #318
-    sess.race = choice['race']
-    sess.class_ = choice['class_']
-    sess.login_character(choice['guid'])
-    log.info("online — guid %d, position %s", sess.player_guid, sess.player_position)
-    # UM-93: the server doesn't auto-join General at login (a real client
-    # asks for it), so join the configured channels now. A failed join is
-    # logged and otherwise ignored. Joining is kept with chat sending deferred
-    # (UM-98) so channel chat is still heard (chat_inbox, chat-feed relay).
-    sess.join_channels(parse_channel_spec(getattr(cfg, "channels", None)))
-    return sess
-
-
-INITIAL_RECONNECT_BACKOFF_S = 5.0
-MAX_RECONNECT_BACKOFF_S = 300.0
-
-
-def _equal_jitter(backoff: float, rng: random.Random) -> float:
-    """#402: the wait for one backoff step, uniform in [backoff / 2, backoff]. It never exceeds
-    the backoff, so jitter only spreads the waits out; the backoff sequence itself is unchanged."""
-    return rng.uniform(backoff / 2, backoff)
-
-
-def _supervise_connection(build_session, run_session, log,
-                           sleep=None, stop: threading.Event | None = None,
-                           initial_backoff: float = INITIAL_RECONNECT_BACKOFF_S,
-                           max_backoff: float = MAX_RECONNECT_BACKOFF_S,
-                           jitter: Callable[[float], float] | None = None):
-    """Reconnect supervisor (UM-43). `build_session()` does auth+connect+
-    login and returns a fresh WoWSession (and therefore fresh WorldState);
-    `run_session(session)` drives one full agent run and returns True if it
-    ended because of an unexpected disconnect (recv thread death,
-    ConnectionError, or an unrequested SMSG_LOGOUT_COMPLETE — see
-    agent.session.WoWSession.unexpected_disconnect) or False for a clean/
-    requested stop (duration elapsed). Backoff is exponential, 5s -> 5min
-    cap, reset to the initial value after each successful (re)connect.
-
-    This is the inner layer on top of the outer `docker restart:
-    unless-stopped`: it retries transient drops without the container
-    itself needing to restart. SIGTERM/SIGINT (#401) set `stop`: the per-attempt
-    session.logout() below still runs (via finally) and the supervisor returns
-    instead of reconnecting.
-
-    `sleep` is injectable so tests can assert on backoff timing without
-    actually waiting (see agent/tests/test_reconnect.py). By default the backoff
-    waits on `stop` (#401): once it is set (SIGTERM) the supervisor logs out the
-    current session and returns instead of reconnecting.
-
-    #402: each wait is `jitter(backoff)`, by default equal jitter from a per-supervisor
-    OS-seeded RNG, so a fleet restarting together does not retry in lockstep. Jitter
-    changes only the wait: `backoff` keeps doubling from the un-jittered value. Every
-    reconnect wait is counted once under its reason (agent.metrics.count_reconnect)."""
-    stop = stop or threading.Event()
-    sleep = sleep or stop.wait
-    if jitter is None:
-        rng = random.Random()  # OS-seeded: each supervisor draws its own waits
-        jitter = functools.partial(_equal_jitter, rng=rng)
-    backoff = initial_backoff
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            session = build_session()
-        except Exception as e:
-            if isinstance(e, AuthRejected) and e.code in PERMANENT_AUTH_CODES:
-                # #430: a refusal is one readable line, never a traceback
-                log.error("%s — not retrying", e)
-                raise
-            delay = jitter(backoff)
-            if isinstance(e, AuthRejected):
-                count_reconnect("auth_rejected")
-                log.warning("%s — retrying in %.0fs", e, delay)
-            else:
-                count_reconnect("connect_failed")
-                if isinstance(e, OSError):  # #571: an expected network error is one line, no traceback
-                    log.warning("connect failed (%s: %s), attempt %d; retrying in %.0fs", type(e).__name__, e, attempt, delay)
-                else:
-                    swallowed("main.connect", log, f"attempt {attempt}")
-                    log.warning("retrying in %.0fs", delay)
-            sleep(delay)
-            if stop.is_set():
-                return
-            backoff = min(backoff * 2, max_backoff)
-            continue
-
-        backoff = initial_backoff  # reset after a successful (re)connect
-        try:
-            disconnected = run_session(session)
-        finally:
-            try:
-                session.logout()
-            except Exception:
-                swallowed("main.logout", log, "after this session attempt")
-
-        if not disconnected or stop.is_set():
-            return
-        delay = jitter(backoff)
-        count_reconnect("disconnected")
-        log.warning("connection lost unexpectedly — reconnecting in %.0fs", delay)
-        sleep(delay)
-        if stop.is_set():
-            return
-        backoff = min(backoff * 2, max_backoff)
-
-
-FOLLOW_REFLEX_TICK_INTERVAL_S = 0.3  # 250-500 ms, per UM-58's card
-REST_REFLEX_TICK_INTERVAL_S = 0.3  # same cadence, per UM-43's card
-
-
-def _run_follow_reflex_loop(sess, stop_event: threading.Event,
-                             tick_interval: float = FOLLOW_REFLEX_TICK_INTERVAL_S):
-    """Runs agent.reflexes.follow's FollowReflex.tick() on its own thread at
-    a fixed cadence, independent of the (much slower) LLM think_interval —
-    this is what makes it a reflex ("between LLM steps") rather than
-    another step of the think loop. One bad tick shouldn't kill the whole
-    loop or the recv thread, so exceptions are logged and swallowed."""
-    log = logging.getLogger("agent.reflexes.follow")
-    reflex = get_follow_reflex(sess)
-    while not stop_event.is_set():
-        try:
-            reflex.tick(sess, sess.world_state)
-        except Exception:
-            swallowed("reflex.follow_tick", log)
-        stop_event.wait(tick_interval)
-
-
-def _run_rest_reflex_loop(sess, stop_event: threading.Event,
-                           tick_interval: float = REST_REFLEX_TICK_INTERVAL_S):
-    """Same shape as _run_follow_reflex_loop, driving agent.reflexes.rest's
-    RestReflex.tick() (UM-43) on its own thread."""
-    log = logging.getLogger("agent.reflexes.rest")
-    reflex = get_rest_reflex(sess)
-    while not stop_event.is_set():
-        try:
-            reflex.tick(sess, sess.world_state)
-        except Exception:
-            swallowed("reflex.rest_tick", log)
-        stop_event.wait(tick_interval)
-
-
-def _run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, brain=None,
-              audit_logger=None, observer=None, stop: threading.Event | None = None) -> bool:
-    start = time.monotonic()
-
-    reflex_stop = threading.Event()
-    reflex_threads = [
-        threading.Thread(target=_run_follow_reflex_loop, args=(sess, reflex_stop), daemon=True),
-        threading.Thread(target=_run_rest_reflex_loop, args=(sess, reflex_stop), daemon=True),
-    ]
-    for t in reflex_threads:
-        t.start()
-    try:
-        return _run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump,
-                                brain=brain, audit_logger=audit_logger, observer=observer, stop=stop)
-    finally:
-        if observer is not None:
-            observer.detach()
-        reflex_stop.set()
-        for t in reflex_threads:
-            t.join(timeout=2.0)
-
-
-def _reflex_state(sess) -> dict:
-    """Best-effort snapshot of active reflexes for the audit log — never
-    raises, since a reflex's internal shape isn't this loop's business."""
-    state = {}
-    follow = getattr(sess, "follow_reflex", None)
-    if follow is not None and getattr(follow, "enabled", False):
-        state["follow"] = {
-            "enabled": True,
-            "leader_guid": getattr(follow, "leader_guid", None),
-            "leader_name": getattr(follow, "leader_name", None),
-            "assist": getattr(follow, "assist", False),
-        }
-    rest = getattr(sess, "rest_reflex", None)
-    if rest is not None and getattr(rest, "active", False):
-        state["rest"] = {"active": True, "method": getattr(rest, "method", None)}
-    return state
-
-
-def _remaining_sleep(cycle_start: float, interval: float, now: float) -> float:
-    """Seconds left until the cycle's deadline; 0 (never negative) when it overran."""
-    return max(0.0, interval - (now - cycle_start))
-
-
-def _run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
-                     brain=None, audit_logger=None, observer=None,
-                     stop: threading.Event | None = None) -> bool:
-    """`stop` (#401) ends the loop at once, mid-sleep, as a clean stop (False).
-    Returns True if the loop ended because of an unexpected disconnect
-    (agent.session.WoWSession.unexpected_disconnect, UM-43 — the reconnect
-    supervisor should retry), False for a normal end (duration elapsed)."""
-    log = logging.getLogger("agent")
-    cycle = 0
-    think_state = ThinkState()  # UM-90: recent-action history + loop guard, per session attempt
-    if observer is not None:
-        observer.attach(sess, think_state, _reflex_state)  # UM-50: read-only HTTP view
-    while (duration is None or time.monotonic() - start < duration) and not (stop and stop.is_set()):
-        cycle_start = time.monotonic()
-        if sess.unexpected_disconnect:
-            log.warning("world connection dropped unexpectedly — ending this session attempt")
-            return True
-
-        # ── perceive ───────────────────────────────────────────
-        objects = sess.world_state.get_objects()
-        units = sum(1 for o in objects.values() if o.object_type == "unit")
-        players = sum(1 for o in objects.values() if o.object_type == "player")
-        gameobjects = sum(1 for o in objects.values() if o.object_type == "gameobject")
-        if objects:
-            log.info("perception: %d objects tracked (%d units, %d players, %d gameobjects)",
-                      len(objects), units, players, gameobjects)
-            if log.isEnabledFor(logging.DEBUG):
-                me = sess.world_state.get_my_object()
-                pos = me.position if me else sess.player_position
-                nearest = sorted(
-                    (o for o in objects.values() if o.guid != sess.player_guid and o.distance_to(pos or ()) is not None),
-                    key=lambda o: o.distance_to(pos),
-                )[:5]
-                for o in nearest:
-                    hp_pct = f"{o.health / o.max_health:.0%}" if o.health is not None and o.max_health else "?"
-                    log.debug("  %5.1fyd  entry=%s level=%s hp=%s  %s",
-                              o.distance_to(pos), o.entry, o.level, hp_pct, o)
-        if perception_dump:
-            snapshot = sess.world_state.snapshot(my_position=sess.player_position)
-            print(json.dumps(snapshot))
-
-        # ── think + act (brain call → one validated action per cycle) ────
-        if brain is not None:
-            cycle += 1
-            # #178: an operator walk (agent/control.py) holds this lock while it moves the
-            # character, so a think cycle never starts a competing move mid-walk.
-            with (observer.action_lock if observer is not None else contextlib.nullcontext()):
-                result = think_and_act(sess, sess.world_state, brain,
-                                        persona=cfg.persona, my_position=sess.player_position,
-                                        audit_logger=audit_logger, cycle=cycle,
-                                        reflex_state=_reflex_state(sess), state=think_state)
-            if not result.ok:
-                log.info("think cycle: no action taken (%s)", result.error)
-
-        # #215: sleep to a deadline so the period is the interval, not interval + cycle time.
-        wait = _remaining_sleep(cycle_start, cfg.think_interval, time.monotonic())
-        stop.wait(wait) if stop else time.sleep(wait)
-
-    return False
 
 
 if __name__ == "__main__":

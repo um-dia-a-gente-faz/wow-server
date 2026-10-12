@@ -2,15 +2,15 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from agent import __main__ as m
+from agent import runloop as m
 
 
 class RemainingSleepTests(unittest.TestCase):
     def test_sleeps_the_remainder(self):
-        self.assertAlmostEqual(m._remaining_sleep(10.0, 5.0, 10.25), 4.75)
+        self.assertAlmostEqual(m.remaining_sleep(10.0, 5.0, 10.25), 4.75)
 
     def test_overrun_never_negative(self):
-        self.assertEqual(m._remaining_sleep(10.0, 3.0, 20.0), 0.0)
+        self.assertEqual(m.remaining_sleep(10.0, 3.0, 20.0), 0.0)
 
 
 class FakeClock:
@@ -42,7 +42,7 @@ class ThinkLoopPacingTests(unittest.TestCase):
         cfg = SimpleNamespace(think_interval=interval)
         with mock.patch.object(m.time, "monotonic", clock.monotonic), \
              mock.patch.object(m.time, "sleep", clock.sleep):
-            m._run_think_loop(sess, cfg, duration=interval * len(cycle_costs) - 0.5, start=0.0)
+            m.run_think_loop(sess, cfg, duration=interval * len(cycle_costs) - 0.5, start=0.0)
         return starts, clock.sleeps
 
     def test_period_is_interval_not_interval_plus_cycle(self):
