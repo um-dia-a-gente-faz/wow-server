@@ -82,8 +82,10 @@ services:
       - LISTEN_PORT=9300
       - TOP_PLAYED=20
       - BACKUP_DIR=/backups
+      - DEPLOY_LOG=/deploy/deploy.log
     volumes:
       - /opt/wow-server-backups:/backups:ro   # scripts/backup-db.sh output, for the backup-age metric (#361)
+      - /opt/wow-server-metrics:/deploy:ro    # deploy.log, for the deploy annotations (#377); the dir, not the file
     ports:
       - "9300:9300"
     networks:
