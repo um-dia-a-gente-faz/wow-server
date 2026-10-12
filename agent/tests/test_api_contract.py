@@ -53,6 +53,33 @@ class ProducerTest(_ServerCase):
         self.check("/perception", "/perception", "not in game")
         self.check("/brain", "/brain", "ok")
 
+    def test_state_with_a_lifecycle_validates_in_game_and_detached(self):
+        from agent.lifecycle import Lifecycle, State
+        lc = Lifecycle(clock=lambda: 1700000000.5)
+        lc.to(State.ONLINE, "connected")
+        self.observer.lifecycle = lc
+        self.check("/state", "/state", "in game")
+        self.assertEqual(json.loads(self.get("/state")[1])["lifecycle"], lc.snapshot())
+        self.observer.detach()
+        self.check("/state", "/state", "not in game")
+        body = json.loads(self.get("/state")[1])
+        self.assertEqual(body["lifecycle"], lc.snapshot())
+        self.assertIs(body["connected"], False)
+
+    def test_state_has_no_lifecycle_key_until_one_is_attached(self):
+        self.assertNotIn("lifecycle", json.loads(self.get("/state")[1]))
+        self.observer.detach()
+        self.assertNotIn("lifecycle", json.loads(self.get("/state")[1]))
+
+    def test_lifecycle_schema_matches_the_machine(self):
+        from agent.lifecycle import Lifecycle, State
+        for response in ("in game", "not in game"):
+            with self.subTest(response=response):
+                schema = ac.response_schema("/state", response)["properties"]["lifecycle"]
+                self.assertEqual(schema["properties"]["state"]["enum"], [s.value for s in State])
+                self.assertEqual(sorted(schema["required"]), sorted(Lifecycle().snapshot()))
+                self.assertNotIn("lifecycle", ac.response_schema("/state", response)["required"])
+
     def test_error_bodies_carry_version(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             urllib.request.urlopen(self.base + "/nope", timeout=5)

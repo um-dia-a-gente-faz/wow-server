@@ -19,7 +19,7 @@ Response: ok
 
 ## `GET /state`
 
-Own stats, spellbook, quest log, equipment and inventory.
+Own stats, spellbook, quest log, equipment and inventory. Also the connection lifecycle (ADR 0015), when the agent has one.
 
 Response: not in game
 
@@ -28,6 +28,15 @@ Response: not in game
 | `api_version` | integer | yes |
 | `agent` | string | yes |
 | `connected` | boolean | yes |
+| `lifecycle` | object |  |
+| `lifecycle.state` | string | yes |
+| `lifecycle.since` | number | yes |
+| `lifecycle.reason` | string | yes |
+| `lifecycle.transitions` | array | yes |
+| `lifecycle.transitions[].from` | string | yes |
+| `lifecycle.transitions[].to` | string | yes |
+| `lifecycle.transitions[].reason` | string | yes |
+| `lifecycle.transitions[].at` | number | yes |
 
 Response: in game
 
@@ -62,6 +71,15 @@ Response: in game
 | `quest_log` | array | yes |
 | `equipment` | object | yes |
 | `inventory` | array | yes |
+| `lifecycle` | object |  |
+| `lifecycle.state` | string | yes |
+| `lifecycle.since` | number | yes |
+| `lifecycle.reason` | string | yes |
+| `lifecycle.transitions` | array | yes |
+| `lifecycle.transitions[].from` | string | yes |
+| `lifecycle.transitions[].to` | string | yes |
+| `lifecycle.transitions[].reason` | string | yes |
+| `lifecycle.transitions[].at` | number | yes |
 
 ## `GET /perception`
 
@@ -174,6 +192,7 @@ Any non-2xx JSON body: {api_version, error}.
 
 - GET /events is a Server-Sent Events stream (event: event | decision, data: JSON) and is not versioned per message.
 - A missing api_version means an agent older than this contract; consumers treat it as version 1 (the shape did not change).
+- lifecycle in GET /state is the snapshot of the reconnect supervisor's state machine (docs/adr/0015-agent-connection-lifecycle.md). It is absent on an agent that has none. since and at are unix epoch seconds; transitions holds the newest 32, oldest first.
 
 <!-- BEGIN GENERATED catalog: agent/action_specs.py (scripts/generate.py) -->
 ## Action catalog

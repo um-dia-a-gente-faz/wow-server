@@ -11,7 +11,8 @@ AGENT_CONTROL_TOKEN is set (bearer-authenticated, called by tools/agent-runner,
 see agent/control.py). With no token configured every POST is still a 405.
 
     GET /healthz     liveness, agent name, whether a session is attached
-    GET /state       own stats, spellbook, quest log, equipment, inventory
+    GET /state       own stats, spellbook, quest log, equipment, inventory; the connection
+                     lifecycle (ADR 0015) when one is attached, also while not in game
     GET /perception  WorldState.snapshot(), the same view the LLM gets
     GET /brain       goal, brain (jev/llm), model, last decisions (from the audit records),
                      recent-action history, reflexes, token usage
@@ -37,6 +38,7 @@ import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from . import control
@@ -74,6 +76,12 @@ def _jsonable(obj):
     return _redact(json.loads(json.dumps(obj, default=str)))
 
 
+class LifecycleView(Protocol):
+    """What the observer needs from agent.lifecycle.Lifecycle (#292): a thread-safe snapshot."""
+
+    def snapshot(self) -> dict[str, object]: ...
+
+
 class AgentObserver:
     """What the HTTP handlers read from. The main loop calls attach() when a
     session starts and detach() when it ends (sessions are rebuilt on every
@@ -97,6 +105,9 @@ class AgentObserver:
         # whole duration, so the two never drive the character at once.
         self.action_lock = threading.Lock()
         self.control_token = ""  # set by the main loop from AGENT_CONTROL_TOKEN; "" = no control endpoint
+        # #292: the supervisor's agent.lifecycle.Lifecycle. None until the supervisor is wired:
+        # /state then has no "lifecycle".
+        self.lifecycle: LifecycleView | None = None
 
     # ── fed by the agent loop ────────────────────────────────────────
     def attach(self, session, think_state=None, reflex_state_fn=None):
@@ -125,6 +136,11 @@ class AgentObserver:
         return [d for d in _copy(lambda: list(self.decisions)) if d["seq"] > seq]
 
     # ── views ────────────────────────────────────────────────────────
+    def _lifecycle(self) -> dict:
+        """{"lifecycle": snapshot} when a lifecycle is attached, else {} (#292)."""
+        lc = self.lifecycle
+        return {} if lc is None else {"lifecycle": lc.snapshot()}
+
     def healthz(self) -> dict:
         sess = self.session
         return {
@@ -137,7 +153,7 @@ class AgentObserver:
     def state(self) -> dict:
         sess = self.session
         if sess is None:
-            return {"agent": self.agent_name, "connected": False}
+            return {"agent": self.agent_name, "connected": False, **self._lifecycle()}
         world = sess.world_state
         me = world.get_my_object()
         stats = {
@@ -178,6 +194,7 @@ class AgentObserver:
             "quest_log": world.build_quest_log(),
             "equipment": equipment,
             "inventory": inventory,
+            **self._lifecycle(),
         })
 
     def perception(self) -> dict:

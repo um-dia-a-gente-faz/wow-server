@@ -36,6 +36,8 @@ DEFAULT_BASE_DIR = "/data/audit"
 DEFAULT_RETENTION_DAYS = 14
 DEFAULT_FULL_SNAPSHOT_EVERY = 20
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB per file before rotation
+LIFECYCLE_SUBDIR = "lifecycle"  # <base_dir>/<agent>/lifecycle/<YYYY-MM-DD>.jsonl (#292)
+LIFECYCLE_SCHEMA = 1
 
 _DAY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl(\.\d+)?$")
 
@@ -164,6 +166,24 @@ class AuditLogger:
             f.write(line)
         return rec
 
+    def record_lifecycle(self, source: str, target: str, reason: str, ts: float | None = None) -> dict:
+        """One line per connection-lifecycle transition (#292, ADR 0015), appended to
+        `<base_dir>/<agent>/lifecycle/<YYYY-MM-DD>.jsonl`.
+
+        Not in the decision day files on purpose: every line there is read as one think
+        cycle (agent.metrics.iter_records, tools/agent-runner's newest-record age, wowmap's
+        AuditTailer). For the same reason `on_record` is not called. No size rotation: a
+        transition is about 120 bytes. Retention is the day files' retention."""
+        ts = ts if ts is not None else time.time()
+        d = {"schema": LIFECYCLE_SCHEMA, "ts": ts, "agent": self.agent_name,
+             "from": source, "to": target, "reason": reason}
+        self._maybe_clean_retention(ts)
+        directory = os.path.join(self.agent_dir, LIFECYCLE_SUBDIR)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, f"{self._date_str(ts)}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(d) + "\n")
+        return d
+
     def _rotate_if_needed(self, path: str, incoming_bytes: int):
         if not os.path.exists(path):
             return  # nothing written yet this day — nothing to rotate
@@ -195,27 +215,29 @@ class AuditLogger:
 
     def clean_retention(self, now: float | None = None) -> list[str]:
         """Delete audit files (any `.jsonl` or rotated `.jsonl.N`) whose day
-        is older than `retention_days`. Returns the list of deleted paths."""
+        is older than `retention_days`, in the agent directory and in its lifecycle
+        subdirectory (#292). Returns the list of deleted paths."""
         now = now if now is not None else time.time()
         cutoff = now - self.retention_days * 86400
         deleted: list[str] = []
-        if not os.path.isdir(self.agent_dir):
-            return deleted
-        for name in os.listdir(self.agent_dir):
-            m = _DAY_FILE_RE.match(name)
-            if not m:
+        for directory in (self.agent_dir, os.path.join(self.agent_dir, LIFECYCLE_SUBDIR)):
+            if not os.path.isdir(directory):
                 continue
-            try:
-                day_ts = time.mktime(time.strptime(m.group(1), "%Y-%m-%d"))
-            except ValueError:
-                continue
-            if day_ts < cutoff:
-                path = os.path.join(self.agent_dir, name)
+            for name in os.listdir(directory):
+                m = _DAY_FILE_RE.match(name)
+                if not m:
+                    continue
                 try:
-                    os.remove(path)
-                    deleted.append(path)
-                except OSError:
-                    pass
+                    day_ts = time.mktime(time.strptime(m.group(1), "%Y-%m-%d"))
+                except ValueError:
+                    continue
+                if day_ts < cutoff:
+                    path = os.path.join(directory, name)
+                    try:
+                        os.remove(path)
+                        deleted.append(path)
+                    except OSError:
+                        pass
         if deleted:
             log.info("audit retention: deleted %d file(s) older than %d days",
                       len(deleted), self.retention_days)

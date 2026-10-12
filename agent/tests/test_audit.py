@@ -123,6 +123,66 @@ class AuditLoggerWriteTest(unittest.TestCase):
         self.assertEqual(redacted["a"]["b"][0]["password"], "***")
 
 
+class LifecycleRecordTest(unittest.TestCase):
+    """#292: lifecycle transitions go to <agent>/lifecycle/<day>.jsonl, apart from the decision records."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.logger = AuditLogger("TestAgent", base_dir=self.tmp.name, retention_days=14)
+        self.agent_dir = os.path.join(self.tmp.name, "TestAgent")
+
+    def test_writes_one_line_per_transition_in_the_lifecycle_subdirectory(self):
+        ts = time.time()
+        first = self.logger.record_lifecycle("connecting", "online", "connected", ts=ts)
+        self.logger.record_lifecycle("online", "backoff", "disconnected", ts=ts + 1)
+        path = os.path.join(self.agent_dir, "lifecycle", time.strftime("%Y-%m-%d", time.localtime(ts)) + ".jsonl")
+        with open(path) as f:
+            lines = [json.loads(line) for line in f]
+        self.assertEqual(lines, [
+            {"schema": 1, "ts": ts, "agent": "TestAgent", "from": "connecting", "to": "online", "reason": "connected"},
+            {"schema": 1, "ts": ts + 1, "agent": "TestAgent", "from": "online", "to": "backoff",
+             "reason": "disconnected"},
+        ])
+        self.assertEqual(first, lines[0])
+
+    def test_ts_defaults_to_now(self):
+        before = time.time()
+        d = self.logger.record_lifecycle("connecting", "backoff", "connect_failed")
+        self.assertGreaterEqual(d["ts"], before)
+        self.assertLessEqual(d["ts"], time.time())
+
+    def test_lifecycle_line_does_not_reach_on_record(self):
+        seen = []
+        self.logger.on_record = seen.append
+        self.logger.record_lifecycle("connecting", "online", "connected")
+        self.assertEqual(seen, [])
+
+    def test_decision_readers_do_not_see_lifecycle_lines(self):
+        from agent import metrics
+        self.logger.record(cycle=1, snapshot={}, tool_call={"name": "idle", "args": {}},
+                           valid=True, result={"ok": True, "error": None})
+        self.logger.record_lifecycle("connecting", "online", "connected")
+        files = metrics.find_audit_files(self.tmp.name)
+        self.assertEqual(files, [os.path.join(self.agent_dir, time.strftime("%Y-%m-%d") + ".jsonl")])
+        records, bad = metrics.read_audit(files)
+        self.assertEqual([r["cycle"] for r in records], [1])
+        self.assertEqual(bad, {})
+        self.assertEqual(sorted(os.listdir(self.agent_dir)), sorted(["lifecycle", os.path.basename(files[0])]))
+
+    def test_retention_also_cleans_the_lifecycle_subdirectory(self):
+        directory = os.path.join(self.agent_dir, "lifecycle")
+        os.makedirs(directory)
+        now = time.time()
+        old = os.path.join(directory, time.strftime("%Y-%m-%d", time.localtime(now - 30 * 86400)) + ".jsonl")
+        new = os.path.join(directory, time.strftime("%Y-%m-%d", time.localtime(now)) + ".jsonl")
+        for path in (old, new):
+            with open(path, "w") as f:
+                f.write("{}\n")
+        self.assertEqual(self.logger.clean_retention(now=now), [old])
+        self.assertEqual(os.listdir(directory), [os.path.basename(new)])
+
+
 class AuditLoggerRotationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
