@@ -93,6 +93,35 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 
+**Where the `tools` job's time goes (#591).** The job `tools (unit tests, generated files)`
+has a 10-minute timeout. It runs `scripts/check.sh generated test`, which is the
+generated-file checks and then every suite in `SUITES` in sequence, then the JevClient
+step against a running jev-mock (about 6 s). Job setup, checkout, `setup-python` and the two pip
+installs take about 8 s before the first suite, and post-job cleanup about 2 s after. The limit is at least 2x the job's duration: the job in run 38226653245 on `main`
+(2026-10-12, a push that ran every job) took 4m33s in total. Wall time per suite is the gap between
+consecutive suite starts in that job's log, slowest first:
+
+| Suite | Tests | Wall time (s) |
+|---|---|---|
+| agent | 1727 | 143.1 |
+| wowmap | 262 | 39.0 |
+| world-mock | 34 | 36.5 |
+| loadtest | 14 | 19.2 |
+| agent-runner | 74 | 5.8 |
+| scripts | 162 | 4.0 |
+| chat-feed | 51 | 3.9 |
+| jev-mock | 17 | 3.7 |
+| common | 32 | 0.9 |
+| generated checks | - | 0.7 |
+| tools-arch | 28 | 0.4 |
+| wow-agents | 19 | 0.2 |
+| dbc | 48 | 0.1 |
+| wowmap-js | 9 | 0.1 |
+| wow-exporter | 8 | 0.1 |
+
+`agent` is most of the job. It is already past that mark (143 s in this run), and the separate `agent` job runs the same suite, so it is the first place to look; #591 only raised the limit. A suite that grows past about a minute is a reason to look at
+it (what it runs, what it waits on), not a reason to raise the timeout again.
+
 Milestone and board naming (`M<n> - <subject>`, label and view rules, *blocked by*) is
 in `CLAUDE.md`, *Milestones and board naming*.
 
