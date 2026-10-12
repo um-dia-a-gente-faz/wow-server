@@ -398,7 +398,7 @@ class WoWSession(Transport, GameState):
                 self._running = False
                 # Not a requested logout() (that sets _running=False itself
                 # before joining this thread) — the reconnect supervisor
-                # (agent/__main__.py, UM-43) treats this as a drop worth
+                # (agent/supervisor.py, UM-43) treats this as a drop worth
                 # retrying rather than the agent process exiting.
                 self.unexpected_disconnect = True
 
@@ -445,7 +445,7 @@ def handle_logout_complete(ctx, payload):
     if not st._logout_requested:
         # The server ended our session without us asking (kicked,
         # duplicate login elsewhere, forced disconnect) — the
-        # reconnect supervisor (agent/__main__.py, UM-43) treats
+        # reconnect supervisor (agent/supervisor.py, UM-43) treats
         # this the same as a dropped socket.
         st.unexpected_disconnect = True
     st._in_world = False

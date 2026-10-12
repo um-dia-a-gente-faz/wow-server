@@ -62,13 +62,26 @@ if [ -r "$state_dir/last-failure" ]; then
 fi
 
 # --- mirror newest ---------------------------------------------------------
+# Freshness (QUIET vs OK) counts the decision day files only: the files directly
+# in <agent>/ (live and rotated <day>.jsonl.N), not <agent>/lifecycle/ (#622).
+mirror_day_newest="$(find "$dest" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl*' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
+mirror_day_newest="${mirror_day_newest%.*}"
+# PULL BEHIND compares the whole tree on both sides, lifecycle files included.
 mirror_newest="$(find "$dest" -type f -name '*.jsonl*' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
 mirror_newest="${mirror_newest%.*}"
+# Same base as the source line (whole tree); the decision-file age is reported next to it.
+mirror_line="mirror:        "
 if [ -n "$mirror_newest" ]; then
-  echo "mirror:        newest audit file $((now - mirror_newest)) s old ($dest)"
+  mirror_line+="newest audit file $((now - mirror_newest)) s old"
 else
-  echo "mirror:        no audit files in $dest"
+  mirror_line+="no audit files"
 fi
+if [ -n "$mirror_day_newest" ]; then
+  mirror_line+=", newest decision file $((now - mirror_day_newest)) s old"
+else
+  mirror_line+=", no decision files"
+fi
+echo "$mirror_line ($dest)"
 
 # --- source newest (optional) ---------------------------------------------
 src_newest=""
@@ -100,7 +113,7 @@ if [ -n "$src_newest" ] && { [ -z "$mirror_newest" ] || [ $((src_newest - mirror
   exit 1
 fi
 
-if [ -z "$mirror_newest" ] || [ $((now - mirror_newest)) -gt "$quiet_after" ]; then
+if [ -z "$mirror_day_newest" ] || [ $((now - mirror_day_newest)) -gt "$quiet_after" ]; then
   echo "VERDICT: QUIET - the pull is healthy and the source has nothing newer: no agent activity for over ${quiet_after}s."
   exit 0
 fi
