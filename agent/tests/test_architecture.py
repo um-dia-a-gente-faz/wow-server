@@ -169,6 +169,20 @@ def agent_graph():
     return graph, third
 
 
+def _live_deque_loops(source: str, filename: str = "<src>") -> list[int]:
+    """Line numbers where `source` reads `.events` or `.chat_inbox` other than as the direct
+    argument of list(...) or len(...): a loop, a comprehension, reversed()/max()/map()/zip(),
+    or an alias (`inbox = s.chat_inbox`) that is looped over later. A copy
+    (`list(x.events)`, the snapshot methods) is the only safe read."""
+    tree = ast.parse(source, filename)
+    copies = {"list", "len"}
+    safe = {id(n.args[0]) for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") in copies and len(n.args) == 1}
+    return sorted(n.lineno for n in ast.walk(tree)
+                  if isinstance(n, ast.Attribute) and n.attr in {"events", "chat_inbox"}
+                  and id(n) not in safe)
+
+
 class AgentArchitectureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -258,6 +272,28 @@ class AgentArchitectureTests(unittest.TestCase):
                 if "swallowed" not in calls and not reraises:
                     bad.append(f"{rel}:{node.lineno}")
         self.assertEqual(bad, [], "broad except without swallowed(where, log): see agent/metrics.py")
+
+    def test_other_threads_never_iterate_the_live_deques(self):
+        """#692: the recv thread (agent/state.py, agent/handlers/) is the only appender, so
+        only it may loop over `events` / `chat_inbox`; everyone else takes events_snapshot()
+        / chat_inbox_snapshot() (ADR 0009)."""
+        bad = []
+        for path, _, _ in _agent_files():
+            rel = str(path.relative_to(ROOT))
+            if "/tests/" in rel or rel == "agent/state.py" or rel.startswith("agent/handlers/"):
+                continue
+            bad += [f"{rel}:{n}" for n in _live_deque_loops(path.read_text(), rel)]
+        self.assertEqual(bad, [], "iterate session.events_snapshot() / chat_inbox_snapshot(), not the deque")
+
+    def test_the_live_deque_probe_catches_every_loop_shape(self):
+        for src in ("for e in session.events: pass", "[e for e in s.chat_inbox]",
+                    "any(e for e in s.events)", "for e in reversed(ctx.state.events): pass",
+                    "for i, e in enumerate(s.events): pass", "inbox = session.chat_inbox",
+                    "max(s.events, key=lambda e: e['t'])", "list(map(f, s.events))"):
+            self.assertTrue(_live_deque_loops(src), src)
+        for src in ("for e in list(s.events): pass", "for e in s.events_snapshot(): pass",
+                    "for e in s.chat_inbox_snapshot(): pass", "n = len(s.events)"):
+            self.assertEqual(_live_deque_loops(src), [], src)
 
     def test_parsers_do_not_reach_into_state_or_actions(self):
         # "parsers are pure": they may use the wire helpers and each other's data, never

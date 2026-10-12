@@ -222,7 +222,7 @@ def _known_player_name(session, world, target_name: str) -> bool:
     for obj in world.get_objects().values():
         if obj.name and obj.name.lower() == lname:
             return True
-    for entry in session.chat_inbox:
+    for entry in session.chat_inbox_snapshot():
         if entry.get("sender_name", "").lower() == lname:
             return True
     return False
@@ -291,7 +291,7 @@ class WhisperAction(Action):  # not registered: chat deferred (UM-98)
         # successful whisper gets no ack at all. Same fire-and-forget,
         # wait-for-failure-only pattern as SellItemAction.
         def find_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if (e.get("t", 0) >= sent_at and e.get("kind") == "whisper_failed"
                         and e.get("target_name") == target_name):
                     return e
@@ -342,7 +342,7 @@ class InviteToGroupAction(Action):
         # only a failure event is worth waiting for; a timeout (or a
         # silently-successful OK) means the invite went through.
         def find_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if (e.get("t", 0) >= sent_at and e.get("kind") == "group_invite_failed"
                         and e.get("target_name") == name):
                     return e
@@ -534,8 +534,7 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
     def execute(self, session, world, channel: str, message: str, **_) -> ActionResult:
         full = chmod.find_joined(world.get_channels(), channel)
         text = _encode_message(message).decode("utf-8")
-        inbox = session.chat_inbox
-        seen = {id(e) for e in inbox}
+        seen = {id(e) for e in session.chat_inbox_snapshot()}
         sent_at = time.monotonic()
         channel_say(session, full, message)
         history = session.channel_say_history
@@ -547,7 +546,7 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
         # refusal comes back as SMSG_CHANNEL_NOTIFY (not_member, muted,
         # throttled, ...), which the session records as a channel_error event.
         def find_outcome():
-            for e in list(inbox):
+            for e in session.chat_inbox_snapshot():
                 if (id(e) not in seen and e.get("kind") == "channel"
                         and e.get("sender_guid") == session.player_guid and e.get("text") == text):
                     return {"echo": e}
