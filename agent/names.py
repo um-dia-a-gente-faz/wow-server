@@ -30,7 +30,7 @@ from .wire import Reader
 log = logging.getLogger("agent.names")
 
 DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/wow-agent/names.json")
-CACHE_SCHEMA = 1   # ADR 0018: the `schema` key of names.json
+CACHE_SCHEMA = 2   # 2: names decoded as UTF-8 (#666); a schema-1 file may hold U+FFFD and is not read
 
 # CreatureEliteType (SharedDefines.h) — Classification in QueryCreatureResponse.
 CREATURE_RANK_NAMES = {
