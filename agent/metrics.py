@@ -525,3 +525,37 @@ def render_reconnects(agent: str) -> str:
     lines += [f'wow_agent_reconnect_attempts_total{{agent="{agent}",reason="{r}"}} {counts[r]}'
               for r in RECONNECT_REASONS]
     return "\n".join(lines) + "\n"
+
+
+# ── Fleet limits file health (ADR 0017 slice 3, #675) ─────────────────────
+# `health` is FleetLimits.health: (state, written_ts), or None when no limits file is
+# configured. The counter is process-wide like the reconnect one, at 0 until a brain is blocked.
+FLEET_STATES = ("ok", "missing", "invalid", "off")
+FLEET_BRAINS = ("jev", "llm")
+FLEET_BLOCKED: dict[str, int] = dict.fromkeys(FLEET_BRAINS, 0)
+_fleet_lock = threading.Lock()
+
+
+def count_fleet_blocked(brain: str) -> None:
+    with _fleet_lock:
+        FLEET_BLOCKED[brain] += 1   # KeyError on an unknown brain: label values stay bounded
+
+
+def render_fleet(agent: str, health: tuple[str, float | None] | None, now: float) -> str:
+    """The fleet limits state, age and blocked-cycle counter as Prometheus exposition text."""
+    with _fleet_lock:
+        counts = dict(FLEET_BLOCKED)
+    state, written_ts = health if health is not None else ("off", None)
+    a = _label_value(agent)
+    lines = ["# HELP wow_agent_fleet_limits_state State of the fleet limits file as of the last think cycle "
+             "(ADR 0017): 1 for the current state",
+             "# TYPE wow_agent_fleet_limits_state gauge"]
+    lines += [f'wow_agent_fleet_limits_state{{agent="{a}",state="{s}"}} {int(s == state)}' for s in FLEET_STATES]
+    lines += ["# HELP wow_agent_fleet_limits_age_seconds Seconds since the limits file's written_ts",
+              "# TYPE wow_agent_fleet_limits_age_seconds gauge"]
+    if state == "ok" and written_ts is not None:
+        lines.append(f'wow_agent_fleet_limits_age_seconds{{agent="{a}"}} {max(0.0, now - written_ts)}')
+    lines += ["# HELP wow_agent_fleet_blocked_cycles_total Think cycles in which the fleet limits file blocked a brain",
+              "# TYPE wow_agent_fleet_blocked_cycles_total counter"]
+    lines += [f'wow_agent_fleet_blocked_cycles_total{{agent="{a}",brain="{b}"}} {counts[b]}' for b in FLEET_BRAINS]
+    return "\n".join(lines) + "\n"

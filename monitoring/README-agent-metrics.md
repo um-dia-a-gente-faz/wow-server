@@ -85,6 +85,14 @@ permanent refusal stops the agent and is not counted. The waits are jittered (eq
 and the full backoff), so a fleet restarted together does not retry in lockstep. All three reasons are
 exposed from 0, so `rate()` works from the first scrape. Process-wide, so it resets when the agent restarts.
 
+The fleet limits file (ADR 0017) is visible on the same `GET /metrics` (#675), as of the agent's last think
+cycle (the file is read only when a brain decides, so an agent that is not thinking shows a stale state):
+`wow_agent_fleet_limits_state{agent,state}` is 1 for the current `state` among `ok`, `missing`, `invalid`
+and `off` (no limits file configured) and 0 for the others; `wow_agent_fleet_limits_age_seconds{agent}` is
+the seconds since the file's `written_ts`, present only when the state is `ok` and `written_ts` is a number;
+`wow_agent_fleet_blocked_cycles_total{agent,brain}` (`jev`, `llm`, both from 0) counts think cycles in which
+the file blocked that brain. `/metrics` only reads the state the think thread recorded; it never reads the file.
+
 The **Jev — decision usage** dashboard is in
 `monitoring/grafana-dashboard-jev-decision-usage.json`. Metrics are rebuilt
 from retained audit rows on each textfile-exporter run, so every `*_total`

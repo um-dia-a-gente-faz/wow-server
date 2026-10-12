@@ -336,6 +336,67 @@ class FleetBlockTest(unittest.TestCase):
         self.assertEqual(b.fleet.path, self.path)
 
 
+class FleetCountTest(unittest.TestCase):
+    """#675: one fleet-blocked count per cycle and brain, only where the limits file decides."""
+
+    NOW = FleetBlockTest.NOW
+
+    def setUp(self):
+        from agent import metrics
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = os.path.join(tmp.name, "limits.json")
+        self.now = self.NOW
+        self.metrics = metrics
+        metrics.FLEET_BLOCKED.update(dict.fromkeys(metrics.FLEET_BRAINS, 0))
+        self.addCleanup(metrics.FLEET_BLOCKED.update, dict.fromkeys(metrics.FLEET_BRAINS, 0))
+
+    def fleet(self, *brains):
+        with open(self.path, "w") as f:
+            json.dump({"version": 1, "blocks": {b: {"until_ts": self.NOW + 30, "reason": "x"} for b in brains}}, f)
+        return FleetLimits(self.path, lambda: self.now)
+
+    def counts(self):
+        return dict(self.metrics.FLEET_BLOCKED)
+
+    def cycle(self, b):
+        with self.assertRaises(br.BrainError):
+            b.decide(snap(), my_guid=ME)
+
+    def test_jev_blocked_three_cycles_then_expiry(self):
+        b = br.Brain(jev=_Boom(), fleet=self.fleet("jev"))
+        for _ in range(3):
+            self.cycle(b)
+        self.now = self.NOW + 31
+        b.jev = ScriptedDecider([("idle", {})])
+        b.decide(snap(), my_guid=ME)
+        self.assertEqual(self.counts(), {"jev": 3, "llm": 0})
+
+    def test_llm_block_counts_under_llm(self):
+        self.cycle(br.Brain(llm=_Boom(), fleet=self.fleet("llm")))
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 1})
+
+    def test_both_blocked_counts_once_each(self):
+        self.cycle(br.Brain(jev=_Boom(), llm=_Boom(), fleet=self.fleet("jev", "llm")))
+        self.assertEqual(self.counts(), {"jev": 1, "llm": 1})
+
+    def test_budget_skip_counts_nothing(self):
+        b = br.Brain(jev=_Boom(), max_tokens_per_hour=1, fleet=self.fleet())
+        b.budget.record(10)
+        self.cycle(b)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
+    def test_unblocked_llm_cycle_counts_nothing(self):
+        br.Brain(llm=ScriptedDecider([("idle", {})]), fleet=self.fleet("jev")).decide(snap(), my_guid=ME)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
+    def test_cooldown_skip_counts_nothing(self):
+        b = br.Brain(jev=_Boom(), fleet=self.fleet("jev"))
+        b._jev_cooldown_until = b._clock() + 60
+        self.cycle(b)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
+
 class _ErrJev:
     """A Jev client that raises one scripted JevError and counts its calls."""
     model = "err"

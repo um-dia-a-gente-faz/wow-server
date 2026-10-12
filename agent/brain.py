@@ -46,6 +46,7 @@ from .action_specs import LLM_EXCLUDED_ACTIONS  # #531: the one home of the set,
 from .fleetlimits import FleetLimits
 from .jev import JevClient, JevError
 from .llm import COOLDOWN_JITTER, MAX_COOLDOWN_S, MIN_COOLDOWN_S, LLMClient, LLMError
+from .metrics import count_fleet_blocked
 from .model import ActionRecord, Candidate, Snapshot
 from .tokenbudget import WINDOW_S as JEV_BUDGET_WINDOW_S, TokenBudget
 
@@ -264,6 +265,7 @@ class Brain:
             reason = self.fleet.blocked(BRAIN_JEV)   # no log line: this runs every think cycle
             if reason is not None:
                 d.jev_status = JEV_STATUS_FLEET
+                count_fleet_blocked(BRAIN_JEV)
         if reason is None:
             reason = self.budget.exhausted("jev")
             if reason is not None:
@@ -276,6 +278,7 @@ class Brain:
         `_derive_jev` counts a brain=llm record with a fallback as a Jev fallback."""
         reason = self.fleet.blocked(BRAIN_LLM) if self.fleet is not None else None
         if reason is not None:
+            count_fleet_blocked(BRAIN_LLM)
             raise BrainError(f"{fallback}; {reason}" if fallback else reason, d)
 
     def _jev_skip_reason(self) -> str | None:

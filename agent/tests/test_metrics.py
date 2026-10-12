@@ -201,6 +201,51 @@ class SwallowedTest(unittest.TestCase):
         self.assertIn('wow_agent_swallowed_errors_total{agent="A",where="unit.site"} 3', text)
 
 
+class FleetRenderTest(unittest.TestCase):
+    """ADR 0017 slice 3 (#675): fleet limits state, age and blocked-cycle counter."""
+
+    def setUp(self):
+        from agent import metrics
+        self.m = metrics
+        metrics.FLEET_BLOCKED.update(dict.fromkeys(metrics.FLEET_BRAINS, 0))
+        self.addCleanup(metrics.FLEET_BLOCKED.update, dict.fromkeys(metrics.FLEET_BRAINS, 0))
+
+    def expected(self, state, age=None, jev=0, llm=0):
+        s = "wow_agent_fleet_limits_state"
+        lines = ["# HELP wow_agent_fleet_limits_state State of the fleet limits file as of the last think cycle "
+                 "(ADR 0017): 1 for the current state",
+                 f"# TYPE {s} gauge"]
+        lines += [f'{s}{{agent="A",state="{n}"}} {int(n == state)}' for n in ("ok", "missing", "invalid", "off")]
+        a = "wow_agent_fleet_limits_age_seconds"
+        lines += [f"# HELP {a} Seconds since the limits file's written_ts", f"# TYPE {a} gauge"]
+        if age is not None:
+            lines.append(f'{a}{{agent="A"}} {age}')
+        c = "wow_agent_fleet_blocked_cycles_total"
+        lines += [f"# HELP {c} Think cycles in which the fleet limits file blocked a brain", f"# TYPE {c} counter",
+                  f'{c}{{agent="A",brain="jev"}} {jev}', f'{c}{{agent="A",brain="llm"}} {llm}']
+        return "\n".join(lines) + "\n"
+
+    def test_each_state(self):
+        r = self.m.render_fleet
+        self.assertEqual(r("A", None, 100.0), self.expected("off"))
+        self.assertEqual(r("A", ("ok", 87.5), 100.0), self.expected("ok", age=12.5))
+        self.assertEqual(r("A", ("ok", None), 100.0), self.expected("ok"))
+        self.assertEqual(r("A", ("missing", None), 100.0), self.expected("missing"))
+        self.assertEqual(r("A", ("invalid", None), 100.0), self.expected("invalid"))
+        self.assertEqual(r("A", ("invalid", 87.5), 100.0), self.expected("invalid"))   # no age unless ok
+
+    def test_future_written_ts_is_age_zero(self):
+        self.assertEqual(self.m.render_fleet("A", ("ok", 200.0), 100.0), self.expected("ok", age=0.0))
+
+    def test_counter(self):
+        self.m.count_fleet_blocked("jev")
+        self.m.count_fleet_blocked("jev")
+        self.m.count_fleet_blocked("llm")
+        self.assertEqual(self.m.render_fleet("A", None, 0.0), self.expected("off", jev=2, llm=1))
+        with self.assertRaises(KeyError):
+            self.m.count_fleet_blocked("other")
+
+
 class ReconnectCountersTest(unittest.TestCase):
     """#402: wow_agent_reconnect_attempts_total{agent,reason}, process-wide like the router counters."""
 
