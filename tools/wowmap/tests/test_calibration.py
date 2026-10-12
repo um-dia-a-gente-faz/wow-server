@@ -135,6 +135,63 @@ class CalibrationFileTests(unittest.TestCase):
         self.assertIn(self.path, payload["error"])
         self.assertEqual(self.raw(), before)
 
+    def import_in_subprocess(self):
+        env = {"PYTHONPATH": f"{WOWMAP}:{TOOLS}", "CALIBRATION_FILE": self.path}
+        return subprocess.run([sys.executable, "-c", "import calibration"],
+                              cwd=WOWMAP, capture_output=True, text=True, env=env)
+
+    def assert_unreadable_shape(self):
+        """The loader contract for an unreadable file: import exits 0, load gives {} with one
+        warning naming the path, and a save is refused with the bytes kept."""
+        before = self.raw()
+        r = self.import_in_subprocess()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(self.path, r.stderr)
+        with self.assertLogs(state.log, "WARNING") as logs:
+            self.assertEqual(calibration.load_calibrations(), {})
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn(self.path, logs.output[0])
+        self.assertEqual(self.raw(), before)
+        self.assert_refused()
+
+    def test_a_400_digit_integer_offset_is_unreadable_not_a_crash(self):
+        self.write('{"100": {"dx": ' + "1" * 400 + ', "dy": 0}, "200": {"dx": 1, "dy": 1}}')
+        self.assert_unreadable_shape()
+
+    def test_a_200000_deep_nested_file_is_unreadable_not_a_crash(self):
+        depth = 200_000
+        self.write('{"100": {"dx": 0, "dy": 0, "extra": ' + "[" * depth + "]" * depth + "}}")
+        self.assert_unreadable_shape()
+
+    def test_a_zero_byte_file_is_an_empty_store_and_a_save_writes_it(self):
+        self.write("")
+        with self.assertNoLogs(state.log, "WARNING"):
+            self.assertEqual(calibration.load_calibrations(), {})
+        self.assertEqual(calibration.save_calibration(100, 1, 2), {"dx": 1.0, "dy": 2.0})
+        self.assertEqual(json.loads(self.raw()), {"100": {"dx": 1.0, "dy": 2.0}})
+
+    def test_a_whitespace_only_file_is_an_empty_store_and_a_save_writes_it(self):
+        self.write("  \n")
+        with self.assertNoLogs(state.log, "WARNING"):
+            self.assertEqual(calibration.load_calibrations(), {})
+        self.assertEqual(calibration.save_calibration(100, 1, 2), {"dx": 1.0, "dy": 2.0})
+        self.assertEqual(json.loads(self.raw()), {"100": {"dx": 1.0, "dy": 2.0}})
+
+    def test_a_save_refreshes_the_shared_store_in_place_and_never_clears_it(self):
+        class NoClearDict(dict):
+            def clear(self):
+                raise AssertionError("the shared store must be refreshed, not emptied first")
+
+        store = NoClearDict({"100": {"dx": 0.0, "dy": 0.0}, "500": {"dx": 9.0, "dy": 9.0}})
+        self.write(json.dumps({"100": {"dx": 1.5, "dy": -2.0}, "200": {"dx": 0.0, "dy": 3.25},
+                               "300": {"dx": 7.0, "dy": 8.0}}))   # 300 is only in the file
+        with mock.patch.object(calibration, "calibrations", store):
+            shared = calibration.calibrations
+            calibration.save_calibration(400, 4, 5)
+            self.assertIs(calibration.calibrations, shared)
+        self.assertEqual(store, json.loads(self.raw()))
+        self.assertEqual(sorted(store), ["100", "200", "300", "400"])  # 500 was only in memory
+
 
 if __name__ == "__main__":
     unittest.main()

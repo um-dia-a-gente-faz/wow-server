@@ -11,6 +11,7 @@ CALIBRATION_FILE = os.environ.get(
     "CALIBRATION_FILE", os.path.join(os.path.dirname(__file__), "calibration.json")
 )
 MAX_CALIBRATION_PAYLOAD_BYTES = 65536
+JSON_WHITESPACE = " \t\r\n"  # the whitespace JSON allows; an all-whitespace file is an empty store
 _lock = threading.Lock()
 
 
@@ -19,16 +20,19 @@ class CalibrationUnreadable(ValueError):
 
 
 def _read_store():
-    """The zones in calibration.json ({} if the file is missing).
+    """The zones in calibration.json ({} if the file is missing, empty or only whitespace).
 
     Raises CalibrationUnreadable when the file exists but is not valid JSON, not an object,
     has a zone that is not an object, or has an offset that does not parse as a number."""
     try:
         with open(CALIBRATION_FILE, encoding="utf-8") as f:
-            data = json.load(f)
+            text = f.read()
+        if not text.strip(JSON_WHITESPACE):
+            return {}
+        data = json.loads(text)
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: {exc}") from exc
     if not isinstance(data, dict):
         raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: top-level value must be an object")
@@ -38,7 +42,7 @@ def _read_store():
             raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: zone {area_id} is not an object")
         try:
             store[str(area_id)] = {"dx": float(value.get("dx", 0)), "dy": float(value.get("dy", 0))}
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: zone {area_id}: {exc}") from exc
     return store
 
@@ -72,8 +76,9 @@ def save_calibration(area_id, dx, dy):
             json.dump(store, f, indent=2, sort_keys=True)
             f.write("\n")
         os.replace(temporary, CALIBRATION_FILE)
-        calibrations.clear()
         calibrations.update(store)
+        for stale in set(calibrations) - set(store):
+            del calibrations[stale]
     return value
 
 
