@@ -188,9 +188,9 @@ class JevBudgetSkipPanels(unittest.TestCase):
         for expr in exprs:
             self.assertIn('wow_agent_jev_errors_total{status!="budget_exhausted"}', expr)
 
-    def test_some_target_shows_budget_exhausted_skips(self):
-        exprs = [expr for _, expr in dashboard_exprs(self.doc)]
-        self.assertTrue(any('status="budget_exhausted"' in expr for expr in exprs), exprs)
+    def test_skip_panel_queries_the_errors_counter_for_budget_exhausted(self):
+        exprs = [t["expr"] for t in self.panels["Jev cycles skipped: hourly budget spent"]["targets"]]
+        self.assertTrue(any('wow_agent_jev_errors_total{status="budget_exhausted"}' in e for e in exprs), exprs)
 
     def test_budget_skip_panel_is_titled_as_a_skip(self):
         self.assertIn("Jev cycles skipped: hourly budget spent", self.panels)

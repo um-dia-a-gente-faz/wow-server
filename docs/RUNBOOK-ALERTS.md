@@ -203,7 +203,7 @@ never fires. An agent whose every Jev call fails has errors but no successes, so
 1. On the wow-server VM (192.168.1.64): `grep -h -o 'jev_status[^,]*' /opt/wow-server-metrics/audit/<agent>/$(date -u +%F).jsonl | sort | uniq -c`
    for the status mix today.
 2. Grafana, "Jev — decision usage", panel "Jev errors / sec".
-3. For `budget_exhausted`, the Jev budget setting in `/opt/wow-server/.env` on the wow-server VM. Read
+3. For `budget_exhausted` (it does not fire this alert, but explains an agent that stopped calling Jev): the Jev budget setting in `/opt/wow-server/.env` on the wow-server VM. Read
    the key only; never paste its value anywhere.
 4. For `fleet_blocked` (it does not fire this alert, but explains an agent that stopped calling Jev):
    read the limits file on the agent host, the path in `AGENT_FLEET_LIMITS_FILE`, for the `jev` entry's
