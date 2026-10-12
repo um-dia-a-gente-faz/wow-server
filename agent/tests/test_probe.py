@@ -8,6 +8,7 @@ for chat, manual-only guard)."""
 import contextlib
 import io
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -724,6 +725,9 @@ class CliTest(unittest.TestCase):
            "WOW_HOST": "host.test"}
 
     def invoke(self, argv, connect=None, steps=None):
+        root = logging.getLogger()  # probe.main configures it (any run, not one test); give it back as found
+        handlers, level = root.handlers[:], root.level
+        self.addCleanup(lambda: (setattr(root, "handlers", handlers), root.setLevel(level)))
         out, err = io.StringIO(), io.StringIO()
         patches = {name: (lambda env: probe.ok("fine")) for name in probe.STEP_NAMES}
         patches.update(steps or {})

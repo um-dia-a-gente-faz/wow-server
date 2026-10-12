@@ -7,6 +7,7 @@ import os
 import unittest
 
 from agent.metrics import derive_metrics, iter_records, read_audit, render_prometheus_text, xp_per_hour
+from agent.tests.restore import reset_counters
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "audit", "luaprata_sample.jsonl")
 
@@ -151,8 +152,7 @@ class RouterCountersRenderTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics, opcodes
         self.m, self.op = metrics, opcodes
-        metrics.ROUTER_COUNTS.clear()
-        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+        reset_counters(self)
 
     def test_count_router_event_and_render_with_names(self):
         for kind in ("packets", "unhandled", "truncated", "handler_errors"):
@@ -182,7 +182,7 @@ class SwallowedTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics
         self.m = metrics
-        metrics.SWALLOWED.clear()
+        reset_counters(self)
 
     def test_counts_logs_with_traceback_and_throttles(self):
         import logging
@@ -207,8 +207,7 @@ class FleetRenderTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics
         self.m = metrics
-        metrics.FLEET_BLOCKED.update(dict.fromkeys(metrics.FLEET_BRAINS, 0))
-        self.addCleanup(metrics.FLEET_BLOCKED.update, dict.fromkeys(metrics.FLEET_BRAINS, 0))
+        reset_counters(self)
 
     def expected(self, state, age=None, jev=0, llm=0):
         s = "wow_agent_fleet_limits_state"
@@ -252,8 +251,7 @@ class ReconnectCountersTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics
         self.m = metrics
-        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
-        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        reset_counters(self)
 
     def test_count_per_reason_and_render(self):
         self.m.count_reconnect("auth_rejected")

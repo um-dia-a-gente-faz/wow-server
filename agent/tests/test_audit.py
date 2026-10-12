@@ -10,6 +10,7 @@ import time
 import unittest
 
 from agent.audit import AuditLogger, _redact
+from agent.tests.restore import reset_counters
 
 
 class AuditLoggerWriteTest(unittest.TestCase):
@@ -41,8 +42,7 @@ class AuditLoggerWriteTest(unittest.TestCase):
 
     def test_failing_observer_is_counted_and_auditing_continues(self):
         from agent import metrics
-        metrics.SWALLOWED.clear()
-        self.addCleanup(metrics.SWALLOWED.clear)
+        reset_counters(self)
 
         def boom(rec):
             raise RuntimeError("observer down")

@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "scripts"))
+if str(REPO / "scripts") not in sys.path:  # stays for the process, by design: the module imports from scripts/
+    sys.path.insert(0, str(REPO / "scripts"))
 
 import gen_agent_api_urls as urls  # noqa: E402
 import gen_agents_compose as gen   # noqa: E402
