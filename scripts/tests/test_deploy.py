@@ -140,6 +140,71 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.calls().count("monitoring/docker-compose.yml up -d --build"), 1)
         self.assertEqual(self.deploy_log().count("deployed"), 1)
 
+    def ref_exists(self, name):
+        return subprocess.run(["git", "rev-parse", "-q", "--verify", name], cwd=self.work,
+                              capture_output=True).returncode == 0
+
+    def test_two_deferred_runs_log_one_line(self):
+        self.merge("docker-compose.yml")
+        for _ in range(2):
+            r = self.run_deploy(FAKE_ONLINE="3")
+            self.assertEqual(r.returncode, 75, r.stderr)
+            self.assertIn("DEFERRED", r.stdout)
+        self.assertEqual(self.deploy_log().count("DEFERRED game"), 1)
+
+    def test_player_count_change_alone_does_not_relog(self):
+        self.merge("docker-compose.yml")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="5").returncode, 75)
+        self.assertEqual(self.deploy_log().count("DEFERRED game"), 1)
+
+    def test_new_game_commit_while_deferred_logs_again(self):
+        self.merge("docker-compose.yml")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.merge("tdb/a.sql")
+        tip = git(self.origin, "rev-parse", "HEAD")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        lines = self.deploy_log().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn(f"DEFERRED game {tip[:7]}, players online: 3", lines[1])
+
+    def test_deploy_clears_deferred_ref_and_next_deferral_logs_again(self):
+        self.merge("docker-compose.yml")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertTrue(self.ref_exists("refs/deployed/game-deferred"))
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="0").returncode, 0)
+        self.assertFalse(self.ref_exists("refs/deployed/game-deferred"))
+        self.merge("tdb/b.sql")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertEqual(self.deploy_log().count("DEFERRED game"), 2)
+
+    def test_dry_run_while_deferred_writes_no_line_and_no_ref(self):
+        self.merge("docker-compose.yml")
+        r = self.run_deploy(DRY_RUN="1", FAKE_ONLINE="3")
+        self.assertIn("DEFERRED", r.stdout)
+        self.assertFalse(self.deploy_log())
+        self.assertFalse(self.ref_exists("refs/deployed/game-deferred"))
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        self.assertEqual(self.deploy_log().count("DEFERRED game"), 1)
+
+    def test_unwritable_deferred_ref_does_not_abort_the_deploy(self):
+        self.run_deploy()  # first run: refs/deployed/* at the base commit
+        # a ref under refs/deployed/game-deferred/ makes refs/deployed/game-deferred unwritable
+        git(self.work, "update-ref", "refs/deployed/game-deferred/x", "HEAD")
+        self.merge("docker-compose.yml")
+        self.merge("monitoring/x.yml")
+        r = self.run_deploy(FAKE_ONLINE="3")
+        self.assertEqual(r.returncode, 75, r.stdout + r.stderr)
+        self.assertEqual(self.calls().count("monitoring/docker-compose.yml up -d --build"), 1)
+
+    def test_force_after_deferral_deploys_and_clears_ref(self):
+        self.merge("docker-compose.yml")
+        self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
+        r = self.run_deploy(FAKE_ONLINE="3", FORCE="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("docker compose up -d --build", self.calls())
+        self.assertFalse(self.ref_exists("refs/deployed/game-deferred"))
+
     def test_failing_git_diff_aborts_before_recording_a_deploy(self):
         self.run_deploy()  # creates refs/deployed/* at the base commit
         base = git(self.work, "rev-parse", "HEAD")
