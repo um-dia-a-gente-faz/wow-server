@@ -301,19 +301,19 @@ class NameCachePersistenceTest(unittest.TestCase):
     def test_load_survives_malformed_cache_files(self):
         cases = {
             "top-level list": "[]",
-            "non-numeric key": '{"creatures": {"abc": {"name": "x"}}}',
-            "long non-numeric key": '{"creatures": {"' + "k" * 10000 + '": {}}}',
-            "newline in key": '{"creatures": {"\\n3\\n": 5}}',
-            "newline in non-numeric key": '{"creatures": {"a\\nb": {}}}',
-            "section is a list": '{"creatures": []}',
-            "wrong value type": '{"creatures": {"1": 5}}',
-            "4300-digit key": '{"creatures": {"' + "1" * 4300 + '": 5}}',
-            "creature without name": '{"creatures": {"1": {}}}',
-            "creature name not a string": '{"creatures": {"1": {"name": 5}}}',
-            "creature name null": '{"creatures": {"1": {"name": null}}}',
-            "gameobject without type": '{"gameobjects": {"1": {"name": "x"}}}',
-            "gameobject type a string": '{"gameobjects": {"1": {"name": "x", "type": "3"}}}',
-            "gameobject type a bool": '{"gameobjects": {"1": {"name": "x", "type": true}}}',
+            "non-numeric key": '{"schema": 2, "creatures": {"abc": {"name": "x"}}}',
+            "long non-numeric key": '{"schema": 2, "creatures": {"' + "k" * 10000 + '": {}}}',
+            "newline in key": '{"schema": 2, "creatures": {"\\n3\\n": 5}}',
+            "newline in non-numeric key": '{"schema": 2, "creatures": {"a\\nb": {}}}',
+            "section is a list": '{"schema": 2, "creatures": []}',
+            "wrong value type": '{"schema": 2, "creatures": {"1": 5}}',
+            "4300-digit key": '{"schema": 2, "creatures": {"' + "1" * 4300 + '": 5}}',
+            "creature without name": '{"schema": 2, "creatures": {"1": {}}}',
+            "creature name not a string": '{"schema": 2, "creatures": {"1": {"name": 5}}}',
+            "creature name null": '{"schema": 2, "creatures": {"1": {"name": null}}}',
+            "gameobject without type": '{"schema": 2, "gameobjects": {"1": {"name": "x"}}}',
+            "gameobject type a string": '{"schema": 2, "gameobjects": {"1": {"name": "x", "type": "3"}}}',
+            "gameobject type a bool": '{"schema": 2, "gameobjects": {"1": {"name": "x", "type": true}}}',
             "truncated": '{"creatures": {"1": {"name": "Bro',
             "deeply nested": "[" * 100000 + "]" * 100000,
             "empty file": "",
@@ -338,7 +338,7 @@ class NameCachePersistenceTest(unittest.TestCase):
                     self.assertFalse(os.path.exists(path))
 
     def test_one_bad_entry_keeps_nothing_from_the_file(self):
-        content = ('{"creatures": {"1": {"name": "Wolf"}, "2": {"name": 5}},'
+        content = ('{"schema": 2, "creatures": {"1": {"name": "Wolf"}, "2": {"name": 5}},'
                    ' "gameobjects": {"3": {"name": "Chest", "type": 3}}}')
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "names.json")
@@ -350,7 +350,7 @@ class NameCachePersistenceTest(unittest.TestCase):
             self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
 
     def test_entries_of_the_current_schema_load_unchanged(self):
-        content = ('{"schema": 1, "creatures": {"1": null, "2": {"name": "Wolf", "extra": 1}},'
+        content = ('{"schema": 2, "creatures": {"1": null, "2": {"name": "Wolf", "extra": 1}},'
                    ' "gameobjects": {"3": {"name": "Chest", "type": 3}}}')
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "names.json")
@@ -409,17 +409,18 @@ UNREADABLE_FILES = {
     "zero bytes": b"",
     "truncated": b'{"creatures": {"1": {"name": "Bro',
     "list": b"[]",
-    "bad key": b'{"creatures": {"abc": 1}}',
+    "bad key": b'{"schema": 2, "creatures": {"abc": 1}}',
     "string schema": b'{"schema": "x"}',
     "bool schema": b'{"schema": true}',
     "deep": b"[" * 100000 + b"]" * 100000,
-    "bad utf8": b'{"creatures": {"1": {"name": "\xff"}}}',
-    "gameobjects bad, creatures fine": b'{"creatures": {"1": {"name": "a"}}, "gameobjects": {"x": {}}}',
+    "bad utf8": b'{"schema": 2, "creatures": {"1": {"name": "\xff"}}}',
+    "gameobjects bad, creatures fine": b'{"schema": 2, "creatures": {"1": {"name": "a"}}, "gameobjects": {"x": {}}}',
 }
 
 
 class NameCacheSchemaTest(unittest.TestCase):
-    def test_file_written_by_main_loads_unchanged(self):
+    def test_file_written_before_versioning_is_not_loaded_and_the_next_save_replaces_it(self):
+        # #671: the no-schema (version 1) guarantee of #666's era ends here; see test_older_file_*.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "names.json")
             _put(path, json.dumps({"creatures": {"1": {"name": "A"}, "2": None},
@@ -427,18 +428,21 @@ class NameCacheSchemaTest(unittest.TestCase):
             c = nm.NameCache()
             with self.assertNoLogs("agent.names", "WARNING"):
                 c.load(path)
-            self.assertEqual(c.creatures, {1: {"name": "A"}, 2: None})
-            self.assertEqual(c.gameobjects, {3: {"name": "B", "type": 0}})
+            self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
             self.assertFalse(os.path.exists(path + ".corrupt"))
+            c.creatures[4] = {"name": "C"}
+            c.save(path)
+            self.assertEqual(json.loads(_read(path)),
+                             {"schema": 2, "creatures": {"4": {"name": "C"}}, "gameobjects": {}})
 
-    def test_saved_file_has_schema_1_and_the_old_loader_reads_it(self):
+    def test_saved_file_has_the_current_schema_and_the_old_loader_reads_it(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "names.json")
             c1 = nm.NameCache()
             c1.creatures[1] = {"name": "A"}
             c1.gameobjects[2] = None
             c1.save(path)
-            self.assertEqual(json.loads(_read(path))["schema"], 1)
+            self.assertEqual(json.loads(_read(path))["schema"], 2)
             c2 = nm.NameCache()
             main_loader(c2, path)
             self.assertEqual((c2.creatures, c2.gameobjects), ({1: {"name": "A"}}, {2: None}))
@@ -447,7 +451,7 @@ class NameCacheSchemaTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "names.json")
             other = os.path.join(d, "other.json")
-            _put(path, '{"schema": 2, "creatures": {"1": {"name": "A"}}}')
+            _put(path, '{"schema": 3, "creatures": {"1": {"name": "A"}}}')
             os.utime(path, (1000000000, 1000000000))
             before = _read(path)
             c = nm.NameCache(cache_path=path)
@@ -539,6 +543,24 @@ class NameCacheSchemaTest(unittest.TestCase):
                 self.assertEqual(json.loads(_read(path)),
                                  {"schema": 2, "creatures": {}, "gameobjects": {}})
             self.assertFalse(os.path.exists(path + ".corrupt"))
+
+    def test_schema_1_entries_are_not_loaded_and_the_next_save_replaces_them(self):
+        # #671: a schema-1 names.json may hold U+FFFD names (#666); it is dropped, not read.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            _put(path, '{"schema": 1, "creatures": {"1": {"name": "Wolf\\ufffd"}},'
+                       ' "gameobjects": {"2": {"name": "Chest", "type": 3}}}')
+            c = nm.NameCache(cache_path=path)
+            with self.assertNoLogs("agent.names", "WARNING"):
+                c.load()
+            self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
+            self.assertFalse(os.path.exists(path + ".corrupt"))
+            c.on_creature_query_response(nm.parse_creature_query_response(
+                struct.pack('<I', 17213) + creature_response_body(name="Broom")))
+            data = json.loads(_read(path))
+            self.assertEqual(data["schema"], 2)
+            self.assertEqual(list(data["creatures"]), ["17213"])
+            self.assertEqual(data["gameobjects"], {})
 
 
 if __name__ == '__main__':
