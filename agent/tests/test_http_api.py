@@ -22,7 +22,7 @@ from agent import perception as per
 from agent import update_object as uo
 from agent.audit import AuditLogger
 from agent.config import Config
-from agent.http_api import AgentObserver, make_server
+from agent.http_api import AgentObserver, make_server, start_server
 from agent.think import ThinkState
 
 SECRET_PASSWORD = "pw-do-not-leak-7f3a"
@@ -261,6 +261,57 @@ class OffByDefaultTest(unittest.TestCase):
         with mock.patch.object(main_mod, "start_server", side_effect=OSError("in use")):
             with self.assertLogs("t", level="ERROR"):
                 self.assertEqual(main_mod.start_observer(cfg, None, logging.getLogger("t")), (None, None))
+
+
+class ShutdownTest(unittest.TestCase):
+    """#659: shutdown() closes the listening socket, returns at once when serve_forever never ran,
+    and a second shutdown() is harmless."""
+
+    def _within_1s(self, *calls):
+        """Run the calls in order on a daemon thread; fail if they do not all return within 1 s or raise."""
+        errors = []
+
+        def run():
+            try:
+                for call in calls:
+                    call()
+            except Exception as e:  # noqa: BLE001 — report whatever the call raised, as the assertion
+                errors.append(e)
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        t.join(1)
+        self.assertFalse(t.is_alive(), "did not return within 1 s")
+        self.assertEqual(errors, [])
+
+    def _assert_port_bindable(self, port):
+        with socket.socket() as s:   # no SO_REUSEADDR: a listener left open raises OSError here
+            s.bind(("127.0.0.1", port))
+
+    def test_shutdown_after_start_server_frees_the_port_and_stops_the_thread(self):
+        srv = start_server(AgentObserver("Luaprata"), "127.0.0.1", 0)
+        port = srv.server_address[1]
+        srv.shutdown()
+        srv.shutdown()
+        self._assert_port_bindable(port)
+        for t in threading.enumerate():
+            if t.name == "agent-http":
+                t.join(1)
+                self.assertFalse(t.is_alive(), "serving thread still alive after shutdown()")
+
+    def test_shutdown_of_a_server_that_never_served_returns_and_frees_the_port(self):
+        srv = make_server(AgentObserver("Luaprata"), "127.0.0.1", 0)
+        port = srv.server_address[1]
+        self._within_1s(srv.shutdown, srv.shutdown)
+        self._assert_port_bindable(port)
+
+    def test_serve_forever_entered_after_shutdown_returns_at_once(self):
+        # shutdown() ran before the serving thread reached serve_forever(): the late call must
+        # not serve on the closed socket, and must not block either.
+        srv = make_server(AgentObserver("Luaprata"), "127.0.0.1", 0)
+        port = srv.server_address[1]
+        self._within_1s(srv.shutdown, srv.serve_forever)
+        self._assert_port_bindable(port)
 
 
 if __name__ == "__main__":
