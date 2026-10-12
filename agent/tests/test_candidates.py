@@ -160,6 +160,10 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
                              f"unit {unit_3} with my_guid {my_guid}")
         someone_elses = dict(snap, nearby_units=[idle_mob, dict(other, target_guid=999)])
         self.assertIn("auto_attack:guid=2", ids(cand.generate(someone_elses, my_guid=MY_GUID)))
+        # gh-593: a dead unit (health 0) is not a possible attacker, even in combat with target 0: the rat is pulled.
+        dead = dict(other, health_pct=0, target_guid=0)
+        self.assertIn("auto_attack:guid=2", ids(cand.generate(dict(snap, nearby_units=[idle_mob, dead]),
+                                                              my_guid=MY_GUID)))
 
 
 class QuestScenarioTest(CandidateShapeMixin, unittest.TestCase):
