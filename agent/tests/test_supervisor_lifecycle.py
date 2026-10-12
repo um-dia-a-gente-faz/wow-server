@@ -11,8 +11,7 @@ import threading
 import time
 import unittest
 
-from agent import __main__ as main_mod
-from agent import metrics
+from agent import metrics, root
 from agent.audit import AuditLogger
 from agent.auth import AuthRejected
 from agent.http_api import AgentObserver
@@ -236,7 +235,7 @@ class LifecycleNeverChangesTheSupervisorTest(unittest.TestCase):
 
 
 class MainLifecycleWiringTest(unittest.TestCase):
-    """__main__._build_lifecycle: wall clock, one audit line per transition in order, the snapshot in GET /state."""
+    """root.build_lifecycle: wall clock, one audit line per transition in order, the snapshot in GET /state."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -252,7 +251,7 @@ class MainLifecycleWiringTest(unittest.TestCase):
 
     def test_each_transition_is_one_audit_line_in_order_and_state_shows_the_snapshot(self):
         before = time.time()
-        lifecycle = main_mod._build_lifecycle(self.audit, self.observer)
+        lifecycle = root.build_lifecycle(self.audit, self.observer)
         self.assertIs(self.observer.lifecycle, lifecycle)
         world = World(builds=[RuntimeError("refused"), OK, OK], runs=[DROP, END], lifecycle=lifecycle)
         world.supervise()
@@ -270,13 +269,13 @@ class MainLifecycleWiringTest(unittest.TestCase):
     def test_no_decision_record_is_written_and_on_record_is_not_called(self):
         seen = []
         self.audit.on_record = seen.append
-        world = World(builds=[OK], runs=[END], lifecycle=main_mod._build_lifecycle(self.audit, None))
+        world = World(builds=[OK], runs=[END], lifecycle=root.build_lifecycle(self.audit, None))
         world.supervise()
         self.assertEqual(seen, [])
         self.assertEqual(os.listdir(os.path.dirname(self.directory)), ["lifecycle"])
 
     def test_a_crash_is_on_disk_before_the_exception_leaves(self):
-        world = World(builds=[OK], runs=[Boom("think loop")], lifecycle=main_mod._build_lifecycle(self.audit, None))
+        world = World(builds=[OK], runs=[Boom("think loop")], lifecycle=root.build_lifecycle(self.audit, None))
         with self.assertRaises(Boom):
             world.supervise()
         self.assertEqual([(d["to"], d["reason"]) for d in self.lines()][-2:],
@@ -297,7 +296,7 @@ class MainLifecycleWiringTest(unittest.TestCase):
                              ["schema", "ts", "agent", "from", "to", "reason"])
 
     def test_the_production_machine_uses_the_wall_clock(self):
-        lifecycle = main_mod._build_lifecycle(self.audit, None)
+        lifecycle = root.build_lifecycle(self.audit, None)
         lifecycle.to(State.ONLINE, "connected")
         (name,) = os.listdir(self.directory)
         self.assertNotIn("1970", name)   # time.monotonic() would give lifecycle/1970-01-01.jsonl
@@ -311,7 +310,7 @@ class MainLifecycleWiringTest(unittest.TestCase):
         self.addCleanup(os.chmod, self.directory, 0o700)
         if os.access(self.directory, os.W_OK):
             self.skipTest("running as a user that ignores directory permissions")
-        world = World(builds=[OK, OK], runs=[DROP, END], lifecycle=main_mod._build_lifecycle(self.audit, None))
+        world = World(builds=[OK, OK], runs=[DROP, END], lifecycle=root.build_lifecycle(self.audit, None))
         world.supervise()
         self.assertEqual(world.sleeps, [5.0])
         self.assertEqual(world.walk()[-1], ("stopping", "stopped", "run_ended"))

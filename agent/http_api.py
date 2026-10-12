@@ -221,7 +221,7 @@ class AgentObserver:
         if self.reflex_state_fn is not None and self.session is not None:
             try:
                 reflexes = self.reflex_state_fn(self.session)
-            except Exception:  # best effort, like __main__._reflex_state
+            except Exception:  # best effort, like runloop.reflex_state
                 swallowed("http.reflex_state", log, level=logging.WARNING)
                 reflexes = {}
         with self._lock:

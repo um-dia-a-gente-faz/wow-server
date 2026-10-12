@@ -17,7 +17,7 @@ import urllib.request
 from types import SimpleNamespace
 from unittest import mock
 
-from agent import __main__ as main_mod
+from agent import root as main_mod
 from agent import perception as per
 from agent import update_object as uo
 from agent.audit import AuditLogger
@@ -223,7 +223,7 @@ class NoSecretsTest(unittest.TestCase):
         with socket.socket() as s:  # pick a free port
             s.bind(("127.0.0.1", 0))
             cfg.http_port = s.getsockname()[1]
-        observer, server = main_mod._start_observer(cfg, audit, logging.getLogger("test"))
+        observer, server = main_mod.start_observer(cfg, audit, logging.getLogger("test"))
         self.assertIsNotNone(server)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -252,7 +252,7 @@ class OffByDefaultTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             cfg = Config()
         with mock.patch.object(main_mod, "start_server") as start:
-            self.assertEqual(main_mod._start_observer(cfg, None, logging.getLogger("t")), (None, None))
+            self.assertEqual(main_mod.start_observer(cfg, None, logging.getLogger("t")), (None, None))
         start.assert_not_called()
 
     def test_bind_failure_is_not_fatal(self):
@@ -260,7 +260,7 @@ class OffByDefaultTest(unittest.TestCase):
             cfg = Config()
         with mock.patch.object(main_mod, "start_server", side_effect=OSError("in use")):
             with self.assertLogs("t", level="ERROR"):
-                self.assertEqual(main_mod._start_observer(cfg, None, logging.getLogger("t")), (None, None))
+                self.assertEqual(main_mod.start_observer(cfg, None, logging.getLogger("t")), (None, None))
 
 
 if __name__ == "__main__":

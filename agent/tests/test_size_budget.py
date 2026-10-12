@@ -26,7 +26,6 @@ BASELINE = {
     "tools/agent_dev/probe.py": 769,
     "tools/wowmap/wowmap/activity.py": 639,
     # functions
-    "agent/__main__.py::main": 93,
     "agent/handlers/chat.py::handle_messagechat": 84,
     "agent/loot.py::parse_item_query_response": 128,
     "agent/movement.py::_simulate": 125,
@@ -98,6 +97,15 @@ class SizeBudgetTests(unittest.TestCase):
         self.assertEqual(self.stale, [], "stale BASELINE entries in "
                          "agent/tests/test_size_budget.py; delete or lower each one: "
                          + "; ".join(self.stale))
+
+
+class EntryPointTests(unittest.TestCase):
+    """#292: agent/__main__.py is arguments, config, logging and signals; the wiring is agent/root.py."""
+    ENTRY_MAX = 100
+
+    def test_entry_point_stays_small(self):
+        lines = len((ROOT / "agent" / "__main__.py").read_text().splitlines())
+        self.assertLessEqual(lines, self.ENTRY_MAX, "agent/__main__.py grew: wiring belongs in agent/root.py")
 
 
 class CheckerTests(unittest.TestCase):
