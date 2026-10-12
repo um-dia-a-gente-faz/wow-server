@@ -4,7 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
-COPY exporter.py backups.py ./
+COPY exporter.py backups.py deploys.py ./
 
 EXPOSE 9300
 CMD ["python", "-u", "exporter.py"]

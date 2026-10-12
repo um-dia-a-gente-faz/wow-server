@@ -326,7 +326,14 @@ dash_realm = {
     "tags": ["wow", "wow-server", "trinitycore", "homelab"],
     "timezone": "browser", "refresh": "30s", "editable": True,
     "time": {"from": "now-6h", "to": "now"},
-    "schemaVersion": 39, "version": 1, "panels": q,
+    "schemaVersion": 39, "version": 1,
+    # #377: deploys from wow-exporter (deploy.log), one annotation on this dashboard only
+    "annotations": {"list": [{
+        "name": "Deploys", "datasource": DS, "enable": True,
+        "expr": "wow_deploy_timestamp_seconds * 1000", "step": "60s", "useValueForTime": True,
+        "titleFormat": "deploy {{sha}}", "textFormat": "{{stacks}}",
+    }]},
+    "panels": q,
 }
 
 sys.exit(max(sync(f"monitoring/grafana-dashboard-{d['uid']}.json", dashboard_text(d),
