@@ -98,9 +98,9 @@ class Reader:
                 self._off += 1
         return guid
 
-    def cstring(self, encoding: str = 'ascii') -> str:
-        """A NUL-terminated string (ascii like pk.cstring unless `encoding` says otherwise; bad
-        bytes are replaced). No NUL before the end raises PacketTruncated asking for the 1
+    def cstring(self, encoding: str = 'utf-8') -> str:
+        """A NUL-terminated string (UTF-8 like pk.cstring: ByteBuffer writes the server's string
+        bytes untranscoded, names and text are UTF-8; bad bytes are replaced). No NUL before the end raises PacketTruncated asking for the 1
         terminator byte."""
         end = self._data.find(b'\x00', self._off)
         if end < 0:
