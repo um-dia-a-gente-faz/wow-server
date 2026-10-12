@@ -59,12 +59,12 @@ groups:
           description: "A handler raised PacketTruncated for 10m: the parser read past the end of a packet. Query wow_agent_router_truncated_total by opcode to see which packet; this usually means a layout drift."
           runbook: "docs/RUNBOOK-ALERTS.md#agentroutertruncatedpackets"
       - alert: JevErrorRatioHigh
-        expr: sum by (agent) (rate(wow_agent_jev_errors_total[15m])) / sum by (agent) (rate(wow_agent_jev_calls_total[15m])) > 0.2
+        expr: sum by (agent) (rate(wow_agent_jev_errors_total{status!="budget_exhausted"}[15m])) / sum by (agent) (rate(wow_agent_jev_calls_total[15m])) > 0.2
         for: 15m
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.agent }}: Jev errors exceed 20% of successful calls"
-          description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. Query wow_agent_jev_errors_total by status for the class (http_4xx, http_5xx, error, budget_exhausted). A fleet_blocked cycle (the fleet limits file, ADR 0017) is not counted as an error or a call and does not feed this alert."
+          description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. Query wow_agent_jev_errors_total by status for the class (http_4xx, http_5xx, error); budget_exhausted is a skip, not an error, and is not counted here. A fleet_blocked cycle (the fleet limits file, ADR 0017) is not counted as an error or a call and does not feed this alert."
           runbook: "docs/RUNBOOK-ALERTS.md#jeverrorratiohigh"
       - alert: JevCostBurnHigh
         expr: sum(increase(wow_agent_jev_cost_usd_total[1h])) > 1 and sum(resets(wow_agent_jev_cost_usd_total[1h])) == 0

@@ -25,18 +25,25 @@ from server import FaultPlan  # noqa: E402
 
 from agent import opcodes as op  # noqa: E402
 from agent import root  # noqa: E402
+from agent import session as session_mod  # noqa: E402
 from agent.auth import AuthRejected  # noqa: E402
 from agent.config import load_config  # noqa: E402
 
 BACKOFF_S = 1.0      # handed to the injected sleep
 SESSION_S = 1.0      # AGENT_RUN_DURATION_S: how long a healthy session runs before it ends cleanly
 RECOVER_S = 20.0     # upper bound for one whole scenario
+RUN_DEADLINE_S = 30.0    # Agent.run() must return this long after it started: the session ended, or stop was set
 MAX_BACKOFFS = 5
 
 CONNECTED = ("connecting", "online", "connected")
 RETRY = ("backoff", "connecting", "backoff_elapsed")
 ENDED = [("online", "stopping", "run_ended"), ("stopping", "stopped", "run_ended")]
 DROPPED = [CONNECTED, ("online", "backoff", "disconnected"), RETRY, CONNECTED, *ENDED]
+
+# The packets the first session reads when the mock hangs up halfway through packet 6: the
+# login packets 1-5, and no packet 6 (a truncated frame never completes a read).
+TRUNCATED_FIRST_SESSION_READS = [op.SMSG_AUTH_RESPONSE, op.SMSG_TIME_SYNC_REQ, op.SMSG_TUTORIAL_FLAGS,
+                                 op.SMSG_CHAR_ENUM, op.SMSG_LOGIN_VERIFY_WORLD]
 
 
 # DeathMock world packets: 1-5 login, 6-8 the login burst, 9 the spirit healer, 10 the corpse,
@@ -88,17 +95,45 @@ class LifecycleScenarioTest(unittest.TestCase):
         self.assertIsNone(agent.brain)
         return agent
 
-    def run_agent(self, agent, stop=None):
-        """Agent.run() with an injected sleep that records the backoffs and bounds the scenario."""
-        self.sleeps = []
+    def run_agent(self, agent, name, stop=None):
+        """Agent.run() in a daemon thread, with an injected sleep that records the backoffs and
+        bounds the scenario. A run still going after RUN_DEADLINE_S fails by name, and its stop
+        event is set so the thread can end. An exception raised by run() is re-raised here as
+        the same object."""
+        sleeps = self.sleeps = []
+        self.reads = {}           # session -> opcodes of the packets it read whole, in order
+        stop = stop or threading.Event()
+        outcome, returned = [], []
         t0 = time.monotonic()
+        real_recv = session_mod.WoWSession._recv_packet
+
+        def recording_recv(sess):
+            opcode, payload = real_recv(sess)
+            self.reads.setdefault(sess, []).append(opcode)
+            return opcode, payload
 
         def sleep(backoff):
-            self.sleeps.append(backoff)
-            if len(self.sleeps) > MAX_BACKOFFS or time.monotonic() - t0 > RECOVER_S:
-                raise AssertionError(f"supervisor did not recover: backoffs {self.sleeps}")
+            sleeps.append(backoff)
+            if len(sleeps) > MAX_BACKOFFS or time.monotonic() - t0 > RECOVER_S:
+                raise AssertionError(f"supervisor did not recover: backoffs {sleeps}")
 
-        agent.run(stop, sleep=sleep, jitter=lambda b: b, initial_backoff=BACKOFF_S)
+        def target():
+            try:
+                agent.run(stop, sleep=sleep, jitter=lambda b: b, initial_backoff=BACKOFF_S)
+                returned.append(True)
+            except Exception as e:  # noqa: BLE001 - carried back to the test thread, re-raised as is
+                outcome.append(e)
+
+        with mock.patch.object(session_mod.WoWSession, "_recv_packet", recording_recv):
+            runner = threading.Thread(target=target, daemon=True, name=f"run-{name}")
+            runner.start()
+            runner.join(RUN_DEADLINE_S)
+            if runner.is_alive():
+                stop.set()
+                self.fail(f"{name}: Agent.run did not return within {RUN_DEADLINE_S:.0f} s")
+        if outcome:
+            raise outcome[0]
+        self.assertTrue(returned, f"{name}: Agent.run ended without returning")
         self.assertLess(time.monotonic() - t0, RECOVER_S)
 
     def walk(self):
@@ -126,17 +161,24 @@ class LifecycleScenarioTest(unittest.TestCase):
             with self.subTest(scenario=name):
                 self.audit = self.enterContext(tempfile.TemporaryDirectory())
                 agent = self.build(server.WorldMock(faults=faults))
-                self.run_agent(agent)
+                self.run_agent(agent, name)
                 self.assertEqual(self.walk(), lines)
                 self.assertEqual(self.sleeps, sleeps)
                 self.assertEqual((self.mock.auth_connections, self.mock.world_connections), connections)
-                self.assertEqual(self.logout_requests(), 1, "only the healthy session says goodbye (#406)")
+                self.assertEqual(self.logout_requests(), 1,
+                                 "the mock saw one CMSG_LOGOUT_REQUEST in total, so a dropped session sent none "
+                                 "(#406; test_faults.py pins that by timing)")
                 self.assertEqual(agent.lifecycle.snapshot()["state"], "stopped")
+                if any(f.truncate for f in faults):
+                    # A plain drop_after=6 delivers packet 6 whole. The truncated one never completes a
+                    # read, so the first session's reads stop at packet 5 (the hang-up is inside packet 6).
+                    first_session = next(iter(self.reads.values()))
+                    self.assertEqual(first_session, TRUNCATED_FIRST_SESSION_READS)
 
     def test_permanent_auth_refusal_fails_after_one_attempt(self):
         agent = self.build(server.WorldMock(faults=[FaultPlan(auth_reject=3)]))
         with self.assertRaises(AuthRejected) as cm:
-            self.run_agent(agent)
+            self.run_agent(agent, "permanent auth refusal")
         self.assertEqual(cm.exception.code, 3)
         self.assertEqual(self.walk(), [("connecting", "failed", "auth_rejected_permanent")])
         self.assertEqual(self.sleeps, [])
@@ -147,7 +189,7 @@ class LifecycleScenarioTest(unittest.TestCase):
         stop = threading.Event()
         threading.Thread(target=lambda: (wait_for(lambda: agent.lifecycle.state.value == "online"),
                                          time.sleep(0.2), stop.set()), daemon=True).start()
-        self.run_agent(agent, stop)
+        self.run_agent(agent, "stop during a session", stop)
         self.assertEqual(self.walk(), [CONNECTED, ("online", "stopping", "stop"), ("stopping", "stopped", "stop")])
         self.assertEqual(self.sleeps, [])
         self.assertEqual(self.mock.world_connections, 1)
@@ -157,7 +199,7 @@ class LifecycleScenarioTest(unittest.TestCase):
         agent = self.build(server.WorldMock())
         crash = Crash("bug in the think loop")
         with mock.patch.object(root, "run_loop", side_effect=crash), self.assertRaises(Crash) as cm:
-            self.run_agent(agent)
+            self.run_agent(agent, "crash in the session")
         self.assertIs(cm.exception, crash)
         self.assertEqual(self.walk(), [CONNECTED, ("online", "stopping", "crashed"),
                                        ("stopping", "stopped", "crashed")])
@@ -179,7 +221,7 @@ class LifecycleScenarioTest(unittest.TestCase):
             return real_run_loop(sess, *args, **kw)
 
         with mock.patch.object(root, "run_loop", side_effect=run_loop):
-            self.run_agent(agent)
+            self.run_agent(agent, "death")
         self.assertEqual(dead, [True, True])
         self.assertEqual(self.walk(), DROPPED)
         self.assertEqual(self.sleeps, [BACKOFF_S])

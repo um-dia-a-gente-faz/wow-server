@@ -17,6 +17,7 @@ instead of lingering as stale data.
 | `MYSQL_PASSWORD` | — | required; compose passes `MYSQL_ROOT_PASSWORD` from the root `.env` |
 | `LISTEN_PORT` | `9300` | |
 | `TOP_PLAYED` | `20` | how many characters to expose per-character playtime for |
+| `DEPLOY_LOG` | `/deploy/deploy.log` | `deploy.log` written by `scripts/deploy.sh` (read-only mount of `/opt/wow-server-metrics`) |
 
 ### Metric groups
 
@@ -41,6 +42,10 @@ instead of lingering as stale data.
 - **Database** — `wow_db_size_bytes{database}`, `wow_mysql_connections`
 - **Security** — `wow_accounts_locked`, `wow_accounts_with_failed_logins`,
   `wow_failed_logins_total`, `wow_accounts_muted`
+- **Deploys** — `wow_deploy_timestamp_seconds{sha,stacks}` (value: the deploy's Unix time) for
+  the newest deploys in `deploy.log`, read from its last 64 KiB; at most 20 series (the newest
+  per sha and stacks). `wow_deploy_log_readable` is 1 when the log can be read. Drives the
+  `Deploys` annotation on the realm-health and agent-behaviour dashboards.
 - **Self** — `wow_exporter_up`, `wow_exporter_scrape_duration_seconds`
 
 ### Build & run

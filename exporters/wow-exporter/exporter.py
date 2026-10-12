@@ -13,6 +13,7 @@ Env:
     LISTEN_PORT     default: 9300
     TOP_PLAYED      default: 20   (how many characters to expose playtime for)
     BACKUP_DIR      default: /backups   (read-only mount of /opt/wow-server-backups)
+    DEPLOY_LOG      default: /deploy/deploy.log   (read-only mount of /opt/wow-server-metrics, #377)
 """
 import logging
 import os
@@ -24,6 +25,7 @@ from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 from backups import backup_stats
+from deploys import read_deploys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("wow-exporter")
@@ -35,6 +37,7 @@ MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "9300"))
 TOP_PLAYED = int(os.environ.get("TOP_PLAYED", "20"))
 BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
+DEPLOY_LOG = os.environ.get("DEPLOY_LOG", "/deploy/deploy.log")
 
 # --- Static lookups (DBC values, stable for 3.3.5a) -------------------------------
 
@@ -100,6 +103,21 @@ class WowCollector(Collector):
                                 "Unix mtime of the newest dump (0 if there is none)", value=newest_ts)
         yield GaugeMetricFamily("wow_backup_newest_size_bytes", "Size of the newest dump (0 if none)",
                                 value=newest_size)
+
+        # Deploys are read from a file outside the MySQL block too (#377): a dead DB must not hide them.
+        # Oldest first, so a newer deploy of the same sha and stacks overwrites the older timestamp.
+        latest = {}
+        for ts, sha, stacks in read_deploys(DEPLOY_LOG):
+            latest[(sha, stacks)] = ts
+        y = GaugeMetricFamily("wow_deploy_timestamp_seconds",
+                              "Unix time of each recent deploy (at most 20 series)",
+                              labels=["sha", "stacks"])
+        for (sha, stacks), ts in latest.items():
+            y.add_metric([sha, stacks], ts)
+        yield y
+        readable = os.path.isfile(DEPLOY_LOG) and os.access(DEPLOY_LOG, os.R_OK)
+        yield GaugeMetricFamily("wow_deploy_log_readable", "1 if the deploy log can be read",
+                                value=int(readable))
         yield GaugeMetricFamily("wow_exporter_up", "1 if the last MySQL scrape succeeded", value=up)
         yield GaugeMetricFamily("wow_exporter_scrape_duration_seconds",
                                 "Duration of the collector run", value=time.time() - t0)
