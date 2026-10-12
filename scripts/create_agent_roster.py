@@ -41,63 +41,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+# tools/agent-runner's characters.load_script pops sys.path[0] after importing this file. Without
+# this second entry it pops the checkout root and Realm.open cannot import `agent` (until #597).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-ROSTER_PATH = REPO / "agents" / "roster.json"
-FIRST_PORT = 9601          # agent N publishes its observability API on 9600 + N
-PARTY_SIZE = 5             # compose profile `party`; `raid` is everyone
-TOTAL = 25
+from agents import roster  # noqa: E402
+# valid_name is not used here: it stays readable as create_agent_roster.valid_name for the tests.
+from agents.character_rules import CLASS_NAMES, HORDE, gen_name, valid_name  # noqa: E402, F401
+from agents.realm import Console, Realm  # noqa: E402
 
-# Horde races (SharedDefines.h Races) -> the classes a fresh account can create.
-# Death Knight (6) is left out on purpose, see the module docstring.
-WARRIOR, PALADIN, HUNTER, ROGUE, PRIEST, SHAMAN, MAGE, WARLOCK, DRUID = 1, 2, 3, 4, 5, 7, 8, 9, 11
-HORDE = {
-    2:  ("Orc",       [WARRIOR, HUNTER, ROGUE, SHAMAN, WARLOCK]),
-    5:  ("Undead",    [WARRIOR, ROGUE, PRIEST, MAGE, WARLOCK]),
-    6:  ("Tauren",    [WARRIOR, HUNTER, SHAMAN, DRUID]),
-    8:  ("Troll",     [WARRIOR, HUNTER, ROGUE, PRIEST, SHAMAN, MAGE]),
-    10: ("Blood Elf", [WARRIOR, PALADIN, HUNTER, ROGUE, PRIEST, MAGE, WARLOCK]),
-}
-CLASS_NAMES = {1: "Warrior", 2: "Paladin", 3: "Hunter", 4: "Rogue", 5: "Priest",
-               7: "Shaman", 8: "Mage", 9: "Warlock", 11: "Druid"}
+ROSTER_PATH = roster.ROSTER_PATH
+TOTAL = 25
 
 # AGENT01..05 predate the roster. Their race/class/gender are null here and are read
 # back from the realm on a real run (the characters are not in this repo's data).
 LEGACY = [("AGENT01", "Luaprata"), ("AGENT02", "Farstrider"), ("AGENT03", "Shadowblade"),
           ("AGENT04", "Sunspeaker"), ("AGENT05", "Spellweaver")]
 PLAN_SEED = 63             # seed used for the committed agents/roster.json (UM-63)
-
-# Syllables per race, so names read like the race: "Grokhar", "Mulgore-ish", "Sylvaris".
-_SYLLABLES = {
-    2:  (["Gar", "Gro", "Thok", "Dra", "Kar", "Mog", "Ur", "Zug", "Bor"], ["hak", "gash", "mar", "nak", "thar", "dum", "gor"]),
-    5:  (["Mor", "Vel", "Sar", "Ner", "Thal", "Ves", "Dal", "Cor"], ["wyn", "vis", "ric", "den", "gar", "lock", "mund"]),
-    6:  (["Ba", "Ru", "Ma", "Ke", "Ta", "Hu", "Pa", "Mu"], ["hotah", "kuna", "wak", "hawk", "toka", "nuk", "rana"]),
-    8:  (["Zul", "Jin", "Vol", "Rok", "Zan", "Sen", "Mah", "Tiki"], ["jin", "tar", "ja", "kazi", "ari", "ton", "rik"]),
-    10: (["Sil", "Quel", "Aer", "Thal", "Lor", "Kael", "Anar", "Vel"], ["varis", "dorei", "ian", "anar", "eth", "thas", "lian"]),
-}
-
-
-def valid_name(name: str) -> bool:
-    """2-12 ASCII letters, no letter three times in a row (TC's name rules)."""
-    if not (2 <= len(name) <= 12) or not name.isascii() or not name.isalpha():
-        return False
-    lower = name.lower()
-    return not any(lower[i] == lower[i + 1] == lower[i + 2] for i in range(len(lower) - 2))
-
-
-def gen_name(rng: random.Random, race: int, taken: set[str]) -> str:
-    pre, post = _SYLLABLES[race]
-    for _ in range(500):
-        name = rng.choice(pre) + rng.choice(post)
-        if rng.random() < 0.3:
-            name = rng.choice(pre) + rng.choice(pre).lower() + rng.choice(post)
-        if valid_name(name) and name.lower() not in taken:
-            return name
-    raise RuntimeError(f"could not generate a free name for race {race}")
-
-
-def account_name(n: int) -> str:
-    return f"AGENT{n:02d}"
 
 
 def plan_agents(rng: random.Random, existing: list[dict], total: int = TOTAL) -> list[dict]:
@@ -109,7 +69,7 @@ def plan_agents(rng: random.Random, existing: list[dict], total: int = TOTAL) ->
     taken = {a["character"].lower() for a in by_account.values()}
     out = []
     for n in range(1, total + 1):
-        acc = account_name(n)
+        acc = roster.account_name(n)
         if acc in by_account:
             out.append(by_account[acc])
             continue
@@ -123,10 +83,12 @@ def plan_agents(rng: random.Random, existing: list[dict], total: int = TOTAL) ->
 
 
 def load_roster(path: Path | None = None) -> list[dict]:
+    """The validated entries as the five JSON keys, [] when the file does not exist yet.
+    A malformed file raises roster.RosterError."""
     path = path or ROSTER_PATH          # resolved per call so tests can redirect it
     if not path.exists():
         return []
-    return json.loads(path.read_text())["agents"]
+    return [a.to_json() for a in roster.load_roster(path)]
 
 
 def save_roster(agents: list[dict], path: Path | None = None) -> None:
@@ -147,50 +109,6 @@ def describe(a: dict) -> str:
 # CHAR_NAME_RUSSIAN_SILENT_CHARACTER_AT_BEGINNING_OR_END = 88..102 (CHAR_NAME_RESERVED = 95).
 # All of them mean "pick another name"; anything else is a real failure.
 _NAME_RETRY_CODES = {50, *range(88, 103)}
-
-
-class Console:
-    """Fire-and-forget `account create` over the socket.io console of scripts/wow_console.py.
-
-    Unlike wow_console.main() this never prints the command (it carries a password)
-    nor the server's reply; callers confirm by logging in afterwards."""
-
-    def __init__(self, host: str):
-        self.host = host
-
-    def create_account(self, account: str, password: str) -> None:
-        import wow_console as wc
-        wc.BASE = f"http://{self.host}:{wc.PORT}/socket.io/"
-        with wc.urllib.request.urlopen(f"{wc.BASE}?EIO=4&transport=polling&t={int(time.time() * 1000)}",
-                                       timeout=10) as r:
-            hs = r.read().decode()
-        sid = json.loads(hs[hs.find("{"):])["sid"]
-        wc.post(sid, "40")
-        time.sleep(0.5)
-        wc.get(sid)
-        wc.post(sid, "42" + json.dumps(["worldserver_input", f"account create {account} {password}"]))
-        time.sleep(2.0)
-
-
-class Realm:
-    """One authenticated world session for an account (no character selected)."""
-
-    def __init__(self, host: str, auth_port: int):
-        self.host, self.auth_port = host, auth_port
-
-    def open(self, account: str, password: str):
-        """Returns a connected WoWSession, or None if the account/password is rejected."""
-        from agent.auth import AuthRejected, auth_logon
-        from agent.session import WoWSession
-        try:
-            acc, key, realms = auth_logon(self.host, self.auth_port, account, password)
-        except AuthRejected:
-            return None
-        realm = list(realms.values())[0]
-        world_host, port = realm["address"].rsplit(":", 1)
-        sess = WoWSession(world_host, int(port), acc, key, realm["id"])
-        sess.connect()
-        return sess
 
 
 def ensure_agent(entry: dict, password: str, realm, console, rng: random.Random,

@@ -16,8 +16,8 @@ class State(enum.Enum):
     CONNECTING = "connecting"   # build_session() running: auth, realm, world login
     ONLINE = "online"           # in world, run_session() running
     BACKOFF = "backoff"         # waiting before the next connect attempt
-    STOPPING = "stopping"       # stop requested or the run ended, tearing down
-    STOPPED = "stopped"         # terminal, clean
+    STOPPING = "stopping"       # stop requested, the run ended or the supervisor is unwinding; logging out if a session exists
+    STOPPED = "stopped"         # terminal: the supervisor returned or was unwound; the reason says which
     FAILED = "failed"           # terminal, permanent refusal (AuthRejected with a permanent code)
 
 
@@ -31,6 +31,11 @@ TRANSITIONS: dict[State, frozenset[State]] = {
 }
 TERMINAL = frozenset({State.STOPPED, State.FAILED})
 
+# The reasons the supervisor passes to to(). The machine accepts any text; this is the list
+# the supervisor, the audit log and ADR 0015 agree on (a test compares it with the ADR).
+REASONS = frozenset({"connected", "connect_failed", "auth_rejected", "auth_rejected_permanent",
+                     "disconnected", "backoff_elapsed", "stop", "run_ended", "crashed"})
+
 
 class InvalidTransition(RuntimeError):
     pass
@@ -40,13 +45,18 @@ class InvalidTransition(RuntimeError):
 class Transition:
     source: State
     target: State
-    reason: str   # free text; the supervisor passes "connect_failed", "auth_rejected", "disconnected", "stop", ...
+    reason: str   # free text; the supervisor passes one of REASONS
     at: float     # clock() at the transition
 
 
 class Lifecycle:
     """One connection's lifecycle. Thread-safe: every method takes one lock. The
-    callback runs after the lock is released, so it may read the machine."""
+    callback runs after the lock is released, so it may read the machine.
+
+    One writer: only the thread that runs the supervisor calls to(), and the callback
+    never calls to(). Then callbacks run in transition order. Other threads read (state,
+    snapshot, history). The lock is not re-entrant: never touch a Lifecycle from a signal
+    handler, which runs on the main thread and would deadlock inside to()."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic,
                  on_transition: Callable[[Transition], None] | None = None,

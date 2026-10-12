@@ -15,12 +15,18 @@
       }
     },
     "/state": {
-      "summary": "Own stats, spellbook, quest log, equipment and inventory.",
+      "summary": "Own stats, spellbook, quest log, equipment and inventory. Also the connection lifecycle (ADR 0015), when the agent has one.",
       "responses": {
         "not in game": {"type": "object", "required": ["api_version", "agent", "connected"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
-          "connected": {"type": "boolean"}}},
+          "connected": {"type": "boolean"},
+          "lifecycle": {"type": "object", "required": ["state", "since", "reason", "transitions"], "properties": {
+            "state": {"type": "string", "enum": ["connecting", "online", "backoff", "stopping", "stopped", "failed"]},
+            "since": {"type": "number"},
+            "reason": {"type": "string"},
+            "transitions": {"type": "array", "items": {"type": "object", "required": ["from", "to", "reason", "at"], "properties": {
+              "from": {"type": "string"}, "to": {"type": "string"}, "reason": {"type": "string"}, "at": {"type": "number"}}}}}}}},
         "in game": {"type": "object", "required": ["api_version", "agent", "connected", "self", "spellbook", "quest_log", "equipment", "inventory"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
@@ -46,7 +52,13 @@
             "id": {"type": "integer"}, "name": {"type": ["string", "null"]}}}},
           "quest_log": {"type": "array"},
           "equipment": {"type": "object"},
-          "inventory": {"type": "array"}}}
+          "inventory": {"type": "array"},
+          "lifecycle": {"type": "object", "required": ["state", "since", "reason", "transitions"], "properties": {
+            "state": {"type": "string", "enum": ["connecting", "online", "backoff", "stopping", "stopped", "failed"]},
+            "since": {"type": "number"},
+            "reason": {"type": "string"},
+            "transitions": {"type": "array", "items": {"type": "object", "required": ["from", "to", "reason", "at"], "properties": {
+              "from": {"type": "string"}, "to": {"type": "string"}, "reason": {"type": "string"}, "at": {"type": "number"}}}}}}}}
       }
     },
     "/perception": {
@@ -133,6 +145,7 @@
   },
   "notes": [
     "GET /events is a Server-Sent Events stream (event: event | decision, data: JSON) and is not versioned per message.",
-    "A missing api_version means an agent older than this contract; consumers treat it as version 1 (the shape did not change)."
+    "A missing api_version means an agent older than this contract; consumers treat it as version 1 (the shape did not change).",
+    "lifecycle in GET /state is the snapshot of the reconnect supervisor's state machine (docs/adr/0015-agent-connection-lifecycle.md). It is absent on an agent that has none. since and at are unix epoch seconds; transitions holds the newest 32, oldest first."
   ]
 }
