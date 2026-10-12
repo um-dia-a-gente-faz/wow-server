@@ -192,6 +192,54 @@ class CalibrationFileTests(unittest.TestCase):
         self.assertEqual(store, json.loads(self.raw()))
         self.assertEqual(sorted(store), ["100", "200", "300", "400"])  # 500 was only in memory
 
+    def test_a_newer_schema_is_not_read_and_the_save_is_refused_with_the_bytes_kept(self):
+        self.write(json.dumps({"schema": 2, "12": {"dx": 1, "dy": 2}}))
+        before = self.raw()
+        with self.assertLogs(state.log, "WARNING") as logs:
+            self.assertEqual(calibration.load_calibrations(), {})
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("newer", logs.output[0])
+        with self.assertRaises(calibration.CalibrationNewer):
+            calibration.save_calibration(12, 5, 5)
+        self.assertEqual(self.raw(), before)
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_the_route_answers_500_saying_newer_for_a_newer_schema(self):
+        self.write(json.dumps({"schema": 2, "12": {"dx": 1, "dy": 2}}))
+        before = self.raw()
+        body = b'{"area_id": 12, "dx": 5, "dy": 5}'
+        req = Request("POST", "/api/calibrate", {}, {"Content-Length": str(len(body))},
+                      lambda n: body[:n], "10.0.0.9")
+        with self.assertLogs(state.log, "WARNING"):
+            status, payload = calibration.calibrate(req)
+        self.assertEqual(status, 500)
+        self.assertIn("newer", payload["error"])
+        self.assertEqual(self.raw(), before)
+
+    def test_schema_1_loads_its_zones_without_a_schema_zone(self):
+        self.write(json.dumps({"schema": 1, "12": {"dx": 1, "dy": 2}}))
+        self.start_up()
+        self.assertEqual(calibration.calibrations, {"12": {"dx": 1.0, "dy": 2.0}})
+        calibration.save_calibration(13, 3, 4)
+        self.assertEqual(json.loads(self.raw()), {"12": {"dx": 1.0, "dy": 2.0},
+                                                  "13": {"dx": 3.0, "dy": 4.0}})
+
+    def test_a_schema_that_is_not_a_positive_integer_is_unreadable_not_newer(self):
+        for schema in ("1", True, 1.0, 0, -1, None, []):
+            with self.subTest(schema=schema):
+                self.write(json.dumps({"schema": schema, "12": {"dx": 1, "dy": 2}}))
+                before = self.raw()
+                with self.assertRaises(calibration.CalibrationUnreadable) as ctx:
+                    calibration.save_calibration(13, 1.0, 2.0)
+                self.assertNotIsInstance(ctx.exception, calibration.CalibrationNewer)
+                self.assertEqual(self.raw(), before)
+
+    def test_the_committed_store_loads_without_a_warning(self):
+        committed = os.path.join(WOWMAP, "calibration.json")
+        with mock.patch.object(calibration, "CALIBRATION_FILE", committed), \
+                self.assertNoLogs(state.log, "WARNING"):
+            self.assertEqual(calibration.load_calibrations(), {})
+
 
 if __name__ == "__main__":
     unittest.main()
