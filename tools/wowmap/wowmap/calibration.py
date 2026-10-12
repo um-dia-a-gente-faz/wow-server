@@ -13,17 +13,27 @@ CALIBRATION_FILE = os.environ.get(
 MAX_CALIBRATION_PAYLOAD_BYTES = 65536
 JSON_WHITESPACE = " \t\r\n"  # the whitespace JSON allows; an all-whitespace file is an empty store
 _lock = threading.Lock()
+# The writer never writes a "schema" key while this is 1: the site deployed before #641 reads a
+# top-level "schema": 1 as a zone that is not an object and would refuse the file after a
+# rollback. An absent schema already means 1 (ADR 0018), so the key is not needed yet.
+CALIBRATION_SCHEMA = 1
 
 
 class CalibrationUnreadable(ValueError):
     """calibration.json exists but is not a readable store; saving would overwrite it (#608)."""
 
 
+class CalibrationNewer(CalibrationUnreadable):
+    """calibration.json was written by a newer site; this one neither reads nor overwrites it (ADR 0018)."""
+
+
 def _read_store():
     """The zones in calibration.json ({} if the file is missing, empty or only whitespace).
 
     Raises CalibrationUnreadable when the file exists but is not valid JSON, not an object,
-    has a zone that is not an object, or has an offset that does not parse as a number."""
+    has a zone that is not an object, has an offset that does not parse as a number, or has a
+    schema that is not a positive integer. Raises CalibrationNewer when the schema is above
+    CALIBRATION_SCHEMA. An absent schema is version 1."""
     try:
         with open(CALIBRATION_FILE, encoding="utf-8") as f:
             text = f.read()
@@ -36,6 +46,12 @@ def _read_store():
         raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: {exc}") from exc
     if not isinstance(data, dict):
         raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: top-level value must be an object")
+    schema = data.pop("schema", 1)
+    if type(schema) is not int or schema < 1:  # type(): a bool or a float is not a schema number
+        raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: schema must be a positive integer")
+    if schema > CALIBRATION_SCHEMA:
+        raise CalibrationNewer(
+            f"{CALIBRATION_FILE} is schema {schema}, newer than {CALIBRATION_SCHEMA}: not read, not overwritten")
     store = {}
     for area_id, value in data.items():
         if not isinstance(value, dict):
