@@ -222,7 +222,7 @@ def _known_player_name(session, world, target_name: str) -> bool:
     for obj in world.get_objects().values():
         if obj.name and obj.name.lower() == lname:
             return True
-    for entry in session.chat_inbox:
+    for entry in session.chat_inbox_snapshot():
         if entry.get("sender_name", "").lower() == lname:
             return True
     return False
@@ -291,7 +291,7 @@ class WhisperAction(Action):  # not registered: chat deferred (UM-98)
         # successful whisper gets no ack at all. Same fire-and-forget,
         # wait-for-failure-only pattern as SellItemAction.
         def find_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if (e.get("t", 0) >= sent_at and e.get("kind") == "whisper_failed"
                         and e.get("target_name") == target_name):
                     return e
@@ -342,7 +342,7 @@ class InviteToGroupAction(Action):
         # only a failure event is worth waiting for; a timeout (or a
         # silently-successful OK) means the invite went through.
         def find_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if (e.get("t", 0) >= sent_at and e.get("kind") == "group_invite_failed"
                         and e.get("target_name") == name):
                     return e

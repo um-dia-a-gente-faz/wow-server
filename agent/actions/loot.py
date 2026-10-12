@@ -65,7 +65,7 @@ class LootAction(Action):
         send(session, lootmod.CMSG_LOOT, lootmod.build_loot(guid))
 
         def find_loot_response():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) >= sent_at and e.get("kind") == "loot_response" and e.get("guid") == guid:
                     return e
             return None
@@ -88,7 +88,7 @@ class LootAction(Action):
                                   lootmod.build_autostore_loot_item(item["slot"]))
 
         def find_inventory_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) >= sent_at and e.get("kind") == "inventory_change_failure":
                     return e
             return None
@@ -249,7 +249,7 @@ class EquipItemAction(Action):
         send(session, lootmod.CMSG_AUTOEQUIP_ITEM, lootmod.build_autoequip_item(bag, slot))
 
         def find_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) >= sent_at and e.get("kind") == "inventory_change_failure":
                     return e
             return None

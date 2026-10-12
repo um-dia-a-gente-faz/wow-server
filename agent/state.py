@@ -82,3 +82,14 @@ class GameState:
         make plain index-based slicing wrong)."""
         self.events.append({"kind": kind, "t": time.monotonic(), **fields})
         changes.notify()
+
+    def events_snapshot(self) -> list[dict]:
+        """A copy of `events`, oldest first. Readers on any thread but the recv thread
+        (the appender) must iterate this, never `events`: a live loop raises "deque
+        mutated during iteration" when an append lands mid-scan. list(deque) copies in
+        C without releasing the GIL, so it cannot be interrupted (ADR 0009)."""
+        return list(self.events)
+
+    def chat_inbox_snapshot(self) -> list[dict]:
+        """A copy of `chat_inbox`, for the same reason as events_snapshot()."""
+        return list(self.chat_inbox)

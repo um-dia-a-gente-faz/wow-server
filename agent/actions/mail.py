@@ -165,7 +165,7 @@ class SendMailAction(Action):
                                                        money=gold, item_guid=item_guid))
 
         def find_result():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
                     continue
                 if e.get("command") == mailmod.MAIL_SEND:
@@ -224,7 +224,7 @@ class TakeMailAction(Action):
 
         def find_result(command, sent_at):
             def _find():
-                for e in session.events:
+                for e in session.events_snapshot():
                     if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
                         continue
                     if e.get("mail_id") == mail_id and e.get("command") == command:
@@ -292,7 +292,7 @@ class DeleteMailAction(Action):
                               mailmod.build_mail_delete(mailbox["mailbox_guid"], mail_id))
 
         def find_result():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) < sent_at or e.get("kind") != "mail_result":
                     continue
                 if e.get("mail_id") == mail_id and e.get("command") == mailmod.MAIL_DELETED:

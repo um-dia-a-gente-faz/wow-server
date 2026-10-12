@@ -75,7 +75,7 @@ class AutoAttackAction(Action):
         send_attack(session, guid)
         confirmed = _wait_for(
             lambda: any(e.get("kind") == "attack_start" and e.get("victim_guid") == guid
-                        and e.get("t", 0) >= sent_at for e in session.events),
+                        and e.get("t", 0) >= sent_at for e in session.events_snapshot()),
             timeout=self.confirm_timeout, interval=self.confirm_interval)
         if not confirmed:
             return ActionResult(ok=False, error="no attack_start event seen", detail={"guid": guid})
@@ -139,7 +139,7 @@ class CastSpellAction(Action):
         send(session, CMSG_CAST_SPELL, spells.build_cast_spell(spell_id, target_guid=target_guid))
 
         def find_start_or_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) < sent_at or e.get("spell_id") != spell_id:
                     continue
                 if e.get("kind") in ("cast_failed", "spell_start", "spell_go"):
@@ -170,7 +170,7 @@ class CastSpellAction(Action):
         cast_time_s = event.get("cast_time", 0) / 1000.0
 
         def find_outcome():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) <= started_at or e.get("spell_id") != spell_id:
                     continue
                 if e.get("kind") in ("cast_failed", "spell_go"):

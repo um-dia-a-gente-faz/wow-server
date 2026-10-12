@@ -65,6 +65,16 @@ safe enough under CPython's GIL and on readers tolerating a slightly stale value
 `agent/actions/` waits for confirmation by scanning `events` for entries newer than a
 `time.monotonic()` stamp (`record_event` stamps `t` for that reason).
 
+Readers on any thread but the recv thread take a snapshot, `GameState.events_snapshot()`
+or `chat_inbox_snapshot()`, and never loop over the deque itself (#692): CPython raises
+`RuntimeError: deque mutated during iteration` when an append lands mid-loop, which
+happens exactly while an action waits for an event, and nothing on the think path catches
+it, so it ends the agent process. `list(deque)` is safe because the copy runs in C
+without releasing the GIL, so no append can interleave with it. That holds for the GIL
+builds of CPython (3.12 here); a free-threaded build would need a lock around the deque.
+A fitness test in `agent/tests/test_architecture.py` rejects a live loop outside
+`agent/state.py` and `agent/handlers/`.
+
 ## Consequences
 
 - A new handler may assume it runs on the recv thread, serially, so handlers do

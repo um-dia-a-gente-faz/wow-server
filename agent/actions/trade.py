@@ -41,7 +41,7 @@ TRADE_CONFIRM_TIMEOUT_S = DEFAULT_CONFIRM_TIMEOUT_S
 
 
 def _find_trade_status_event(session, sent_at: float, status_names: tuple) -> dict | None:
-    for e in session.events:
+    for e in session.events_snapshot():
         if e.get("t", 0) < sent_at or e.get("kind") != "trade_status":
             continue
         if e.get("status_name") in status_names:
@@ -50,7 +50,7 @@ def _find_trade_status_event(session, sent_at: float, status_names: tuple) -> di
 
 
 def _find_event_since(session, sent_at: float, kind: str) -> dict | None:
-    for e in session.events:
+    for e in session.events_snapshot():
         if e.get("t", 0) >= sent_at and e.get("kind") == kind:
             return e
     return None

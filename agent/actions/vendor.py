@@ -144,7 +144,7 @@ class BuyItemAction(Action):
         # CastSpellAction's SMSG_CAST_FAILED pattern and wait for whichever
         # arrives first, tied to this vendor/item.
         def find_outcome():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if e.get("t", 0) < sent_at or e.get("vendor_guid") != vendor_guid:
                     continue
                 if e.get("kind") == "buy_item" and e.get("slot") == item["slot"]:
@@ -195,7 +195,7 @@ class SellItemAction(Action):
         # worth waiting on), so wait briefly for sell_failed and otherwise
         # treat the timeout as success.
         def find_failure():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if (e.get("t", 0) >= sent_at and e.get("kind") == "sell_failed"
                         and e.get("vendor_guid") == vendor_guid and e.get("item_guid") == item_guid):
                     return e
@@ -232,7 +232,7 @@ class TrainSpellAction(Action):
         send(session, npc.CMSG_TRAINER_BUY_SPELL, npc.build_train_spell(trainer_guid, spell_id))
 
         def find_outcome():
-            for e in session.events:
+            for e in session.events_snapshot():
                 if (e.get("t", 0) >= sent_at and e.get("kind") in ("train_succeeded", "train_failed")
                         and e.get("trainer_guid") == trainer_guid and e.get("spell_id") == spell_id):
                     return e

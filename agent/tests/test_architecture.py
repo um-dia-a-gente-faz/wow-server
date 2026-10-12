@@ -169,6 +169,23 @@ def agent_graph():
     return graph, third
 
 
+def _live_deque_loops(source: str, filename: str = "<src>") -> list[int]:
+    """Line numbers where `source` iterates `.events` or `.chat_inbox` itself: a `for`, a
+    comprehension or generator, or reversed()/iter()/enumerate()/sorted() of it. A copy
+    (`list(x.events)`, the snapshot methods) is not iteration of the deque."""
+    deques = {"events", "chat_inbox"}
+    wrappers = {"reversed", "iter", "enumerate", "sorted"}
+    live = lambda n: isinstance(n, ast.Attribute) and n.attr in deques
+    lines = []
+    for node in ast.walk(ast.parse(source, filename)):
+        if isinstance(node, (ast.For, ast.comprehension)) and live(node.iter):
+            lines.append(node.iter.lineno)
+        elif (isinstance(node, ast.Call) and getattr(node.func, "id", "") in wrappers
+              and node.args and live(node.args[0])):
+            lines.append(node.lineno)
+    return sorted(lines)
+
+
 class AgentArchitectureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -258,6 +275,27 @@ class AgentArchitectureTests(unittest.TestCase):
                 if "swallowed" not in calls and not reraises:
                     bad.append(f"{rel}:{node.lineno}")
         self.assertEqual(bad, [], "broad except without swallowed(where, log): see agent/metrics.py")
+
+    def test_other_threads_never_iterate_the_live_deques(self):
+        """#692: the recv thread (agent/state.py, agent/handlers/) is the only appender, so
+        only it may loop over `events` / `chat_inbox`; everyone else takes events_snapshot()
+        / chat_inbox_snapshot() (ADR 0009)."""
+        bad = []
+        for path, _, _ in _agent_files():
+            rel = str(path.relative_to(ROOT))
+            if "/tests/" in rel or rel == "agent/state.py" or rel.startswith("agent/handlers/"):
+                continue
+            bad += [f"{rel}:{n}" for n in _live_deque_loops(path.read_text(), rel)]
+        self.assertEqual(bad, [], "iterate session.events_snapshot() / chat_inbox_snapshot(), not the deque")
+
+    def test_the_live_deque_probe_catches_every_loop_shape(self):
+        for src in ("for e in session.events: pass", "[e for e in s.chat_inbox]",
+                    "any(e for e in s.events)", "for e in reversed(ctx.state.events): pass",
+                    "for i, e in enumerate(s.events): pass"):
+            self.assertTrue(_live_deque_loops(src), src)
+        for src in ("for e in list(s.events): pass", "for e in s.events_snapshot(): pass",
+                    "for e in s.chat_inbox_snapshot(): pass", "n = len(s.events)"):
+            self.assertEqual(_live_deque_loops(src), [], src)
 
     def test_parsers_do_not_reach_into_state_or_actions(self):
         # "parsers are pure": they may use the wire helpers and each other's data, never
