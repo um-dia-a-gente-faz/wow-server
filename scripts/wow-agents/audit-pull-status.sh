@@ -26,7 +26,7 @@
 #   AUDIT_DEST, AUDIT_STATE_DIR, AUDIT_SRC_HOST/USER/PATH, AUDIT_SSH_KEY,
 #   AUDIT_SSH_KNOWN_HOSTS  (as in pull-audit.sh)
 #   STALE_AFTER_S   default 120    heartbeat older than this = stalled (4 ticks)
-#   QUIET_AFTER_S   default 300    mirror newest older than this = agents quiet
+#   QUIET_AFTER_S   default 300    per agent: newest decision file older than this = that agent quiet
 #   SLACK_S         default 120    allowed source-over-mirror lag
 #   SKIP_SOURCE=1   skip the ssh check (heartbeat + mirror only)
 #   RSYNC_BIN / SSH_BIN  (tests)
@@ -45,6 +45,11 @@ slack="${SLACK_S:-120}"
 rsync_bin="${RSYNC_BIN:-rsync}"
 ssh_bin="${SSH_BIN:-ssh}"
 now="${NOW_EPOCH:-$(date +%s)}"
+
+# A directory name can hold a newline: print every name with control characters
+# replaced by '?', so no output line can start with VERDICT: but the real one (#645).
+# Ordinary names (letters, digits, space, dash, dot, underscore) print unchanged.
+show_name() { local s="${1//[[:cntrl:]]/?}"; printf '%s' "$s"; }
 
 # --- heartbeat -------------------------------------------------------------
 hb=""
@@ -96,10 +101,10 @@ for name in "${agent_names[@]}"; do
   agent_newest="$(find "$dest/$name" -mindepth 1 -maxdepth 1 -type f -name '*.jsonl*' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
   agent_newest="${agent_newest%.*}"
   if [ -z "$agent_newest" ]; then
-    echo "agent $name: no decision files"
+    echo "agent $(show_name "$name"): no decision files"
     quiet_names+=("$name")
   else
-    echo "agent $name: newest decision file $((now - agent_newest)) s old"
+    echo "agent $(show_name "$name"): newest decision file $((now - agent_newest)) s old"
     if [ $((now - agent_newest)) -gt "$quiet_after" ]; then
       quiet_names+=("$name")
     fi
@@ -144,7 +149,10 @@ fi
 
 # Any quiet agent makes the verdict QUIET; OK needs every agent fresh.
 if [ "${#quiet_names[@]}" -gt 0 ]; then
-  printf -v quiet_list '%s, ' "${quiet_names[@]}"
+  quiet_list=""
+  for name in "${quiet_names[@]}"; do
+    quiet_list+="$(show_name "$name"), "
+  done
   quiet_list="${quiet_list%, }"
   echo "VERDICT: QUIET - the pull is healthy and the source has nothing newer: no agent activity for over ${quiet_after}s from: ${quiet_list}."
   exit 0

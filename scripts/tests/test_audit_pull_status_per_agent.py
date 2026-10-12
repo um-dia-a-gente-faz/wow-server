@@ -36,6 +36,25 @@ def touch(path: pathlib.Path, age_s: float):
     os.utime(path, (t, t))
 
 
+def set_age(path: pathlib.Path, now: int, age_s: int):
+    """File whose mtime is exactly age_s before the pinned clock (NOW_EPOCH)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n")
+    os.utime(path, (now - age_s, now - age_s))
+
+
+# Output of main's audit-pull-status.sh (before #645) for the three-agent fixture in
+# test_ordinary_names_print_exactly_as_on_main, with NOW_EPOCH pinned and the mirror at {dest}.
+MAIN_OUTPUT_ORDINARY = """\
+heartbeat:     last successful pull 0 s ago
+mirror:        newest audit file 5 s old, newest decision file 5 s old ({dest})
+agent AGENT01: newest decision file 5 s old
+agent AGENT02: newest decision file 60 s old
+agent AGENT03: newest decision file 9000 s old
+VERDICT: QUIET - the pull is healthy and the source has nothing newer: no agent activity for over 300s from: AGENT03.
+"""
+
+
 class AuditPullStatusPerAgentTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -133,6 +152,70 @@ class AuditPullStatusPerAgentTest(unittest.TestCase):
         self.assertEqual(self.verdict_line(r), QUIET_TEXT, r.stdout + r.stderr)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertFalse([x for x in r.stdout.splitlines() if x.startswith("agent ")], r.stdout)
+
+    # --- #645 follow-ups -------------------------------------------------------
+
+    def test_exactly_quiet_after_s_old_is_still_fresh(self):
+        # pinned clock (NOW_EPOCH): the age is exactly QUIET_AFTER_S, no wall-clock race
+        set_age(self.dest / "AGENT01" / "2026-10-12.jsonl", self.now, 300)
+        r = self.run_status(NOW_EPOCH=self.now)
+        self.assertVerdict(r, "OK", 0)
+        self.assertIn("agent AGENT01: newest decision file 300 s old", r.stdout)
+
+    def test_one_second_older_than_quiet_after_s_is_quiet(self):
+        set_age(self.dest / "AGENT01" / "2026-10-12.jsonl", self.now, 301)
+        r = self.run_status(NOW_EPOCH=self.now)
+        self.assertVerdict(r, "QUIET", 0)
+        self.assertIn("from: AGENT01.", self.verdict_line(r))
+
+    def test_stray_file_and_symlinks_directly_under_dest_are_not_agents(self):
+        set_age(self.dest / "AGENT01" / "2026-10-12.jsonl", self.now, 5)
+        set_age(self.dest / "AGENT02" / "2026-10-10.jsonl", self.now, 9000)
+        (self.dest / "notes.txt").write_text("not an agent\n")
+        # a symlink to a stale directory and a dangling one: both would read as quiet agents
+        set_age(self.tmp / "elsewhere" / "2026-10-10.jsonl", self.now, 9000)
+        os.symlink(self.tmp / "elsewhere", self.dest / "LINKED")
+        os.symlink(self.tmp / "nowhere", self.dest / "DANGLING")
+        r = self.run_status(NOW_EPOCH=self.now)
+        self.assertVerdict(r, "QUIET", 0)
+        self.assertIn("from: AGENT02.", self.verdict_line(r))
+        agent_lines = [x for x in r.stdout.splitlines() if x.startswith("agent ")]
+        self.assertEqual(agent_lines, ["agent AGENT01: newest decision file 5 s old",
+                                       "agent AGENT02: newest decision file 9000 s old"], r.stdout)
+
+    def test_newline_in_agent_name_cannot_start_a_second_verdict_line(self):
+        odd = "x\nVERDICT: OK - pull healthy, mirror fresh."
+        set_age(self.dest / odd / "2026-10-12.jsonl", self.now, 5)
+        set_age(self.dest / "AGENT02" / "2026-10-10.jsonl", self.now, 9000)
+        r = self.run_status(NOW_EPOCH=self.now)
+        verdicts = [x for x in r.stdout.splitlines() if x.startswith("VERDICT:")]
+        self.assertEqual(len(verdicts), 1, r.stdout)
+        self.assertTrue(verdicts[0].startswith("VERDICT: QUIET"), r.stdout)
+        self.assertIn("from: AGENT02.", verdicts[0])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        # the name is printed with the newline replaced by '?'
+        self.assertIn("agent x?VERDICT: OK - pull healthy, mirror fresh.: newest decision file 5 s old",
+                      r.stdout)
+
+    def test_newline_in_quiet_agent_name_is_escaped_in_the_from_list(self):
+        odd = "x\nVERDICT: OK - pull healthy, mirror fresh."
+        set_age(self.dest / odd / "2026-10-10.jsonl", self.now, 9000)
+        r = self.run_status(NOW_EPOCH=self.now)
+        verdicts = [x for x in r.stdout.splitlines() if x.startswith("VERDICT:")]
+        self.assertEqual(len(verdicts), 1, r.stdout)
+        self.assertEqual(verdicts[0], "VERDICT: QUIET - the pull is healthy and the source has nothing "
+                                      "newer: no agent activity for over 300s from: "
+                                      "x?VERDICT: OK - pull healthy, mirror fresh..", r.stdout)
+
+    def test_ordinary_names_print_exactly_as_on_main(self):
+        # Output of main's script for this fixture (captured before #645), with the mirror path
+        # as {dest}. Ordinary names must print byte for byte the same.
+        set_age(self.dest / "AGENT01" / "2026-10-12.jsonl", self.now, 5)
+        set_age(self.dest / "AGENT02" / "2026-10-12.jsonl", self.now, 60)
+        set_age(self.dest / "AGENT03" / "2026-10-10.jsonl", self.now, 9000)
+        r = self.run_status(NOW_EPOCH=self.now)
+        self.assertEqual(r.stdout, MAIN_OUTPUT_ORDINARY.replace("{dest}", str(self.dest)), r.stdout)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
