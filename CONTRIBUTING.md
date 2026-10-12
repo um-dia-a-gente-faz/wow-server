@@ -171,6 +171,15 @@ generator or its source, then `python3 scripts/generate.py`. CI runs
 generator to run. A new generator is one line in `GENERATORS`; it must rewrite its outputs
 and, given `--check`, exit non-zero on drift (`scripts/genlib.py` has the helper).
 
+## Persisted state
+
+`scripts/tests/test_persisted_state_inventory.py` fails when code writes a file or a SQLite
+database that has no row in its `INVENTORY`. Add the row (class, and the version constant or
+`"none"`), and for anything that is not `exempt` decide the class and version rule in
+[ADR 0018](docs/adr/0018-persisted-state-versioning.md) and its inventory table first. A file
+that an agent or a service reads back on a later run is not exempt; a file under
+`tools/agent_dev` or `tools/loadtest` that a person passes back by hand is, and its reason says so.
+
 ## Lint and types
 
 CI job `lint + types` runs `ruff` and `mypy`. They are dev tools only (`agent/` stays

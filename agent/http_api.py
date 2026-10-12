@@ -18,7 +18,8 @@ see agent/control.py). With no token configured every POST is still a 405.
                      recent-action history, reflexes, token usage
     GET /events      Server-Sent Events: session.events + decisions
     GET /metrics     Prometheus text: wow_agent_swallowed_errors_total{agent,where}, router counters,
-                     wow_agent_reconnect_attempts_total{agent,reason} (agent.metrics)
+                     wow_agent_reconnect_attempts_total{agent,reason},
+                     wow_agent_fleet_limits_state/_age_seconds and wow_agent_fleet_blocked_cycles_total (agent.metrics)
     POST /control/walk   operator walk, only with AGENT_CONTROL_TOKEN set (agent/control.py)
 
 Threading: the recv thread and the think loop mutate state; handlers only
@@ -45,7 +46,7 @@ from . import control
 from . import spells as sp
 from . import update_fields as uf
 from .audit import _redact
-from .metrics import render_reconnects, render_router, render_swallowed, swallowed
+from .metrics import render_fleet, render_reconnects, render_router, render_swallowed, swallowed
 
 log = logging.getLogger("agent.http")
 
@@ -82,6 +83,11 @@ class LifecycleView(Protocol):
     def snapshot(self) -> dict[str, object]: ...
 
 
+class HealthView(Protocol):
+    """What /metrics reads of the brain's FleetLimits: one attribute, an immutable tuple."""
+    health: tuple[str, float | None]
+
+
 class AgentObserver:
     """What the HTTP handlers read from. The main loop calls attach() when a
     session starts and detach() when it ends (sessions are rebuilt on every
@@ -108,6 +114,15 @@ class AgentObserver:
         # #292: the supervisor's agent.lifecycle.Lifecycle. None until the supervisor is wired:
         # /state then has no "lifecycle".
         self.lifecycle: LifecycleView | None = None
+        # #675: the brain's fleet limits file, set by start_observer. /metrics reads only its
+        # `health` (an immutable tuple); it never calls blocked(), so the file is read by the think thread alone.
+        self.fleet: HealthView | None = None
+
+    def metrics_text(self) -> str:
+        """The body of GET /metrics."""
+        return (render_swallowed(self.agent_name) + render_router(self.agent_name)
+                + render_reconnects(self.agent_name)
+                + render_fleet(self.agent_name, self.fleet.health if self.fleet is not None else None, time.time()))
 
     # ── fed by the agent loop ────────────────────────────────────────
     def attach(self, session, think_state=None, reflex_state_fn=None):
@@ -330,8 +345,7 @@ class _Handler(BaseHTTPRequestHandler):
             if path == "/events":
                 return self._stream_events()
             if path == "/metrics":   # Prometheus text, not JSON; the swallowed-error counter (#306)
-                data = (render_swallowed(obs.agent_name) + render_router(obs.agent_name)
-                        + render_reconnects(obs.agent_name)).encode("utf-8")
+                data = obs.metrics_text().encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))

@@ -14,6 +14,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+# #670: point CALIBRATION_FILE at a temp file before any wowmap import
+import _calibration_env  # noqa: F401
 WOWMAP = pathlib.Path(__file__).resolve().parents[1] / "wowmap"
 TOOLS = WOWMAP.parents[1]
 sys.path.insert(0, str(WOWMAP))

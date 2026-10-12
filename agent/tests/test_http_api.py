@@ -114,6 +114,44 @@ class EndpointsTest(_ServerCase):
             text = r.read().decode("utf-8")
         self.assertIn('wow_agent_reconnect_attempts_total{agent="Luaprata",reason="disconnected"} 1', text)
 
+    def test_metrics_fleet_block_for_each_kind_of_observer(self):
+        from agent import metrics
+        from agent.fleetlimits import FleetLimits
+
+        def body():
+            with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
+                return r.read().decode("utf-8")
+        name = "Luaprata"
+        old = metrics.render_swallowed(name) + metrics.render_router(name) + metrics.render_reconnects(name)
+        text = body()   # no limits file configured
+        self.assertTrue(text.startswith(old))
+        self.assertIn('wow_agent_fleet_limits_state{agent="Luaprata",state="off"} 1', text)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "limits.json")
+            with open(path, "w") as f:
+                json.dump({"version": 1, "written_ts": time.time() - 10, "blocks": {}}, f)
+            self.observer.fleet = FleetLimits(path)
+            self.observer.fleet.blocked("jev")   # the think thread's read
+            text = body()
+            self.assertTrue(text.startswith(old))
+            self.assertIn('wow_agent_fleet_limits_state{agent="Luaprata",state="ok"} 1', text)
+            self.assertRegex(text, r'wow_agent_fleet_limits_age_seconds\{agent="Luaprata"\} 1\d\.')
+
+            def boom(*a, **k):
+                raise AssertionError("the /metrics handler touched the limits file")
+            # the handler thread only reads `health`: it never stats or opens the file
+            with mock.patch("os.stat", boom), mock.patch("builtins.open", boom):
+                self.assertIn('state="ok"} 1', body())
+
+    def test_start_observer_gives_the_observer_the_brains_limits(self):
+        from agent.fleetlimits import FleetLimits
+        cfg = Config(agent_name="Luaprata", http_port=1, http_bind="127.0.0.1")
+        fleet = FleetLimits("/nonexistent/limits.json")
+        brain = SimpleNamespace(model="m", jev=None, fleet=fleet)
+        with mock.patch.object(main_mod, "start_server", return_value=object()):
+            observer, _ = main_mod.start_observer(cfg, None, logging.getLogger("t"), brain=brain)
+        self.assertIs(observer.fleet, fleet)
+
     def test_healthz(self):
         body = json.loads(self.get("/healthz")[1])
         self.assertEqual(body["agent"], "Luaprata")

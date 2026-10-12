@@ -336,6 +336,67 @@ class FleetBlockTest(unittest.TestCase):
         self.assertEqual(b.fleet.path, self.path)
 
 
+class FleetCountTest(unittest.TestCase):
+    """#675: one fleet-blocked count per cycle and brain, only where the limits file decides."""
+
+    NOW = FleetBlockTest.NOW
+
+    def setUp(self):
+        from agent import metrics
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = os.path.join(tmp.name, "limits.json")
+        self.now = self.NOW
+        self.metrics = metrics
+        metrics.FLEET_BLOCKED.update(dict.fromkeys(metrics.FLEET_BRAINS, 0))
+        self.addCleanup(metrics.FLEET_BLOCKED.update, dict.fromkeys(metrics.FLEET_BRAINS, 0))
+
+    def fleet(self, *brains):
+        with open(self.path, "w") as f:
+            json.dump({"version": 1, "blocks": {b: {"until_ts": self.NOW + 30, "reason": "x"} for b in brains}}, f)
+        return FleetLimits(self.path, lambda: self.now)
+
+    def counts(self):
+        return dict(self.metrics.FLEET_BLOCKED)
+
+    def cycle(self, b):
+        with self.assertRaises(br.BrainError):
+            b.decide(snap(), my_guid=ME)
+
+    def test_jev_blocked_three_cycles_then_expiry(self):
+        b = br.Brain(jev=_Boom(), fleet=self.fleet("jev"))
+        for _ in range(3):
+            self.cycle(b)
+        self.now = self.NOW + 31
+        b.jev = ScriptedDecider([("idle", {})])
+        b.decide(snap(), my_guid=ME)
+        self.assertEqual(self.counts(), {"jev": 3, "llm": 0})
+
+    def test_llm_block_counts_under_llm(self):
+        self.cycle(br.Brain(llm=_Boom(), fleet=self.fleet("llm")))
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 1})
+
+    def test_both_blocked_counts_once_each(self):
+        self.cycle(br.Brain(jev=_Boom(), llm=_Boom(), fleet=self.fleet("jev", "llm")))
+        self.assertEqual(self.counts(), {"jev": 1, "llm": 1})
+
+    def test_budget_skip_counts_nothing(self):
+        b = br.Brain(jev=_Boom(), max_tokens_per_hour=1, fleet=self.fleet())
+        b.budget.record(10)
+        self.cycle(b)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
+    def test_unblocked_llm_cycle_counts_nothing(self):
+        br.Brain(llm=ScriptedDecider([("idle", {})]), fleet=self.fleet("jev")).decide(snap(), my_guid=ME)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
+    def test_cooldown_skip_counts_nothing(self):
+        b = br.Brain(jev=_Boom(), fleet=self.fleet("jev"))
+        b._jev_cooldown_until = b._clock() + 60
+        self.cycle(b)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
+
 class _ErrJev:
     """A Jev client that raises one scripted JevError and counts its calls."""
     model = "err"
@@ -435,10 +496,46 @@ class JevCooldownTest(unittest.TestCase):
         b._maybe_cool_down(JevError("x", status=402))
         self.assertEqual((self.cooldown(b), b._jev_cooldown_reason), (300, "HTTP 402"))
 
+    def test_a_cooldown_that_does_not_extend_the_running_one_logs_nothing(self):
+        b = self.make(JevError("x", status=402))
+        self.fail(b)
+        end, reason = b._jev_cooldown_until, b._jev_cooldown_reason
+        self.now[0] += 5
+        with self.assertNoLogs("agent.brain", "WARNING"):
+            b._maybe_cool_down(JevError("net", transient=True))
+        self.assertEqual((b._jev_cooldown_until, b._jev_cooldown_reason), (end, reason))
+
+    def test_a_cooldown_that_extends_the_running_one_logs_one_warning(self):
+        b = self.make(JevError("net", transient=True))
+        self.fail(b)
+        self.now[0] += 2
+        with self.assertLogs("agent.brain", "WARNING") as cm:
+            b._maybe_cool_down(JevError("x", status=402))
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("not calling it for 300s", cm.output[0])
+        self.assertIn("HTTP 402", cm.output[0])
+
+    def test_a_cooldown_started_with_none_running_logs_the_same_line_as_before(self):
+        for error, want in ((JevError("x", status=402), "jev failed (HTTP 402) — not calling it for 300s"),
+                            (JevError("net", transient=True),
+                             "jev failed (network error) — not calling it for 10s")):
+            with self.subTest(error=str(error)):
+                b = self.make(error)
+                with self.assertLogs("agent.brain", "WARNING") as cm:
+                    b._maybe_cool_down(error)
+                self.assertEqual(cm.output, [f"WARNING:agent.brain:{want}"])
+
     def test_jitter_end_of_range(self):
         b = self.make(JevError("x", status=429), end="b")
         self.fail(b)
         self.assertAlmostEqual(self.cooldown(b), 33.0)
+
+    def test_jitter_is_applied_after_the_clamp(self):
+        # 99999 s clamps to 900 s first, then the 10 % jitter: 990 s, not 900 (jitter
+        # lost to the clamp) and not 109 998.9 (clamp lost to the jitter).
+        b = self.make(JevError("x", status=429, retry_after=99999), end="b")
+        self.fail(b)
+        self.assertAlmostEqual(self.cooldown(b), 990.0)
 
     def test_jitter_never_below_base(self):
         import random
