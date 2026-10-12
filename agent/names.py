@@ -178,9 +178,9 @@ def _parse_cache_section(section) -> dict[int, dict | None]:
         try:
             entry = int(key)
         except ValueError:
-            raise ValueError(f"non-numeric entry key {key!r}") from None
+            raise ValueError(f"non-numeric entry key {key[:40]!r}") from None
         if value is not None and not isinstance(value, dict):
-            raise ValueError(f"entry {key} is {type(value).__name__}, expected an object or null")
+            raise ValueError(f"entry {entry} is {type(value).__name__}, expected an object or null")
         out[entry] = value
     return out
 
@@ -307,7 +307,7 @@ class NameCache:
             gameobjects = _parse_cache_section(data.get("gameobjects", {}))
         except FileNotFoundError:
             return
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:
             log.warning("ignoring unreadable name cache %s: %s", path, e)
             return
         self.creatures.update(creatures)

@@ -301,8 +301,12 @@ class NameCachePersistenceTest(unittest.TestCase):
         cases = {
             "top-level list": "[]",
             "non-numeric key": '{"creatures": {"abc": {"name": "x"}}}',
+            "long non-numeric key": '{"creatures": {"' + "k" * 10000 + '": {}}}',
+            "newline in key": '{"creatures": {"\\n3\\n": 5}}',
+            "section is a list": '{"creatures": []}',
             "wrong value type": '{"creatures": {"1": 5}}',
             "truncated": '{"creatures": {"1": {"name": "Bro',
+            "deeply nested": "[" * 100000 + "]" * 100000,
             "empty file": "",
         }
         with tempfile.TemporaryDirectory() as d:
@@ -316,7 +320,10 @@ class NameCachePersistenceTest(unittest.TestCase):
                         c.load(path)  # must not raise
                     self.assertEqual(c.creatures, {})
                     self.assertEqual(c.gameobjects, {})
+                    self.assertEqual(len(logs.output), 1)  # exactly one warning per failed load
                     self.assertIn(path, logs.output[0])
+                    self.assertNotIn("\n", logs.output[0])  # one line, whatever the file held
+                    self.assertLess(len(logs.output[0]), 500)  # bounded, whatever the file held
 
     def test_on_creature_response_persists_found_entries(self):
         with tempfile.TemporaryDirectory() as d:
