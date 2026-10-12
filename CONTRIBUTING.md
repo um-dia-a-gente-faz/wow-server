@@ -243,6 +243,23 @@ gate landed, each with its size then. Same ratchet as ruff and mypy:
   PR that shrinks an offender must update `BASELINE` in the same PR. If another PR
   shrinks the same offender first, rebase and lower the entry.
 
+## Coverage floor
+
+The CI job `coverage (agent floor)` (#384, part of `ci-ok`) runs the `agent/` and
+`tools/world-mock` suites under `coverage` and compares the total with `"agent"` in
+`coverage-floors.json`. Same ratchet as mypy and the size budget:
+
+- **Below the floor fails**: tests were lost or code was added untested.
+- **1.5 or more points above the floor fails too** (`STALE_MARGIN` in
+  `scripts/coverage_floor.py`): a PR that raises coverage raises the number in the same PR,
+  to the integer part of the total the failure message names. The margin absorbs run-to-run
+  and Python-version differences, so take the number from CI (Python 3.12), not your machine.
+- Reproduce with `pip install -r requirements-dev.txt` and `scripts/check.sh coverage`
+  (several minutes; not part of `all`). `python3 scripts/coverage_floor.py --report-only`
+  prints the per-module table without gating. The data file is written to a temp dir.
+
+Only `agent/` has a floor so far; the `tools/` packages follow in a separate issue.
+
 ## Secrets
 
 - Never commit credentials, API keys, or tokens.

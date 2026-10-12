@@ -44,7 +44,7 @@ jobs:
           hit() { [ "$EVENT" != "pull_request" ] || grep -Eq "$1" <<<"$files"; }
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
-            echo "agent=$(hit "$all|^agent/" && echo true || echo false)"
+            echo "agent=$(hit "$all|^agent/|^coverage-floors\.json$" && echo true || echo false)"
             echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
             echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^\.env\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
@@ -52,12 +52,12 @@ jobs:
           } | tee -a "$GITHUB_OUTPUT"
 
   # The single required check (#399). Skipped by the path filter counts as passing;
-  # failed or cancelled needed jobs fail it. Gate on this job only. The coverage job is
-  # informational (continue-on-error) so it is not needed here.
+  # failed or cancelled needed jobs fail it. Gate on this job only. The coverage
+  # job (#384) is a gate too, so it is needed here.
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, agent, tools, lint-typing, compose, secrets, docker-build, docker-build-wowmap, backup-restore]
+    needs: [changes, agent, coverage, tools, lint-typing, compose, secrets, docker-build, docker-build-wowmap, backup-restore]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -133,33 +133,29 @@ jobs:
       - name: mypy (tiers)
         run: scripts/check.sh types
 
-  # #253: informational only (continue-on-error), never gates a merge. `coverage`
-  # is installed here on the runner and is not a dependency of agent/ (stdlib only).
+  # #384: a gate. The floor is in coverage-floors.json and scripts/coverage_floor.py fails when
+  # the total is below it or 1.5 points above it (raise the number in the same PR).
+  # `coverage` comes from requirements-dev.txt, never from agent/ (stdlib only).
   coverage:
-    name: coverage report (informational)
+    name: coverage (agent floor)
     needs: changes
     if: needs.changes.outputs.agent == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Run agent + world-mock tests under coverage
+      - run: pip install -r requirements-dev.txt
+      - name: Agent + world-mock tests under coverage, against the floor
         run: |
-          pip install coverage
-          coverage run --source=agent -m unittest discover -s agent/tests
-          coverage run -a --source=agent -m unittest discover -s tools/world-mock/tests
-      - name: Report (modules with the least coverage first)
-        run: |
-          {
-            echo '### Coverage of agent/ (informational)'
-            echo '```'
-            coverage report --skip-empty --sort=cover
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          set -o pipefail
+          { echo '### Coverage of agent/'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          rc=0
+          scripts/check.sh coverage | tee -a "$GITHUB_STEP_SUMMARY" || rc=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
 
   compose:
     name: compose config

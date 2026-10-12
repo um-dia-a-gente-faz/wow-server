@@ -1,3 +1,4 @@
 # CI/dev-only tools (#261). Never imported by agent/ and not runtime deps (agent/ is stdlib-only).
 ruff==0.8.6
 mypy==1.14.1
+coverage==7.16.2

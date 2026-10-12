@@ -20,7 +20,7 @@ CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 JOB_HEAD = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$")
 CHECK_TARGETS = re.compile(r"scripts/check\.sh((?:[ \t]+[A-Za-z0-9_*-]+)*)")
 # Targets that run no suite (dispatch arms in scripts/check.sh that call a function).
-NO_SUITE_TARGETS = {"compile", "lint", "types", "types-legacy", "generated", "list"}
+NO_SUITE_TARGETS = {"compile", "lint", "types", "types-legacy", "generated", "list", "coverage"}
 
 
 def suite_names(check_text):
