@@ -45,11 +45,12 @@ def wdbc(field_count, records):
     return head + bytes(body) + bytes(strings)
 
 
-def write_dbcs(d, spell_fields=234, cast_times_fields=4, range_fields=40, cast_base=1500, mana=30):
+def write_dbcs(d, spell_fields=234, cast_times_fields=4, range_fields=40, cast_base=1500, mana=30,
+               power_type=0):
     spells = [
         # ID, CastingTimeIndex 28, SpellLevel 39, PowerType 41, ManaCost 42, RangeIndex 46,
         # Name 136 (enUS slot), NameSubtext 153, ManaCostPct 204
-        {0: 133, 28: 4, 39: 1, 41: 0, 42: mana, 46: 7, 136: "Fireball", 153: "Rank 1", 204: 0},
+        {0: 133, 28: 4, 39: 1, 41: power_type, 42: mana, 46: 7, 136: "Fireball", 153: "Rank 1", 204: 0},
         {0: 2098, 28: 0, 39: 12, 41: 3, 42: 40, 46: 0, 136: "Eviscerate", 153: "Rank 2", 204: 5},
     ]
     for name, data in {
@@ -111,6 +112,14 @@ class BuildTests(unittest.TestCase):
         r = WorldKnowledge(self.out)
         self.addCleanup(r.close)
         self.assertEqual(r.spell(133)["cast_time_ms"], -1000)
+
+    def test_power_type_is_read_unsigned(self):
+        # SpellEntry.PowerType is uint32 (DBCStructure.h:1432); POWER_HEALTH (-2) is stored as 0xFFFFFFFE
+        write_dbcs(self.dbc, power_type=0xFFFFFFFE)
+        build.build(self.dbc, self.out)
+        r = WorldKnowledge(self.out)
+        self.addCleanup(r.close)
+        self.assertEqual(r.spell(133)["power_type"], 4294967294)
 
     def test_source_hashes_are_of_the_source_files(self):
         write_dbcs(self.dbc)

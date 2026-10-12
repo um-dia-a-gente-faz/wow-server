@@ -12,7 +12,8 @@ A file with another count is from another build and fails the build.
 
 Signedness, from the same header: `SpellEntry` (line 1391) `PowerType` is `uint32` (line 1432), so it
 is read unsigned; `SpellCastTimesEntry` (line 1505) `Base` is `int32` (line 1508), so it is read
-signed.
+signed. A health-cost spell has PowerType `4294967294` (0xFFFFFFFE), which is `POWER_HEALTH` (-2 in
+TrinityCore's SharedDefines.h:303) read as the `uint32 PowerType` of DBCStructure.h:1432.
 
     Spell.dbc            234 fields  0 ID, 28 CastingTimeIndex, 39 SpellLevel, 41 PowerType,
                                      42 ManaCost, 46 RangeIndex, 136-151 Name[16],
