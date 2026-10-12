@@ -6,7 +6,6 @@ live check, see the PR's How to test."""
 
 import json
 import sys
-import types
 import unittest
 import urllib.error
 import urllib.request
@@ -16,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import characters
-from test_runner import PASSWORD, REPO, TOKEN, RunnerCase
+from test_runner import PASSWORD, TOKEN, RunnerCase
 
 
 class World:
@@ -34,8 +33,8 @@ def char(name, race=10, class_=8, level=1):
     return {"guid": 1, "name": name, "race": race, "class_": class_, "gender": 0, "level": level}
 
 
-def fake_car(world):
-    real = characters.load_script(REPO, "create_agent_roster")
+def fake_realm(world):
+    """(Realm, Console) stand-ins over `world`, for CharacterService's two factories."""
 
     class Session:
         def __init__(self, account):
@@ -73,18 +72,17 @@ def fake_car(world):
             if world.console_works:
                 world.accounts[account] = []
 
-    return types.SimpleNamespace(HORDE=real.HORDE, CLASS_NAMES=real.CLASS_NAMES,
-                                 valid_name=real.valid_name, gen_name=real.gen_name,
-                                 Realm=Realm, Console=Console)
+    return Realm, Console
 
 
 class CharCase(RunnerCase):
     def setUp(self):
         super().setUp()
         self.world = World()
+        realm, console = fake_realm(self.world)
         self.fleet._character_service = characters.CharacterService(
-            fake_car(self.world), "127.0.0.1", 3724, env={"AGENT_PASSWORD": PASSWORD},
-            sleep=lambda s: None)
+            "127.0.0.1", 3724, env={"AGENT_PASSWORD": PASSWORD}, sleep=lambda s: None,
+            realm_factory=realm, console_factory=console)
 
     def post_json(self, path, body, token=TOKEN):
         r = urllib.request.Request(self.base + path, method="POST", data=json.dumps(body).encode(),
