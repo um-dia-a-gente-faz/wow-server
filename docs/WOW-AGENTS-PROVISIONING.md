@@ -257,7 +257,10 @@ It prints three ages and a verdict:
 By hand, the same comparison is: heartbeat age (`cat /var/lib/wow-audit-pull/last-success`)
 vs newest mirror file (`find /opt/wow-server-metrics/audit -name '*.jsonl*' -printf '%T@ %p\n' | sort -n | tail -1`)
 vs newest source file (`ssh ubuntu@$IP 'find /opt/wow-server-metrics/audit -name "*.jsonl*" -printf "%T@ %p\n" | sort -n | tail -1'`).
-Fresh heartbeat + old mirror + old source = agents quiet. Old heartbeat, or source
+The mirror-versus-source comparison (`PULL BEHIND`) counts the whole tree, lifecycle files included.
+`QUIET` and `OK` look at the decision day files only (`<agent>/<day>.jsonl[.N]`, not `<agent>/lifecycle/`),
+so the by-hand quiet question is the day-file newest: `find /opt/wow-server-metrics/audit -mindepth 2 -maxdepth 2 -name '*.jsonl*' -printf '%T@ %p\n' | sort -n | tail -1`.
+Fresh heartbeat + old decision file + source not newer than mirror = agents quiet. Old heartbeat, or source
 newer than mirror = the pull.
 
 Failure is also loud on its own: a non-zero pull fails the unit, `OnFailure` logs an
