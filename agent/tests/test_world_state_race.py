@@ -42,29 +42,50 @@ def _world():
     return ws
 
 
-def _run_with_writer(write, read):
-    """Run write() on a thread and read() READS times meanwhile; return read()'s results."""
-    stop, started = threading.Event(), threading.Event()
-    errors: list = []
+def _run_with_writer(write, check):
+    """Run write(stop) and READS snapshots on two daemon threads. check(snapshot) returns True
+    for a bad one. Returns (bad snapshot count, exceptions raised by snapshot()). Both threads
+    are joined on every path; a reader that does not finish (a deadlock) fails the test by name."""
+    stop = threading.Event()
+    bad, errors = [], []
 
-    def body():
-        started.set()
+    def writer():
         try:
             write(stop)
         except Exception as e:  # noqa: BLE001 - reported by the test
-            errors.append(e)
+            errors.append(("writer", e))
 
-    t = threading.Thread(target=body)
+    def reader():
+        for _ in range(READS):
+            try:
+                if check():
+                    bad.append(1)
+            except Exception as e:  # noqa: BLE001 - what the think thread would die of
+                errors.append(("reader", e))
+
+    w = threading.Thread(target=writer, name="race-writer", daemon=True)
+    r = threading.Thread(target=reader, name="race-reader", daemon=True)
+    w.start()
+    r.start()
+    r.join(JOIN_S)
+    stop.set()
+    w.join(JOIN_S)
+    if r.is_alive():
+        raise AssertionError(f"thread {r.name!r} (snapshot reader) did not finish in {JOIN_S}s: deadlock?")
+    if w.is_alive():
+        raise AssertionError(f"thread {w.name!r} did not stop in {JOIN_S}s")
+    return len(bad), errors
+
+
+def _bounded(fn, name):
+    """fn() on a daemon thread joined with JOIN_S: a hang fails by name instead of freezing the suite."""
+    box: list = []
+    t = threading.Thread(target=lambda: box.append(fn()), name=name, daemon=True)
     t.start()
-    try:
-        started.wait(JOIN_S)
-        results = [read() for _ in range(READS)]
-    finally:
-        stop.set()
-        t.join(JOIN_S)
-    assert not t.is_alive(), "writer thread did not stop"
-    assert not errors, errors
-    return results
+    t.join(JOIN_S)
+    if t.is_alive():
+        raise AssertionError(f"thread {name!r} did not finish in {JOIN_S}s: deadlock?")
+    return box[0]
 
 
 class SnapshotRaceTest(unittest.TestCase):
@@ -85,15 +106,54 @@ class SnapshotRaceTest(unittest.TestCase):
                     ws.update_object(_create(500 + k % 7, x=2.0))
                     ws.remove_guids([500 + (k + 3) % 7])
 
-        def read():
-            return ws.snapshot(my_position=POS)["nearby_units"]
+        def check():
+            units = ws.snapshot(my_position=POS)["nearby_units"]
+            return any("level" in u and u["level"] != u.get("faction") for u in units)
 
-        torn = 0
-        for units in _run_with_writer(write, read):
-            for u in units:
-                if "level" in u and u["level"] != u.get("faction"):
-                    torn += 1
-        self.assertEqual(torn, 0)
+        self.assertEqual(_run_with_writer(write, check), (0, []))
+
+    def test_window_dicts_are_not_walked_while_the_recv_thread_edits_them(self):
+        """encode() inside the lock: trade and mailbox are edited in place (trade_state, windows)."""
+        ws = _world()
+        ws.trade = {"partner_guid": 7, "my_items": {}, "my_gold": 0, "last_activity_at": 0.0}
+        ws.open_mailbox_request(9)
+
+        def write(stop):
+            k = 0
+            while not stop.is_set() and k < BLOCKS:
+                k += 1
+                n = k % 5 + 1
+                ws.apply_mail_list_result({"total_records": n, "mails": [
+                    {"id": i, "attachments": []} for i in range(n)]})
+                for slot in range(6):
+                    ws.set_my_trade_item(slot, {"entry": k})
+                for slot in range(6):
+                    ws.clear_my_trade_item(slot)
+
+        def check():
+            mb = ws.snapshot(my_position=POS)["mailbox"]
+            return mb["total_records"] != len(mb["mails"])
+
+        self.assertEqual(_run_with_writer(write, check), (0, []))
+
+    def test_equipment_and_quest_log_come_from_the_same_moment_as_the_objects(self):
+        """The builders inside the lock: one VALUES block sets health and a quest state together."""
+        ws = _world()
+        ws.update_object(_create(ME, uo.TYPEID_PLAYER, 0.0, fields={
+            uf.PLAYER_QUEST_LOG_1_1: 77, uf.PLAYER_QUEST_LOG_1_1 + 1: 1, uf.UNIT_FIELD_HEALTH: 1}))
+
+        def write(stop):
+            for k in range(1, BLOCKS):
+                if stop.is_set():
+                    return
+                ws.update_object(uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=ME, fields={
+                    uf.UNIT_FIELD_HEALTH: k % 2, uf.PLAYER_QUEST_LOG_1_1 + 1: k % 2}))
+
+        def check():
+            snap = ws.snapshot(my_position=POS)
+            return snap["is_dead"] != (snap["quest_log"][0]["state"] == 0)
+
+        self.assertEqual(_run_with_writer(write, check), (0, []))
 
     def test_returned_snapshot_shares_nothing_with_live_state(self):
         ws = _world()
@@ -105,7 +165,7 @@ class SnapshotRaceTest(unittest.TestCase):
             uf.PLAYER_FIELD_INV_SLOT_HEAD: 6}))
         ws.update_object(_create(5, uo.TYPEID_ITEM, fields={uf.OBJECT_FIELD_ENTRY: 9}))
         ws.update_object(_create(6, uo.TYPEID_ITEM, fields={uf.OBJECT_FIELD_ENTRY: 8}))
-        snap = ws.snapshot(my_position=POS)
+        snap = _bounded(lambda: ws.snapshot(my_position=POS), "pin-snapshot")
         for key in ("window", "trade", "mailbox", "equipment", "inventory", "quest_log"):
             self.assertIsNotNone(snap[key] or None, key)  # the sections under test are populated
         frozen = copy.deepcopy(snap)
