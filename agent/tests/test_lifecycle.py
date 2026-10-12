@@ -9,7 +9,7 @@ import pathlib
 import threading
 import unittest
 
-from agent.lifecycle import TERMINAL, TRANSITIONS, InvalidTransition, Lifecycle, State, Transition
+from agent.lifecycle import REASONS, TERMINAL, TRANSITIONS, InvalidTransition, Lifecycle, State, Transition
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ADR_PATH = ROOT / "docs" / "adr" / "0015-agent-connection-lifecycle.md"
@@ -71,6 +71,33 @@ def adr_table_pairs() -> list[tuple[str, str]]:
         rows.append((cells[0], cells[1]))
     if not rows:
         raise AssertionError("the ADR transition table has no rows")
+    return rows
+
+
+def adr_reason_rows() -> dict[str, set[tuple[str, str]]]:
+    """reason -> {(From, To)} from the ADR's Reasons table. Fails loudly if the table is missing or malformed."""
+    lines = ADR_PATH.read_text().splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip() == "| Reason | Transitions | When |"]
+    if len(starts) != 1:
+        raise AssertionError(f"expected one '| Reason | Transitions | When |' table in {ADR_PATH.name}, found {len(starts)}")
+    rows: dict[str, set[tuple[str, str]]] = {}
+    for line in lines[starts[0] + 2:]:   # skip the header and the |---| separator
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 3 or not (cells[0].startswith("`") and cells[0].endswith("`")):
+            raise AssertionError(f"malformed row in the ADR reasons table: {line!r}")
+        pairs = set()
+        for pair in cells[1].split(","):
+            source, sep, target = (part.strip() for part in pair.partition(">"))
+            if not sep or not source or not target:
+                raise AssertionError(f"malformed transition {pair!r} in the ADR reasons table")
+            pairs.add((source, target))
+        if cells[0].strip("`") in rows:
+            raise AssertionError(f"reason {cells[0]} is listed twice in the ADR reasons table")
+        rows[cells[0].strip("`")] = pairs
+    if not rows:
+        raise AssertionError("the ADR reasons table has no rows")
     return rows
 
 
@@ -232,6 +259,57 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(snap["state"], "backoff")
         self.assertEqual(snap["transitions"][0], {"from": "connecting", "to": "backoff",
                                                   "reason": "connect_failed", "at": 3.0})
+
+
+class CrashDecisionTest(unittest.TestCase):
+    """#292: a crash ends in STOPPED with the reason "crashed"; FAILED stays the permanent refusal."""
+
+    def test_every_working_state_unwinds_to_stopped_crashed(self):
+        for source in (C, O, B):
+            with self.subTest(source=source.value):
+                lc = machine_in(source, clock=FakeClock(2.0))
+                lc.to(S, "crashed")
+                lc.to(STOPPED, "crashed")
+                self.assertTrue(lc.terminal)
+                self.assertEqual(lc.snapshot()["state"], "stopped")
+                self.assertEqual(lc.snapshot()["reason"], "crashed")
+                self.assertEqual([(t.source, t.target, t.reason) for t in lc.history()[-2:]],
+                                 [(source, S, "crashed"), (S, STOPPED, "crashed")])
+
+    def test_only_connecting_can_fail(self):
+        self.assertEqual({s for s in State if FAILED in TRANSITIONS[s]}, {C})
+        for source in (O, B, S):
+            with self.subTest(source=source.value):
+                lc = machine_in(source)
+                with self.assertRaises(InvalidTransition):
+                    lc.to(FAILED, "crashed")
+                self.assertIs(lc.state, source)
+
+    def test_reason_is_free_text_to_the_machine(self):
+        lc = Lifecycle(clock=FakeClock())
+        self.assertNotIn("anything at all", REASONS)
+        self.assertEqual(lc.to(B, "anything at all").reason, "anything at all")
+
+
+class AdrReasonsTest(unittest.TestCase):
+    def test_adr_reasons_table_matches_reasons(self):
+        self.assertEqual(set(adr_reason_rows()), set(REASONS))
+
+    def test_every_reason_names_only_allowed_transitions(self):
+        allowed = {(s.name, t.name) for s, ts in TRANSITIONS.items() for t in ts}
+        for reason, pairs in adr_reason_rows().items():
+            with self.subTest(reason=reason):
+                self.assertLessEqual(pairs, allowed)
+
+    def test_every_allowed_transition_has_a_reason(self):
+        covered = set().union(*adr_reason_rows().values())
+        self.assertEqual(covered, {(s.name, t.name) for s, ts in TRANSITIONS.items() for t in ts})
+
+    def test_adr_states_table_carries_the_decided_wording(self):
+        text = ADR_PATH.read_text()
+        self.assertNotIn("tearing down the session |", text)
+        self.assertNotIn("| STOPPED | Terminal, clean |", text)
+        self.assertIn("## Decisions from the review of #587", text)
 
 
 class AdrTableTest(unittest.TestCase):
