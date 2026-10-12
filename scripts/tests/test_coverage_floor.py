@@ -9,8 +9,11 @@ import io
 import json
 import pathlib
 import re
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -128,19 +131,52 @@ class MainTest(unittest.TestCase):
 
 class RunTest(unittest.TestCase):
     def test_failed_command_exits_1(self):
-        with mock.patch.object(cf.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="")), \
+        proc = mock.Mock(returncode=1, **{"communicate.return_value": ("", None)})
+        with mock.patch.object(cf.subprocess, "Popen", return_value=proc), \
                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
             cf._run(["run"], {})
         self.assertEqual(cm.exception.code, 1)
+
+    def test_run_past_the_deadline_gets_sigabrt_then_exits_1(self):
+        # #707: with PYTHONFAULTHANDLER=1 the SIGABRT is what dumps every thread's stack.
+        proc = mock.Mock(returncode=-6)
+        proc.communicate.side_effect = [subprocess.TimeoutExpired("x", 1), ("", None)]
+        with mock.patch.object(cf.subprocess, "Popen", return_value=proc), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            cf._run(["run"], {}, deadline=time.monotonic() - 1)
+        self.assertEqual(cm.exception.code, 1)
+        proc.send_signal.assert_called_once_with(signal.SIGABRT)
+        proc.kill.assert_not_called()
+
+    def test_run_that_ignores_sigabrt_is_killed(self):
+        proc = mock.Mock(returncode=-9)
+        proc.communicate.side_effect = [subprocess.TimeoutExpired("x", 1), subprocess.TimeoutExpired("x", 10), ("", None)]
+        with mock.patch.object(cf.subprocess, "Popen", return_value=proc), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cf._run(["run"], {}, deadline=time.monotonic() - 1)
+        proc.kill.assert_called_once_with()
+
+    def test_measure_bounds_both_runs_by_one_deadline_from_the_env(self):
+        deadlines = []
+
+        def fake_run(cmd, env, **kw):
+            deadlines.append(kw.get("deadline"))
+            return "1\n"
+
+        with mock.patch.dict(cf.os.environ, {"CHECK_STALL_DUMP_S": "100"}), \
+                mock.patch.object(cf, "_run", fake_run), contextlib.redirect_stdout(io.StringIO()):
+            cf.measure()
+        self.assertEqual(deadlines[0], deadlines[1])
+        self.assertAlmostEqual(deadlines[0] - time.monotonic(), 100, delta=5)
 
     def test_both_runs_omit_the_tests_and_keep_data_out_of_the_checkout(self):
         calls = []
 
         def fake(cmd, **kw):
             calls.append((cmd, kw["env"]["COVERAGE_FILE"]))
-            return mock.Mock(returncode=0, stdout="97.5\n")
+            return mock.Mock(returncode=0, **{"communicate.return_value": ("97.5\n", None)})
 
-        with mock.patch.object(cf.subprocess, "run", fake), contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(cf.subprocess, "Popen", fake), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cf.measure(), 97.5)
         runs = [c for c, _ in calls if "run" in c[:4]]
         self.assertEqual(len(runs), 2)
