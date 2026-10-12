@@ -15,6 +15,7 @@ from unittest import mock
 from agent import __main__ as m
 from agent import runloop, supervisor
 from agent import session as session_mod
+from agent.lifecycle import Lifecycle
 from agent.tests.builders import make_session
 from agent.tests.test_reconnect import _NullLog
 
@@ -84,6 +85,8 @@ class MainWiresStopTest(unittest.TestCase):
                 mock.patch.object(m, "supervise_connection", side_effect=supervise):
             m.main()
         self.assertIs(seen.get("stop"), stop)
+        self.assertIsInstance(seen.get("lifecycle"), Lifecycle)   # #292: main() hands the supervisor its machine
+        self.assertEqual(seen["lifecycle"].history(), ())
 
 
 class ThinkLoopStopTest(unittest.TestCase):

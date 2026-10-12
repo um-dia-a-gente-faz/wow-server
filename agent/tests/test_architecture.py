@@ -50,7 +50,7 @@ LAYERS = {
     "rules": set(),
     "ports": set(),
     "persist": set(),   # atomic versioned JSON for the on-disk caches (ADR 0018); stdlib only
-    "lifecycle": set(),   # connection lifecycle state machine (#584); stdlib only, nothing wired yet
+    "lifecycle": set(),   # connection lifecycle state machine (#584); stdlib only
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "wire"},
     "quests": {"opcodes", "wire"},
@@ -102,9 +102,9 @@ LAYERS = {
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
     "login": {"auth", "channels", "config", "death", "session"},   # auth, world connect, character login (#292); death: imported so its actions register (#321)
-    "supervisor": {"auth", "metrics"},   # the reconnect supervisor (#292)
+    "supervisor": {"auth", "lifecycle", "metrics"},   # the reconnect supervisor (#292)
     "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
-    "__main__": {"audit", "auth", "brain", "chat_relay", "config", "http_api", "login", "runloop", "supervisor"},
+    "__main__": {"audit", "auth", "brain", "chat_relay", "config", "http_api", "lifecycle", "login", "runloop", "supervisor"},
 }
 
 ADR = {

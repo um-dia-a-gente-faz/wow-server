@@ -1,5 +1,5 @@
 """Connection lifecycle state machine (#584): the states the reconnect supervisor
-moves through, as a pure module. Nothing imports it yet; #292 wires it in.
+moves through, as a pure module. agent/supervisor.py drives it (#292).
 
 Player state (alive, dead, ghost) is not here: it is game state (agent/death.py).
 Stdlib only, and no logging: the owner of a Lifecycle decides what to do on a change.
