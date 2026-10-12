@@ -4,6 +4,10 @@ table agrees with the non-exempt rows.
 
 The scan is `ast` only (the scanned modules are never imported) over the tracked Python
 files, test code excluded. A site is identified by (path, qualname).
+
+Known misses (the scan does not see these): `Image.save`, `Path.open` with a variable mode,
+`gzip.open`, `os.open`, `Path.touch` / `mkdir` / `rename`, `logging.FileHandler`, and shell
+redirection or `mv` in the scripts.
 """
 import ast
 import pathlib
@@ -23,6 +27,8 @@ Row = tuple[str, str, str, str, str]   # path, qualname, artefact, klass, versio
 
 _RENAMES = {"os.replace", "os.rename", "shutil.move", "shutil.copy", "shutil.copy2",
             "shutil.copyfile", "shutil.copyfileobj", "shutil.copytree"}
+_PERSIST_WRITERS = {"persist.write_atomic", "persist.write_versioned"}   # agent/persist.py, the repo's helper
+_STDLIB = ("os", "shutil", "sqlite3", "io")
 _OPENERS = {"open": 1, "io.open": 1, "os.fdopen": 1}   # dotted name -> index of the mode argument
 
 
@@ -41,11 +47,31 @@ def _mode_arg(call: ast.Call, index: int) -> ast.expr | None:
     return call.args[index] if len(call.args) > index else None
 
 
+def _imports(tree: ast.AST) -> dict[str, str]:
+    """Local name -> dotted name, for the stdlib modules and for the persist helper module."""
+    out = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            out.update({a.asname: a.name for a in n.names if a.asname and a.name in _STDLIB})
+        elif isinstance(n, ast.ImportFrom):
+            mod = n.module or ""
+            for a in n.names:
+                if mod in _STDLIB:
+                    out[a.asname or a.name] = f"{mod}.{a.name}"
+                elif mod.rpartition(".")[2] == "persist":
+                    out[a.asname or a.name] = f"persist.{a.name}"
+                elif a.name == "persist":   # from . import persist [as p]
+                    out[a.asname or a.name] = "persist"
+    return out
+
+
 def _is_site(call: ast.Call, imported: dict[str, str]) -> bool:
     func = call.func
     name = ast.unparse(func)
-    name = imported.get(name, name)   # `from os import replace` -> os.replace
-    if name in _RENAMES:
+    head, _, rest = name.partition(".")
+    if head in imported:   # `from os import replace`, `import os as _os`
+        name = imported[head] + ("." + rest if rest else "")
+    if name in _RENAMES or name in _PERSIST_WRITERS:
         return True
     if name in _OPENERS:
         return _is_write_mode(_mode_arg(call, _OPENERS[name]))
@@ -68,9 +94,7 @@ def _is_site(call: ast.Call, imported: dict[str, str]) -> bool:
 def collect_sites(source: str, path: str) -> list[tuple[str, str, int]]:
     """Every write site of one source text as (path, qualname, line), sorted."""
     tree = ast.parse(source)
-    imported = {a.asname or a.name: f"{n.module}.{a.name}" for n in ast.walk(tree)
-                if isinstance(n, ast.ImportFrom) and n.module in ("os", "shutil", "sqlite3", "io")
-                for a in n.names}
+    imported = _imports(tree)
     sites: set[tuple[str, str, int]] = set()
 
     def walk(node: ast.AST, scope: tuple[str, ...]) -> None:
@@ -123,8 +147,9 @@ INVENTORY: list[Row] = [
     ("agent/audit.py", "AuditLogger._rotate_if_needed", "audit day file", "record-log", _AUDIT_V),
     ("agent/audit.py", "AuditLogger.record_lifecycle", "lifecycle file", "record-log", "LIFECYCLE_SCHEMA"),
     ("agent/memory.py", "_connect", "memory.db", "sqlite", "MIGRATIONS"),
-    (_PERSIST, "write_atomic", "names.json; items.json", "cache",
-     "agent/names.py:CACHE_SCHEMA, agent/items.py:CACHE_SCHEMA"),
+    ("agent/names.py", "NameCache.save", "names.json", "cache", "CACHE_SCHEMA"),
+    ("agent/items.py", "ItemCache.save", "items.json", "cache", "CACHE_SCHEMA"),
+    (_PERSIST, "write_atomic", "the helper itself", "exempt", "agent/persist.py: its callers are the rows"),
     (_PERSIST, "set_aside", "<cache>.corrupt", "exempt", "moved-aside copy of an unreadable file, never read"),
     ("agent/transport.py", "Transport._dump_packet", "raw packet dumps", "exempt",
      "AGENT_DUMP_PACKETS, off by default, read only by tools/agent_dev/dump_update.py"),
@@ -144,17 +169,20 @@ INVENTORY: list[Row] = [
     ("tools/agent-runner/fleet.py", "Fleet.save_agent", "state.json", "document", "none"),
     ("tools/agent-runner/fleet.py", "Fleet.write_compose", "generated compose file", "exempt",
      "rewritten whole on every run"),
-    ("tools/agent_dev/ab.py", "run", "ab --record fixtures and --output artifact", "exempt", "dev tooling"),
+    ("tools/agent_dev/ab.py", "run", "ab --record fixtures and --output artifact", "exempt",
+     "dev tooling: a later run reads --record back as --fixture, but a person passes both paths"),
     ("tools/agent_dev/probe.py", "save_report", "probe report", "exempt",
      "ADR 0018 exempts it; REPORT_SCHEMA, exact match"),
-    ("tools/loadtest/__main__.py", "main", "loadtest --out report", "exempt", "dev tooling"),
+    ("tools/loadtest/__main__.py", "main", "loadtest --out report", "exempt",
+     "dev tooling: a later run reads it back as --compare, but a person passes the path"),
     ("tools/worldknowledge/build.py", "build", "world bundle", "binary-asset",
      "agent/worldknowledge.py:SCHEMA_VERSION"),
     ("tools/wowmap/pipeline/extract_models.py", "main", "model blob", "binary-asset",
      "tools/wowmap/wowmap/models.py:BLOB_VERSION"),
     ("tools/wowmap/wowmap/activity.py", "ActivityStore.__init__", "activity.sqlite3", "sqlite",
      "tools/wowmap/wowmap/activity_schema.py:MIGRATIONS"),
-    ("tools/wowmap/wowmap/calibration.py", "save_calibration", "calibration.json", "document", "none"),
+    ("tools/wowmap/wowmap/calibration.py", "save_calibration", "calibration.json", "document",
+     "CALIBRATION_SCHEMA"),
 ]
 
 # The ADR table's first cell (first backticked token) -> the artefact name used in INVENTORY.
@@ -175,15 +203,13 @@ ADR_NAMES = {
 
 
 def module_constants(source: str) -> set[str]:
-    """Names bound at module level by assignment or `from x import name`."""
+    """Names bound at module level by assignment (an imported name is not a version constant)."""
     names: set[str] = set()
     for node in ast.parse(source).body:
         if isinstance(node, ast.Assign):
             names.update(t.id for t in node.targets if isinstance(t, ast.Name))
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
-        elif isinstance(node, ast.ImportFrom):
-            names.update(a.asname or a.name for a in node.names)
     return names
 
 
@@ -302,7 +328,28 @@ class CollectorProbes(unittest.TestCase):
                "        inner()\nopen('x', 'w')\n")
         self.assertEqual(self.sites(src), [("<module>", 6), ("A.m.inner", 4)])
 
+    def test_module_aliases_are_resolved(self):
+        self.assertEqual(self.sites("import sqlite3 as sq\ndef f(p):\n    sq.connect(p)\n"), [("f", 3)])
+        self.assertEqual(self.sites("import os as _os\ndef f(a, b):\n    _os.replace(a, b)\n"), [("f", 3)])
+        self.assertEqual(self.sites("import shutil as sh\ndef f(a, b):\n    sh.move(a, b)\n"), [("f", 3)])
+        self.assertEqual(self.sites("from os import replace as rp\ndef f(a, b):\n    rp(a, b)\n"), [("f", 3)])
+
+    def test_persist_helpers_are_sites(self):
+        self.assertEqual(self.sites("from . import persist\ndef f(p):\n    persist.write_versioned(p, 1, {})\n"),
+                         [("f", 3)])
+        self.assertEqual(self.sites("from . import persist\ndef f(p):\n    persist.write_atomic(p, '')\n"),
+                         [("f", 3)])
+        self.assertEqual(self.sites("from .persist import write_atomic\ndef f(p):\n    write_atomic(p, '')\n"),
+                         [("f", 3)])
+        self.assertEqual(self.sites(
+            "from .persist import write_versioned as wv\ndef f(p):\n    wv(p, 1, {})\n"), [("f", 3)])
+        self.assertEqual(self.sites("from . import persist\ndef f(p):\n    persist.read_versioned(p, 1)\n"), [])
+
+    def test_an_imported_name_is_not_a_version_constant(self):
+        self.assertEqual(module_constants("from x import Callable\nA = 1\nB: int = 2\n"), {"A", "B"})
+
     def test_version_refs(self):
+        self.assertEqual(missing_version_refs("agent/memory.py", "Callable"), ["Callable"])
         self.assertEqual(missing_version_refs("agent/names.py", "CACHE_SCHEMA"), [])
         self.assertEqual(missing_version_refs("agent/names.py", "NO_SUCH_CONSTANT"), ["NO_SUCH_CONSTANT"])
         self.assertEqual(missing_version_refs("agent/names.py", "agent/nope.py:X"), ["agent/nope.py:X"])

@@ -177,7 +177,8 @@ and, given `--check`, exit non-zero on drift (`scripts/genlib.py` has the helper
 database that has no row in its `INVENTORY`. Add the row (class, and the version constant or
 `"none"`), and for anything that is not `exempt` decide the class and version rule in
 [ADR 0018](docs/adr/0018-persisted-state-versioning.md) and its inventory table first. A file
-that a later run reads back is not exempt.
+that an agent or a service reads back on a later run is not exempt; a file under
+`tools/agent_dev` or `tools/loadtest` that a person passes back by hand is, and its reason says so.
 
 ## Lint and types
 
