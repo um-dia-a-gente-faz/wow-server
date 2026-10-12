@@ -3,9 +3,9 @@
 Jev over generated candidates, or the LLM over the action catalog; see
 agent/brain.py) -> one validated action executed, per think cycle.
 
-Wired into agent/__main__.py::_run_loop between the perceive and act
+Wired into agent/runloop.py::run_loop between the perceive and act
 comments that Phase 3 (docs/ROADMAP.md) left as placeholders. Kept in its
-own module (not inlined in __main__.py) so it can be unit-tested against a
+own module (not inlined in runloop.py) so it can be unit-tested against a
 fake LLM client without booting a real WoWSession.
 """
 

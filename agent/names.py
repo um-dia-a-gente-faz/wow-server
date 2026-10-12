@@ -13,12 +13,13 @@ the full writeup.
 """
 
 import collections
-import json
+import contextlib
 import logging
 import os
 import struct
 import time
 
+from . import persist
 from .opcodes import (
     SMSG_CREATURE_QUERY_RESPONSE,
     SMSG_GAMEOBJECT_QUERY_RESPONSE,
@@ -29,6 +30,7 @@ from .wire import Reader
 log = logging.getLogger("agent.names")
 
 DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/wow-agent/names.json")
+CACHE_SCHEMA = 1   # ADR 0018: the `schema` key of names.json
 
 # CreatureEliteType (SharedDefines.h) — Classification in QueryCreatureResponse.
 CREATURE_RANK_NAMES = {
@@ -215,6 +217,7 @@ class NameCache:
         self._budget_per_second = budget_per_second
         self._clock = clock
         self.cache_path = cache_path  # used by load()/save() when no path is given — tests override this
+        self._no_save: set[str] = set()  # paths whose file is of a newer schema: save() leaves them alone
         self.duplicate_queries = 0  # debug counter: a want_*() for something already known or in-flight
         self.expired_queries = 0  # sent queries forgotten after QUERY_TIMEOUT_S with no answer
         self.dropped_queries = 0  # queued queries pushed out by the MAX_PENDING cap
@@ -293,36 +296,45 @@ class NameCache:
             self.save()
 
     def load(self, path: str | None = None):
-        """Best-effort: a missing or corrupt cache file just means starting
-        cold, not a fatal error. `path` overrides self.cache_path for this
-        call only (tests use this — production code always uses the path
-        set at construction)."""
+        """Best-effort: a missing, unreadable or newer cache file just means starting
+        cold, never a fatal error. `path` overrides self.cache_path for this call only
+        (tests use this; production code always uses the path set at construction).
+        ADR 0018: a file of a newer schema is left alone and saving to it is switched off;
+        an unreadable one is moved to <path>.corrupt and the next save writes a fresh file.
+        All or nothing: either every section converts or none is kept."""
         path = path or self.cache_path
-        try:
-            with open(path) as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError(f"top level is {type(data).__name__}, expected an object")
-            creatures = _parse_cache_section(data.get("creatures", {}))
-            gameobjects = _parse_cache_section(data.get("gameobjects", {}))
-        except FileNotFoundError:
+        loaded = persist.read_versioned(path, CACHE_SCHEMA)
+        if loaded.status == persist.MISSING:
             return
-        except (OSError, ValueError, RecursionError) as e:
-            log.warning("ignoring unreadable name cache %s: %s", path, e)
+        if loaded.status == persist.NEWER:
+            log.warning("name cache %s is schema %d, newer than %d: not read, not overwritten",
+                        path, loaded.version, CACHE_SCHEMA)
+            self._no_save.add(path)
             return
-        self.creatures.update(creatures)
-        self.gameobjects.update(gameobjects)
+        if loaded.status == persist.OLDER:
+            return
+        if loaded.status == persist.OK:
+            try:
+                creatures = _parse_cache_section(loaded.data.get("creatures", {}))
+                gameobjects = _parse_cache_section(loaded.data.get("gameobjects", {}))
+            except ValueError as e:
+                log.warning("ignoring unreadable name cache %s: %s", path, e)
+                persist.set_aside(path)
+                return
+            self.creatures.update(creatures)
+            self.gameobjects.update(gameobjects)
+            return
+        log.warning("ignoring unreadable name cache %s", path)
+        persist.set_aside(path)
 
     def save(self, path: str | None = None):
         """A save failure (read-only fs, disk full) must not crash the
         agent — the cache is a speed-up, not a source of truth. `path`
-        overrides self.cache_path for this call only, same as load()."""
+        overrides self.cache_path for this call only, same as load(). Does nothing
+        for a path whose file load() found to be of a newer schema."""
         path = path or self.cache_path
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = path + f".tmp{os.getpid()}"
-            with open(tmp, "w") as f:
-                json.dump({"creatures": self.creatures, "gameobjects": self.gameobjects}, f)
-            os.replace(tmp, path)
-        except OSError:
-            pass
+        if path in self._no_save:
+            return
+        with contextlib.suppress(OSError):
+            persist.write_versioned(path, CACHE_SCHEMA,
+                                    {"creatures": self.creatures, "gameobjects": self.gameobjects})

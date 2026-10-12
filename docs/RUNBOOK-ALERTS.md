@@ -65,7 +65,7 @@ fire this rule.
 
 **What it means.** One agent logged at least 2 reconnect waits in 15 minutes (`increase(...[15m]) > 1`)
 for 25 minutes. An agent that keeps failing logs waits for as long as it keeps failing, so this rule
-fires on a sustained failure, not on a blip. The supervisor (`agent/__main__.py`, `_supervise_connection`) waits between attempts and counts each
+fires on a sustained failure, not on a blip. The supervisor (`agent/supervisor.py`, `supervise_connection`) waits between attempts and counts each
 wait in `wow_agent_reconnect_attempts_total{agent,reason}`. The `reason` label says why:
 `connect_failed` (login or connect raised), `auth_rejected` (a transient auth refusal),
 `disconnected` (a drop after a good connect). A permanent refusal stops the agent and is not counted,
@@ -81,8 +81,8 @@ so a stopped container shows up in the logs, not here.
 agent, so a fleet-wide cause is the storm alert below, not this one.
 
 **Threshold.** The backoff starts at 5 s, doubles, and caps at 5 min; each wait is jittered between
-half and all of its step. Simulated from the supervisor's model (`agent/__main__.py`,
-`_supervise_connection`, a 10 s connect timeout per failed attempt), not run against Prometheus:
+half and all of its step. Simulated from the supervisor's model (`agent/supervisor.py`,
+`supervise_connection`, a 10 s connect timeout per failed attempt), not run against Prometheus:
 
 - **(a) An agent failing forever.** Waits are counted at 10, 25, 45, 75, 125, 215, 385 and 695 s
   (all-maximum jitter). From 25 s the trailing 15 minutes always hold two or more waits; at the 5-minute
@@ -188,7 +188,8 @@ otherwise.
 **What it means.** Failed Jev calls exceed 20% of successful calls for one agent, for 15 minutes. The
 two sides are `wow_agent_jev_errors_total{agent,status}` (`http_4xx`, `http_5xx`, `error`,
 `budget_exhausted`) and `wow_agent_jev_calls_total{agent}`, both rates over 15 minutes from the
-audit textfile.
+audit textfile. A cycle audited as `jev_status: "fleet_blocked"` (the fleet limits file blocked Jev,
+ADR 0017) is the limit working: it counts as neither an error nor a call and does not fire this alert.
 
 **When it does not fire.** With no Jev calls and no errors, both rates are zero and the ratio is
 `0/0`, which is NaN, and NaN does not fire. An idle agent, or one that plays on the LLM brain,
@@ -202,6 +203,10 @@ never fires. An agent whose every Jev call fails has errors but no successes, so
 2. Grafana, "Jev — decision usage", panel "Jev errors / sec".
 3. For `budget_exhausted`, the Jev budget setting in `/opt/wow-server/.env` on the wow-server VM. Read
    the key only; never paste its value anywhere.
+4. For `fleet_blocked` (it does not fire this alert, but explains an agent that stopped calling Jev):
+   read the limits file on the agent host, the path in `AGENT_FLEET_LIMITS_FILE`, for the `jev` entry's
+   `until_ts` and `reason`, and find out who wrote the block (the writer, or the owner by hand). Remove the
+   entry, or the file, to lift it before `until_ts`.
 
 **Tune or silence.** Failed Jev calls fall back to the LLM brain (`docs/AGENT-DIRECTION.md`), so this
 is a cost and quality signal, not an outage. Whether to change the brain is the owner's decision.

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent import __main__ as m
+from agent import runloop, supervisor
 from agent import session as session_mod
 from agent.tests.builders import make_session
 from agent.tests.test_reconnect import _NullLog
@@ -40,7 +41,7 @@ class SupervisorStopTest(unittest.TestCase):
             stop.set()
             return True  # even a "dropped" verdict must not trigger a reconnect once stopped
 
-        m._supervise_connection(build, run, log=_NullLog(), stop=stop)
+        supervisor.supervise_connection(build, run, log=_NullLog(), stop=stop)
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0].logouts, 1)
 
@@ -53,7 +54,7 @@ class SupervisorStopTest(unittest.TestCase):
 
         threading.Timer(0.1, stop.set).start()
         t0 = time.monotonic()
-        m._supervise_connection(build, lambda s: False, log=_NullLog(), stop=stop,
+        supervisor.supervise_connection(build, lambda s: False, log=_NullLog(), stop=stop,
                                 initial_backoff=30.0)
         self.assertLess(time.monotonic() - t0, 5.0)
         self.assertEqual(len(builds), 1)
@@ -80,7 +81,7 @@ class MainWiresStopTest(unittest.TestCase):
                 mock.patch.object(m, "AuditLogger"), \
                 mock.patch.object(m, "_start_observer", return_value=(None, None)), \
                 mock.patch.object(m, "_install_stop_signals", return_value=stop), \
-                mock.patch.object(m, "_supervise_connection", side_effect=supervise):
+                mock.patch.object(m, "supervise_connection", side_effect=supervise):
             m.main()
         self.assertIs(seen.get("stop"), stop)
 
@@ -91,7 +92,7 @@ class ThinkLoopStopTest(unittest.TestCase):
         cfg = SimpleNamespace(think_interval=30.0)
         threading.Timer(0.1, stop.set).start()
         t0 = time.monotonic()
-        result = m._run_think_loop(FakeSession(), cfg, None, time.monotonic(), stop=stop)
+        result = runloop.run_think_loop(FakeSession(), cfg, None, time.monotonic(), stop=stop)
         self.assertIs(result, False)  # False = clean stop, supervisor must not reconnect
         self.assertLess(time.monotonic() - t0, 5.0)
 

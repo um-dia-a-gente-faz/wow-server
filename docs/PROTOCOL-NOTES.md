@@ -829,7 +829,7 @@ Opcodes (`Opcodes.h`): `CMSG_JOIN_CHANNEL = 0x097`, `CMSG_LEAVE_CHANNEL = 0x098`
 `Player::UpdateLocalChannels` returns early while the player is loading ("The
 client handles it automatically after loading"). A real client sends
 `CMSG_JOIN_CHANNEL` itself, so the agent does too, right after
-`login_character()` (`agent/__main__.py`). Channels come from `AGENT_CHANNELS`
+`login_character()` (`agent/login.py`). Channels come from `AGENT_CHANNELS`
 (comma-separated, default `General`, `none` disables).
 
 ### `CMSG_JOIN_CHANNEL` (`JoinChannel::Read`, `ChannelPackets.cpp`)

@@ -6,7 +6,7 @@ import struct
 import unittest
 from unittest import mock
 
-from agent import __main__ as main_mod
+from agent import supervisor as main_mod
 from agent import auth
 from agent.auth import AuthRejected, AuthSecurityUnsupported
 from agent.wire import PacketTruncated
@@ -137,7 +137,7 @@ class SupervisorSecurityFlagsTest(unittest.TestCase):
             raise AssertionError(f"supervisor retried after a permanent refusal: sleep {seconds}")
 
         with self.assertRaises(AuthSecurityUnsupported):
-            main_mod._supervise_connection(build_session, lambda s: False, log=Log(),
+            main_mod.supervise_connection(build_session, lambda s: False, log=Log(),
                                            sleep=no_sleep)
         self.assertEqual(len(attempts), 1)
         self.assertEqual([level for level, _ in lines], ["error"])

@@ -163,7 +163,7 @@ class ChatRelay:
         `resolve_name(guid) -> str | None` is the session's player-name
         lookup (`WorldState.resolve_player_name`); it is passed per call
         rather than held on the relay because a reconnect builds a brand
-        new session and WorldState (see agent/__main__.py).
+        new session and WorldState (see agent/login.py).
         """
         if not self.enabled:
             return

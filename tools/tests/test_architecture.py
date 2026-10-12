@@ -58,13 +58,13 @@ PACKAGE_EDGES = {
 # none; the dev and test tools are pinned to exactly what they import today.
 AGENT_EDGES = {
     "agent-runner": set(),
-    "agent_dev": {"__main__", "actions", "audit_schema", "candidates", "config", "jev", "known_targets", "lines",
-                  "llm", "packets", "reflexes", "rules", "update_fields", "update_object"},
+    "agent_dev": {"actions", "audit_schema", "candidates", "config", "jev", "known_targets", "lines",
+                  "llm", "login", "packets", "reflexes", "rules", "update_fields", "update_object"},
     "chat-feed": set(),
     "common": set(),
     "dbc": set(),
     "jev-mock": set(),
-    "loadtest": {"__main__", "handles", "items", "names", "npc", "quests"},
+    "loadtest": {"handles", "items", "login", "names", "npc", "quests", "runloop", "supervisor"},
     "wowmap": set(),
     "world-mock": {"auth", "crypt", "opcodes", "packets", "quests", "update_fields", "update_object"},
 }

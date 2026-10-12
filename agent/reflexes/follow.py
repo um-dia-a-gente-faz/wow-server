@@ -27,7 +27,7 @@ Reflex tick, per the card:
      blocks the calling thread until arrival/stuck/lost/stopped, so one
      tick() call can itself span several seconds of real time — the
      production driver's "call tick() every ~250-500ms" cadence
-     (agent/__main__.py) is naturally throttled by that; tests drive tick()
+     (agent/runloop.py) is naturally throttled by that; tests drive tick()
      directly against a fake Mover, so no real sleeping happens there.
   3. Within range -> stop moving, face the leader.
   4. assist on -> match the leader's hostile, in-combat target
@@ -168,7 +168,7 @@ class FollowReflex:
     # ── the reflex tick ───────────────────────────────────────────────────
     def tick(self, session: ActionSession, world):
         """One reflex step. Safe to call repeatedly — production:
-        agent/__main__.py's loop, between LLM think cycles; tests: call
+        agent/runloop.py's loop, between LLM think cycles; tests: call
         directly with a fake session/world. No-op if not enabled."""
         self._settle_accepted_invite(session, world)
         if not self.enabled or self.leader_guid is None:

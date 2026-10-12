@@ -93,7 +93,7 @@ class RestReflex:
     """Per-session rest state — one instance per WoWSession, see
     get_rest_reflex(). Mirrors agent.reflexes.follow.FollowReflex's shape: a
     plain tick(session, world) driven at a fixed cadence from its own
-    thread (agent/__main__.py), independent of the LLM think loop."""
+    thread (agent/runloop.py), independent of the LLM think loop."""
 
     def __init__(self):
         self.active = False
@@ -125,7 +125,7 @@ class RestReflex:
 
     def tick(self, session: ActionSession, world):
         """One reflex step. Safe to call repeatedly — production:
-        agent/__main__.py's reflex loop; tests: call directly with a fake
+        agent/runloop.py's reflex loop; tests: call directly with a fake
         session/world. No-op besides the checks below."""
         me = world.get_my_object()
         if self.active:

@@ -108,6 +108,23 @@ class DeriveMetricsMultiAgentTest(unittest.TestCase):
         self.assertIn('wow_agent_jev_prompt_tokens_total{agent="Jev1"} 123', text)
         self.assertIn('wow_agent_jev_confidence{agent="Jev1"} 0.8', text)
 
+    def test_fleet_blocked_is_not_a_jev_error_and_not_a_call(self):
+        # ADR 0017: a fleet block is the limit working. It must move no Jev counter and no
+        # latency histogram, and add no status label (JevErrorRatioHigh would be +Inf otherwise).
+        base = {"agent": "Jev1", "ts": 1.0, "brain": "jev", "jev_status": "fleet_blocked",
+                "fallback": "jev blocked by fleet limits until x: r", "latency_ms": None,
+                "tool_call": {"name": None, "args": {}}, "valid": False,
+                "result": {"ok": False, "error": "jev blocked by fleet limits until x: r"}}
+        m = derive_metrics([dict(base, cycle=i) for i in range(3)])["Jev1"]
+        self.assertEqual(m.jev_calls_total, 0)
+        self.assertEqual(set(m.jev_errors.values()), {0})
+        self.assertNotIn("fleet_blocked", m.jev_errors)
+        self.assertEqual((m.jev_latency_count, m.jev_latency_sum_ms), (0, 0.0))
+        text = render_prometheus_text({"Jev1": m})
+        self.assertNotIn("fleet_blocked", text)
+        self.assertIn('wow_agent_jev_calls_total{agent="Jev1"} 0', text)
+        self.assertIn('wow_agent_jev_latency_ms_count{agent="Jev1"} 0', text)
+
     def test_jev_metric_families_exist_with_no_agents(self):
         text = render_prometheus_text({})
         for name in ("wow_agent_jev_calls_total", "wow_agent_jev_errors_total",

@@ -64,7 +64,7 @@ groups:
         labels: {severity: warning}
         annotations:
           summary: "{{ $labels.agent }}: Jev errors exceed 20% of successful calls"
-          description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. Query wow_agent_jev_errors_total by status for the class (http_4xx, http_5xx, error, budget_exhausted)."
+          description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. Query wow_agent_jev_errors_total by status for the class (http_4xx, http_5xx, error, budget_exhausted). A fleet_blocked cycle (the fleet limits file, ADR 0017) is not counted as an error or a call and does not feed this alert."
           runbook: "docs/RUNBOOK-ALERTS.md#jeverrorratiohigh"
       - alert: JevCostBurnHigh
         expr: sum(increase(wow_agent_jev_cost_usd_total[1h])) > 1 and sum(resets(wow_agent_jev_cost_usd_total[1h])) == 0

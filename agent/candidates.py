@@ -41,7 +41,7 @@ levels above the agent (none at all while its level is unknown; while hurt
 `snapshot` is what agent/think.py builds: `world.snapshot(...)` updated with
 `_self_status()` (the `me` key). `my_guid` (session.my_guid / world.my_guid)
 lets the generator tell which units are attacking the agent. `reflex_state`
-is the dict agent/__main__.py's `_reflex_state()` returns (its "follow"
+is the dict agent/runloop.py's `reflex_state()` returns (its "follow"
 entry decides between follow and stop_following/assist options).
 
 UM-89: snapshot GUID fields may hold short handle strings ("u3") instead of

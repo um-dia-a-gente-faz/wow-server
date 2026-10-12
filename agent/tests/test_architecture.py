@@ -24,11 +24,12 @@ UNLAYERED = {"tests"}
 #   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines, action_names,
 #       known_targets, metrics, api_contract, ports (the typed session contract, #304),
 #       model (the snapshot contract, #288)
+#   state files: persist (ADR 0018)
 #   pure parsers and builders: npc, quests, loot, mail, trade, spells, channels, names,
 #       items, item_compare, update_object, update_fields, movement
 #   state: perception, state;  routing: router, handlers (ADR 0005, 0006)
 #   acting: actions, reflexes, control, death, candidates;  deciding: jev, llm, deciders, brain, think
-#   entry and observing: session, http_api, audit, __main__
+#   entry and observing: session, http_api, audit, login, supervisor, runloop, __main__
 LAYERS = {
     "packets": set(),
     "wire": {"packets"},   # cursor Reader/Writer over packets' helpers, PacketTruncated is a ProtocolError (#274)
@@ -48,6 +49,7 @@ LAYERS = {
     "auth": {"packets", "wire"},   # the logon challenge and realm list read through Reader (#517)
     "rules": set(),
     "ports": set(),
+    "persist": set(),   # atomic versioned JSON for the on-disk caches (ADR 0018); stdlib only
     "lifecycle": set(),   # connection lifecycle state machine (#584); stdlib only, nothing wired yet
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "wire"},
@@ -57,9 +59,9 @@ LAYERS = {
     "trade": {"opcodes", "packets", "wire"},
     "spells": {"opcodes", "packets", "wire"},
     "channels": {"opcodes", "wire"},
-    "names": {"opcodes", "wire"},
+    "names": {"opcodes", "persist", "wire"},
     "group": {"opcodes", "wire"},
-    "items": set(),
+    "items": {"persist"},
     "item_compare": set(),
     "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
@@ -89,7 +91,8 @@ LAYERS = {
     "llm": {"httpjson", "prompts"},
     "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain": {"action_specs", "actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
+    "fleetlimits": {"metrics"},   # the ADR 0017 limits file reader; metrics for swallowed()
+    "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "update_fields"},  # #411: ports
     # entry and observing; nothing imports __main__
@@ -98,8 +101,10 @@ LAYERS = {
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
     "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
-    "__main__": {"audit", "auth", "brain", "channels", "chat_relay", "config", "death", "http_api",
-                 "metrics", "reflexes", "session", "think"},   # death: imported so its actions register (#321)
+    "login": {"auth", "channels", "config", "death", "session"},   # auth, world connect, character login (#292); death: imported so its actions register (#321)
+    "supervisor": {"auth", "metrics"},   # the reconnect supervisor (#292)
+    "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
+    "__main__": {"audit", "auth", "brain", "chat_relay", "config", "http_api", "login", "runloop", "supervisor"},
 }
 
 ADR = {
