@@ -14,10 +14,11 @@ def parse_deploys(text: str, limit: int = 20) -> list[tuple[float, str, str]]:
     """(epoch seconds, sha, stacks) of the newest `limit` deploy lines, oldest first.
 
     `stacks` has its spaces replaced by `+` (`game monitoring` -> `game+monitoring`). A line that
-    does not match (DEFERRED, garbage, a torn line, a time without an offset) is skipped.
+    does not match (DEFERRED, garbage, a torn line, a time without an offset) is skipped. Only
+    newline-terminated lines count: the text after the last newline may still be being written.
     """
     found = []
-    for line in text.split("\n"):
+    for line in text.split("\n")[:-1]:  # the piece after the last newline is torn or still being written
         m = LINE.fullmatch(line)
         if not m:
             continue

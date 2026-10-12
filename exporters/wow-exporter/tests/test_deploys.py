@@ -30,9 +30,18 @@ class ParseDeploysTest(unittest.TestCase):
         text = DEPLOY_1 + "hello world\n" + "2026-10-12T19:30:00+00:00 deployed 1a2b3"
         self.assertEqual(deploys.parse_deploys(text), [(EPOCH_1, "1a2b3c4", "game+monitoring")])
 
-    def test_complete_last_line_without_newline_is_kept(self):
+    def test_last_line_without_newline_is_not_a_deploy_even_if_it_matches(self):
         text = DEPLOY_1 + "2026-10-12T19:30:00+00:00 deployed 9999999, stacks: game"
-        self.assertEqual(len(deploys.parse_deploys(text)), 2)
+        self.assertEqual(deploys.parse_deploys(text), [(EPOCH_1, "1a2b3c4", "game+monitoring")])
+
+    def test_torn_stacks_without_newline_are_not_deploys(self):
+        # deploy.sh writes a whole line with one echo, but a read can still catch a prefix of it:
+        # `game monitoring` torn to `game` looks like a valid deploy, so only newline-ended lines count.
+        for torn in ("2026-10-12T19:30:00+00:00 deployed 9999999, stacks: game monit",
+                     "2026-10-12T19:30:00+00:00 deployed 9999999, stacks: game"):
+            with self.subTest(torn=torn):
+                self.assertEqual(deploys.parse_deploys(DEPLOY_1 + torn),
+                                 [(EPOCH_1, "1a2b3c4", "game+monitoring")])
 
     def test_sha_must_be_7_to_40_lowercase_hex(self):
         bad = ["2026-10-12T19:30:00+00:00 deployed 1a2b3, stacks: game\n",
@@ -75,6 +84,25 @@ class ReadDeploysTest(unittest.TestCase):
         got = deploys.read_deploys(self.path, limit=3)
         self.assertEqual([sha for _, sha, _ in got], ["00007cd", "00007ce", "00007cf"])
         self.assertEqual([stacks for _, _, stacks in got], ["game"] * 3)
+
+    def test_torn_stacks_without_newline_are_not_deploys_through_the_file(self):
+        for torn in ("2026-10-12T19:30:00+00:00 deployed 9999999, stacks: game monit",
+                     "2026-10-12T19:30:00+00:00 deployed 9999999, stacks: game"):
+            with self.subTest(torn=torn):
+                self.path.write_text(DEPLOY_1 + torn)
+                self.assertEqual(deploys.read_deploys(self.path), [(EPOCH_1, "1a2b3c4", "game+monitoring")])
+
+    def test_window_returns_only_whole_lines_of_the_last_64_kib(self):
+        # The window is a literal 64 KiB here (not deploys.TAIL_BYTES), so a mutant that changes
+        # TAIL_BYTES cannot change the fixture.
+        before = "2026-10-12T10:00:00+00:00 deployed 0000aaa, stacks: game\n"  # outside the window
+        glued = "2026-10-12T19:00:00+00:00 deployed 1a2b3c4, stacks: game\n"  # window starts at its text
+        tail = "2026-10-12T19:30:00+00:00 deployed 5d6e7f8, stacks: monitoring\n"  # whole, ~64 KiB from the start
+        head = before + "z" * 70000 + "\n" + "junk"  # `junk` is the cut-off front of the glued line
+        rest = tail + "y" * (65536 - len(glued) - len(tail) - 1) + "\n"
+        self.path.write_text(head + glued + rest)
+        self.assertEqual(deploys.read_deploys(self.path),
+                         [(datetime(2026, 10, 12, 19, 30, tzinfo=UTC).timestamp(), "5d6e7f8", "monitoring")])
 
     def test_torn_tail_while_deploy_sh_appends_is_not_a_deploy(self):
         self.path.write_text(DEPLOY_1 + "2026-10-12T19:30:00+00:00 deployed 9")

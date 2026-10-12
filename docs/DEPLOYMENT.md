@@ -309,7 +309,7 @@ stack is **deferred**: it logs `DEFERRED game <sha>` (also to `deploy.log`, once
 `refs/deployed/<stack>`, which a deferral does not move), and `auto-deploy.sh` keeps polling
 until it goes through. Later merges therefore do not queue behind a deferral.
 Each real deploy appends `<time> deployed <sha>, stacks: <list>` to
-`/opt/wow-server-metrics/deploy.log` (`METRICS_DIR` overrides). `wow-exporter` reads that file, so deploys show as a `Deploys` annotation on the realm-health and agent-behaviour dashboards (#377).
+`/opt/wow-server-metrics/deploy.log` (`METRICS_DIR` overrides). `wow-exporter` reads that file, so deploys show as a `Deploys` annotation on the realm-health and agent-behaviour dashboards (#377). The poll does not push dashboards to Grafana: after a dashboard JSON changes, run `./scripts/deploy-dashboards.sh` by hand from a machine with SSH access to the docker-stack VM.
 
 Two consequences to know (owner decision pending, see the PR for #266):
 
