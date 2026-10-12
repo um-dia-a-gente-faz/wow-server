@@ -440,6 +440,13 @@ class JevCooldownTest(unittest.TestCase):
         self.fail(b)
         self.assertAlmostEqual(self.cooldown(b), 33.0)
 
+    def test_jitter_is_applied_after_the_clamp(self):
+        # 99999 s clamps to 900 s first, then the 10 % jitter: 990 s, not 900 (jitter
+        # lost to the clamp) and not 109 998.9 (clamp lost to the jitter).
+        b = self.make(JevError("x", status=429, retry_after=99999), end="b")
+        self.fail(b)
+        self.assertAlmostEqual(self.cooldown(b), 990.0)
+
     def test_jitter_never_below_base(self):
         import random
         b = self.make(JevError("x", status=429))
