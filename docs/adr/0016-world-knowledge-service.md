@@ -29,22 +29,27 @@ fourth. Each claim was checked against `main`; the result is below, with what wa
 - **Templates over the wire, cached per container.** `agent/names.py::NameCache` asks the
   server for creature and gameobject templates (`build_creature_query`,
   `build_gameobject_query`) and saves the found ones to `DEFAULT_CACHE_PATH`,
-  `~/.cache/wow-agent/names.json`. The path in #340 is correct. `agent/items.py::ItemCache`
-  does the same for item templates in `~/.cache/wow-agent/items.json`; #340 does not mention
-  it. `agent/perception/world.py::WorldState.__init__` builds both with the default path, and
+  `~/.cache/wow-agent/names.json`. The path in #340 is correct.
+  `agent/perception/world.py::WorldState.__init__` builds it with the default path, and
   `agent/session.py` calls `self.world_state.names.load()` at login.
-- **The cache is weaker than #340 says.** `docker-compose.agents.yml` mounts one volume into
+- **The item cache is written and never read.** `agent/items.py::ItemCache` queries item
+  templates the same way and saves them to `~/.cache/wow-agent/items.json`, but
+  `ItemCache.load` has no caller outside the tests: `agent/session.py` loads names only. So
+  item templates are re-queried in every process, even one that restarts in the same
+  container. #340 does not mention this cache.
+- **The name cache is weaker than #340 says.** `docker-compose.agents.yml` mounts one volume into
   an agent container, the audit directory (`x-agent` → `volumes`). `~/.cache` is in the
   container's writable layer, so the cache is private to one container and is lost whenever
   the container is recreated, which is every new image tag. So "25 agents repeat the same
   queries" is true, and they also repeat them after each agent deploy.
-- **The cache is never invalidated.** The server announces its template cache version at
+- **The name cache is never invalidated.** The server announces its template cache version at
   login: `WorldSession::InitializeSessionCallback` calls `SendClientCacheVersion`
   (`SMSG_CLIENTCACHE_VERSION`, 0x4AB, one `uint32`), whose value is `world.version.cache_id`
   unless `ClientCacheVersion` in the worldserver config overrides it (`World::LoadDBVersion`
   and `World::LoadConfigSettings` in `World.cpp`, TrinityCore branch `3.3.5`). A real client
   drops its template cache when this number changes. `agent/opcodes.py` does not define the
-  opcode, so the agent ignores it and trusts `names.json` forever.
+  opcode, so the agent ignores it and trusts `names.json` forever. (`items.json` cannot be
+  stale, because it is never read.)
 - **A hand-copied table is already the fourth route.** `agent/spells.py::SPELL_TABLE` holds 17
   spells typed in by hand, read through `get_spell_info` by `agent/think.py`,
   `agent/http_api.py` and `agent/actions/combat.py`. Its own comment says to "verify against
@@ -115,7 +120,9 @@ agent already gets them the way a client does.
 
 The client tier raises no fairness question. The server tier contradicts the glossary's
 **Level to cap** as written, so it is off unless the owner turns it on (open question 1).
-This split means the first slice needs no owner answer and no database.
+This split means the first slice needs no answer to the fairness question and no database.
+Its PR still waits for the owner's go-ahead for another reason: it adds a line to
+`scripts/check.sh` (see Consequences).
 
 ## Options considered
 
@@ -175,7 +182,8 @@ hand-run exporter under `tools/` and read by one stdlib module in `agent/`.
 2. **Exporter.** A new tool, `worldknowledge` under `tools/`, builds the bundle from the DBC
    directory and, for server-tier tables only, from the `world` database. It runs by hand
    where those exist (the wow-server VM). It is not a service, has no port and is in no compose file.
-3. **Contract owner.** The consumer owns it, as in ADR 0010: the reader module holds
+3. **Contract owner.** `agent/` holds the contract, as in ADR 0010; there `agent/` is the
+   producer, here it is the consumer. The reader module holds
    `SCHEMA_VERSION` and the table definitions. The exporter imports them, so there is one
    definition. A contract test builds a bundle with the real exporter from fixture data and
    reads it back with the real reader; this is stronger than ADR 0010's consumer tests,
@@ -196,10 +204,14 @@ hand-run exporter under `tools/` and read by one stdlib module in `agent/`.
    mismatch they return unknown. That check catches a changed cache id, not every TDB
    change, so the operating rule is also written down: rebuild the bundle whenever the TDB
    file or the server image tag changes.
-8. **`agent/names.py` and `agent/items.py` are kept as they are**, on purpose. They are the
-   client's own mechanism, they ask the running server, and their cost is bounded
-   (`budget_per_second`, and `MAX_PENDING` in `names.py`). Backing them with the bundle
-   would save a few small queries per login and add a way to be stale. They stay per agent:
+8. **The wire route of `agent/names.py` and `agent/items.py` is kept**, on purpose. Asking
+   the server for templates is the client's own mechanism, it asks the running server, and
+   its cost is bounded (`budget_per_second`, and `MAX_PENDING` in `names.py`). Backing it
+   with the bundle would save a few small queries per login and add a way to be stale. The
+   two differ on disk today: `names.json` is read back at login, `items.json` is not (see
+   Context). This ADR does not decide whether `ItemCache.load` gets a caller; that is a fix
+   of its own, and if it is made, `items.json` needs the same invalidation as `names.json`
+   (further slice 3). Template caches stay per agent:
    one writable cache shared by all agents would be shared state between agent processes
    (decision 4). The bundle is read-only and identical for everyone, like installed client
    data, so it is not.
@@ -229,7 +241,10 @@ hand-run exporter under `tools/` and read by one stdlib module in `agent/`.
   slice and waits for the owner like any `scripts/` change.
 - `SPELL_TABLE` can be retired once the bundle is mounted; until then it is the fallback.
 - The new directory under `tools/` triggers no deploy (`scripts/deploy.sh` does not
-  match it), so building it never disconnects players.
+  match it), so building it never disconnects players. The first slice also adds one
+  `SUITES` line to `scripts/check.sh`, so its PR is a `scripts/` change and follows the rule
+  for those in `CLAUDE.md` (*Working model*): it waits for the owner's go-ahead, although no
+  stack is redeployed.
 - #315 is unchanged: quest givers are still found by walking, because that is server-tier
   knowledge and it is off. #82 is unchanged. Both get a pointer to this ADR on acceptance.
 - #252's "shared caches" item is answered for static data (the bundle); template caches stay
@@ -252,8 +267,13 @@ setting is added, no compose file changes. Needs no database.
     `range_max_yd` (the hostile range) and `range_max_friendly_yd`).
   - `class WorldKnowledge`: `__init__(self, path: str | None, allow_server_tier: bool = False)`,
     attribute `available: bool`, `meta() -> dict`, `spell(spell_id: int) -> dict | None`,
-    `close()`. Opens with `sqlite3.connect("file:...?mode=ro", uri=True)`. Safe to call from
-    any thread.
+    `close()`. Opens with
+    `sqlite3.connect("file:...?mode=ro", uri=True, check_same_thread=False)` and holds one
+    `threading.Lock` around every use of the connection, which makes it safe to call from
+    any thread. `agent/memory.py::_connect` passes `check_same_thread=False` for the same
+    reason, and `Memory` guards its reader with a lock. Without the flag, a lookup from a
+    second thread raises `sqlite3.ProgrammingError`, which would break "no exception leaves
+    the module".
 - `test_worldknowledge.py` in `agent/tests/` (new).
 - `agent/tests/test_architecture.py`: add `"worldknowledge": set()` to `LAYERS`.
 - `build.py` in a new directory `worldknowledge` under `tools/`:
@@ -266,7 +286,8 @@ setting is added, no compose file changes. Needs no database.
 - `tests/test_build.py` next to it (new).
 - `tools/tests/test_architecture.py`: `ROOTS`, `PACKAGE_EDGES["worldknowledge"] = {"dbc"}`,
   `AGENT_EDGES["worldknowledge"] = {"worldknowledge"}`.
-- `scripts/check.sh`: one line in `SUITES` for the new suite.
+- `scripts/check.sh`: one line in `SUITES` for the new suite. This makes the PR a `scripts/`
+  change (owner's go-ahead, `CLAUDE.md` *Working model*).
 - `docs/ARCHITECTURE.md`: the two modules in the module map.
 
 **Behaviour**
@@ -284,6 +305,8 @@ setting is added, no compose file changes. Needs no database.
 - [ ] Known and unknown spell lookups: `scripts/check.sh test-agent`.
 - [ ] Each of the four unavailable cases above, with exactly one warning and no exception:
       `scripts/check.sh test-agent`.
+- [ ] A lookup made from a second thread (not the one that built the reader) returns the
+      row and raises nothing: `scripts/check.sh test-agent`.
 - [ ] The reader opens read-only: a write through its connection fails and a missing path is
       not created: `scripts/check.sh test-agent`.
 - [ ] Contract test: a bundle built by `build()` from fixture WDBC bytes is read by
@@ -304,8 +327,8 @@ setting is added, no compose file changes. Needs no database.
    bundle path becomes a setting in `agent/config.py::SETTINGS`.
 2. Mount the bundle read-only into agent containers (`scripts/gen_agents_compose.py`, the
    runner) and document the rebuild-and-copy step in `docs/DEPLOYMENT.md`.
-3. Handle `SMSG_CLIENTCACHE_VERSION`: keep the cache id, and discard `names.json` and
-   `items.json` when it changes.
+3. Handle `SMSG_CLIENTCACHE_VERSION`: keep the cache id and discard `names.json` when it
+   changes; the same for `items.json` if `ItemCache.load` has a caller by then.
 4. More client-tier tables as M9 issues need them (`AreaTable`, `Map`, `TaxiNodes`).
 5. Server-tier tables (spawns, quest starters, vendors) from the `world` database, only if
    open question 1 is answered yes.
@@ -328,5 +351,6 @@ Each has a default, so no work waits on the answer.
    automating this needs a new key and is not proposed.
 5. **Should the bundle ever be committed?** Default: no; it is derived from client data the
    repository does not hold.
-6. **Should `names.json` and `items.json` get a volume so they survive a recreate?**
-   Default: decide it with the volume question of ADR 0011; not part of this ADR.
+6. **Should `names.json` get a volume so it survives a recreate, and should `items.json`
+   be read at all?** Today only `names.json` is read back. Default: decide both with the
+   volume question of ADR 0011; not part of this ADR.
