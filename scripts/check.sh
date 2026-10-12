@@ -22,6 +22,7 @@ SUITES=(
   # needs tools/wowmap/requirements.txt + Pillow (the tools CI job installs them)
   "wowmap|python3 -m unittest discover -s tools/wowmap/tests"
   "wowmap-js|node --test tools/wowmap/tests/js/*.test.js"
+  "worldknowledge|python3 -m unittest discover -s tools/worldknowledge/tests"
 )
 # Suites that must not need third-party packages (agent/ is stdlib-only).
 STDLIB_SUITES="agent"
