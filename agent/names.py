@@ -14,6 +14,7 @@ the full writeup.
 
 import collections
 import json
+import logging
 import os
 import struct
 import time
@@ -24,6 +25,8 @@ from .opcodes import (
     SMSG_NAME_QUERY_RESPONSE,
 )
 from .wire import Reader
+
+log = logging.getLogger("agent.names")
 
 DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/wow-agent/names.json")
 
@@ -165,6 +168,23 @@ def parse_gameobject_query_response(payload: bytes) -> dict:
     return info
 
 
+def _parse_cache_section(section) -> dict[int, dict | None]:
+    """One kind's section of the cache file: {"<entry>": parsed dict or null}.
+    Raises ValueError on any other shape, so load() drops the whole file."""
+    if not isinstance(section, dict):
+        raise ValueError(f"cache section is {type(section).__name__}, expected an object")
+    out = {}
+    for key, value in section.items():
+        try:
+            entry = int(key)
+        except ValueError:
+            raise ValueError(f"non-numeric entry key {key[:40]!r}") from None
+        if value is not None and not isinstance(value, dict):
+            raise ValueError(f"entry {entry} is {type(value).__name__}, expected an object or null")
+        out[entry] = value
+    return out
+
+
 class NameCache:
     """Per-kind name dicts, query dedupe/budgeting, and on-disk persistence
     for the static creature/gameobject templates (player names are session-
@@ -277,13 +297,21 @@ class NameCache:
         cold, not a fatal error. `path` overrides self.cache_path for this
         call only (tests use this — production code always uses the path
         set at construction)."""
+        path = path or self.cache_path
         try:
-            with open(path or self.cache_path) as f:
+            with open(path) as f:
                 data = json.load(f)
-        except (OSError, ValueError):
+            if not isinstance(data, dict):
+                raise ValueError(f"top level is {type(data).__name__}, expected an object")
+            creatures = _parse_cache_section(data.get("creatures", {}))
+            gameobjects = _parse_cache_section(data.get("gameobjects", {}))
+        except FileNotFoundError:
             return
-        self.creatures.update({int(k): v for k, v in data.get("creatures", {}).items()})
-        self.gameobjects.update({int(k): v for k, v in data.get("gameobjects", {}).items()})
+        except (OSError, ValueError, RecursionError) as e:
+            log.warning("ignoring unreadable name cache %s: %s", path, e)
+            return
+        self.creatures.update(creatures)
+        self.gameobjects.update(gameobjects)
 
     def save(self, path: str | None = None):
         """A save failure (read-only fs, disk full) must not crash the
