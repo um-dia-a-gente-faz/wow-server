@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import opcodes
-from .audit_schema import AuditRecord
+from .audit_schema import SCHEMA_VERSION, AuditRecord
 from .transport import ERROR_LOG_INTERVAL_S, _ErrorThrottle
 
 # Bucket upper bounds (ms) for the LLM latency histogram. Chosen to span
@@ -128,10 +128,13 @@ def _bucket_for(latency_ms: float) -> int | None:
     return None  # +Inf bucket, handled separately
 
 
-def iter_records(path: str, on_bad=None):
+def iter_records(path: str, on_bad=None, on_newer=None):
     """Yield parsed JSON records from one JSONL file. A line that is not UTF-8, not JSON,
     or JSON but not an object is skipped and `on_bad()` is called for it (#513); blank
-    lines are skipped silently. Never raises on file content."""
+    lines are skipped silently. Never raises on file content.
+    Each yielded dict's `schema` is the version the line was written with (0 when it has
+    no usable one), not SCHEMA_VERSION (#635). A line newer than SCHEMA_VERSION calls
+    `on_newer()` and is still yielded: its unknown keys are kept in the dict."""
     with open(path, "rb") as f:
         for raw in f:
             if not raw.strip():
@@ -144,7 +147,14 @@ def iter_records(path: str, on_bad=None):
                 if on_bad is not None:
                     on_bad()
                 continue
-            yield AuditRecord.from_json(obj).to_json()
+            stored = obj.get("schema", 0)
+            if type(stored) is not int or stored < 0:
+                stored = 0
+            if stored > SCHEMA_VERSION and on_newer is not None:
+                on_newer()
+            rec = AuditRecord.from_json(obj).to_json()
+            rec["schema"] = stored
+            yield rec
 
 
 def read_audit(paths) -> tuple[list[dict], dict[str, int]]:

@@ -6,8 +6,10 @@ which upgrades older lines: a line with no `schema` key is version 0 and takes t
 field defaults below. Keys this version does not know are kept in `extra` and
 written back, so a newer writer's fields survive a round trip through this code.
 
-When a field's meaning or shape changes, bump SCHEMA_VERSION and add a golden line
-under agent/tests/fixtures/audit/. A new field needs a field here, or the writer
+The log changes by addition only (ADR 0018): a key is never given a new meaning or type,
+and a changed meaning takes a new key. SCHEMA_VERSION is bumped when a key is added, so a
+reader can tell which defaults it filled in; add a golden line under
+agent/tests/fixtures/audit/ with each bump. A new field needs a field here, or the writer
 contract test in agent/tests/test_audit_schema.py fails.
 """
 

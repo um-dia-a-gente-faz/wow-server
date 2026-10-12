@@ -6,7 +6,7 @@ fixture file itself."""
 import os
 import unittest
 
-from agent.metrics import derive_metrics, iter_records, render_prometheus_text, xp_per_hour
+from agent.metrics import derive_metrics, iter_records, read_audit, render_prometheus_text, xp_per_hour
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "audit", "luaprata_sample.jsonl")
 
@@ -322,6 +322,57 @@ class ReaderSkipsBadLinesTest(unittest.TestCase):
         bad = []
         self.assertEqual(list(iter_records(self.write(b"[" * 100000 + b"\n"), on_bad=lambda: bad.append(1))), [])
         self.assertEqual(len(bad), 1)
+
+
+class StoredSchemaTest(unittest.TestCase):
+    """#635 (ADR 0018): iter_records yields the schema each line was written with, so a
+    reader can tell which defaults it filled in, and on_newer reports a line from a newer writer."""
+
+    def write(self, lines: list[bytes]) -> str:
+        import tempfile
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        path = os.path.join(self._dir.name, "A.jsonl")
+        with open(path, "wb") as f:
+            f.write(b"\n".join(lines) + b"\n")
+        return path
+
+    def test_yields_the_stored_schema_of_each_line(self):
+        from agent.audit_schema import SCHEMA_VERSION
+        path = self.write([
+            b'{"agent": "A", "ts": 1.0}',
+            b'{"schema": 1, "agent": "A", "ts": 2.0}',
+            b'{"schema": %d, "agent": "A", "ts": 3.0}' % SCHEMA_VERSION,
+            b'{"schema": %d, "agent": "A", "ts": 4.0, "future_field": "kept"}' % (SCHEMA_VERSION + 1),
+        ])
+        newer = []
+        got = list(iter_records(path, on_newer=lambda: newer.append(1)))
+        self.assertEqual([r["schema"] for r in got], [0, 1, SCHEMA_VERSION, SCHEMA_VERSION + 1])
+        self.assertEqual(len(newer), 1)
+
+    def test_a_newer_line_is_still_yielded_with_its_unknown_key(self):
+        from agent.audit_schema import SCHEMA_VERSION
+        path = self.write([b'{"schema": %d, "agent": "A", "ts": 4.0, "future_field": "kept"}'
+                           % (SCHEMA_VERSION + 1)])
+        (rec,) = list(iter_records(path, on_newer=lambda: None))
+        self.assertEqual(rec["future_field"], "kept")
+        self.assertEqual(rec["agent"], "A")
+
+    def test_a_malformed_schema_reads_as_zero_and_calls_no_callback(self):
+        calls = []
+        for raw in (b'"2"', b"true", b"-1", b"null", b"1.5"):
+            with self.subTest(schema=raw):
+                path = self.write([b'{"schema": %s, "agent": "A", "ts": 1.0}' % raw])
+                (rec,) = list(iter_records(path, on_bad=lambda: calls.append("bad"),
+                                           on_newer=lambda: calls.append("newer")))
+                self.assertEqual(rec["schema"], 0)
+                self.assertEqual(calls, [])
+
+    def test_read_audit_yields_the_stored_schema_and_counts_bad_lines(self):
+        path = self.write([b'{"agent": "A", "ts": 1.0}', b"[1]"])
+        records, bad = read_audit([path])
+        self.assertEqual([r["schema"] for r in records], [0])
+        self.assertEqual(bad, {os.path.basename(os.path.dirname(path)): 1})
 
 
 class LabelValueTest(unittest.TestCase):
