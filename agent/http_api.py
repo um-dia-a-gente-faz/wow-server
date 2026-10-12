@@ -396,11 +396,33 @@ class ObserverServer(ThreadingHTTPServer):
 
     def __init__(self, addr, handler):
         self.stopping = threading.Event()
+        self._state_lock = threading.Lock()
+        self._serving = False   # the serve loop is running
+        self._closed = False    # shutdown() has run
         super().__init__(addr, handler)
+
+    def serve_forever(self, poll_interval=0.5):
+        with self._state_lock:
+            if self._closed:   # shutdown() came first: never enter the loop on a closed socket
+                return
+            self._serving = True
+        try:
+            super().serve_forever(poll_interval)
+        finally:
+            with self._state_lock:
+                self._serving = False
 
     def shutdown(self):
         self.stopping.set()
-        super().shutdown()
+        with self._state_lock:
+            self._closed = True
+            serving = self._serving
+        # BaseServer.shutdown() waits for the serve loop to exit, so it is only called when one
+        # is running; with none it would block forever. A serve_forever() that starts later sees
+        # _closed and returns at once.
+        if serving:
+            super().shutdown()
+        self.server_close()   # after the loop has stopped; closing twice is harmless
 
 
 def make_server(observer: AgentObserver, host: str, port: int) -> ObserverServer:
