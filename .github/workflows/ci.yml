@@ -86,7 +86,7 @@ jobs:
       - run: scripts/check.sh compile test-stdlib
         env:
           PYTHONFAULTHANDLER: "1"
-          CHECK_STALL_DUMP_S: "240"
+          CHECK_STALL_DUMP_S: "30"
 
   # Every other suite, registered in scripts/check.sh (#298). wowmap needs PyMySQL +
   # cryptography (its requirements.txt) and Pillow; node is preinstalled on ubuntu-latest.
@@ -159,7 +159,7 @@ jobs:
         # 270 s), and coverage_floor.py sends the SIGABRT. Keep it 30 s under timeout-minutes * 60.
         env:
           PYTHONFAULTHANDLER: "1"
-          CHECK_STALL_DUMP_S: "420"
+          CHECK_STALL_DUMP_S: "30"
         run: |
           set -o pipefail
           { echo '### Coverage of agent/'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
