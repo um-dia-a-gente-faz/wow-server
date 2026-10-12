@@ -67,6 +67,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("JEV_MIN_CONFIDENCE", float, 0.0, "below this confidence the safe candidate runs; 0 = rule off"),
     _s("OPENROUTER_API_KEY", str, "", "only read when JEV_PROVIDER=openrouter", secret=True),
     _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "caps Jev tokens per agent per rolling hour (LLM brain and fallback not metered); 0 = unlimited"),
+    _s("AGENT_FLEET_LIMITS_FILE", str, "", "fleet limits file (ADR 0017): a JSON file of time-bounded brain blocks "
+       "that Brain reads; empty = off, no file is touched", compose=False),
     _s("LOG_LEVEL", str, "INFO", "python logging level"),
     _s("VERBOSE_PACKETS", bool, False, "log every packet"),
     _s("AGENT_DUMP_PACKETS", str, "", "directory for raw SMSG_UPDATE_OBJECT dumps; empty = off"),
@@ -187,6 +189,8 @@ class Config:
     # Spend cap (#213, agent/brain.py): input+output tokens this agent may spend
     # on Jev in any rolling 60 minutes; 0 = unlimited. Per agent, not fleet-wide.
     max_tokens_per_hour: int = _f("AGENT_MAX_TOKENS_PER_HOUR")
+    # ADR 0017 slice 1: JSON file of "do not call brain X until T" blocks; empty = off.
+    fleet_limits_file: str = _f("AGENT_FLEET_LIMITS_FILE")
     jev_enabled: bool = field(default_factory=lambda: bool(
         get("JEV_BASE_URL") or (
             _lower("JEV_PROVIDER") == "openrouter"

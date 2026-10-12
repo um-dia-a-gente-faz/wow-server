@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from . import actions as ac
 from . import candidates as cand
 from .action_specs import LLM_EXCLUDED_ACTIONS  # #531: the one home of the set, shared with api_contract
+from .fleetlimits import FleetLimits
 from .jev import JevClient, JevError
 from .llm import LLMClient, LLMError
 from .model import ActionRecord, Candidate, Snapshot
@@ -64,6 +65,8 @@ _COOLDOWNS = {401: JEV_AUTH_COOLDOWN_S, 402: JEV_AUTH_COOLDOWN_S,
 
 # #213: Jev token budget. Rolling window, per agent, input+output tokens (agent/tokenbudget.py).
 JEV_STATUS_BUDGET = "budget_exhausted"
+# ADR 0017: the fleet limits file blocks Jev. Not a Jev error: agent/metrics.py counts it nowhere.
+JEV_STATUS_FLEET = "fleet_blocked"
 
 
 class BrainError(Exception):
@@ -122,7 +125,8 @@ class Brain:
 
     def __init__(self, jev=None, llm=None, clock=time.monotonic,
                  min_confidence: float = DEFAULT_JEV_MIN_CONFIDENCE,
-                 max_tokens_per_hour: int = 0, budget: TokenBudget | None = None):
+                 max_tokens_per_hour: int = 0, budget: TokenBudget | None = None,
+                 fleet: FleetLimits | None = None):
         self.jev = jev
         self.llm = llm
         self.min_confidence = min_confidence
@@ -131,6 +135,8 @@ class Brain:
         self._jev_cooldown_reason: str | None = None
         # One budget object may be shared by several Brains (#454).
         self.budget = budget if budget is not None else TokenBudget(max_tokens_per_hour, clock)
+        # ADR 0017: None (the default) means no file is ever touched. Read on the think thread only.
+        self.fleet = fleet
 
     @classmethod
     def from_config(cls, cfg) -> "Brain | None":
@@ -151,8 +157,10 @@ class Brain:
             llm = LLMClient(cfg.llm_base_url, cfg.llm_model, api_key=cfg.llm_api_key)
         if jev is None and llm is None:
             return None
+        limits_file = getattr(cfg, "fleet_limits_file", "")
         return cls(jev=jev, llm=llm, min_confidence=cfg.jev_min_confidence,
-                   max_tokens_per_hour=getattr(cfg, "max_tokens_per_hour", 0))
+                   max_tokens_per_hour=getattr(cfg, "max_tokens_per_hour", 0),
+                   fleet=FleetLimits(limits_file) if limits_file else None)
 
     def describe(self) -> str:
         parts = []
@@ -181,16 +189,11 @@ class Brain:
         snapshot's handle-string GUIDs (UM-89) for its unit comparisons."""
         fallback = None
         failed_jev = None
-        budget_skipped = False
+        skip_status = None   # jev_status of a cycle where Jev was not called (budget or fleet block)
         if self.jev is not None:
             d = Decision(brain=BRAIN_JEV, model=getattr(self.jev, "model", None))
-            fallback = self._jev_skip_reason()
-            if fallback is None:
-                fallback = self.budget.exhausted("jev")
-                if fallback is not None:
-                    d.jev_status = JEV_STATUS_BUDGET
-                    budget_skipped = True
-                    log.warning("%s", fallback)
+            fallback = self._jev_gate(d)
+            skip_status = d.jev_status   # set by the gate: fleet block or spent budget
             if fallback is None:
                 try:
                     notes: list[dict] = []
@@ -227,8 +230,9 @@ class Brain:
         if failed_jev is not None:
             # The failed Jev call still happened: keep its status and billed usage.
             d.jev_status, d.usage = failed_jev.jev_status, failed_jev.usage
-        elif budget_skipped:
-            d.jev_status = JEV_STATUS_BUDGET
+        elif skip_status is not None:
+            d.jev_status = skip_status
+        self._raise_if_llm_blocked(fallback, d)
         try:
             if history is not None:
                 d.action, d.params = self.llm.choose_action(snapshot, llm_catalog(), persona=persona,
@@ -245,6 +249,28 @@ class Brain:
         return d
 
     # ── internals ──────────────────────────────────────────────────
+    def _jev_gate(self, d: Decision) -> str | None:
+        """Why Jev is not called this cycle, or None. Order: cooldown, fleet limits file
+        (ADR 0017), per-agent token budget; a fleet or budget skip sets `d.jev_status`."""
+        reason = self._jev_skip_reason()
+        if reason is None and self.fleet is not None:
+            reason = self.fleet.blocked(BRAIN_JEV)   # no log line: this runs every think cycle
+            if reason is not None:
+                d.jev_status = JEV_STATUS_FLEET
+        if reason is None:
+            reason = self.budget.exhausted("jev")
+            if reason is not None:
+                d.jev_status = JEV_STATUS_BUDGET
+                log.warning("%s", reason)
+        return reason
+
+    def _raise_if_llm_blocked(self, fallback: str | None, d: Decision) -> None:
+        """ADR 0017: a blocked LLM fails the cycle without a request. `d.fallback` stays as it is:
+        `_derive_jev` counts a brain=llm record with a fallback as a Jev fallback."""
+        reason = self.fleet.blocked(BRAIN_LLM) if self.fleet is not None else None
+        if reason is not None:
+            raise BrainError(f"{fallback}; {reason}" if fallback else reason, d)
+
     def _jev_skip_reason(self) -> str | None:
         remaining = self._jev_cooldown_until - self._clock()
         if remaining <= 0:

@@ -188,7 +188,8 @@ otherwise.
 **What it means.** Failed Jev calls exceed 20% of successful calls for one agent, for 15 minutes. The
 two sides are `wow_agent_jev_errors_total{agent,status}` (`http_4xx`, `http_5xx`, `error`,
 `budget_exhausted`) and `wow_agent_jev_calls_total{agent}`, both rates over 15 minutes from the
-audit textfile.
+audit textfile. A cycle audited as `jev_status: "fleet_blocked"` (the fleet limits file blocked Jev,
+ADR 0017) is the limit working: it counts as neither an error nor a call and does not fire this alert.
 
 **When it does not fire.** With no Jev calls and no errors, both rates are zero and the ratio is
 `0/0`, which is NaN, and NaN does not fire. An idle agent, or one that plays on the LLM brain,
@@ -202,6 +203,10 @@ never fires. An agent whose every Jev call fails has errors but no successes, so
 2. Grafana, "Jev — decision usage", panel "Jev errors / sec".
 3. For `budget_exhausted`, the Jev budget setting in `/opt/wow-server/.env` on the wow-server VM. Read
    the key only; never paste its value anywhere.
+4. For `fleet_blocked` (it does not fire this alert, but explains an agent that stopped calling Jev):
+   read the limits file on the agent host, the path in `AGENT_FLEET_LIMITS_FILE`, for the `jev` entry's
+   `until_ts` and `reason`, and find out who wrote the block (the writer, or the owner by hand). Remove the
+   entry, or the file, to lift it before `until_ts`.
 
 **Tune or silence.** Failed Jev calls fall back to the LLM brain (`docs/AGENT-DIRECTION.md`), so this
 is a cost and quality signal, not an outage. Whether to change the brain is the owner's decision.
