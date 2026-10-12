@@ -130,6 +130,24 @@ class CalibrationFileTests(unittest.TestCase):
                                                              "200": {"dx": 0.0, "dy": 3.25}})
                 self.assertEqual(self.raw(), before)
 
+    def test_the_reserved_schema_refusal_comes_before_the_read(self):
+        # an unreadable file: the refusal must be the plain ValueError, not the read's CalibrationUnreadable
+        self.write('{"100": ')
+        before = self.raw()
+        with self.assertRaises(ValueError) as ctx:
+            calibration.save_calibration("schema", 1, 2)
+        self.assertNotIsInstance(ctx.exception, calibration.CalibrationUnreadable)
+        self.assertEqual(self.raw(), before)
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+        # no file at all: the refusal creates nothing and loads nothing
+        os.remove(self.path)
+        with self.assertRaises(ValueError) as ctx:
+            calibration.save_calibration("schema", 1, 2)
+        self.assertNotIsInstance(ctx.exception, calibration.CalibrationUnreadable)
+        self.assertFalse(os.path.exists(self.path))
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+        self.assertEqual(calibration.calibrations, {})
+
     def test_save_refuses_the_reserved_schema_zone_before_touching_the_file(self):
         self.write(json.dumps(GOOD))
         before = self.raw()
@@ -237,7 +255,8 @@ class CalibrationFileTests(unittest.TestCase):
         self.assertIn("newer", logs.output[0])
         with self.assertRaises(calibration.CalibrationNewer) as ctx:
             calibration.save_calibration(12, 5, 5)
-        self.assertIn("deploy the newer site", str(ctx.exception))
+        self.assertIn(f"{self.path} is schema 2, newer than 1: not read, not overwritten; "
+                      "deploy the newer site", str(ctx.exception))
         self.assertEqual(self.raw(), before)
         self.assertFalse(os.path.exists(self.path + ".tmp"))
 
@@ -250,8 +269,8 @@ class CalibrationFileTests(unittest.TestCase):
         with self.assertLogs(state.log, "WARNING"):
             status, payload = calibration.calibrate(req)
         self.assertEqual(status, 500)
-        self.assertIn("newer", payload["error"])
-        self.assertIn("deploy the newer site", payload["error"])
+        self.assertIn(f"{self.path} is schema 2, newer than 1: not read, not overwritten; "
+                      "deploy the newer site", payload["error"])
         self.assertEqual(self.raw(), before)
 
     def test_schema_1_loads_its_zones_without_a_schema_zone(self):
