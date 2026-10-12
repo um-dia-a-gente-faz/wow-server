@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 
 from agent import worldknowledge as wk
@@ -19,6 +20,49 @@ def make_bundle(path, version=wk.SCHEMA_VERSION):
     conn.execute(f"PRAGMA user_version = {version}")
     conn.commit()
     conn.close()
+
+
+class _Cursor:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class SlowConn:
+    """Wraps the real connection (or none, then answers SPELL itself); execute() sleeps so
+    overlapping calls show up. Without a real connection SQLite is never touched from two threads."""
+
+    def __init__(self, real, on_execute=None, delay=0.005):
+        self.real = real
+        self.on_execute = on_execute
+        self.delay = delay
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._count = threading.Lock()
+
+    def execute(self, sql, params=()):
+        with self._count:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            if self.on_execute:
+                self.on_execute()
+            time.sleep(self.delay)
+            return _Cursor(SPELL) if self.real is None else self.real.execute(sql, params)
+        finally:
+            with self._count:
+                self.in_flight -= 1
+
+    def close(self):
+        if self.real is not None:
+            self.real.close()
+
+
+class RaisingConn(SlowConn):
+    def execute(self, sql, params=()):
+        raise sqlite3.OperationalError("disk I/O error")
 
 
 class WorldKnowledgeTests(unittest.TestCase):
@@ -88,6 +132,90 @@ class WorldKnowledgeTests(unittest.TestCase):
         r.close()
         self.assertFalse(r.available)
         self.assertIsNone(r.spell(133))
+
+    def test_spell_table_dropped_or_column_missing_is_unavailable(self):
+        shapes = {"table dropped": "DROP TABLE spell",
+                  "column missing": "ALTER TABLE spell DROP COLUMN cast_time_ms"}
+        for name, sql in shapes.items():
+            path = os.path.join(self.dir, name.replace(" ", "_") + ".sqlite3")
+            make_bundle(path)
+            conn = sqlite3.connect(path)
+            conn.execute(sql)
+            conn.commit()
+            conn.close()
+            with open(path, "rb") as f:
+                before = f.read()
+            with self.subTest(name), self.assertLogs("agent.worldknowledge", "WARNING") as logs:
+                r = wk.WorldKnowledge(path)
+                self.assertFalse(r.available)
+                self.assertIsNone(r.spell(133))
+                self.assertEqual(r.meta(), {})
+                r.close()
+            self.assertEqual(len(logs.records), 1)
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), before)
+
+    def test_lookups_are_serialised(self):
+        make_bundle(self.path)
+        r = self.opened()
+        fake = SlowConn(None)
+        r._conn = fake
+        threads = [threading.Thread(target=r.spell, args=(133,)) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(fake.max_in_flight, 1)
+
+    def test_lookups_racing_close_raise_nothing(self):
+        make_bundle(self.path)
+        r = self.opened()
+        errors = []
+
+        def look():
+            try:
+                for _ in range(200):
+                    r.spell(133)
+            except Exception as e:  # noqa: BLE001 - the point of the test: nothing may escape
+                errors.append(e)
+
+        threads = [threading.Thread(target=look) for _ in range(16)]
+        for t in threads:
+            t.start()
+        r.close()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+
+    def test_close_waits_for_a_lookup_in_progress(self):
+        make_bundle(self.path)
+        r = wk.WorldKnowledge(self.path)
+        entered = threading.Event()
+        busy_at_close = []
+
+        class Probe(SlowConn):
+            def close(self):
+                busy_at_close.append(self.in_flight)
+                self.real.close()
+
+        r._conn = Probe(r._conn, on_execute=entered.set, delay=0.2)
+        t = threading.Thread(target=r.spell, args=(133,))
+        t.start()
+        self.assertTrue(entered.wait(5))
+        r.close()
+        t.join()
+        self.assertEqual(busy_at_close, [0])
+
+    def test_sqlite_error_during_lookup_answers_none(self):
+        make_bundle(self.path)
+        r = self.opened()
+        r._conn = RaisingConn(r._conn)
+        self.assertIsNone(r.spell(133))
+
+    def test_overflowing_spell_id_answers_none(self):
+        make_bundle(self.path)
+        r = self.opened()
+        self.assertIsNone(r.spell(2 ** 70))
 
 
 if __name__ == "__main__":

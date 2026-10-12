@@ -10,10 +10,14 @@ Field indexes are from TrinityCore branch 3.3.5, src/server/shared/DataStores/DB
 `SpellCastTimefmt` "nixx" = 4, `SpellRangefmt` 40 chars), whose lengths are the field counts below.
 A file with another count is from another build and fails the build.
 
+Signedness, from the same header: `SpellEntry` (line 1391) `PowerType` is `uint32` (line 1432), so it
+is read unsigned; `SpellCastTimesEntry` (line 1505) `Base` is `int32` (line 1508), so it is read
+signed.
+
     Spell.dbc            234 fields  0 ID, 28 CastingTimeIndex, 39 SpellLevel, 41 PowerType,
                                      42 ManaCost, 46 RangeIndex, 136-151 Name[16],
                                      153-168 NameSubtext[16] (the rank), 204 ManaCostPct
-    SpellCastTimes.dbc     4 fields  0 ID, 1 Base (ms)
+    SpellCastTimes.dbc     4 fields  0 ID, 1 Base (ms, int32)
     SpellRange.dbc        40 fields  0 ID, 1-2 RangeMin[hostile, friendly],
                                      3-4 RangeMax[hostile, friendly]
 
@@ -26,8 +30,11 @@ import sqlite3
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))        # tools/
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))  # checkout root
+for _p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),        # tools/
+           os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")):  # checkout root
+    _p = os.path.abspath(_p)
+    if _p not in sys.path:
+        sys.path.append(_p)
 from agent.worldknowledge import SCHEMA, SCHEMA_VERSION  # noqa: E402
 from dbc.wdbc import WdbcFile  # noqa: E402
 
