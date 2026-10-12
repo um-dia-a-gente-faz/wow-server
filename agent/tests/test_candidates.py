@@ -142,6 +142,25 @@ class CombatScenarioTest(CandidateShapeMixin, unittest.TestCase):
                 del out["me"]
             self.assertNotIn("auto_attack:guid=2", ids(cand.generate(out, my_guid=MY_GUID)))
 
+    def test_hurt_with_a_possible_attacker_offers_no_pull(self):
+        # gh-555: hurt and in combat, a unit may still be attacking us (its target is 0, absent, or
+        # unknown to us, or my_guid is unknown), so the idle rat (guid 2) is not pulled. Someone
+        # else's fight (target 999 with my_guid known) is not ours: the rat is pulled as before.
+        idle_mob = {"guid": 2, "distance": 4, "level": 1, "name": "rat", "health_pct": 1}
+        other = {"guid": 3, "distance": 6, "level": 1, "name": "other", "health_pct": 1, "in_combat": True}
+        snap = {"me": {"level": 3, "health": "18/90", "in_combat": True}, "window": None}
+        may_attack = [
+            (dict(other, target_guid=0), MY_GUID),
+            (dict(other), MY_GUID),
+            (dict(other, target_guid=999), None),
+        ]
+        for unit_3, my_guid in may_attack:
+            out = dict(snap, nearby_units=[idle_mob, unit_3])
+            self.assertNotIn("auto_attack:guid=2", ids(cand.generate(out, my_guid=my_guid)),
+                             f"unit {unit_3} with my_guid {my_guid}")
+        someone_elses = dict(snap, nearby_units=[idle_mob, dict(other, target_guid=999)])
+        self.assertIn("auto_attack:guid=2", ids(cand.generate(someone_elses, my_guid=MY_GUID)))
+
 
 class QuestScenarioTest(CandidateShapeMixin, unittest.TestCase):
     def test_quest(self):

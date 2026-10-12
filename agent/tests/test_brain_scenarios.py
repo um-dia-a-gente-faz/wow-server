@@ -133,6 +133,14 @@ SCENARIOS = {
                       me=dict(HURT, in_combat=True)),
         offered=lambda cs: offering_attack_on(10)(cs) and not_offering_guid(11)(cs),
         chosen=first_is("auto_attack", guid=10)),
+    # gh-555: hurt and in combat, the attacker is stunned (target 0) and 10 yd away, so it is not a
+    # threat; the idle rats must still not be pulled while a possible attacker is in view
+    "hurt_with_a_stunned_attacker_pulls_no_idle_mob": dict(
+        snapshot=snap([unit(10, 10, level=1, in_combat=True, target_guid=0), unit(11, 4, level=1),
+                       unit(12, 5, level=1), unit(13, 6, level=1)], me=dict(HURT, in_combat=True)),
+        offered=lambda cs: any(c["params"].get("guid") == 10 for c in cs)
+        and all(c["params"].get("guid") not in (11, 12, 13) for c in cs),
+        chosen=first_is("move_towards", guid=10)),
     "healthy_pulls_the_idle_mob": dict(
         snapshot=snap([unit(10, 4, level=1)]),
         offered=offering_attack_on(10), chosen=first_is("auto_attack", guid=10)),

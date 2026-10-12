@@ -291,10 +291,20 @@ class _Context:
         self.my_level = _my_level(snapshot)
         self.threats = [u for u in self.units if self._attacks_me(u)]
         self.threat_guids = {u["guid"] for u in self.threats}
+        self.possible_attackers = [u for u in self.units if self._may_attack_me(u)]
 
     def _attacks_me(self, unit: Unit) -> bool:
         return bool(_alive(unit) and unit.get("in_combat") and self.my_guid is not None
                     and _guid_value(unit, "target_guid", self.handles) == self.my_guid)
+
+    def _may_attack_me(self, unit: Unit) -> bool:
+        """gh-555: alive and in combat, and not known to be fighting someone else. A stunned or fleeing
+        unit shows target 0 or none, so it may still be the attacker. With my_guid unknown, any fighter is."""
+        if not (_alive(unit) and unit.get("in_combat")):
+            return False
+        if self.my_guid is None:
+            return True
+        return _guid_value(unit, "target_guid", self.handles) in (None, 0, self.my_guid)
 
 
 Provider = Callable[[_Context, list[Candidate]], None]
@@ -459,8 +469,9 @@ def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
     targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
                and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
                # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays),
-               # unless we are in combat with no threat: a stuck combat flag, so the pull is offered again (gh-544)
-               and not (ctx.needs_health and not u.get("in_combat") and not (ctx.in_combat and not ctx.threats))
+               # unless we are in combat with no possible attacker in view: a stuck combat flag, so the pull
+               # is offered again (gh-544, narrowed by gh-555)
+               and not (ctx.needs_health and not u.get("in_combat") and not (ctx.in_combat and not ctx.possible_attackers))
                # unprovoked pulls only when both levels are known and the mob isn't too strong
                and ctx.my_level is not None and isinstance(u.get("level"), int)
                and u["level"] <= ctx.my_level + ATTACK_LEVEL_MARGIN
