@@ -1,8 +1,11 @@
 """Per-zone pixel offsets for the map markers: a small operator-maintained JSON store,
 edited from the page's calibration mode (POST /api/calibrate)."""
+import contextlib
 import json
 import math
 import os
+import stat
+import tempfile
 import threading
 
 import state
@@ -76,6 +79,47 @@ def load_calibrations():
 calibrations = load_calibrations()
 
 
+def _write_atomic(path, text):
+    """Write `text` to `path` through a unique temporary file in the same directory: flush, fsync,
+    os.replace. On any failure the temporary file is removed, the target is untouched and the
+    original exception propagates. The target keeps its mode (a new one gets 0o666 minus the
+    umask, as open(..., "w") gave it); mkstemp alone would leave 0600. No directory fsync (ADR 0018).
+    Private copy: agent/persist.py, tools/ and scripts/ each carry one until tools/common does."""
+    path = os.fspath(path)
+    directory, name = os.path.split(path)
+    directory = directory or "."
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        # Probe the umask without os.umask(), which is process-wide and racy with other threads.
+        pfd, probe = tempfile.mkstemp(dir=directory, prefix=f".{name}.", suffix=".mode")
+        os.close(pfd)
+        os.unlink(probe)
+        pfd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+        try:
+            mode = stat.S_IMODE(os.fstat(pfd).st_mode)
+        finally:
+            os.close(pfd)
+            os.unlink(probe)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{name}.", suffix=".tmp")
+    try:
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
+            f.write(text)
+            f.flush()
+            os.fchmod(f.fileno(), mode)
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def save_calibration(area_id, dx, dy):
     """Read-modify-write one zone's offset; callers receive the saved value.
 
@@ -91,11 +135,7 @@ def save_calibration(area_id, dx, dy):
         directory = os.path.dirname(CALIBRATION_FILE)
         if directory:
             os.makedirs(directory, exist_ok=True)
-        temporary = f"{CALIBRATION_FILE}.tmp"
-        with open(temporary, "w", encoding="utf-8") as f:
-            json.dump(store, f, indent=2, sort_keys=True)
-            f.write("\n")
-        os.replace(temporary, CALIBRATION_FILE)
+        _write_atomic(CALIBRATION_FILE, json.dumps(store, indent=2, sort_keys=True) + "\n")
         calibrations.update(store)
         for stale in set(calibrations) - set(store):
             del calibrations[stale]

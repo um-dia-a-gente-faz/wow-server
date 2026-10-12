@@ -31,11 +31,14 @@ Rules (verified against TrinityCore 3.3.5a CharacterHandler.cpp):
     CHAR_NAME_RESERVED when a name is taken, and the script then draws a new one.
 """
 import argparse
+import contextlib
 import json
 import os
 import random
 import re
+import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -91,10 +94,51 @@ def load_roster(path: Path | None = None) -> list[dict]:
     return [a.to_json() for a in roster.load_roster(path)]
 
 
+def _write_atomic(path, text):
+    """Write `text` to `path` through a unique temporary file in the same directory: flush, fsync,
+    os.replace. On any failure the temporary file is removed, the target is untouched and the
+    original exception propagates. The target keeps its mode (a new one gets 0o666 minus the
+    umask, as open(..., "w") gave it); mkstemp alone would leave 0600. No directory fsync (ADR 0018).
+    Private copy: agent/persist.py, tools/ and scripts/ each carry one until tools/common does."""
+    path = os.fspath(path)
+    directory, name = os.path.split(path)
+    directory = directory or "."
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        # Probe the umask without os.umask(), which is process-wide and racy with other threads.
+        pfd, probe = tempfile.mkstemp(dir=directory, prefix=f".{name}.", suffix=".mode")
+        os.close(pfd)
+        os.unlink(probe)
+        pfd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+        try:
+            mode = stat.S_IMODE(os.fstat(pfd).st_mode)
+        finally:
+            os.close(pfd)
+            os.unlink(probe)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{name}.", suffix=".tmp")
+    try:
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
+            f.write(text)
+            f.flush()
+            os.fchmod(f.fileno(), mode)
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def save_roster(agents: list[dict], path: Path | None = None) -> None:
     path = path or ROSTER_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"agents": agents}, indent=2) + "\n")
+    _write_atomic(path, json.dumps({"agents": agents}, indent=2) + "\n")
 
 
 def describe(a: dict) -> str:
