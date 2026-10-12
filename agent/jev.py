@@ -55,11 +55,16 @@ class JevError(Exception):
     status, malformed response, a choice we did not offer, no candidates).
     Like agent.llm.LLMError, callers treat it as "skip this think cycle".
     `status` is the HTTP status when the server answered with one (402 = out
-    of credits, 429 = rate limited), else None."""
+    of credits, 429 = rate limited), else None. `retry_after` is the seconds the
+    server asked for, when it did. `transient` marks a network error or timeout
+    (no answer at all), which the brain cools down on like a 5xx (#636)."""
 
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(self, message: str, status: int | None = None,
+                 retry_after: float | None = None, transient: bool = False):
         super().__init__(message)
         self.status = status
+        self.retry_after = retry_after
+        self.transient = transient
 
 
 def candidate_key(candidate: dict) -> str:
@@ -224,9 +229,10 @@ def _error_message(body: bytes | None) -> str:
 
 def _jev_error(e: httpjson.HttpJsonError) -> JevError:
     if e.kind == "http":
-        return JevError(f"HTTP {e.status} from {e.url}: {_error_message(e.body)}", status=e.status)
+        return JevError(f"HTTP {e.status} from {e.url}: {_error_message(e.body)}", status=e.status,
+                        retry_after=e.retry_after)
     if e.kind == "network":
-        return JevError(f"request to {e.url} failed: {e.detail}")
+        return JevError(f"request to {e.url} failed: {e.detail}", transient=True)
     if e.detail:
         return JevError(f"response is not a JSON object: {(e.body or b'')[:500]!r}")
     return JevError(f"non-JSON response from {e.url}: {(e.body or b'')[:500]!r}")

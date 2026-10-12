@@ -15,6 +15,10 @@ import random
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/, for common
+_CHECKOUT = str(Path(__file__).resolve().parents[2])   # the repo root, for the agents/ library
+if _CHECKOUT not in sys.path:
+    sys.path.append(_CHECKOUT)
+from agents import character_rules, realm  # noqa: E402
 from common.agent_accounts import is_agent_account  # noqa: E402
 
 DEATH_KNIGHT = 6
@@ -22,15 +26,6 @@ NAME_IN_USE = 50
 NAME_REJECTED = range(88, 103)  # SharedDefines.h CHAR_NAME_* codes: the server refused the name
 LOGIN_RETRIES = 5
 LOGIN_RETRY_DELAY_S = 2.0
-
-
-def load_script(repo, module):
-    """A module from the checkout's scripts/ directory (it puts the repo root on sys.path)."""
-    sys.path.insert(0, str(Path(repo) / "scripts"))
-    try:
-        return __import__(module)
-    finally:
-        sys.path.pop(0)
 
 
 class CharacterError(Exception):
@@ -47,10 +42,11 @@ def _is_int(value):
 
 
 class CharacterService:
-    def __init__(self, car, realm_host, realm_auth_port, env=None, sleep=time.sleep, rng=None):
-        """`car` is scripts/create_agent_roster.py (or a stand-in): Realm, Console,
-        HORDE, CLASS_NAMES, valid_name, gen_name."""
-        self.car = car
+    def __init__(self, realm_host, realm_auth_port, env=None, sleep=time.sleep, rng=None,
+                 realm_factory=realm.Realm, console_factory=realm.Console):
+        """`realm_factory(host, auth_port)` and `console_factory(host)` build the live side
+        (agents/realm.py); tests pass stand-ins."""
+        self.realm_factory, self.console_factory = realm_factory, console_factory
         self.realm_host, self.realm_auth_port = realm_host, realm_auth_port
         self.env = os.environ if env is None else env
         self.sleep = sleep
@@ -73,15 +69,15 @@ class CharacterService:
             raise CharacterError("gender must be 0 (male) or 1 (female)")
         if class_ == DEATH_KNIGHT:
             raise CharacterError("death knights need an existing level-55 character on the account")
-        if race not in self.car.HORDE:
+        if race not in character_rules.HORDE:
             raise CharacterError(f"unsupported race {race}: agents are Horde "
-                                 f"({', '.join(f'{r} {n}' for r, (n, _) in self.car.HORDE.items())})")
-        race_name, classes = self.car.HORDE[race]
+                                 f"({', '.join(f'{r} {n}' for r, (n, _) in character_rules.HORDE.items())})")
+        race_name, classes = character_rules.HORDE[race]
         if class_ not in classes:
             raise CharacterError(f"a {race_name} cannot be class {class_}; allowed: "
-                                 + ", ".join(f"{c} {self.car.CLASS_NAMES[c]}" for c in classes))
+                                 + ", ".join(f"{c} {character_rules.CLASS_NAMES[c]}" for c in classes))
         name = body.get("name")
-        if name is not None and (not isinstance(name, str) or not self.car.valid_name(name)):
+        if name is not None and (not isinstance(name, str) or not character_rules.valid_name(name)):
             raise CharacterError("name must be 2-12 ASCII letters, no letter three times in a row")
         return account, name, race, class_, gender
 
@@ -96,11 +92,11 @@ class CharacterService:
         """A world session for the account, or None when it does not exist.
         With create_account, make it through the worldserver console first."""
         password = self._password()
-        realm = self.car.Realm(self.realm_host, self.realm_auth_port)
+        realm = self.realm_factory(self.realm_host, self.realm_auth_port)
         try:
             sess = realm.open(account, password)
             if sess is None and create_account:
-                self.car.Console(self.realm_host).create_account(account, password)
+                self.console_factory(self.realm_host).create_account(account, password)
                 for _ in range(LOGIN_RETRIES):  # the console answers before the row is visible
                     sess = realm.open(account, password)
                     if sess is not None:
@@ -139,7 +135,7 @@ class CharacterService:
         the roster (local only: the realm answers for the rest). Returns the
         entry to record: {account, character, race, class, gender, level}."""
         if name is None:
-            name = self.car.gen_name(self.rng, race, set(taken))
+            name = character_rules.gen_name(self.rng, race, set(taken))
         if name.lower() in taken:
             raise CharacterError(f"name {name!r} is already used by an agent in the roster", status=409)
         sess = self._open(account, create_account=True)
