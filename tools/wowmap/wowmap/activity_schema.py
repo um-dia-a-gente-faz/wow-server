@@ -33,7 +33,7 @@ def migrate(conn):
         raise sqlite3.DatabaseError(f"schema version {version} is newer than {SCHEMA_VERSION}")
     for n in range(version, SCHEMA_VERSION):
         try:
-            conn.executescript(f"BEGIN;\n{MIGRATIONS[n]}\nPRAGMA user_version = {n + 1};\nCOMMIT;")
+            conn.executescript(f"BEGIN IMMEDIATE;\n{MIGRATIONS[n]}\nPRAGMA user_version = {n + 1};\nCOMMIT;")
         except BaseException:
             # executescript leaves the transaction open when a statement fails.
             conn.rollback()

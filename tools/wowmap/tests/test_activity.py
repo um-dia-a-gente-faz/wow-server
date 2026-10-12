@@ -160,7 +160,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(user_version(self.path), 1)
 
     def test_newer_file_is_refused_untouched(self):
-        self.write_file(activity_schema.SCHEMA, 2)
+        self.write_file("CREATE TABLE other (x INTEGER);", 2)
         before = pathlib.Path(self.path).read_bytes()
         with self.assertRaises(sqlite3.DatabaseError) as cm:
             activity.ActivityStore(self.path)
@@ -206,6 +206,30 @@ class MigrationTests(unittest.TestCase):
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
         conn.close()
         self.assertNotIn("step_two", tables)
+
+    def test_refused_store_closes_its_connection(self):
+        self.write_file("CREATE TABLE other (x INTEGER);", 2)
+        made, real = [], sqlite3.connect
+
+        def spy(*a, **k):
+            made.append(real(*a, **k))
+            return made[-1]
+        with mock.patch.object(activity.sqlite3, "connect", spy), self.assertRaises(sqlite3.DatabaseError):
+            activity.ActivityStore(self.path)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            made[0].execute("SELECT 1")
+
+    def test_migrate_leaves_the_callers_connection_outside_a_transaction(self):
+        bad_step = "CREATE TABLE step_two (x INTEGER);\nSELECT * FROM no_such_table;"
+        conn = sqlite3.connect(self.path)
+        self.addCleanup(conn.close)
+        with mock.patch.object(activity_schema, "MIGRATIONS", (activity_schema.SCHEMA, bad_step)), \
+                mock.patch.object(activity_schema, "SCHEMA_VERSION", 2), \
+                self.assertRaises(sqlite3.OperationalError):
+            activity_schema.migrate(conn)
+        self.assertFalse(conn.in_transaction)
+        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertIsNone(conn.execute("SELECT name FROM sqlite_master WHERE name = 'step_two'").fetchone())
 
 
 class ChatTests(unittest.TestCase):
