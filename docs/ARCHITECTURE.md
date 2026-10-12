@@ -164,6 +164,7 @@ Wire formats are in `docs/PROTOCOL-NOTES.md`.
 Who owns what in the tree. Every path below exists on `main`; decisions behind the
 agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config schema,
 0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract, 0012 site stack, 0013 admin-only GM control;
+[0017](adr/0017-fleet-decision-gateway.md) fleet-wide LLM/Jev limits, Proposed;
 the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.json`, with its action catalog section generated from `agent/action_specs.py`).
 
 ### `agent/` (stdlib-only Python 3.12, one process per character)
