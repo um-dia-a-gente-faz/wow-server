@@ -222,6 +222,12 @@ class NameCache:
     starts, and save() is called on that same thread after the lock is released, so a save
     never overlaps a mutation and saves never overlap each other. A new mutator, or a save()
     on another thread, needs a lock.
+
+    Each answered creature/gameobject query is one whole-file save. drain() sends at most
+    budget_per_second (10) queries in any second, so at most 10 saves a second, 9.7 ms
+    median each for a 1 MB file: 97 ms of recv thread a second at the cap, just under the
+    100 ms line, so no batching (#712).
+    Raise the budget or grow the file past that and batching becomes due.
     """
 
     def __init__(self, budget_per_second: int = 10, clock=time.monotonic,

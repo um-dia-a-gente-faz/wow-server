@@ -131,8 +131,7 @@ class WindowsMixin:
                 for obj in self.objects.values():
                     if obj.object_type in ("item", "container") and obj.entry == data["entry"]:
                         obj.name = data["name"]
-        if data["found"]:
-            self.items.save()  # outside the lock, like the name cache (#705)
+        # No items.json write: nothing reads it, and a save is 5 to 10 ms of recv thread (#712).
 
     # ── Mailbox (UM-60) ────────────────────────────────────────────────────
 
