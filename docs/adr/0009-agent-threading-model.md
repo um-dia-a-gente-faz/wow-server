@@ -3,8 +3,8 @@
 ## Status
 
 Descriptive, not a design. It records what the code does on `main`, verified by
-reading it. Issue #251 may change the model; nothing here proposes how.
-Open questions are collected at the end.
+reading it. Issue #251 was narrowed on 2026-10-12; the section "Decision of #251"
+records what changed and what stays open. Open questions are collected at the end.
 
 ## Context
 
@@ -45,7 +45,9 @@ and tears the old one down. It is called by `Agent.run()` (`agent/root.py`).
 - `Transport._lock` serialises writes to the socket, so any thread may send.
 - `WorldState` has one internal lock; its docstring says mutation goes through
   `update_object()` / `remove_guids()` from the recv thread and that `snapshot()`
-  and the getters are safe from other threads.
+  and the getters are safe from other threads. Caveat (#701): `snapshot()` is not
+  consistent under a concurrent writer. It composes the sections from live objects
+  after its lock is released; see "Decision of #251" below.
 - `HandleMap` (`agent/handles.py`) and `AgentObserver` (`_lock` for sequence and
   token totals) have their own small locks.
 - `AgentObserver.action_lock` (#178): held by the think loop for the whole of each
@@ -84,15 +86,48 @@ A fitness test in `agent/tests/test_architecture.py` rejects a live loop outside
 - A reflex and the think loop can both act at once: the `action_lock` covers the
   think loop against operator walks only.
 
+## Decision of #251 (2026-10-12)
+
+Issue #251 asked for an event bus, explicit state ownership and race tests. Most of
+it was delivered by other issues since it was written: the session references no
+audit, metrics or relay code (the observers are built in `agent/root.py`, #292), and
+sends go through the router (ADR 0006). The decision narrows #251 to the following.
+
+- **No event bus while there is one subscriber.** The only consumer of game events
+  outside the handlers is the chat relay (`GameState.chat_relay`, read by
+  `agent/handlers/chat.py::relay_chat`). A publish/subscribe layer for one subscriber
+  is not built. It is revisited with the activity-event contract (#390), the likely
+  second consumer, which should bring its own design.
+- **Dead observer removed.** `GameState.on_update_object` had no setter and no caller
+  and is deleted.
+- **Open question 3 is answered**, in three parts:
+  - Stale reads of scalar `GameState` fields are accepted. They are plain attribute
+    assignments, and readers tolerate a slightly old value.
+  - Iterating the unlocked deques (`events`, `chat_inbox`) from another thread is not
+    accepted. Such readers go through `events_snapshot()` / `chat_inbox_snapshot()`
+    (#692), pinned by `agent/tests/test_events_snapshot.py`; `test_architecture.py`
+    rejects a live loop outside `agent/state.py` and `agent/handlers/`.
+  - `WorldState` getters read under its lock. `WorldState.snapshot()` is NOT yet
+    consistent under a concurrent writer: it copies the object table under its lock,
+    then composes the sections from the live `ObjectInfo` objects after releasing the
+    lock, so a writer can change an object between two of its field reads. This is
+    tracked as #701, which owns the race test and the fix. Until #701 lands, the
+    statement that `snapshot()` is safe from other threads holds only for its
+    lock-held part.
+- **Open questions 1 and 2 stay open.** They ask for a single writer for `GameState`
+  and for reflex and think-loop coordination. Both change the threading model.
+  Nothing measured so far needs that change, so it is not started. Reopen them when a
+  measured problem asks for it.
+
 ## Open questions
 
-These are not answered here and may be the subject of #251.
+Questions 1 and 2 are open (see the Decision of #251 above). Question 3 was answered
+there. Question 4 was resolved in #371.
 
 1. Should `GameState` have a single writer (the recv thread), with the mover and
    actions posting changes to it instead of assigning fields?
 2. Do the reflexes need to coordinate with the think loop (e.g. both issuing
    movement), given `action_lock` does not cover them?
-3. Is relying on the GIL for unlocked fields and deques acceptable, or should reads
-   go through a snapshot like `WorldState.snapshot()`?
+3. (Answered 2026-10-12, see "Decision of #251".)
 4. (Resolved in #371: the router is per session, ADR 0006.) Does any plan to run several sessions in
    one process need it per session?
