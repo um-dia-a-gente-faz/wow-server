@@ -1,9 +1,12 @@
 """The fleet (#279): configured agents, their signals, and the start/stop/create/walk
 actions. Docker goes through a backend (docker_backend.py), so tests can hand in a fake."""
 
+import contextlib
 import json
 import os
 import re
+import secrets
+import stat
 import sys
 import threading
 import time
@@ -38,6 +41,41 @@ WALK_MAX_TIMEOUT_S = 120.0
 WALK_AGENT_SLACK_S = 60.0     # the agent may wait for its think cycle (45 s) before it walks
 WALK_KEYS = {"x", "y", "z", "near_player", "map", "stop_distance", "timeout_s"}
 AUDIT_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
+
+
+def _write_atomic(path, text):
+    """Write `text` to `path` through a unique temporary file in the same directory: flush, fsync,
+    os.replace. On any failure the temporary file is removed, the target is untouched and the
+    original exception propagates. The temporary is created exclusively under a random name: for a
+    new target with 0o666, so it gets the mode open(..., "w") gave it (minus the umask, applied by
+    the kernel per call); for an existing target with 0o600, never wider than that target, then
+    fchmod to the target's mode. No directory fsync (ADR 0018).
+    Private copy: agent/persist.py, tools/ and scripts/ each carry one until tools/common does."""
+    path = os.fspath(path)
+    directory, name = os.path.split(path)
+    tmp = os.path.join(directory or ".", f".{name}.{secrets.token_hex(8)}.tmp")
+    try:
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+    except FileNotFoundError:
+        mode = None
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666 if mode is None else 0o600)
+    try:
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
+            f.write(text)
+            f.flush()
+            if mode is not None:
+                os.fchmod(f.fileno(), mode)
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def parse_docker_time(value):
@@ -101,9 +139,7 @@ class Fleet:
         """Render the runner's own compose file under the runtime dir."""
         text = compose.render([e["planned"] for e in self.roster()], audit_dir=str(self.cfg.audit_dir))
         self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.cfg.compose_path.with_suffix(".tmp")
-        tmp.write_text(text)
-        os.replace(tmp, self.cfg.compose_path)
+        _write_atomic(self.cfg.compose_path, text)
 
     # ── docker (through the backend, #279) ───────────────────────────
     def containers(self, entries):
@@ -262,9 +298,7 @@ class Fleet:
             agents.append(planned)
             state["agents"] = agents
             self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
-            tmp = state_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(state, indent=2) + "\n")
-            os.replace(tmp, state_path)
+            _write_atomic(state_path, json.dumps(state, indent=2) + "\n")
 
     def start(self, name, build=False):
         e = self.find(name)

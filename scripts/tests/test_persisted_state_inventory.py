@@ -8,6 +8,13 @@ files, test code excluded. A site is identified by (path, qualname).
 Known misses (the scan does not see these): `Image.save`, `Path.open` with a variable mode,
 `gzip.open`, `os.open`, `Path.touch` / `mkdir` / `rename`, `logging.FileHandler`, and shell
 redirection or `mv` in the scripts.
+
+Helpers: `persist` is the module `agent/persist.py` however it is imported (`from . import
+persist`, `import agent.persist as ap`, `import agent.persist` and a dotted call). A local
+variable that shadows an aliased module name is read as the module (a loud-side false positive).
+A call to a private `_write_atomic` (the three local copies, #685) is a site, like
+`persist.write_atomic`; the sites inside a function named `_write_atomic` are skipped, so the
+helper bodies need no row and the callers are the rows.
 """
 import ast
 import pathlib
@@ -52,7 +59,11 @@ def _imports(tree: ast.AST) -> dict[str, str]:
     out = {}
     for n in ast.walk(tree):
         if isinstance(n, ast.Import):
-            out.update({a.asname: a.name for a in n.names if a.asname and a.name in _STDLIB})
+            for a in n.names:
+                if a.asname and a.name in _STDLIB:
+                    out[a.asname] = a.name
+                elif a.asname and a.name.rpartition(".")[2] == "persist":   # import agent.persist as ap
+                    out[a.asname] = "persist"
         elif isinstance(n, ast.ImportFrom):
             mod = n.module or ""
             for a in n.names:
@@ -71,7 +82,9 @@ def _is_site(call: ast.Call, imported: dict[str, str]) -> bool:
     head, _, rest = name.partition(".")
     if head in imported:   # `from os import replace`, `import os as _os`
         name = imported[head] + ("." + rest if rest else "")
-    if name in _RENAMES or name in _PERSIST_WRITERS:
+    if name.startswith("agent.persist."):   # import agent.persist; agent.persist.write_atomic(...)
+        name = name[len("agent."):]
+    if name in _RENAMES or name in _PERSIST_WRITERS or name == "_write_atomic":
         return True
     if name in _OPENERS:
         return _is_write_mode(_mode_arg(call, _OPENERS[name]))
@@ -102,7 +115,7 @@ def collect_sites(source: str, path: str) -> list[tuple[str, str, int]]:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 walk(child, scope + (child.name,))
                 continue
-            if isinstance(child, ast.Call) and _is_site(child, imported):
+            if isinstance(child, ast.Call) and scope[-1:] != ("_write_atomic",) and _is_site(child, imported):
                 sites.add((path, ".".join(scope) or "<module>", child.lineno))
             walk(child, scope)
 
@@ -344,6 +357,22 @@ class CollectorProbes(unittest.TestCase):
         self.assertEqual(self.sites(
             "from .persist import write_versioned as wv\ndef f(p):\n    wv(p, 1, {})\n"), [("f", 3)])
         self.assertEqual(self.sites("from . import persist\ndef f(p):\n    persist.read_versioned(p, 1)\n"), [])
+
+    def test_dotted_and_aliased_persist_imports(self):
+        self.assertEqual(self.sites("import agent.persist as ap\ndef f(p):\n    ap.write_atomic(p, '')\n"),
+                         [("f", 3)])
+        self.assertEqual(self.sites("import agent.persist as ap\ndef f(p):\n    ap.write_versioned(p, 1, {})\n"),
+                         [("f", 3)])
+        self.assertEqual(self.sites("import agent.persist\ndef f(p):\n    agent.persist.write_atomic(p, '')\n"),
+                         [("f", 3)])
+        self.assertEqual(self.sites("import agent.persist as ap\ndef f(p):\n    ap.read_versioned(p, 1)\n"), [])
+        self.assertEqual(self.sites("import agent.persist\ndef f(p):\n    agent.persist.read_versioned(p, 1)\n"), [])
+        self.assertEqual(self.sites("import agent.other as ap\ndef f(p):\n    ap.write_atomic(p, '')\n"), [])
+
+    def test_a_call_of_the_private_atomic_helper_is_a_site_its_body_is_not(self):
+        src = ("import os\ndef _write_atomic(p, t):\n    f = os.fdopen(1, 'w')\n    os.replace('a', p)\n"
+               "def save(p):\n    _write_atomic(p, '')\n")
+        self.assertEqual(self.sites(src), [("save", 6)])
 
     def test_an_imported_name_is_not_a_version_constant(self):
         self.assertEqual(module_constants("from x import Callable\nA = 1\nB: int = 2\n"), {"A", "B"})
