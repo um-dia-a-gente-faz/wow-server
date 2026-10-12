@@ -95,11 +95,12 @@ audit or relay code and imports only the `swallowed()` logging helper from
 (since #292); and `think.py` does not call `_send_packet`, its guard sends through
 `actions.base.send`. The decision narrows #251 to the following.
 
-- **No event bus while there is one subscriber.** The only consumer of game events
-  outside the handlers is the chat relay (`GameState.chat_relay`, read by
-  `agent/handlers/chat.py::relay_chat`). A publish/subscribe layer for one subscriber
+- **No event bus while there is one subscriber.** The only observer the handlers push
+  game events to is the chat relay (`GameState.chat_relay`, read by
+  `agent/handlers/chat.py::relay_chat`); every other reader polls state, as
+  `agent/actions/` does with `events`. A publish/subscribe layer for one subscriber
   is not built. It is revisited with the activity-event contract (#390), the likely
-  second consumer, which should bring its own design.
+  second subscriber, which should bring its own design.
 - **Dead observer removed.** `GameState.on_update_object` had no setter and no caller
   and is deleted.
 - **Open question 3 is answered**, in three parts:
