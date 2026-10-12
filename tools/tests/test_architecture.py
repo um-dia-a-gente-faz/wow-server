@@ -32,7 +32,7 @@ LAYER_DIRS = {
 # tool file only when that file is under one of these roots, so wowmap's fleet.py is not
 # agent-runner's fleet.py, and a name no root holds is an unresolved import, not a silent miss.
 ROOTS = {
-    "agent-runner": ["tools/agent-runner", "tools", "scripts"],   # characters.py: tools/; fleet.py: scripts/
+    "agent-runner": ["tools/agent-runner", "tools", "scripts", "."],   # characters.py: tools/; fleet.py: scripts/, and the checkout root for agents/
     "chat-feed": ["tools/chat-feed", "tools"],                    # app.py appends tools/
     "common": ["tools/common", "tools"],                          # imported by path from tools/ (wowmap, chat-feed, agent-runner)
     "dbc": ["tools/dbc", "tools"],                                # imported by path from tools/ (wowmap)

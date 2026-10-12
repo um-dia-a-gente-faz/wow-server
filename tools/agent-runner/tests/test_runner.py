@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO))
 import runner  # noqa: E402
 from docker_backend import FakeDockerBackend  # noqa: E402
 from agent import api_contract  # noqa: E402  (#264: fixtures come from the shared agent API schema)
+from agents import roster as roster_lib  # noqa: E402
 
 _EP = api_contract.load()["endpoints"]
 
@@ -169,11 +170,10 @@ class RunnerCase(unittest.TestCase):
             "AGENT_RUNNER_TOKEN": TOKEN, "AGENT_RUNNER_PORT": "0", "AGENT_RUNNER_REPO": str(self.repo),
             "AGENT_RUNNER_RUNTIME_DIR": str(self.runtime), "AGENT_RUNNER_AUDIT_DIR": str(self.audit),
             "AGENT_RUNNER_CHARACTER_URL": f"http://127.0.0.1:{self.wowmap.port}"})
-        gen = runner.load_generator(REPO)
-        patcher = mock.patch.object(gen, "FIRST_PORT", self.agent_api.port)
+        patcher = mock.patch.object(roster_lib, "FIRST_PORT", self.agent_api.port)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.fleet = runner.Fleet(self.config, gen=gen)
+        self.fleet = runner.Fleet(self.config, gen=runner.load_generator(REPO))
         self.server = runner.make_server(self.config, self.fleet)
         threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -383,7 +383,7 @@ class WalkTest(RunnerCase):
         self.agent_api = FakeHTTP({}, post=handler)
         self.addCleanup(self.agent_api.server_close)
         self.addCleanup(self.agent_api.shutdown)
-        patcher = mock.patch.object(self.fleet.gen, "FIRST_PORT", self.agent_api.port)
+        patcher = mock.patch.object(roster_lib, "FIRST_PORT", self.agent_api.port)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -535,6 +535,47 @@ class RuntimeStateTest(RunnerCase):
         names = [e["name"] for e in self.fleet.roster()]
         self.assertEqual(names, ["Alpha", "Bravo", "Charlie", "Delta"])
         self.assertEqual(self.fleet.roster()[1]["planned"]["race"], 2)
+
+
+class RosterLibraryTest(RunnerCase):
+    """#391: names and ports come from agents/roster.py, the committed file is validated by it,
+    and runtime state is merged afterwards without validation."""
+
+    def test_names_come_from_the_library(self):
+        with mock.patch.object(roster_lib.Agent, "container", property(lambda a: "wow-agentx-" + a.slug)), \
+                mock.patch.object(roster_lib.Agent, "service", property(lambda a: "svcx-" + a.slug)):
+            first = self.fleet.roster()[0]
+        self.assertEqual((first["service"], first["container"]), ("svcx-alpha", "wow-agentx-alpha"))
+
+    def test_ports_follow_the_library_first_port(self):
+        with mock.patch.object(roster_lib, "FIRST_PORT", 9701):
+            self.assertEqual([e["port"] for e in self.fleet.roster()], [9701, 9702, 9703])
+
+    def test_entry_keys_and_values_are_unchanged(self):
+        with mock.patch.object(roster_lib, "FIRST_PORT", 9601):
+            entries = self.fleet.roster()
+        self.assertEqual(entries[1], {
+            "name": "Bravo", "account": "AGENT02", "slug": "bravo", "service": "agent-bravo",
+            "container": "wow-agent-bravo", "port": 9602, "retired": False,
+            "planned": {"account": "AGENT02", "character": "Bravo", "race": None, "class": None,
+                        "gender": None}})
+
+    def test_runtime_entries_are_not_validated(self):
+        self.runtime.mkdir()
+        (self.runtime / "state.json").write_text(json.dumps({"agents": [
+            {"account": "AGENT03", "character": "Charlie", "retired": True},
+            {"account": "AGENT04", "character": "Delta", "race": 2, "class": 1, "gender": 0, "level": 1}]}))
+        entries = self.fleet.roster()
+        self.assertEqual([(e["name"], e["retired"]) for e in entries],
+                         [("Alpha", False), ("Bravo", False), ("Charlie", True), ("Delta", False)])
+        self.assertEqual(entries[2]["planned"], {"account": "AGENT03", "character": "Charlie", "retired": True})
+        self.assertEqual(entries[3]["port"], self.agent_api.port + 3)
+
+    def test_a_malformed_committed_roster_is_refused_by_the_library(self):
+        bad = {"agents": [dict(ROSTER["agents"][0], retired=True)]}
+        (self.repo / "agents" / "roster.json").write_text(json.dumps(bad))
+        with self.assertRaisesRegex(roster_lib.RosterError, "entry 1"):
+            self.fleet.roster()
 
 
 class FakeDockerTest(RunnerCase):
