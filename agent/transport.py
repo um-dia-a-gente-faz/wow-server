@@ -54,9 +54,10 @@ class Transport:
 
     def _send_packet(self, opcode: int, payload: bytes = b''):
         hdr = struct.pack('>H', len(payload) + 4) + struct.pack('<I', opcode)
-        if self.crypt:
-            hdr = self.crypt.encrypt_send(hdr)
         with self._lock:
+            # The RC4 header stream must advance in the order bytes hit the wire.
+            if self.crypt:
+                hdr = self.crypt.encrypt_send(hdr)
             self.sock.sendall(hdr + payload)
 
     def _recv_packet(self) -> tuple[int, bytes]:
