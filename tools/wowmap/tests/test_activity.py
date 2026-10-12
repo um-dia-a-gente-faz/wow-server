@@ -12,6 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import activity  # noqa: E402
+import activity_schema  # noqa: E402
 import app  # noqa: E402
 import pagesrc  # noqa: E402
 import routes  # noqa: E402
@@ -146,7 +147,7 @@ class MigrationTests(unittest.TestCase):
             "PRAGMA user_version").fetchone()[0], 1)
 
     def test_version_0_file_with_today_schema_keeps_rows(self):
-        self.write_file(activity.SCHEMA, 0)
+        self.write_file(activity_schema.SCHEMA, 0)
         conn = sqlite3.connect(self.path)
         for i in range(3):
             conn.execute("INSERT INTO events (uid, character, t, kind, text, detail_json, source,"
@@ -159,7 +160,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(user_version(self.path), 1)
 
     def test_newer_file_is_refused_untouched(self):
-        self.write_file(activity.SCHEMA, 2)
+        self.write_file(activity_schema.SCHEMA, 2)
         before = pathlib.Path(self.path).read_bytes()
         with self.assertRaises(sqlite3.DatabaseError) as cm:
             activity.ActivityStore(self.path)
@@ -168,7 +169,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self._dir.name)), ["activity.sqlite3"])
 
     def test_start_activity_disables_feed_on_newer_file(self):
-        self.write_file(activity.SCHEMA, 2)
+        self.write_file(activity_schema.SCHEMA, 2)
         with mock.patch.object(wowmap_state, "ACTIVITY_DB", self.path), \
                 self.assertLogs("wowmap", level="ERROR") as logs:
             self.assertIsNone(app.start_activity())
@@ -196,8 +197,8 @@ class MigrationTests(unittest.TestCase):
 
     def test_failing_step_rolls_back_and_keeps_earlier_steps(self):
         bad_step = "CREATE TABLE step_two (x INTEGER);\nSELECT * FROM no_such_table;"
-        with mock.patch.object(activity, "MIGRATIONS", (activity.SCHEMA, bad_step)), \
-                mock.patch.object(activity, "SCHEMA_VERSION", 2), \
+        with mock.patch.object(activity_schema, "MIGRATIONS", (activity_schema.SCHEMA, bad_step)), \
+                mock.patch.object(activity_schema, "SCHEMA_VERSION", 2), \
                 self.assertRaises(sqlite3.OperationalError):
             activity.ActivityStore(self.path)
         self.assertEqual(user_version(self.path), 1)

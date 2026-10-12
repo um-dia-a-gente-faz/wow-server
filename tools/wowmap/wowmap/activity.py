@@ -27,6 +27,8 @@ import threading
 import time
 import urllib.request
 
+import activity_schema
+
 log = logging.getLogger("wowmap.activity")
 
 KEEP_PER_CHARACTER = 500
@@ -34,40 +36,6 @@ MAX_TEXT = 300
 PUBLIC_CHAT_KINDS = frozenset({"say", "yell", "channel"})
 # Decisions that mean "do nothing this cycle" -- not worth a feed row.
 SKIPPED_ACTIONS = frozenset({"idle"})
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid         TEXT NOT NULL UNIQUE,
-    character   TEXT NOT NULL COLLATE NOCASE,
-    t           REAL NOT NULL,
-    kind        TEXT NOT NULL,
-    text        TEXT NOT NULL,
-    detail_json TEXT NOT NULL DEFAULT '{}',
-    source      TEXT NOT NULL,
-    inferred    INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS events_character_t ON events (character, t);
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-"""
-# Forward-only: append a step, never edit one that has shipped. A step may only add
-# (CREATE TABLE, ADD COLUMN, CREATE INDEX). Step 1 is the schema every file had before
-# user_version was set, so a version-0 file with those tables migrates by doing nothing.
-MIGRATIONS = (SCHEMA,)
-SCHEMA_VERSION = len(MIGRATIONS)
-
-
-def _migrate(conn):
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version > SCHEMA_VERSION:
-        raise sqlite3.DatabaseError(f"schema version {version} is newer than {SCHEMA_VERSION}")
-    for n in range(version, SCHEMA_VERSION):
-        try:
-            conn.executescript(f"BEGIN;\n{MIGRATIONS[n]}\nPRAGMA user_version = {n + 1};\nCOMMIT;")
-        except BaseException:
-            # executescript leaves the transaction open when a statement fails.
-            conn.rollback()
-            raise
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -104,7 +72,7 @@ class ActivityStore:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         try:
-            _migrate(self._conn)
+            activity_schema.migrate(self._conn)
         except BaseException:
             self._conn.close()
             raise
