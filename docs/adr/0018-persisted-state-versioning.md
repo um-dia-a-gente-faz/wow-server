@@ -9,11 +9,15 @@ helper and the migration tests.
 ## Context
 
 State that outlives a process is written by one version of the code and read by another.
-That is routine here, not an edge case: the agents run on the `wow-agents` VM from their
-own checkout, fast-forwarded on its own schedule (`scripts/wow-agents/bootstrap-guest.sh`,
-ADR 0002), while the wow-server VM follows `main` within five minutes (`scripts/deploy.sh`,
-which does not touch the agents); a running
-agent container keeps its image until it is recreated; and `tools/wowmap` is rebuilt only
+That is routine here, not an edge case. The agents run on the `wow-agents` VM from their
+own checkout, which is fast-forwarded only when someone runs
+`scripts/wow-agents/bootstrap-guest.sh` again; no timer or cron in the repo does it (the
+only timer under `scripts/wow-agents/` is `wow-audit-pull.timer`, and ADR 0002 and
+`tools/agent-runner/README.md` speak of an auto-update that nothing in the repo
+implements). So a release reaches the agents by a manual step, while the wow-server VM
+follows `main` within five minutes (`scripts/auto-deploy.sh` and `scripts/deploy.sh`,
+which do not touch the agents). A running agent container keeps its image until it is
+recreated; and `tools/wowmap` is rebuilt only
 when its own paths change (`stacks_for` in `scripts/deploy.sh`). ADR 0010 gave the HTTP API
 a version for the same reason. Files have no stated rule.
 
@@ -29,7 +33,7 @@ a version for the same reason. Files have no stated rule.
 | `<runtime>/state.json` on `wow-agents` (ADR 0002, D5) | document, authoritative | `Fleet.save_agent` in `tools/agent-runner/fleet.py` | `Fleet.roster`, `Fleet.save_agent` | none | Invalid JSON raises `ValueError` from `json.loads` in both, so nothing is overwritten. Unknown top-level keys survive a save. Entries are not validated (`entry["account"]`) |
 | `calibration.json` (`CALIBRATION_FILE`; in production the bind mount `/opt/wowmap-data/calibration.json`) | document, authoritative | `save_calibration` in `tools/wowmap/wowmap/calibration.py` | `load_calibrations`, at import | none | Invalid JSON, a non-object, or one zone with a non-numeric string (`"dx": "abc"`): a warning and an empty store, and the next `save_calibration` writes that empty store plus one zone over the file, so every other zone's offset is lost (#608). `"dx": null` raises `TypeError`, which `load_calibrations` does not catch, at import. A zone whose value is not an object is dropped, and gone from the file after the next save. Any other top-level or per-zone key (a newer file) is loaded without complaint and rewritten without it |
 | `ACTIVITY_DB` (`/data/activity.sqlite3`) | SQLite, derived | `ActivityStore` in `tools/wowmap/wowmap/activity.py` | the same class | none (`user_version` stays 0); `SCHEMA` is `CREATE TABLE IF NOT EXISTS` | An existing file with another `events` shape: if `character` or `t` is missing, `CREATE INDEX IF NOT EXISTS events_character_t` in `SCHEMA` fails in the constructor (`OperationalError`), and `start_activity` in `app.py` disables the feed, as it does for a file that cannot be opened. If another column is missing the store opens and the first statement naming it fails at run time |
-| probe report (`save_report` / `load_last_report` in `tools/agent_dev/probe.py`) | cache | the probe | the probe | `schema`, `REPORT_SCHEMA = 1`, exact match | Any other value reads as `never_probed`; the next save overwrites it |
+| probe report (`save_report` / `load_last_report` in `tools/agent_dev/probe.py`) | exempt | the probe | the probe | `schema`, `REPORT_SCHEMA = 1`, exact match | Any other value reads as `never_probed`; the next save overwrites it |
 | `refs/deployed/game`, `refs/deployed/monitoring` | exempt | `scripts/deploy.sh` | `since` in the same script; `scripts/auto-deploy.sh` reads `refs/deployed/game` to keep polling while the game stack is deferred | git owns the format | An absent ref means "as of HEAD" in both |
 | `MODELS_DIR/<race>_<gender>.bin` (in production `/opt/wowmap-data/models`) | generated asset, binary | `tools/wowmap/pipeline/extract_models.py`, run by hand; existing files are skipped unless `--force` | the browser: `parseBlob` in `tools/wowmap/wowmap/static/charview.js`. The server only serves the bytes (`models_file` in `assets.py`); `parse_blob` in `models.py` is the Python inverse | `BLOB_MAGIC = b"WMDL"`, `BLOB_VERSION = 1` in `tools/wowmap/wowmap/models.py`, exact match | Any other magic or version: `parseBlob` throws "not a model file" and `parse_blob` raises `ValueError`. The file is never rewritten by the site |
 | `last-success`, `last-failure` under `AUDIT_STATE_DIR` (default `/var/lib/wow-audit-pull`) | exempt | `write_state` in `scripts/wow-agents/pull-audit.sh` | `scripts/wow-agents/audit-pull-status.sh` | none | The reader takes the first word and treats anything that is not all digits as "no heartbeat" |
@@ -62,10 +66,14 @@ SQLite) and a runner action log.
 - **The path** is `tools/wowmap/wowmap/calibration.json`.
 - **"Each is read by a different version."** True for the audit log (written on
   `wow-agents`, pulled to the wow-server VM every 30 s, ADR 0002 D4) and for `state.json`.
-  Not true yet for the two caches: the agent runs as root with no volume except the audit
-  directory (`scripts/gen_agents_compose.py`), so they sit in the container's writable layer
-  and a new image starts without them. It becomes true the day agent state gets a volume
-  (ADR 0011, open question 1).
+  For the two caches it depends on where the agent runs. In an agent container it is not
+  true yet: the agent runs as root and the only volume is the audit directory (`SERVICE`
+  in `agents/compose.py` adds none; it inherits the one in `x-agent` in `HEADER`), so the
+  caches sit in the container's writable layer and a new image starts without them. That
+  becomes true the day agent state gets a volume (ADR 0011, open question 1). On a
+  developer machine it is true today: `python3 -m agent` from a checkout reads
+  `~/.cache/wow-agent/` with whichever branch is checked out, and that is where the
+  older-shape loss named above can already happen.
 - **ADR 0011 says the audit log "is never read back as state".** `Brain.restore_jev_spend`
   reads it at start to restore the Jev budget (`agent/__main__.py`), so it is state.
 
@@ -115,14 +123,15 @@ document next to the payload, or in each line of a record log. In SQLite it is
 `PRAGMA user_version`; in a binary asset it is the integer after the magic. The existing
 `schema`, `api_version`, `user_version` and `BLOB_VERSION` keep their names.
 
-What an absent `schema` means depends on the artefact. In a document or a cache it is
+What an absent `schema` means depends on the artefact. In a document or a cache that is
+not exempt (`state.json`, `calibration.json`, `names.json`, `items.json`) it is
 version 1, as ADR 0010 does for `api_version`, so every such file written before this ADR
 is a valid version 1. In the audit record it is version 0 and stays 0: the docstring of
 `agent/audit_schema.py` says so, and `test_v0_record_without_schema_loads_with_defaults`
 with the fixture `agent/tests/fixtures/audit/v0.jsonl` pins it.
 
-**One rule holds for every class: a process never writes over state whose version is
-newer than it understands.** The unit that carries the version is the file for a cache, a
+**One rule holds for every class that is not exempt: a process never writes over state
+whose version is newer than it understands.** The unit that carries the version is the file for a cache, a
 document and a SQLite store, and the line for a record log. What a process does instead of
 writing, and what it does with a file it cannot read at all, depends on what the state is
 for. "Unreadable" means truncated, empty, of the wrong type, or with no version that parses.
@@ -137,7 +146,7 @@ Only a version that parses as an integer above the reader's own is "newer".
 | SQLite, advisory: `memory.db` | Ordered steps in a `MIGRATIONS` tuple, each in one transaction with its version bump, as `agent/memory.py` does today | An empty in-memory store for the run, one warning, the file untouched (today's behaviour) | The same, at every start, until the operator moves the file aside; the next start then creates a fresh store |
 | SQLite, derived: `ACTIVITY_DB` | The same steps | The feed is disabled for the run and the file is untouched. No in-memory substitute | The same: "feed disabled" stays, as `start_activity` does today. Recovery: the operator moves the file aside and restarts wowmap |
 | SQLite, authoritative: the site store (#325, not built) | The same steps, after a copy to `<path>.v<old>.bak` made with `sqlite3.Connection.backup` | Refuse to start, with a message that names the file and both versions | Refuse to start, with a clear message. Admin users and roles are never recreated silently. Recovery: the operator restores a backup |
-| Binary asset: the model blob | Exact match only: the browser shows no model | The same | The same. Recovery in all three cases: run `extract_models.py --force`. A PR that changes `BLOB_VERSION` lists that run as a human step |
+| Binary asset: the model blob | Exact match only: the browser shows no model | The same | The same. Recovery in all three cases: run `extract_models.py --force`. A PR that changes `BLOB_VERSION` lists that run as a human step. The site never writes the file; `--force` regenerates it whole from the client files, and is the one overwrite a person asks for by name |
 
 A `.v<old>` copy exists only after an upgrade, so it undoes an upgrade and nothing else.
 It is not the recovery for a corrupt file; the last column is.
@@ -172,9 +181,12 @@ of it carries the check. This is ADR 0010's "consumers first, producers second".
 **Exempt**, each for the reason in the inventory: `agents/roster.json` (committed, so the
 file and its loaders change in one commit; one of its two loaders is strict, and
 `save_roster` would drop a version key anyway), the git refs, `deploy.log`, generated
-files, and the audit-pull heartbeat (two shell scripts in one directory of one checkout,
+files, the audit-pull heartbeat (two shell scripts in one directory of one checkout,
 deployed together; the content is a timestamp and the reader already rejects anything that
-is not digits).
+is not digits), and the probe report (a developer tool run by hand; `load_last_report`
+wants an exact match on `REPORT_SCHEMA`, any other file, one with no `schema` included,
+reads as `never_probed`, and the next probe run replaces it through `save_report`). The
+marker rule above and the invariant below are for the artefacts that are not exempt.
 
 **Where the helper lives.** A new module `persist.py` in `agent/`, stdlib only, importing
 nothing else from the package. It serves the two caches now. `agent/` is not a deploy
