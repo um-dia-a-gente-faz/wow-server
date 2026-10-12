@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Single entry point shared by CI and contributors (#298).
-#   scripts/check.sh <target>...   targets: compile lint types types-legacy generated test test-<suite> all
+#   scripts/check.sh <target>...   targets: compile lint types types-legacy generated test test-tools test-<suite> all
 # Add a test suite = add one line to SUITES. scripts/tests guards that no tests dir is missed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -52,6 +52,8 @@ suite() {
   echo "unknown suite: $1" >&2; return 2
 }
 test_all()  { local s; for s in "${SUITES[@]}"; do suite "${s%%|*}"; done; }
+# #624: every suite except the stdlib ones, which the agent CI job runs (test-stdlib).
+test_tools() { local s n; for s in "${SUITES[@]}"; do n=${s%%|*}; case " $STDLIB_SUITES " in *" $n "*) ;; *) suite "$n" ;; esac; done; }
 
 [ $# -gt 0 ] || set -- all
 for t in "$@"; do
@@ -61,9 +63,10 @@ for t in "$@"; do
     types-legacy) types_legacy ;;
     test) test_all ;;
     test-stdlib) for s in $STDLIB_SUITES; do suite "$s"; done ;;
+    test-tools) test_tools ;;   # must stay before test-*) (it would run a suite named "tools")
     test-*) suite "${t#test-}" ;;
     all) compile; lint; types; types_legacy; generated; test_all ;;
     list) for s in "${SUITES[@]}"; do echo "${s%%|*}"; done ;;
-    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|list|all" >&2; exit 2 ;;
+    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|test-tools|list|all" >&2; exit 2 ;;
   esac
 done
