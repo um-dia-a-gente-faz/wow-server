@@ -5,11 +5,13 @@ Agent.run() over real localhost sockets against a world-mock with a FaultPlan, a
 three things: the lifecycle lines left in the audit directory (ADR 0015), what the mock saw
 on the wire, and the backoffs the supervisor asked for (the sleep is injected, never slept)."""
 
+import contextlib
 import glob
 import json
 import logging
 import os
 import pathlib
+import struct
 import sys
 import tempfile
 import threading
@@ -54,8 +56,31 @@ TRUNCATED_FIRST_SESSION_READS = [op.SMSG_AUTH_RESPONSE, op.SMSG_TIME_SYNC_REQ, o
 DEATH_DROP_AFTER = 12
 
 
+# The login burst is packets 1-8 (server.py numbers them). Packet 9 is the reply to a CMSG_PING
+# sent after login: a plain WorldMock sends nothing on its own once the burst is out, so the
+# hang-up on 9 can only come after the client has sent a ping.
+PING_DROP_AFTER = 9
+
+
 class Crash(Exception):
     """Stands for a bug in the think loop."""
+
+
+class CycleStop(threading.Event):
+    """The stop event the think loop paces its cycles on. run_think_loop calls wait() on it once
+    per cycle, after the perceive step (agent/runloop.py); nothing else in the agent waits on it,
+    since the backoffs use the injected sleep. `on_cycle(n)` runs at the end of cycle n."""
+
+    def __init__(self, on_cycle=None):
+        super().__init__()
+        self.cycles = 0
+        self.on_cycle = on_cycle
+
+    def wait(self, timeout=None):
+        self.cycles += 1
+        if self.on_cycle:
+            self.on_cycle(self.cycles)
+        return super().wait(timeout)
 
 
 def wait_for(pred, timeout=5.0):
@@ -72,6 +97,7 @@ class LifecycleScenarioTest(unittest.TestCase):
         self.threads_before = threading.active_count()
         self.logs = self.enterContext(self.assertLogs(level="DEBUG"))
         self.audit = self.enterContext(tempfile.TemporaryDirectory())
+        self.read_owner = {}      # session -> the run's reads dict it belongs to (see run_agent)
         self.addCleanup(self.check_no_leaks)
 
     def check_no_leaks(self):
@@ -101,7 +127,7 @@ class LifecycleScenarioTest(unittest.TestCase):
         event is set so the thread can end. An exception raised by run() is re-raised here as
         the same object."""
         sleeps = self.sleeps = []
-        self.reads = {}           # session -> opcodes of the packets it read whole, in order
+        reads = self.reads = {}   # session -> opcodes of the packets it read whole, in order
         stop = stop or threading.Event()
         outcome, returned = [], []
         t0 = time.monotonic()
@@ -109,7 +135,10 @@ class LifecycleScenarioTest(unittest.TestCase):
 
         def recording_recv(sess):
             opcode, payload = real_recv(sess)
-            self.reads.setdefault(sess, []).append(opcode)
+            # The patch is on the class, so a receive still in flight from a timed-out run can call
+            # the recorder of a later run. Its session keeps the run that first read from it.
+            owner = self.read_owner.setdefault(sess, reads)
+            owner.setdefault(sess, []).append(opcode)
             return opcode, payload
 
         def sleep(backoff):
@@ -174,6 +203,39 @@ class LifecycleScenarioTest(unittest.TestCase):
                     # read, so the first session's reads stop at packet 5 (the hang-up is inside packet 6).
                     first_session = next(iter(self.reads.values()))
                     self.assertEqual(first_session, TRUNCATED_FIRST_SESSION_READS)
+
+    def test_drop_after_a_think_cycle(self):
+        """The hang-up comes after the first think cycle, not inside the login burst. A think cycle
+        with no brain sends no packet itself, so the test sends one CMSG_PING from the end of
+        cycle 1, as the cycle's reaction. The mock answers it with packet 9 and hangs up on that.
+        The ping cannot be sent before cycle 1 ends, and the mock sends packet 9 only in reply to
+        a ping, so the drop cannot come from the burst (see PING_DROP_AFTER)."""
+        sessions, pinged_at = [], []
+        real_run_loop = root.run_loop
+
+        def run_loop(sess, *args, **kw):
+            sessions.append(sess)
+            return real_run_loop(sess, *args, **kw)
+
+        def ping_after_first_cycle(n):
+            # Cycle 1 of the first session only: the session the plan drops. A session without a
+            # cycle before its drop leaves pinged_at empty.
+            if n == 1 and len(sessions) == 1:
+                pinged_at.append(n)
+                with contextlib.suppress(OSError):   # the mock hung up first: the ping check below reports it
+                    sessions[-1].ctx.send(op.CMSG_PING, struct.pack('<II', 1, 0))
+
+        agent = self.build(server.WorldMock(faults=[FaultPlan(drop_after=PING_DROP_AFTER)]))
+        with mock.patch.object(root, "run_loop", side_effect=run_loop):
+            self.run_agent(agent, "drop after a think cycle", CycleStop(ping_after_first_cycle))
+        self.assertEqual(pinged_at, [1], "no think cycle of the first session ran before the drop")
+        self.assertEqual(len(self.mock.packets_received(op.CMSG_PING)), 1,
+                         "the cycle's ping never reached the mock, so nothing it sent caused the drop")
+        self.assertEqual(self.walk(), DROPPED)
+        self.assertEqual(self.sleeps, [BACKOFF_S])
+        self.assertEqual((self.mock.auth_connections, self.mock.world_connections), (2, 2))
+        self.assertEqual(self.logout_requests(), 1)
+        self.assertEqual(agent.lifecycle.snapshot()["state"], "stopped")
 
     def test_permanent_auth_refusal_fails_after_one_attempt(self):
         agent = self.build(server.WorldMock(faults=[FaultPlan(auth_reject=3)]))

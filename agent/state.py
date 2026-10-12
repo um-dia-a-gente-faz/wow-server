@@ -39,7 +39,6 @@ class GameState:
         self.next_level_xp = None
         self.coinage = None
         self.world_state = per.WorldState()  # nearby objects, players, etc.
-        self.on_update_object = None  # callback(update_type, guid, fields)
         self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
         # UM-47: optional agent.chat_relay.ChatRelay, set by the caller
         # (agent/login.py) — mirrors heard chat to tools/chat-feed.

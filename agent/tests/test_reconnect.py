@@ -13,6 +13,7 @@ from unittest import mock
 
 from agent import supervisor as main_mod
 from agent.auth import AuthRejected
+from agent.tests.restore import reset_counters
 
 
 class FakeSleep:
@@ -122,8 +123,7 @@ class SupervisorConnectErrorLogTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics
         self.m = metrics
-        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
-        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        reset_counters(self)
         # swallowed() rate-limits per (where, type) for 60 s; a test must log every time
         patcher = mock.patch.object(metrics, "_swallowed_throttle", _NoThrottle())
         patcher.start()
@@ -153,7 +153,7 @@ class SupervisorConnectErrorLogTest(unittest.TestCase):
                   ssl.SSLError("bad record mac")]
         for err in errors:
             with self.subTest(error=type(err).__name__):
-                self.m.RECONNECTS.update(dict.fromkeys(self.m.RECONNECT_REASONS, 0))
+                self.m.RECONNECTS.update(dict.fromkeys(self.m.RECONNECT_REASONS, 0))  # per subTest
                 attempts, sleep, records = self.supervise([err])
                 self.assertEqual(len(attempts), 2)  # the retry logs in
                 self.assertEqual(sleep.calls, [5.0])
@@ -349,6 +349,7 @@ class SupervisorJitterTest(unittest.TestCase):
         self.assertIn("retrying in 3s", log.lines[0][1])
 
     def test_default_supervisors_draw_different_waits_even_after_seeding_the_global_rng(self):
+        self.addCleanup(random.setstate, random.getstate())  # the test seeds the global RNG on purpose
         waits = []
         for _ in range(2):
             random.seed(1)  # the global RNG is not what the supervisor draws from
@@ -459,8 +460,7 @@ class SupervisorReconnectCountTest(unittest.TestCase):
     def setUp(self):
         from agent import metrics
         self.m = metrics
-        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
-        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        reset_counters(self)
 
     def test_each_reason_is_counted_once_for_its_wait(self):
         builds, runs = [], []

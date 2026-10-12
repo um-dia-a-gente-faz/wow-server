@@ -29,7 +29,7 @@ Linear (`UM-*`) is the older mirror and is no longer kept up to date.
 - `agent/` is **stdlib-only** Python 3.12 (`urllib`, `struct`, `socket` — no pip deps).
   `tools/` may use `pymysql`/`Pillow`.
 - Tests: `scripts/check.sh test` (one suite: `scripts/check.sh test-agent`; everything CI
-  runs: `scripts/check.sh all`). New suite = one line in `SUITES` in that script. CI also
+  runs: `scripts/check.sh all`; CI also runs `scripts/check.sh coverage`, not part of `all`). New suite = one line in `SUITES` in that script. CI also
   runs compose config, gitleaks, image build.
 - Branch `feature/<ref>-<slug>` or `bugfix/<ref>-<slug>`; **base always `main`, never
   stack** (see CONTRIBUTING.md for the outage this caused). `<ref>` is the issue the

@@ -17,6 +17,7 @@ from agent import runloop, supervisor
 from agent import session as session_mod
 from agent.auth import AuthRejected
 from agent.tests.builders import make_session
+from agent.tests.restore import join_new_threads
 from agent.tests.test_reconnect import _NullLog
 
 
@@ -180,6 +181,9 @@ class SecondSignalTest(unittest.TestCase):
 
 
 class LogoutBoundTest(unittest.TestCase):
+    def setUp(self):
+        join_new_threads(self)  # logout's cut Timer and the test's own logout thread end just after the test
+
     def test_logout_gives_up_waiting_for_logout_complete(self):
         sess = session_mod.WoWSession.__new__(session_mod.WoWSession)
         sess.sock = mock.Mock()

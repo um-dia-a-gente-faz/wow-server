@@ -15,6 +15,7 @@ import urllib.error
 from unittest import mock
 
 from agent import config, httpjson, jev
+from agent.tests.restore import join_new_threads
 
 CANDIDATES = [
     {"action": "attack", "params": {"guid": 0x1234}},
@@ -235,6 +236,7 @@ class FakeDecisionsHandler(http.server.BaseHTTPRequestHandler):
     random criteria key. Records the last request for assertions."""
     last_request = None
     last_auth = None
+    rng = random.Random(0)  # not the global RNG: the handler runs on the server thread
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -244,11 +246,11 @@ class FakeDecisionsHandler(http.server.BaseHTTPRequestHandler):
         answers = {}
         for name, q in body["questions"].items():
             keys = list(q["criteria"])
-            weights = [random.random() for _ in keys]
+            weights = [self.rng.random() for _ in keys]
             total = sum(weights)
             probs = {k: w / total for k, w in zip(keys, weights)}
-            answers[name] = {"type": "choice", "choice": random.choice(keys),
-                             "probabilities": probs, "confidence": random.random()}
+            answers[name] = {"type": "choice", "choice": self.rng.choice(keys),
+                             "probabilities": probs, "confidence": self.rng.random()}
         self._send(200, {"model": body["model"], "answers": answers,
                          "usage": {"input_tokens": 100, "output_tokens": 0, "cost": 0.0}})
 
@@ -265,6 +267,9 @@ class FakeDecisionsHandler(http.server.BaseHTTPRequestHandler):
 
 
 class FakeDecisionsServerTest(unittest.TestCase):
+    def setUp(self):
+        join_new_threads(self)  # the handler thread of the last request may still be finishing
+
     @classmethod
     def setUpClass(cls):
         cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeDecisionsHandler)

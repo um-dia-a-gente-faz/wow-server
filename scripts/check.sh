@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Single entry point shared by CI and contributors (#298).
 #   scripts/check.sh <target>...   targets: compile lint types types-legacy generated test test-tools test-<suite> all
+#   coverage = the agent coverage gate (#384); not part of all, it needs `coverage` installed.
 # Add a test suite = add one line to SUITES. scripts/tests guards that no tests dir is missed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -67,7 +68,8 @@ for t in "$@"; do
     test-tools) test_tools ;;   # must stay before test-*) (it would run a suite named "tools")
     test-*) suite "${t#test-}" ;;
     all) compile; lint; types; types_legacy; generated; test_all ;;
+    coverage) python3 scripts/coverage_floor.py ;;   # #384, not in all: needs requirements-dev.txt
     list) for s in "${SUITES[@]}"; do echo "${s%%|*}"; done ;;
-    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|test-tools|list|all" >&2; exit 2 ;;
+    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|test-tools|coverage|list|all" >&2; exit 2 ;;
   esac
 done

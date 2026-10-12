@@ -13,6 +13,7 @@ from agent.wire import PacketTruncated
 from agent import handlers
 from agent.router import Context, PacketRouter
 from agent.tests.builders import make_session
+from agent.tests.restore import reset_counters
 
 
 class PacketRouterTest(unittest.TestCase):
@@ -121,8 +122,7 @@ class RouterCountersTest(unittest.TestCase):
 
     def test_build_router_feeds_the_process_metrics(self):
         from agent import metrics
-        metrics.ROUTER_COUNTS.clear()
-        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+        reset_counters(self)
         handlers.build_router().dispatch("ctx", 0xFFFE, b'')
         self.assertEqual(metrics.ROUTER_COUNTS, {("packets", 0xFFFE): 1, ("unhandled", 0xFFFE): 1})
 
