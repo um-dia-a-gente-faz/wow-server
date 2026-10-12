@@ -1,8 +1,8 @@
 """Typed loader for agents/roster.json: validation and the names and ports derived from it (#557).
 
-Pure and stdlib-only. Nothing imports it yet; the generator, runner and wowmap keep their
-own copies until #391 rewires them. Agent N (1-based position in the file) serves its
-read-only API on FIRST_PORT + N - 1, and its service and container names come from the
+Pure and stdlib-only. The generators under scripts/ and tools/agent-runner read the roster
+through it (#391). Agent N (1-based position in the file) logs in on account_name(N), serves
+its read-only API on FIRST_PORT + N - 1, and its service and container names come from the
 character name.
 """
 import json
@@ -55,6 +55,11 @@ class Agent:
     def to_json(self) -> dict[str, Any]:
         return {"account": self.account, "character": self.character, "race": self.race,
                 "class": self.class_id, "gender": self.gender}
+
+
+def account_name(index: int) -> str:
+    """The account of agent `index` (1-based): AGENT01, AGENT02, ..."""
+    return f"AGENT{index:02d}"
 
 
 def _fail(index: int, field: str, problem: str) -> RosterError:
