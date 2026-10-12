@@ -196,6 +196,24 @@ class LifecycleNeverChangesTheSupervisorTest(unittest.TestCase):
         self.assertEqual(world.walk()[-1], ("stopping", "stopped", "run_ended"))   # the machine still moved
         self.assertEqual(metrics.SWALLOWED["supervisor.lifecycle"], 6)             # one per transition
 
+    def test_a_callback_that_raises_changes_no_scenario(self):
+        def full_disk(transition):
+            raise OSError(28, "No space left on device")
+
+        for name, kwargs, raises, transitions, sleeps in SCENARIOS:
+            with self.subTest(scenario=name):
+                world = World(**kwargs, lifecycle=Lifecycle(on_transition=full_disk))
+                if raises is None:
+                    world.supervise()
+                else:
+                    scripted = [s for s in (*kwargs["builds"], *kwargs.get("runs", ()), kwargs.get("sleep_raises"))
+                                if isinstance(s, raises)]
+                    with self.assertRaises(raises) as cm:
+                        world.supervise()
+                    self.assertIs(cm.exception, scripted[-1])
+                self.assertEqual(world.walk(), transitions)
+                self.assertEqual(world.sleeps, sleeps)
+
     def test_a_callback_that_raises_does_not_mask_a_crash(self):
         def full_disk(transition):
             raise OSError(28, "No space left on device")
