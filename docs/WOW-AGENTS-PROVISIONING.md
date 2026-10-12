@@ -245,12 +245,26 @@ set -a; . /etc/default/wow-audit-pull; set +a
 sudo -E /opt/wow-server/scripts/wow-agents/audit-pull-status.sh; echo "exit=$?"
 ```
 
-It prints three ages and a verdict:
+It prints the heartbeat, mirror and source ages, one `agent <name>:` line per agent directory
+(sorted by name, #631), and a verdict:
+
+```
+mirror:        newest audit file 5 s old, newest decision file 5 s old (/opt/wow-server-metrics/audit)
+agent AGENT01: newest decision file 5 s old
+agent AGENT02: newest decision file 9000 s old
+VERDICT: QUIET - the pull is healthy and the source has nothing newer: no agent activity for over 300s from: AGENT02.
+```
+
+An agent is each directory directly under the audit dir. Its age is the newest decision day file
+directly in it (`<agent>/<day>.jsonl[.N]`); `lifecycle/` does not count. An agent with no decision
+files reads `agent <name>: no decision files` and counts as quiet. `QUIET` names every quiet agent.
+`OK` needs every agent fresh. The verdict is per agent: one healthy agent does not mask a dead one.
+With no agent directory at all, the `QUIET` line has no `from:` list.
 
 | Verdict | Exit | Meaning | What to do |
 |---|---|---|---|
-| `OK` | 0 | pull healthy, mirror fresh | nothing |
-| `QUIET` | 0 | pull healthy, source has nothing newer: the agents are silent | look at the agents (`docker ps`, logs, `/healthz` on the guest) |
+| `OK` | 0 | pull healthy, every agent fresh | nothing |
+| `QUIET` | 0 | pull healthy, source has nothing newer, at least one agent is silent (named after `from:`) | look at the named agents (`docker ps`, logs, `/healthz` on the guest) |
 | `PULL BEHIND` | 1 | the guest has newer files than the mirror | `journalctl -u wow-audit-pull.service`; run `pull-audit.sh` by hand |
 | `PULL STALLED` | 2 | no successful pull for 120 s (or ever) | same; check SSH, the key, the host key, the guest being up |
 
@@ -259,8 +273,10 @@ vs newest mirror file (`find /opt/wow-server-metrics/audit -name '*.jsonl*' -pri
 vs newest source file (`ssh ubuntu@$IP 'find /opt/wow-server-metrics/audit -name "*.jsonl*" -printf "%T@ %p\n" | sort -n | tail -1'`).
 The mirror-versus-source comparison (`PULL BEHIND`) counts the whole tree, lifecycle files included.
 `QUIET` and `OK` look at the decision day files only (`<agent>/<day>.jsonl[.N]`, not `<agent>/lifecycle/`),
-so the by-hand quiet question is the day-file newest: `find /opt/wow-server-metrics/audit -mindepth 2 -maxdepth 2 -name '*.jsonl*' -printf '%T@ %p\n' | sort -n | tail -1`.
-Fresh heartbeat + old decision file + source not newer than mirror = agents quiet. Old heartbeat, or source
+one agent at a time, so the by-hand quiet question is per agent: for each directory `<agent>` under
+`/opt/wow-server-metrics/audit`, `find <agent> -mindepth 1 -maxdepth 1 -type f -name '*.jsonl*' -printf '%T@ %p\n' | sort -n | tail -1`.
+Fresh heartbeat + every agent's newest decision file fresh = `OK`. Fresh heartbeat + any agent with an old (or no)
+decision file + source not newer than mirror = agents quiet, the named ones. Old heartbeat, or source
 newer than mirror = the pull.
 
 Failure is also loud on its own: a non-zero pull fails the unit, `OnFailure` logs an

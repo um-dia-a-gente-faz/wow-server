@@ -49,6 +49,7 @@ LAYERS = {
     "auth": {"packets", "wire"},   # the logon challenge and realm list read through Reader (#517)
     "rules": set(),
     "ports": set(),
+    "worldknowledge": set(),   # read-only world bundle reader (ADR 0016); stdlib sqlite3 only
     "persist": set(),   # atomic versioned JSON for the on-disk caches (ADR 0018); stdlib only
     "lifecycle": set(),   # connection lifecycle state machine (#584); stdlib only, nothing wired yet
     # parsers are pure: wire helpers only
