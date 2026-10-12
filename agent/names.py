@@ -170,19 +170,32 @@ def parse_gameobject_query_response(payload: bytes) -> dict:
     return info
 
 
-def _parse_cache_section(section) -> dict[int, dict | None]:
-    """One kind's section of the cache file: {"<entry>": parsed dict or null}.
-    Raises ValueError on any other shape, so load() drops the whole file."""
+# Keys every cached object must carry, with the exact type (type(), not isinstance: True is not an int).
+_CREATURE_REQUIRED: dict[str, type] = {"name": str}
+_GAMEOBJECT_REQUIRED: dict[str, type] = {"name": str, "type": int}
+
+
+def _parse_cache_section(section, required: dict[str, type]) -> dict[int, dict | None]:
+    """One kind's section of the cache file: {"<entry>": parsed dict or null}. A null entry is a
+    cached "not found". An object entry must carry every `required` key with that type; the
+    readers index those keys without checking. Raises ValueError on any other shape, so load()
+    drops the whole file."""
     if not isinstance(section, dict):
         raise ValueError(f"cache section is {type(section).__name__}, expected an object")
-    out = {}
+    out: dict[int, dict | None] = {}
     for key, value in section.items():
         try:
             entry = int(key)
         except ValueError:
-            raise ValueError(f"non-numeric entry key {key[:40]!r}") from None
-        if value is not None and not isinstance(value, dict):
+            raise ValueError(f"non-numeric entry key {key!r}") from None
+        if value is None:
+            out[entry] = None
+            continue
+        if not isinstance(value, dict):
             raise ValueError(f"entry {entry} is {type(value).__name__}, expected an object or null")
+        for name, kind in required.items():
+            if type(value.get(name)) is not kind:
+                raise ValueError(f"entry {entry} has no usable {name!r}")
         out[entry] = value
     return out
 
@@ -315,10 +328,10 @@ class NameCache:
             return
         if loaded.status == persist.OK:
             try:
-                creatures = _parse_cache_section(loaded.data.get("creatures", {}))
-                gameobjects = _parse_cache_section(loaded.data.get("gameobjects", {}))
+                creatures = _parse_cache_section(loaded.data.get("creatures", {}), _CREATURE_REQUIRED)
+                gameobjects = _parse_cache_section(loaded.data.get("gameobjects", {}), _GAMEOBJECT_REQUIRED)
             except ValueError as e:
-                log.warning("ignoring unreadable name cache %s: %s", path, e)
+                log.warning("ignoring unreadable name cache %s: %s", path, str(e)[:200])
                 persist.set_aside(path)
                 return
             self.creatures.update(creatures)
