@@ -18,16 +18,23 @@ Layout of the output:
 with profiles: naming a service explicitly enables its profiles.
 """
 import argparse
-import json
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ROSTER_PATH = REPO / "agents" / "roster.json"
 COMPOSE_PATH = REPO / "docker-compose.agents.yml"
-FIRST_PORT = 9601
-PARTY_SIZE = 5
 DEFAULT_AUDIT_DIR = "/opt/wow-server-metrics/audit"
+RAID_SIZE = 25  # the size the HEADER text describes; the port range it names ends at FIRST_PORT + 24
+
+sys.path.insert(0, str(REPO))
+try:
+    from agents import roster  # noqa: E402
+finally:
+    sys.path.pop(0)
+
+FIRST_PORT = roster.FIRST_PORT
+PARTY_SIZE = roster.PARTY_SIZE
 
 HEADER = """\
 # Agent containers, one per character: 5 for a party, 25 for a raid (UM-63).
@@ -96,7 +103,7 @@ x-agent: &agent-defaults
     AGENT_RUN_DURATION_S: ${AGENT_RUN_DURATION_S:-}
     AGENT_CHANNELS: ${AGENT_CHANNELS:-General}
     # UM-50 read-only observability API (agent/http_api.py). Each service
-    # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
+    # sets its own AGENT_HTTP_PORT and publishes it (@API_PORTS@). Bound to
     # all interfaces inside the container so the published port works; the
     # data (position, perception, chat heard, decisions) is visible to the
     # whole LAN, but no secrets and no write endpoints. Set
@@ -117,9 +124,9 @@ services:
 """
 
 SERVICE = """\
-  agent-{slug}:
+  {service}:
     <<: *agent-defaults
-    container_name: wow-agent-{slug}
+    container_name: {container}
     profiles: [{profiles}]
     environment:
       <<: *env-defaults
@@ -167,7 +174,15 @@ JEV_MOCK = """\
 
 
 def load_roster(path: Path = ROSTER_PATH) -> list[dict]:
-    return json.loads(path.read_text())["agents"]
+    """The validated entries as the five JSON keys; a malformed file raises roster.RosterError."""
+    return [a.to_json() for a in roster.load_roster(path)]
+
+
+def derive(position: int, entry: dict) -> roster.Agent:
+    """The library's Agent for the entry at 0-based `position`. Reads only the five known
+    keys, so the runner's extra keys (`retired`) pass through unvalidated."""
+    return roster.Agent(index=position + 1, account=entry.get("account"), character=entry.get("character"),
+                        race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"))
 
 
 def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
@@ -177,14 +192,17 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
     seen = set()
     blocks = []
     for i, a in enumerate(agents):
-        slug = a["character"].lower()
-        if slug in seen or not slug.isalnum():
+        agent = derive(i, a)
+        if agent.slug in seen or not agent.slug.isalnum():
             raise ValueError(f"bad or duplicate character name in roster: {a['character']!r}")
-        seen.add(slug)
+        seen.add(agent.slug)
         blocks.append(SERVICE.format(
-            slug=slug, account=a["account"], character=a["character"], port=FIRST_PORT + i,
-            profiles="party, raid" if i < PARTY_SIZE else "raid"))
-    text = HEADER + "\n".join(blocks + [JEV_MOCK])
+            service=agent.service, container=agent.container,
+            account=agent.account, character=agent.character, port=agent.api_port,
+            profiles=", ".join(agent.profiles)))
+    last_port = roster.FIRST_PORT + RAID_SIZE - 1
+    header = HEADER.replace("@API_PORTS@", f"{roster.FIRST_PORT}-{last_port}")
+    text = header + "\n".join(blocks + [JEV_MOCK])
     return text.replace(f"- {DEFAULT_AUDIT_DIR}:/data/audit", f"- {audit_dir}:/data/audit")
 
 

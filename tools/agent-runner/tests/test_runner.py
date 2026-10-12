@@ -57,9 +57,9 @@ elif a[0] == "compose":
         sys.exit(1)
 """
 
-ROSTER = {"agents": [{"account": "AGENT01", "character": "Alpha"},
-                     {"account": "AGENT02", "character": "Bravo"},
-                     {"account": "AGENT03", "character": "Charlie"}]}
+ROSTER = {"agents": [{"account": "AGENT01", "character": "Alpha", "race": None, "class": None, "gender": None},
+                     {"account": "AGENT02", "character": "Bravo", "race": None, "class": None, "gender": None},
+                     {"account": "AGENT03", "character": "Charlie", "race": None, "class": None, "gender": None}]}
 
 
 class FakeHTTP(ThreadingHTTPServer):
