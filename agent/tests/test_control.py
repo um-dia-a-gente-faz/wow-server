@@ -20,6 +20,7 @@ from agent import perception as per
 from agent import update_object as uo
 from agent.http_api import AgentObserver, make_server
 from agent.tests.builders import FakeSession
+from agent.tests.restore import join_new_threads
 
 TOKEN = "control-token-for-tests"
 ME, RUBENS, MOB = 0x10, 0x30, 0x40
@@ -109,6 +110,9 @@ class ValidateTest(unittest.TestCase):
 
 
 class WalkTest(unittest.TestCase):
+    def setUp(self):
+        join_new_threads(self)  # control.walk's timeout Timer ends just after cancel()
+
     def test_walk_to_a_point_arrives_and_reports_start_and_end(self):
         sess = make_session()
         status, out = control.walk(make_observer(sess), {"x": 50.0, "y": 20.0})

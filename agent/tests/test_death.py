@@ -14,6 +14,7 @@ from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 from agent.tests.builders import FakeSession
+from agent.tests.restore import join_new_threads
 
 
 PLAYER_FLAGS_GHOST = per.PLAYER_FLAGS_GHOST
@@ -132,6 +133,9 @@ class ReleaseSpiritActionTest(unittest.TestCase):
 
 
 class CorpseRunTest(unittest.TestCase):
+    def setUp(self):
+        join_new_threads(self)
+
     def test_straight_line_success(self):
         sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
         result = dt._corpse_run(sess, world, (0, 5.0, 0.0, 0.0))

@@ -29,6 +29,7 @@ from agent import update_fields as uf
 from agent import update_object as uo
 from agent.wire import PacketMalformed, PacketTruncated
 from agent.tests.builders import tc_server_header  # noqa: F401
+from agent.tests.restore import reset_counters
 
 
 from agent.tests.builders import (  # noqa: F401  (re-exported: other tests import from here)
@@ -743,6 +744,7 @@ class RecvLoopSafetyNetTest(unittest.TestCase):
                   + server_packet(hworld.SMSG_UPDATE_OBJECT, b'\x01\x00\x00\x00\x02')
                   + server_packet(hworld.SMSG_UPDATE_OBJECT, b'\x01\x00\x00\x00\x02')
                   + server_packet(hworld.SMSG_UPDATE_OBJECT, good))
+        reset_counters(self)
         sess = make_session(stream)
         sess._running = True
         with self.assertLogs('agent.session', level='WARNING') as logs:

@@ -252,6 +252,39 @@ gate landed, each with its size then. Same ratchet as ruff and mypy:
   PR that shrinks an offender must update `BASELINE` in the same PR. If another PR
   shrinks the same offender first, rebase and lower the entry.
 
+## Coverage floor
+
+The CI job `coverage (agent floor)` (#384, part of `ci-ok`) runs the `agent/` and
+`tools/world-mock` suites under `coverage` and compares the total with `"agent"` in
+`coverage-floors.json`. It measures **production code under `agent/` only**:
+`agent/tests/` is omitted (`--omit=agent/tests/*`), because the test files are most of the
+statements and run by definition. CI (Python 3.12) measures 9,847 statements (about 9,700 on 3.14), so **one point is
+about 98 statements**. Same ratchet as mypy and the size budget:
+
+- **Below the floor fails**: production statements stopped being covered, either tests were
+  lost or code was added untested. The floor sits half a point or more under the measured total.
+- **2 or more points above the floor fails too** (`STALE_MARGIN` in
+  `scripts/coverage_floor.py`; with floor 96 that is from 98.0, which leaves 0.7 up and 1.3
+  down from CI's 97.30, about 70 and 125 statements): a PR that raises coverage raises the number in the same PR.
+  The floor is the measured total minus half a point, rounded down (`int(total - 0.5)`);
+  the failure message names the number. The margin absorbs run-to-run and Python-version
+  differences, so take the number from CI (Python 3.12), not your machine.
+- Reproduce with `pip install -r requirements-dev.txt` and `scripts/check.sh coverage`
+  (several minutes; not part of `all`). `python3 scripts/coverage_floor.py --report-only`
+  prints the per-module table without gating. The data file is written to a temp dir.
+
+What it catches and does not (measured locally, Python 3.14): the gate fires when the total
+falls under the floor, which sits between half a point and a point and a half below it; today
+that is 1.3 points, about 125 statements. Deleting `agent/tests/test_control.py` alone takes
+the total from 97.25% to 95.61%, under the floor. Deleting `test_probe.py` alone (97.12%) or
+`test_candidates.py` alone (97.22%) does not, because other tests cover the same code. So a
+deleted test file fails the gate only when it was the only coverage of about 125 or more
+statements, which holds for 3 of the 105 test files today. It does not see smaller losses, and
+it says nothing about which module lost them; per-module floors or diff coverage would, and
+are part 2.
+
+Only `agent/` has a floor so far; the `tools/` packages follow in a separate issue.
+
 ## Secrets
 
 - Never commit credentials, API keys, or tokens.

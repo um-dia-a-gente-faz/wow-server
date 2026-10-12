@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from agent import fleetlimits as fl
+from agent.tests.restore import reset_counters
 
 NOW = 1_700_000_000.0
 
@@ -32,6 +33,7 @@ class _Files(unittest.TestCase):
         self.dir = self._tmp.name
         self.path = os.path.join(self.dir, "limits.json")
         self.clock = Clock()
+        reset_counters(self)   # swallowed()'s throttle and counters: the tests below assert on them
 
     def write(self, data, path=None):
         path = path or self.path

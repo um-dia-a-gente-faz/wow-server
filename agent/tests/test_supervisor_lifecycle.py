@@ -17,6 +17,7 @@ from agent.auth import AuthRejected
 from agent.http_api import AgentObserver
 from agent.lifecycle import REASONS, Lifecycle, State
 from agent.supervisor import supervise_connection
+from agent.tests.restore import reset_counters
 from agent.tests.test_reconnect import _NoThrottle, _RecordingLog
 from unittest import mock
 
@@ -179,8 +180,7 @@ class LifecycleNeverChangesTheSupervisorTest(unittest.TestCase):
     """The lifecycle is bookkeeping: a failing callback or a refused transition is counted, nothing else."""
 
     def setUp(self):
-        metrics.SWALLOWED.clear()
-        self.addCleanup(metrics.SWALLOWED.clear)
+        reset_counters(self)
         patcher = mock.patch.object(metrics, "_swallowed_throttle", _NoThrottle())
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -303,8 +303,7 @@ class MainLifecycleWiringTest(unittest.TestCase):
         self.assertGreater(lifecycle.history()[0].at, 1.6e9)
 
     def test_an_unwritable_lifecycle_directory_does_not_stop_a_reconnect(self):
-        metrics.SWALLOWED.clear()
-        self.addCleanup(metrics.SWALLOWED.clear)
+        reset_counters(self)
         os.makedirs(self.directory)
         os.chmod(self.directory, 0o500)
         self.addCleanup(os.chmod, self.directory, 0o700)
