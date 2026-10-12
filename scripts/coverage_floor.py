@@ -70,8 +70,10 @@ def measure() -> float:
     """Total coverage of agent/ over the same two runs the CI job always made; prints the table."""
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "COVERAGE_FILE": str(Path(tmp) / "data")}
-        _run(["run", "--source=agent", "-m", "unittest", "discover", "-s", "agent/tests"], env)
-        _run(["run", "-a", "--source=agent", "-m", "unittest", "discover", "-s", "tools/world-mock/tests"], env)
+        # Production code only: the test files are most of the statements and run by definition.
+        src = ["--source=agent", "--omit=agent/tests/*", "-m", "unittest", "discover", "-s"]
+        _run(["run", *src, "agent/tests"], env)
+        _run(["run", "-a", *src, "tools/world-mock/tests"], env)
         print(_run(["report", "--skip-empty", "--sort=cover"], env, capture=True), end="")
         return float(_run(["report", "--format=total", "--precision=2"], env, capture=True))
 

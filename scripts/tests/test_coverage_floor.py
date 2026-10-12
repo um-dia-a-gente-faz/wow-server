@@ -12,6 +12,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -78,6 +79,73 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cf.load_floor(ROOT / "coverage-floors.json"), data["agent"])
 
 
+class MainTest(unittest.TestCase):
+    """main() with measure() stubbed: the exit code and text of each outcome."""
+
+    def run_main(self, measured, argv=(), spec=True):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "floors.json"
+            p.write_text('{"agent": 60}')
+            with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", return_value=measured), \
+                    mock.patch.object(cf.importlib.util, "find_spec", return_value=spec), \
+                    contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+                code = cf.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_below_floor_exits_1(self):
+        code, out, _ = self.run_main(59.0)
+        self.assertEqual(code, 1)
+        self.assertIn("is below the floor 60%", out)
+        self.assertIn("agent coverage 59.00% (floor 60%)", out)
+
+    def test_stale_exits_1(self):
+        code, out, _ = self.run_main(61.5)
+        self.assertEqual(code, 1)
+        self.assertIn('raise "agent"', out)
+
+    def test_inside_band_exits_0(self):
+        for m in (60.0, 61.49):
+            self.assertEqual(self.run_main(m)[0], 0)
+
+    def test_report_only_never_fails(self):
+        for m in (10.0, 99.0):
+            code, out, _ = self.run_main(m, ["--report-only"])
+            self.assertEqual(code, 0)
+            self.assertIn(f"agent coverage {m:.2f}%", out)
+
+    def test_not_installed_exits_2(self):
+        code, _, err = self.run_main(60.0, spec=None)
+        self.assertEqual(code, 2)
+        self.assertIn("coverage is not installed", err)
+
+
+class RunTest(unittest.TestCase):
+    def test_failed_command_exits_1(self):
+        with mock.patch.object(cf.subprocess, "run", return_value=mock.Mock(returncode=1, stdout="")), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            cf._run(["run"], {})
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_both_runs_omit_the_tests_and_keep_data_out_of_the_checkout(self):
+        calls = []
+
+        def fake(cmd, **kw):
+            calls.append((cmd, kw["env"]["COVERAGE_FILE"]))
+            return mock.Mock(returncode=0, stdout="97.5\n")
+
+        with mock.patch.object(cf.subprocess, "run", fake), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cf.measure(), 97.5)
+        runs = [c for c, _ in calls if "run" in c[:4]]
+        self.assertEqual(len(runs), 2)
+        for cmd in runs:
+            self.assertIn("--omit=agent/tests/*", cmd)
+            self.assertIn("--source=agent", cmd)
+        self.assertIn("tools/world-mock/tests", runs[1])
+        self.assertIn("-a", runs[1])
+        for _, data in calls:
+            self.assertNotIn(str(ROOT), data)
+
+
 class WiringTest(unittest.TestCase):
     def test_check_sh_runs_script_outside_all(self):
         self.assertRegex(CHECK, r"(?m)^\s*coverage\)\s*python3 scripts/coverage_floor\.py")
@@ -92,6 +160,11 @@ class WiringTest(unittest.TestCase):
         self.assertIn("scripts/check.sh coverage", job)
         self.assertIn("pipefail", job)
         self.assertIn("timeout-minutes: 10", job)
+
+    def test_path_filter_runs_the_job_for_its_inputs(self):
+        line = next(l for l in CI.splitlines() if 'echo "agent=' in l)
+        for path in (r"^agent/", r"^tools/world-mock/", r"^coverage-floors\.json$"):
+            self.assertIn(path, line)
 
     def test_ci_ok_needs_coverage(self):
         m = re.search(r"ci-ok:.*?needs: \[([^\]]*)\]", CI, re.S)

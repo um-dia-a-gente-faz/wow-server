@@ -44,7 +44,7 @@ jobs:
           hit() { [ "$EVENT" != "pull_request" ] || grep -Eq "$1" <<<"$files"; }
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
-            echo "agent=$(hit "$all|^agent/|^coverage-floors\.json$" && echo true || echo false)"
+            echo "agent=$(hit "$all|^agent/|^tools/world-mock/|^coverage-floors\.json$" && echo true || echo false)"
             echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
             echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^\.env\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
