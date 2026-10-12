@@ -209,13 +209,19 @@ class NameCache:
     Not thread-safe on its own. Threading rule: every call, drain() included, is made
     under agent/perception/world.py::WorldState's lock (want_*/on_*_response, and drain()
     via ResolutionMixin.drain_name_queries, called by agent/handlers/world.py
-    send_name_queries). The one exception is load(): agent/session.py calls it from
+    send_name_queries). The first exception is load(): agent/session.py calls it from
     login_character before CMSG_PLAYER_LOGIN is sent and before the recv thread starts.
     Other threads already run (chat-relay, HTTP observer) but none can reach this
     session's WorldState yet: the relay gets its resolver from a received chat packet. The
     recv thread and the chat-relay thread share this cache. The expiry sweep still
     iterates a snapshot of _in_flight and tolerates a token already removed, which keeps
     that sweep safe if the class is used alone.
+
+    save() is the second exception (#705): the persisted dicts (creatures, gameobjects) are
+    mutated only by on_*_query_response on the recv thread and by load() before that thread
+    starts, and save() is called on that same thread after the lock is released, so a save
+    never overlaps a mutation and saves never overlap each other. A new mutator, or a save()
+    on another thread, needs a lock.
     """
 
     def __init__(self, budget_per_second: int = 10, clock=time.monotonic,
