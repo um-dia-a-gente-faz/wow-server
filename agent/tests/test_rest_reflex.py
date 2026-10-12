@@ -3,6 +3,7 @@ session/world only, no network, no real sleeping."""
 
 import struct
 import unittest
+from unittest import mock
 
 from agent import actions as ac
 from agent import perception as per
@@ -123,6 +124,11 @@ class RestReflexTickTest(unittest.TestCase):
         sess = fake_session()
         item_guid = 0xF120000000000042
 
+        # the class below replaces the real use_item; put it back afterwards (#662)
+        patcher = mock.patch.dict(ac.REGISTRY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
         @ac.register
         class _FakeUseItem(ac.Action):
             name = "use_item"
@@ -131,28 +137,25 @@ class RestReflexTickTest(unittest.TestCase):
             def execute(self, session, world, **_):
                 return ac.ActionResult(ok=True)
 
-        try:
-            world = world_with_self(sess.player_guid, health=30, max_health=100)
-            # Put an item guid in inventory slot 23 (first backpack slot) on
-            # the self player, and a matching item object so
-            # build_equipment_and_inventory() resolves its name.
-            world.update_object(uo.UpdateBlock(
-                update_type=uo.UPDATETYPE_VALUES, guid=sess.player_guid,
-                fields={uf.PLAYER_FIELD_PACK_SLOT_1: item_guid & 0xFFFFFFFF,
-                        uf.PLAYER_FIELD_PACK_SLOT_1 + 1: item_guid >> 32}))
-            world.update_object(uo.UpdateBlock(
-                update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=item_guid, object_type=uo.TYPEID_ITEM,
-                movement={"update_flags": 0},
-                fields={uf.OBJECT_FIELD_ENTRY: 159, uf.ITEM_FIELD_STACK_COUNT: 1}))
-            world.apply_item_query_response({"entry": 159, "found": True, "name": "Fresh Bread"})
+        world = world_with_self(sess.player_guid, health=30, max_health=100)
+        # Put an item guid in inventory slot 23 (first backpack slot) on
+        # the self player, and a matching item object so
+        # build_equipment_and_inventory() resolves its name.
+        world.update_object(uo.UpdateBlock(
+            update_type=uo.UPDATETYPE_VALUES, guid=sess.player_guid,
+            fields={uf.PLAYER_FIELD_PACK_SLOT_1: item_guid & 0xFFFFFFFF,
+                    uf.PLAYER_FIELD_PACK_SLOT_1 + 1: item_guid >> 32}))
+        world.update_object(uo.UpdateBlock(
+            update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=item_guid, object_type=uo.TYPEID_ITEM,
+            movement={"update_flags": 0},
+            fields={uf.OBJECT_FIELD_ENTRY: 159, uf.ITEM_FIELD_STACK_COUNT: 1}))
+        world.apply_item_query_response({"entry": 159, "found": True, "name": "Fresh Bread"})
 
-            reflex = rf.RestReflex()
-            reflex.tick(sess, world)
-            self.assertTrue(reflex.active)
-            self.assertEqual(reflex.method, "food")
-            self.assertEqual(sess._sent, [])  # no stand-state packet — ate instead
-        finally:
-            del ac.REGISTRY["use_item"]
+        reflex = rf.RestReflex()
+        reflex.tick(sess, world)
+        self.assertTrue(reflex.active)
+        self.assertEqual(reflex.method, "food")
+        self.assertEqual(sess._sent, [])  # no stand-state packet — ate instead
 
     def test_no_inventory_falls_back_to_sitting(self):
         sess = fake_session()  # self object has no inventory item slots set
