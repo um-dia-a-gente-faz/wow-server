@@ -41,6 +41,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+# tools/agent-runner's characters.load_script pops sys.path[0] after importing this file. Without
+# this second entry it pops the checkout root and Realm.open cannot import `agent` (until #597).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from agents import roster  # noqa: E402
 # valid_name is not used here: it stays readable as create_agent_roster.valid_name for the tests.

@@ -5,7 +5,9 @@ Runs from the repo root (`discover -t . -s agent/tests`), so `agents` imports as
 import ast
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -129,6 +131,47 @@ class RealmModuleTests(unittest.TestCase):
         logon.assert_called_once_with("127.0.0.1", 3724, "AGENT07", "pw")
         self.assertEqual(made, [("10.0.0.9", 8085, "AGENT07", b"key", 1)])
         self.assertTrue(sess.connected)
+
+
+class LoadScriptTests(unittest.TestCase):
+    # tools/agent-runner/characters.load_script, as a child process: the runner's sys.path
+    # is not in this test's process, so the checkout root is the only thing that could make
+    # `agent` importable, and the child must not get it from the test runner.
+    CHILD = """
+import sys
+from pathlib import Path
+repo = Path(sys.argv[1])
+assert str(repo) not in sys.path, "precondition: checkout root must not be on sys.path"
+sys.path.insert(0, str(repo / "scripts"))      # load_script
+import create_agent_roster                     # noqa: F401
+sys.path.pop(0)                                # load_script
+from agent.auth import AuthRejected            # what Realm.open needs after the load
+print("ok", AuthRejected.__name__)
+"""
+
+    def test_agent_stays_importable_after_load_script(self):
+        with tempfile.TemporaryDirectory() as outside:
+            done = subprocess.run([sys.executable, "-I", "-c", self.CHILD, str(REPO)], cwd=outside,
+                                  env={}, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), "ok AuthRejected")
+
+
+class RosterValidationTests(unittest.TestCase):
+    def test_load_roster_raises_on_an_unknown_key_or_a_bad_account(self):
+        base = json.loads((REPO / "agents" / "roster.json").read_text())["agents"]
+        cases = {
+            "unknown key": lambda a: a[0].update(nickname="x"),
+            "account outside AGENT01..AGENT99": lambda a: a[0].update(account="AGENT100"),
+        }
+        for label, break_it in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as d:
+                agents = json.loads(json.dumps(base))
+                break_it(agents)
+                path = Path(d) / "roster.json"
+                path.write_text(json.dumps({"agents": agents}))
+                with self.assertRaises(roster.RosterError):
+                    car.load_roster(path)
 
 
 if __name__ == "__main__":
