@@ -12,7 +12,9 @@ redirection or `mv` in the scripts.
 Helpers: `persist` is the module `agent/persist.py` however it is imported (`from . import
 persist`, `import agent.persist as ap`, `import agent.persist` and a dotted call). A local
 variable that shadows an aliased module name is read as the module (a loud-side false positive).
-The three private `_write_atomic` copies (#685) are sites themselves; their callers are not.
+A call to a private `_write_atomic` (the three local copies, #685) is a site, like
+`persist.write_atomic`; the sites inside a function named `_write_atomic` are skipped, so the
+helper bodies need no row and the callers are the rows.
 """
 import ast
 import pathlib
@@ -82,7 +84,7 @@ def _is_site(call: ast.Call, imported: dict[str, str]) -> bool:
         name = imported[head] + ("." + rest if rest else "")
     if name.startswith("agent.persist."):   # import agent.persist; agent.persist.write_atomic(...)
         name = name[len("agent."):]
-    if name in _RENAMES or name in _PERSIST_WRITERS:
+    if name in _RENAMES or name in _PERSIST_WRITERS or name == "_write_atomic":
         return True
     if name in _OPENERS:
         return _is_write_mode(_mode_arg(call, _OPENERS[name]))
@@ -113,7 +115,7 @@ def collect_sites(source: str, path: str) -> list[tuple[str, str, int]]:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 walk(child, scope + (child.name,))
                 continue
-            if isinstance(child, ast.Call) and _is_site(child, imported):
+            if isinstance(child, ast.Call) and scope[-1:] != ("_write_atomic",) and _is_site(child, imported):
                 sites.add((path, ".".join(scope) or "<module>", child.lineno))
             walk(child, scope)
 
@@ -167,7 +169,7 @@ INVENTORY: list[Row] = [
     ("agent/worldknowledge.py", "WorldKnowledge.__init__", "world bundle read-only connect", "exempt",
      "mode=ro, writes nothing"),
     ("monitoring/agent_metrics_textfile.py", "main", ".prom textfile", "exempt", "regenerated whole every run"),
-    ("scripts/create_agent_roster.py", "_write_atomic", "roster.json", "document", "none"),
+    ("scripts/create_agent_roster.py", "save_roster", "roster.json", "document", "none"),
     ("scripts/gen_agents_compose.py", "main", "docker-compose.agents.yml", "exempt",
      "generated, checked by --check"),
     ("scripts/gen_protocol_tables.py", "refresh", "protocol excerpts", "exempt", "generated, regenerated whole"),
@@ -177,8 +179,9 @@ INVENTORY: list[Row] = [
     ("scripts/mypy_legacy_baseline.py", "main", "mypy-legacy-baseline.json", "exempt",
      "generated, checked by --check"),
     ("scripts/mypy_legacy_baseline.py", "run_mypy", "temporary mypy config", "exempt", "temporary directory"),
-    # _write_atomic also writes the generated compose file (exempt: rewritten whole on every run)
-    ("tools/agent-runner/fleet.py", "_write_atomic", "state.json", "document", "none"),
+    ("tools/agent-runner/fleet.py", "Fleet.save_agent", "state.json", "document", "none"),
+    ("tools/agent-runner/fleet.py", "Fleet.write_compose", "generated compose file", "exempt",
+     "rewritten whole on every run"),
     ("tools/agent_dev/ab.py", "run", "ab --record fixtures and --output artifact", "exempt",
      "dev tooling: a later run reads --record back as --fixture, but a person passes both paths"),
     ("tools/agent_dev/probe.py", "save_report", "probe report", "exempt",
@@ -191,7 +194,7 @@ INVENTORY: list[Row] = [
      "tools/wowmap/wowmap/models.py:BLOB_VERSION"),
     ("tools/wowmap/wowmap/activity.py", "ActivityStore.__init__", "activity.sqlite3", "sqlite",
      "tools/wowmap/wowmap/activity_schema.py:MIGRATIONS"),
-    ("tools/wowmap/wowmap/calibration.py", "_write_atomic", "calibration.json", "document",
+    ("tools/wowmap/wowmap/calibration.py", "save_calibration", "calibration.json", "document",
      "CALIBRATION_SCHEMA"),
 ]
 
@@ -366,10 +369,10 @@ class CollectorProbes(unittest.TestCase):
         self.assertEqual(self.sites("import agent.persist\ndef f(p):\n    agent.persist.read_versioned(p, 1)\n"), [])
         self.assertEqual(self.sites("import agent.other as ap\ndef f(p):\n    ap.write_atomic(p, '')\n"), [])
 
-    def test_the_private_atomic_helper_is_a_site_through_fdopen_and_replace(self):
+    def test_a_call_of_the_private_atomic_helper_is_a_site_its_body_is_not(self):
         src = ("import os\ndef _write_atomic(p, t):\n    f = os.fdopen(1, 'w')\n    os.replace('a', p)\n"
                "def save(p):\n    _write_atomic(p, '')\n")
-        self.assertEqual(self.sites(src), [("_write_atomic", 3), ("_write_atomic", 4)])
+        self.assertEqual(self.sites(src), [("save", 6)])
 
     def test_an_imported_name_is_not_a_version_constant(self):
         self.assertEqual(module_constants("from x import Callable\nA = 1\nB: int = 2\n"), {"A", "B"})

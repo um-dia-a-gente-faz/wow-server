@@ -2,6 +2,7 @@
 script on PATH, the agents' APIs and wowmap are tiny local HTTP servers, and
 the checkout is a temporary git repo, so nothing here touches the real host."""
 
+import contextlib
 import json
 import os
 import stat
@@ -167,6 +168,11 @@ class AtomicWriteChecks:
         self.assertEqual(len(closed), 1)
         self.assertEqual(self.listing(), [os.path.basename(self.target)])
 
+    def test_a_failing_os_close_on_a_new_target_leaves_nothing_but_the_target(self):
+        with mock.patch("os.close", side_effect=OSError("boom")), contextlib.suppress(OSError):
+            self.save(1)
+        self.assertEqual([n for n in self.listing() if n != os.path.basename(self.target)], [])
+
     def test_two_concurrent_saves_never_share_a_temporary_name(self):
         self.save(1)
         sources, real = [], os.replace
@@ -201,10 +207,13 @@ class AtomicWriteChecks:
     def test_a_new_file_gets_the_mode_open_would_give_it(self):
         old = os.umask(0o027)
         self.addCleanup(os.umask, old)
-        self.assertFalse(os.path.exists(self.target))
-        self.save(1)
-        self.assertEqual(stat.S_IMODE(os.stat(self.target).st_mode), 0o640)
-        self.assertEqual(self.listing(), [os.path.basename(self.target)])
+        for umask in (0o022, 0o002, 0o077, 0o027, 0o000):
+            os.umask(umask)
+            if os.path.exists(self.target):
+                os.unlink(self.target)
+            self.save(1)
+            self.assertEqual(stat.S_IMODE(os.stat(self.target).st_mode), 0o666 & ~umask)
+            self.assertEqual(self.listing(), [os.path.basename(self.target)])
 
 
 class RunnerCase(unittest.TestCase):

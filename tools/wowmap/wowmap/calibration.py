@@ -4,8 +4,8 @@ import contextlib
 import json
 import math
 import os
+import secrets
 import stat
-import tempfile
 import threading
 
 import state
@@ -82,26 +82,18 @@ calibrations = load_calibrations()
 def _write_atomic(path, text):
     """Write `text` to `path` through a unique temporary file in the same directory: flush, fsync,
     os.replace. On any failure the temporary file is removed, the target is untouched and the
-    original exception propagates. The target keeps its mode (a new one gets 0o666 minus the
-    umask, as open(..., "w") gave it); mkstemp alone would leave 0600. No directory fsync (ADR 0018).
+    original exception propagates. The temporary is created with os.open(0o666), so a new target
+    gets the mode open(..., "w") gave it (0o666 minus the umask, applied by the kernel per call);
+    an existing target keeps its mode through fchmod. No directory fsync (ADR 0018).
     Private copy: agent/persist.py, tools/ and scripts/ each carry one until tools/common does."""
     path = os.fspath(path)
     directory, name = os.path.split(path)
-    directory = directory or "."
+    tmp = os.path.join(directory or ".", f".{name}.{secrets.token_hex(8)}.tmp")
     try:
         mode = stat.S_IMODE(os.stat(path).st_mode)
     except FileNotFoundError:
-        # Probe the umask without os.umask(), which is process-wide and racy with other threads.
-        pfd, probe = tempfile.mkstemp(dir=directory, prefix=f".{name}.", suffix=".mode")
-        os.close(pfd)
-        os.unlink(probe)
-        pfd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-        try:
-            mode = stat.S_IMODE(os.fstat(pfd).st_mode)
-        finally:
-            os.close(pfd)
-            os.unlink(probe)
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{name}.", suffix=".tmp")
+        mode = None
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         try:
             f = os.fdopen(fd, "w", encoding="utf-8")
@@ -111,7 +103,8 @@ def _write_atomic(path, text):
         with f:
             f.write(text)
             f.flush()
-            os.fchmod(f.fileno(), mode)
+            if mode is not None:
+                os.fchmod(f.fileno(), mode)
             os.fsync(f.fileno())
         os.replace(tmp, path)
     except BaseException:
