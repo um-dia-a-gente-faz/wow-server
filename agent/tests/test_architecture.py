@@ -170,20 +170,17 @@ def agent_graph():
 
 
 def _live_deque_loops(source: str, filename: str = "<src>") -> list[int]:
-    """Line numbers where `source` iterates `.events` or `.chat_inbox` itself: a `for`, a
-    comprehension or generator, or reversed()/iter()/enumerate()/sorted() of it. A copy
-    (`list(x.events)`, the snapshot methods) is not iteration of the deque."""
-    deques = {"events", "chat_inbox"}
-    wrappers = {"reversed", "iter", "enumerate", "sorted"}
-    live = lambda n: isinstance(n, ast.Attribute) and n.attr in deques
-    lines = []
-    for node in ast.walk(ast.parse(source, filename)):
-        if isinstance(node, (ast.For, ast.comprehension)) and live(node.iter):
-            lines.append(node.iter.lineno)
-        elif (isinstance(node, ast.Call) and getattr(node.func, "id", "") in wrappers
-              and node.args and live(node.args[0])):
-            lines.append(node.lineno)
-    return sorted(lines)
+    """Line numbers where `source` reads `.events` or `.chat_inbox` other than as the direct
+    argument of list(...) or len(...): a loop, a comprehension, reversed()/max()/map()/zip(),
+    or an alias (`inbox = s.chat_inbox`) that is looped over later. A copy
+    (`list(x.events)`, the snapshot methods) is the only safe read."""
+    tree = ast.parse(source, filename)
+    copies = {"list", "len"}
+    safe = {id(n.args[0]) for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "id", "") in copies and len(n.args) == 1}
+    return sorted(n.lineno for n in ast.walk(tree)
+                  if isinstance(n, ast.Attribute) and n.attr in {"events", "chat_inbox"}
+                  and id(n) not in safe)
 
 
 class AgentArchitectureTests(unittest.TestCase):
@@ -291,7 +288,8 @@ class AgentArchitectureTests(unittest.TestCase):
     def test_the_live_deque_probe_catches_every_loop_shape(self):
         for src in ("for e in session.events: pass", "[e for e in s.chat_inbox]",
                     "any(e for e in s.events)", "for e in reversed(ctx.state.events): pass",
-                    "for i, e in enumerate(s.events): pass"):
+                    "for i, e in enumerate(s.events): pass", "inbox = session.chat_inbox",
+                    "max(s.events, key=lambda e: e['t'])", "list(map(f, s.events))"):
             self.assertTrue(_live_deque_loops(src), src)
         for src in ("for e in list(s.events): pass", "for e in s.events_snapshot(): pass",
                     "for e in s.chat_inbox_snapshot(): pass", "n = len(s.events)"):

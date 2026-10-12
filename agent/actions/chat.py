@@ -534,8 +534,7 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
     def execute(self, session, world, channel: str, message: str, **_) -> ActionResult:
         full = chmod.find_joined(world.get_channels(), channel)
         text = _encode_message(message).decode("utf-8")
-        inbox = session.chat_inbox
-        seen = {id(e) for e in inbox}
+        seen = {id(e) for e in session.chat_inbox_snapshot()}
         sent_at = time.monotonic()
         channel_say(session, full, message)
         history = session.channel_say_history
@@ -547,7 +546,7 @@ class ChannelSayAction(Action):  # not registered: chat deferred (UM-98)
         # refusal comes back as SMSG_CHANNEL_NOTIFY (not_member, muted,
         # throttled, ...), which the session records as a channel_error event.
         def find_outcome():
-            for e in list(inbox):
+            for e in session.chat_inbox_snapshot():
                 if (id(e) not in seen and e.get("kind") == "channel"
                         and e.get("sender_guid") == session.player_guid and e.get("text") == text):
                     return {"echo": e}
