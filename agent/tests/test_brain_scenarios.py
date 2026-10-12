@@ -14,11 +14,18 @@ test then asserts it still fails, so fixing the code forces the flag off.
 The model tier (N samples per scenario against Jev/LLM) is #541.
 """
 
+import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from agent import brain as br
+from agent import config
 from agent import candidates as cand
 from agent import death  # noqa: F401  registers release_spirit/reclaim_corpse
+from agent.deciders import ScriptedDecider
+from agent.fleetlimits import FleetLimits
 from agent.handles import UnknownHandle
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
 
@@ -204,6 +211,128 @@ class BrainScenarioTest(unittest.TestCase):
         self.assertTrue(violations(s))
         s = dict(SCENARIOS["never_pull_a_much_stronger_mob"], snapshot=snap([unit(10, 8, level=3)]))
         self.assertTrue(violations(s), "an in-reach same-level mob must be offered, so the predicate bites")
+
+
+class _Boom:
+    """A decider that fails the test if it is asked to decide."""
+    model = "boom"
+    last_usage: dict = {}
+    last_latency_ms = 1.0
+
+    def __init__(self):
+        self.calls = 0
+
+    def choose_action(self, *a, **kw):
+        self.calls += 1
+        raise AssertionError("a blocked brain must not be called")
+
+
+class FleetBlockTest(unittest.TestCase):
+    """ADR 0017 slice 1 (#625): Brain asks the fleet limits file before a Jev or an LLM call."""
+
+    NOW = 1_700_000_000.0
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = os.path.join(tmp.name, "limits.json")
+
+    def block(self, *brains, until=NOW + 30):
+        with open(self.path, "w") as f:
+            json.dump({"version": 1, "blocks": {b: {"until_ts": until, "reason": f"{b} stop"} for b in brains}}, f)
+        return FleetLimits(self.path, lambda: self.NOW)
+
+    def decide(self, **kw):
+        return br.Brain(**kw).decide(snap(), my_guid=ME)
+
+    def test_blocked_jev_is_not_called_and_the_cycle_fails(self):
+        jev = _Boom()
+        with self.assertRaises(br.BrainError) as cm:
+            self.decide(jev=jev, fleet=self.block("jev"))
+        self.assertEqual(jev.calls, 0)
+        d = cm.exception.decision
+        self.assertEqual(d.jev_status, "fleet_blocked")
+        self.assertEqual(br.JEV_STATUS_FLEET, "fleet_blocked")
+        self.assertEqual(d.brain, "jev")
+        self.assertIn("jev blocked by fleet limits until", str(cm.exception))
+        self.assertIn("jev stop", d.fallback)
+        self.assertIsNone(d.latency_ms)   # else _derive_jev puts it in the Jev latency histogram
+        self.assertEqual(d.usage, {})
+        self.assertIsNone(d.candidates)
+
+    def test_blocked_jev_substitutes_the_llm_when_configured(self):
+        jev, llm = _Boom(), ScriptedDecider([("idle", {})])
+        d = self.decide(jev=jev, llm=llm, fleet=self.block("jev"))
+        self.assertEqual(jev.calls, 0)
+        self.assertEqual((d.brain, d.substituted, d.jev_status), ("llm", True, "fleet_blocked"))
+        self.assertIn("jev stop", d.fallback)
+
+    def test_blocked_jev_whose_llm_is_blocked_too_fails_without_a_call(self):
+        jev, llm = _Boom(), _Boom()
+        with self.assertRaises(br.BrainError) as cm:
+            self.decide(jev=jev, llm=llm, fleet=self.block("jev", "llm"))
+        self.assertEqual((jev.calls, llm.calls), (0, 0))
+        self.assertEqual(cm.exception.decision.jev_status, "fleet_blocked")
+        self.assertIn("llm stop", str(cm.exception))
+
+    def test_blocked_llm_is_not_called(self):
+        llm = _Boom()
+        with self.assertRaises(br.BrainError) as cm:
+            self.decide(llm=llm, fleet=self.block("llm"))
+        self.assertEqual(llm.calls, 0)
+        self.assertIn("llm blocked by fleet limits until", str(cm.exception))
+        self.assertEqual(cm.exception.decision.brain, "llm")
+        self.assertIsNone(cm.exception.decision.latency_ms)
+
+    def test_a_block_on_the_other_brain_changes_nothing(self):
+        d = self.decide(jev=ScriptedDecider([("idle", {})]), fleet=self.block("llm"))
+        self.assertEqual((d.brain, d.jev_status), ("jev", "success"))
+        d = self.decide(llm=ScriptedDecider([("idle", {})]), fleet=self.block("jev"))
+        self.assertEqual(d.brain, "llm")
+
+    def test_an_expired_block_decides_normally(self):
+        d = self.decide(jev=ScriptedDecider([("idle", {})]), fleet=self.block("jev", until=self.NOW))
+        self.assertEqual(d.jev_status, "success")
+
+    def test_fleet_runs_after_the_cooldown_and_before_the_budget(self):
+        b = br.Brain(jev=_Boom(), fleet=self.block("jev"), max_tokens_per_hour=1)
+        b.budget.record(10)   # budget spent too: the fleet reason comes first
+        with self.assertRaises(br.BrainError) as cm:
+            b.decide(snap(), my_guid=ME)
+        self.assertEqual(cm.exception.decision.jev_status, "fleet_blocked")
+        b._jev_cooldown_until, b._jev_cooldown_reason = b._clock() + 60, "HTTP 429"
+        with self.assertRaises(br.BrainError) as cm:   # cooling down: the file is not even asked
+            b.decide(snap(), my_guid=ME)
+        self.assertNotEqual(cm.exception.decision.jev_status, "fleet_blocked")
+
+    def test_a_broken_limits_file_never_stops_a_decision(self):
+        with open(self.path, "w") as f:
+            f.write("{nope")
+        d = self.decide(jev=ScriptedDecider([("idle", {})]), fleet=FleetLimits(self.path))
+        self.assertEqual(d.jev_status, "success")
+
+    def test_unset_means_no_fleet_and_no_file_access(self):
+        self.assertIsNone(br.Brain(jev=ScriptedDecider([("idle", {})])).fleet)
+        for env in ({}, {"AGENT_FLEET_LIMITS_FILE": ""}):
+            with mock.patch.dict(os.environ, {"LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m", **env}, clear=True):
+                cfg = config.Config()
+                b = br.Brain.from_config(cfg)
+            self.assertEqual(cfg.fleet_limits_file, "")
+            self.assertIsNone(b.fleet)
+            b.llm = ScriptedDecider([("idle", {})])
+            with mock.patch("builtins.open", side_effect=AssertionError("opened a file")), \
+                    mock.patch("os.stat", side_effect=AssertionError("stat")), \
+                    self.assertNoLogs("agent", level="DEBUG"):
+                d = b.decide(snap(), my_guid=ME)
+            self.assertEqual(d.brain, "llm")
+
+    def test_from_config_builds_fleet_limits_when_the_setting_is_set(self):
+        env = {"AGENT_FLEET_LIMITS_FILE": self.path, "LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "m"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            b = br.Brain.from_config(config.Config())
+        assert b is not None and b.fleet is not None
+        self.assertIsInstance(b.fleet, FleetLimits)
+        self.assertEqual(b.fleet.path, self.path)
 
 
 if __name__ == "__main__":

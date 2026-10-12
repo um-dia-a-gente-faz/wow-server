@@ -89,7 +89,8 @@ LAYERS = {
     "llm": {"httpjson", "prompts"},
     "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
-    "brain": {"action_specs", "actions", "candidates", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
+    "fleetlimits": {"metrics"},   # the ADR 0017 limits file reader; metrics for swallowed()
+    "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "update_fields"},  # #411: ports
     # entry and observing; nothing imports __main__
