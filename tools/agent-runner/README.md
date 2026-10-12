@@ -29,7 +29,7 @@ runner refuses to start without a token. Locally:
 | `AGENT_RUNNER_TOKEN_LABEL` | `shared` | name written to the action log |
 | `AGENT_RUNNER_BIND` | `127.0.0.1` | set to the LAN address; `0.0.0.0` logs a warning |
 | `AGENT_RUNNER_PORT` | `9700` | |
-| `AGENT_RUNNER_REPO` | this checkout | holds `agents/roster.json`, `Dockerfile`, `.env` |
+| `AGENT_RUNNER_REPO` | this checkout | holds `agents/roster.json`, `Dockerfile`, `.env`; the `agents/` library code always comes from the checkout `runner.py` is in (#391) |
 | `AGENT_RUNNER_RUNTIME_DIR` | `/opt/wow-agent-runtime` | runtime state, outside the checkout |
 | `AGENT_RUNNER_AUDIT_DIR` | `<runtime>/audit` | where the agents write `<agent>/<day>.jsonl` |
 | `AGENT_RUNNER_PROJECT` | `wow-agents` | compose project name |
@@ -102,7 +102,7 @@ An agent entry keeps its signals separate:
 `name` and `gender` (0/1):
 
 1. Validates before touching the realm: account `AGENT01..AGENT25`, a Horde race with a
-   class it can play (the table in `scripts/create_agent_roster.py`), no death knight
+   class it can play (the table in `agents/character_rules.py`), no death knight
    (they need an existing level-55 character), name 2-12 letters with no letter three
    times in a row. A name already used by an agent in the roster is refused locally;
    the realm answers for every other name.
@@ -161,8 +161,8 @@ of where it last told the server it was, not a database read. Every call is logg
 ## What it does to the host
 
 - The runner generates its own compose file at
-  `<runtime>/docker-compose.agents.yml` from `agents/roster.json` (through
-  `scripts/gen_agents_compose.py`) plus an optional `<runtime>/state.json`
+  `<runtime>/docker-compose.agents.yml` from `agents/roster.json` (rendered by
+  `agents/compose.py`) plus an optional `<runtime>/state.json`
   (`{"agents": [...]}`, same entry shape, replacing or appending by account).
   It runs compose with `--project-directory <checkout>` so `build: .` and `.env`
   resolve, and writes nothing into the checkout.

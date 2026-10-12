@@ -19,6 +19,7 @@ adding a new Action automatically extends what the model can choose from.
 
 import json
 import logging
+import random
 import time
 
 from . import httpjson, prompts
@@ -33,6 +34,7 @@ DEFAULT_RATE_LIMIT_COOLDOWN_S = 60.0  # 429 with no Retry-After / reset hint
 DEFAULT_ERROR_COOLDOWN_S = 30.0       # 5xx, timeout, network error, non-JSON body
 MIN_COOLDOWN_S = 5.0
 MAX_COOLDOWN_S = 900.0
+COOLDOWN_JITTER = 0.1  # a cooldown ends 0-10 % later, so a fleet does not retry in step (#636)
 
 # Prompt text lives in agent/prompts/ (#395).
 
@@ -150,7 +152,8 @@ class LLMClient:
 
     def __init__(self, base_url: str, model: str, api_key: str = "",
                  timeout: float = DEFAULT_TIMEOUT_S,
-                 max_attempts: int = DEFAULT_MAX_ATTEMPTS, clock=time.monotonic):
+                 max_attempts: int = DEFAULT_MAX_ATTEMPTS, clock=time.monotonic,
+                 rng: random.Random | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model  # the raw configured string, as logged at startup
         self.models = parse_model_list(model)
@@ -158,6 +161,7 @@ class LLMClient:
         self.timeout = timeout
         self.max_attempts = max(1, max_attempts)
         self._clock = clock
+        self._rng = rng if rng is not None else random.Random()
         # model id -> clock() time at which it may be tried again.
         self._cooldown_until: dict[str, float] = {}
         # Populated by the last choose_action() call, for callers (agent.think's
@@ -208,6 +212,7 @@ class LLMClient:
         else:
             seconds = DEFAULT_ERROR_COOLDOWN_S
         seconds = min(max(seconds, MIN_COOLDOWN_S), MAX_COOLDOWN_S)
+        seconds *= 1 + self._rng.uniform(0, COOLDOWN_JITTER)
         self._cooldown_until[model] = self._clock() + seconds
         return seconds
 

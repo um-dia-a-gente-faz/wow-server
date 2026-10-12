@@ -32,12 +32,13 @@ LAYER_DIRS = {
 # tool file only when that file is under one of these roots, so wowmap's fleet.py is not
 # agent-runner's fleet.py, and a name no root holds is an unresolved import, not a silent miss.
 ROOTS = {
-    "agent-runner": ["tools/agent-runner", "tools", "scripts", "."],   # characters.py: tools/; fleet.py: scripts/, and the checkout root for agents/
+    "agent-runner": ["tools/agent-runner", "tools", "."],         # characters.py: tools/; "." is the checkout root, for agents/ (#391)
     "chat-feed": ["tools/chat-feed", "tools"],                    # app.py appends tools/
     "common": ["tools/common", "tools"],                          # imported by path from tools/ (wowmap, chat-feed, agent-runner)
     "dbc": ["tools/dbc", "tools"],                                # imported by path from tools/ (wowmap)
     "loadtest": ["tools/loadtest", "tools/world-mock"],           # soak.py inserts the repo root and world-mock/
     "wowmap": ["tools/wowmap/wowmap", "tools"],                   # state.py appends tools/
+    "worldknowledge": ["tools/worldknowledge", "tools"],          # build.py inserts tools/ and the checkout root
     "wowmap/pipeline": ["tools/wowmap/pipeline", "tools/wowmap/wowmap"],   # extract_*.py insert ../wowmap
 }
 
@@ -51,6 +52,7 @@ PACKAGE_EDGES = {
     "jev-mock": set(),
     "loadtest": {"world-mock"},          # soak.py: `import server` from tools/world-mock (not in the #387 list; pinned, see PR)
     "wowmap": {"common", "dbc"},         # state.py, app.py, character.py
+    "worldknowledge": {"dbc"},           # build.py: dbc.wdbc
     "world-mock": set(),
 }
 
@@ -66,6 +68,7 @@ AGENT_EDGES = {
     "jev-mock": set(),
     "loadtest": {"handles", "items", "login", "names", "npc", "quests", "runloop", "supervisor"},
     "wowmap": set(),
+    "worldknowledge": {"worldknowledge"},   # build.py: SCHEMA_VERSION and SCHEMA, one definition
     "world-mock": {"auth", "crypt", "opcodes", "packets", "quests", "update_fields", "update_object"},
 }
 
@@ -120,9 +123,8 @@ PIPELINE_RUNTIME_IMPORTS = {"item_icons", "models", "overlays", "transform"}
 # Dynamic imports: files with a reference to one of DYNAMIC_CALLS (a loader that loads a module by
 # name at run time). A static read cannot follow what they load, so each such file is pinned here
 # with its reason. The check does not see getattr, exec or loader classes, and does not check what a
-# pinned file loads. Today: characters.py loads the checkout's scripts/ roster generator by name
-# (load_script).
-DYNAMIC_IMPORTS = {"tools/agent-runner/characters.py"}
+# pinned file loads. Today: none (#391 removed characters.py's load_script).
+DYNAMIC_IMPORTS: set[str] = set()
 DYNAMIC_CALLS = {"__import__", "import_module", "spec_from_file_location", "run_path", "run_module"}
 
 
@@ -200,7 +202,13 @@ def _resolve(rel, line, name, level, exact=False):
     if target == "tools":   # a path inside tools/ is never external; the tools/ directory is no module
         return None if exact else {**edge, "kind": "unresolved"}
     if not target.startswith("tools/"):
-        return {**edge, "kind": "external"}   # e.g. scripts/gen_agents_compose.py: not a tool
+        # Outside tools/ only the checkout root reaches (agent-runner's "."), and through it only the
+        # agents/ library modules (#391): scripts/, docs/ and the other top-level dirs stay unresolved,
+        # and so does a package __init__ (`from agents import <missing>` falls back to the package).
+        module = pathlib.PurePosixPath(target)
+        if module.parent.as_posix() == "agents" and module.suffix == ".py" and module.stem != "__init__":
+            return {**edge, "kind": "external"}
+        return {**edge, "kind": "unresolved"}
     return {**edge, "kind": "tool", "dst_tool": target.split("/")[1], "dst_layer": _layer(target),
             "dst_unit": _unit(target)}
 
@@ -255,6 +263,29 @@ def dynamic_sites():
     for rel, path in _files():
         out += _dynamic_sites_from(rel, path.read_text())
     return out
+
+
+def _scripts_path_sites_from(rel, source):
+    """where (file:line) of every string literal in one file's source that names a scripts/
+    directory as a path: exactly "scripts", or ending in "/scripts". That is how a tool would
+    put the checkout's scripts/ on sys.path or load a file from it (#391)."""
+    return [f"{rel}:{node.lineno}" for node in ast.walk(ast.parse(source, rel))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            and (node.value == "scripts" or node.value.endswith("/scripts"))]
+
+
+def scripts_path_sites():
+    out = []
+    for rel, path in _files():
+        out += _scripts_path_sites_from(rel, path.read_text())
+    return out
+
+
+def scripts_root_problems(roots):
+    """roots: a ROOTS-shaped table. A tool with scripts/ as an import root imports scripts by path."""
+    return [f"{tool}: ROOTS lists {root!r}; a tool must not import from scripts/ (#391), move the code "
+            f"into the agents/ library" for tool in sorted(roots) for root in roots[tool]
+            if root == "scripts" or root.startswith("scripts/")]
 
 
 def package_graph(edges):
@@ -397,6 +428,20 @@ class ToolsArchitectureTests(unittest.TestCase):
         self.assertEqual(check_dynamic(dynamic_sites(), DYNAMIC_IMPORTS), [],
                          "dynamic import outside DYNAMIC_IMPORTS")
 
+    def test_no_tool_imports_from_scripts(self):
+        # #391: a service importing a repo script by file path. Static imports resolve only through
+        # ROOTS, dynamic loaders are pinned above, and a scripts/ path literal is how either is reached.
+        self.assertEqual(scripts_root_problems(ROOTS), [], "scripts/ as an import root")
+        self.assertEqual(scripts_path_sites(), [], "a tools/ file names the scripts/ directory as a path")
+
+    def test_the_scripts_rule_reports_a_root_and_a_path_literal(self):
+        self.assertEqual(len(scripts_root_problems({"x": ["tools/x", "scripts"]})), 1)
+        self.assertEqual(scripts_root_problems({"x": ["tools/x", "tools", "."]}), [])
+        src = 'import sys\nsys.path.insert(0, str(repo / "scripts"))\nx = "see scripts/gen.py"\n'
+        self.assertEqual(_scripts_path_sites_from("tools/x/a.py", src), ["tools/x/a.py:2"])
+        self.assertEqual(_scripts_path_sites_from("tools/x/a.py", 'p = os.path.join(root, "../scripts")\n'),
+                         ["tools/x/a.py:1"])
+
     def test_packages_import_only_the_allowed_tools(self):
         self.assertEqual(check_packages(package_graph(self.edges), TOOL_DIRS), [],
                          "tool-to-tool import not in PACKAGE_EDGES (shared code goes in tools/common)")
@@ -467,6 +512,39 @@ class ResolutionSelfChecks(unittest.TestCase):
         # a path inside tools/ is never "external"; `from .. import nothere` must not pass silently.
         edges = _edges_from("tools/agent_dev/replay.py", "from .. import nothere\n")
         self.assertEqual([e["kind"] for e in edges], ["unresolved"])
+
+    # #391: the checkout root is on agent-runner's path for agents/ only. Each name below is a
+    # directory at the checkout root, so before the narrowing the runner resolved it as external.
+    @staticmethod
+    def _runner_kinds(src):
+        return [e["kind"] for e in _edges_from("tools/agent-runner/runner.py", src)]
+
+    def test_the_runner_may_not_import_scripts_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import scripts\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_exporters_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import exporters\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_monitoring_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import monitoring\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_docs_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import docs\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_dev_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import dev\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_tdb_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import tdb\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_grafana_from_the_root(self):
+        self.assertEqual(self._runner_kinds("import grafana\n"), ["unresolved"])
+
+    def test_the_runner_may_not_import_a_missing_agents_module(self):
+        self.assertEqual(self._runner_kinds("from agents import nothere\n"), ["unresolved"])
+
+    def test_the_runner_may_import_an_existing_agents_module_from_the_root(self):
+        self.assertEqual(self._runner_kinds("from agents import roster, compose\n"), ["external", "external"])
 
 
 class CheckerSelfChecks(unittest.TestCase):

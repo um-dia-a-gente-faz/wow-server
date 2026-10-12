@@ -21,6 +21,7 @@ from docker_backend import IMAGE, DockerBackend, allowed_names
 _CHECKOUT = str(Path(__file__).resolve().parents[2])   # the repo root, for the agents/ library
 if _CHECKOUT not in sys.path:
     sys.path.append(_CHECKOUT)
+from agents import compose  # noqa: E402
 from agents import roster as roster_lib  # noqa: E402
 
 PROBE_TIMEOUT_S = 2.0
@@ -39,24 +40,6 @@ WALK_KEYS = {"x", "y", "z", "near_player", "map", "stop_distance", "timeout_s"}
 AUDIT_FILE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
 
 
-def load_generator(repo):
-    """scripts/gen_agents_compose.py from the checkout: the roster's compose renderer."""
-    sys.path.insert(0, str(repo / "scripts"))
-    try:
-        import gen_agents_compose
-    finally:
-        sys.path.pop(0)
-    return gen_agents_compose
-
-
-def _agent_at(position, entry):
-    """The library's Agent for the merged entry at 0-based `position`. A runtime entry from
-    state.json may carry `retired` and may lack race/class/gender, so it is never passed
-    through roster_lib.parse_roster (decision on #391): only the five known keys are read."""
-    return roster_lib.Agent(index=position + 1, account=entry["account"], character=entry["character"],
-                            race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"))
-
-
 def parse_docker_time(value):
     """Docker's RFC3339 nano timestamp -> ISO string, or None for the zero time."""
     if not value or value.startswith("0001-"):
@@ -67,9 +50,8 @@ def parse_docker_time(value):
 class Fleet:
     """The configured agents and the signals about each one."""
 
-    def __init__(self, config, gen=None, character_service=None, backend=None):
+    def __init__(self, config, character_service=None, backend=None):
         self.cfg = config
-        self.gen = gen or load_generator(config.repo)
         self.backend = backend or DockerBackend(config.project, config.repo, config.compose_path)
         self._character_service = character_service
         self._write_lock = threading.Lock()
@@ -82,9 +64,8 @@ class Fleet:
     @property
     def characters(self):
         if self._character_service is None:
-            car = characters.load_script(self.cfg.repo, "create_agent_roster")
             self._character_service = characters.CharacterService(
-                car, self.cfg.realm_host, self.cfg.realm_port)
+                self.cfg.realm_host, self.cfg.realm_port)
         return self._character_service
 
     # ── configuration ────────────────────────────────────────────────
@@ -103,7 +84,7 @@ class Fleet:
                     agents.append(entry)
         entries = []
         for i, a in enumerate(agents):
-            agent = _agent_at(i, a)
+            agent = compose.derive(i, a)
             entries.append({"name": agent.character, "account": agent.account, "slug": agent.slug,
                             "service": agent.service, "container": agent.container,
                             "port": agent.api_port, "planned": a,
@@ -118,7 +99,7 @@ class Fleet:
 
     def write_compose(self):
         """Render the runner's own compose file under the runtime dir."""
-        text = self.gen.render([e["planned"] for e in self.roster()], audit_dir=str(self.cfg.audit_dir))
+        text = compose.render([e["planned"] for e in self.roster()], audit_dir=str(self.cfg.audit_dir))
         self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.cfg.compose_path.with_suffix(".tmp")
         tmp.write_text(text)

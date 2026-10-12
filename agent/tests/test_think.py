@@ -407,6 +407,13 @@ class LoopGuardTest(unittest.TestCase):
 
 # ── UM-101: brain seam (Jev first, LLM fallback) ─────────────────────
 
+class NoJitter:
+    """rng whose uniform(a, b) returns a: exact cooldown lengths (#636)."""
+
+    def uniform(self, a, b):
+        return a
+
+
 class FakeJevClient:
     """JevClient stand-in: records the candidates it was offered and picks
     one by index (default: the first), or raises a pre-programmed JevError.
@@ -562,9 +569,9 @@ class BrainSeamTest(unittest.TestCase):
         self.assertIn("jev call failed: HTTP 500", rec["fallback"])
         self.assertTrue(rec["substituted"])
 
-        # A 500 has no cooldown: the next cycle tries Jev again.
+        # A 500 starts a JEV_ERROR_COOLDOWN_S cooldown (#636): the next cycle does not call Jev.
         self._think(b)
-        self.assertEqual(len(jev.calls), 2)
+        self.assertEqual(len(jev.calls), 1)
 
     def test_auth_and_rate_limit_statuses_cool_jev_down_then_retry(self):
         for status, cooldown in ((402, brain.JEV_AUTH_COOLDOWN_S), (401, brain.JEV_AUTH_COOLDOWN_S),
@@ -573,7 +580,7 @@ class BrainSeamTest(unittest.TestCase):
                 now = [1000.0]
                 jev = FakeJevClient(error=JevError(f"HTTP {status}", status=status))
                 llm = FakeLLMClient(action_name="test_action", params={"value": 5})
-                b = brain.Brain(jev=jev, llm=llm, clock=lambda: now[0])
+                b = brain.Brain(jev=jev, llm=llm, clock=lambda: now[0], rng=NoJitter())
 
                 self.assertTrue(self._think(b).ok)
                 self.assertEqual(len(jev.calls), 1)

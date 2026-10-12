@@ -16,8 +16,9 @@
 #
 # Verdicts (exit code):
 #   0  OK                 pull healthy and the mirror is fresh
-#   0  QUIET              pull healthy; no agent has written for > QUIET_AFTER_S
-#                         (source and mirror agree: this is agent silence)
+#   0  QUIET              pull healthy; at least one agent has written no decision
+#                         file for > QUIET_AFTER_S (source and mirror agree: this is
+#                         agent silence). Names the quiet agents (#631).
 #   1  PULL BEHIND        pull ran, but the source has newer data than the mirror
 #   2  PULL STALLED       no recent successful pull (or never)
 #
@@ -83,6 +84,28 @@ else
 fi
 echo "$mirror_line ($dest)"
 
+# --- per agent (#631) ------------------------------------------------------
+# An agent is each directory directly under $dest; its age is the newest decision day
+# file directly in it (lifecycle/ does not count). Names are NUL-separated and sorted.
+agent_names=()
+while IFS= read -r -d '' name; do
+  agent_names+=("$name")
+done < <(find "$dest" -mindepth 1 -maxdepth 1 -type d -printf '%f\0' 2>/dev/null | LC_ALL=C sort -z)
+quiet_names=()
+for name in "${agent_names[@]}"; do
+  agent_newest="$(find "$dest/$name" -mindepth 1 -maxdepth 1 -type f -name '*.jsonl*' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
+  agent_newest="${agent_newest%.*}"
+  if [ -z "$agent_newest" ]; then
+    echo "agent $name: no decision files"
+    quiet_names+=("$name")
+  else
+    echo "agent $name: newest decision file $((now - agent_newest)) s old"
+    if [ $((now - agent_newest)) -gt "$quiet_after" ]; then
+      quiet_names+=("$name")
+    fi
+  fi
+done
+
 # --- source newest (optional) ---------------------------------------------
 src_newest=""
 if [ -n "$src_host" ] && [ "${SKIP_SOURCE:-0}" != "1" ]; then
@@ -113,8 +136,17 @@ if [ -n "$src_newest" ] && { [ -z "$mirror_newest" ] || [ $((src_newest - mirror
   exit 1
 fi
 
-if [ -z "$mirror_day_newest" ] || [ $((now - mirror_day_newest)) -gt "$quiet_after" ]; then
+# No agent directory at all: today's text, unchanged.
+if [ "${#agent_names[@]}" -eq 0 ]; then
   echo "VERDICT: QUIET - the pull is healthy and the source has nothing newer: no agent activity for over ${quiet_after}s."
+  exit 0
+fi
+
+# Any quiet agent makes the verdict QUIET; OK needs every agent fresh.
+if [ "${#quiet_names[@]}" -gt 0 ]; then
+  printf -v quiet_list '%s, ' "${quiet_names[@]}"
+  quiet_list="${quiet_list%, }"
+  echo "VERDICT: QUIET - the pull is healthy and the source has nothing newer: no agent activity for over ${quiet_after}s from: ${quiet_list}."
   exit 0
 fi
 

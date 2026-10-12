@@ -24,6 +24,7 @@ sys.path.insert(0, str(REPO))
 import runner  # noqa: E402
 from docker_backend import FakeDockerBackend  # noqa: E402
 from agent import api_contract  # noqa: E402  (#264: fixtures come from the shared agent API schema)
+from agents import compose  # noqa: E402
 from agents import roster as roster_lib  # noqa: E402
 
 _EP = api_contract.load()["endpoints"]
@@ -173,7 +174,7 @@ class RunnerCase(unittest.TestCase):
         patcher = mock.patch.object(roster_lib, "FIRST_PORT", self.agent_api.port)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.fleet = runner.Fleet(self.config, gen=runner.load_generator(REPO))
+        self.fleet = runner.Fleet(self.config)
         self.server = runner.make_server(self.config, self.fleet)
         threading.Thread(target=self.server.serve_forever, args=(0.01,), daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -578,6 +579,62 @@ class RosterLibraryTest(RunnerCase):
             self.fleet.roster()
 
 
+class NoScriptImportTest(RunnerCase):
+    """#391: the runner imports the agents/ library and no file under scripts/."""
+
+    def test_compose_text_is_the_library_render(self):
+        self.fleet.write_compose()
+        planned = [e["planned"] for e in self.fleet.roster()]
+        self.assertEqual((self.runtime / "docker-compose.agents.yml").read_text(),
+                         compose.render(planned, audit_dir=str(self.audit)))
+
+    def test_the_script_loaders_are_gone(self):
+        import characters
+        import fleet
+        self.assertFalse(hasattr(runner, "load_generator"))
+        self.assertFalse(hasattr(fleet, "load_generator"))
+        self.assertFalse(hasattr(characters, "load_script"))
+
+    def test_a_fresh_runner_loads_no_script_and_keeps_scripts_off_sys_path(self):
+        code = (
+            "import importlib.util, json, sys\n"
+            f"sys.path.insert(0, {str(HERE.parent)!r})\n"
+            "import runner\n"
+            f"fleet = runner.Fleet(runner.Config({{'AGENT_RUNNER_REPO': {str(self.repo)!r}, "
+            f"'AGENT_RUNNER_RUNTIME_DIR': {str(self.runtime)!r}}}))\n"
+            "names = [e['name'] for e in fleet.roster()]\n"
+            "fleet.write_compose()\n"
+            "service = fleet.characters\n"
+            "print(json.dumps({'names': names, 'service': type(service).__name__,\n"
+            "    'agent_auth': importlib.util.find_spec('agent.auth') is not None,\n"
+            "    'scripts': sorted(m for m in sys.modules if m in ('gen_agents_compose', 'create_agent_roster', 'wow_console')),\n"
+            "    'path': [p for p in sys.path if p.rstrip('/').endswith('/scripts')]}))\n")
+        out = subprocess.run([sys.executable, "-c", code], cwd="/", capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), {"names": ["Alpha", "Bravo", "Charlie"],
+                                                  "service": "CharacterService", "agent_auth": True,
+                                                  "scripts": [], "path": []})
+
+    def test_importing_the_script_and_fleet_leaves_sys_path_as_it_was(self):
+        # Only the checkout root is added, appended last (fleet.py), and characters.py's tools/
+        # entry goes first. The script's own insert of the checkout root must be popped again.
+        # -I keeps PYTHONPATH and the cwd out of the list, so the expectation is exact.
+        script = str(REPO / "scripts" / "gen_agents_compose.py")
+        code = (
+            "import importlib.util, json, sys\n"
+            f"sys.path.insert(0, {str(HERE.parent)!r})\n"
+            "before = list(sys.path)\n"
+            f"spec = importlib.util.spec_from_file_location('gen_agents_compose', {script!r})\n"
+            "spec.loader.exec_module(importlib.util.module_from_spec(spec))\n"
+            "import fleet\n"
+            "print(json.dumps({'before': before, 'after': sys.path}))\n")
+        out = subprocess.run([sys.executable, "-I", "-c", code], cwd="/", capture_output=True, text=True,
+                             timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        got = json.loads(out.stdout)
+        self.assertEqual(got["after"], [str(REPO / "tools")] + got["before"] + [str(REPO)])
+
+
 class FakeDockerTest(RunnerCase):
     """#279: the fleet's logic runs against FakeDockerBackend. subprocess.run raises here,
     so any path that still shelled out would fail the test."""
@@ -588,7 +645,7 @@ class FakeDockerTest(RunnerCase):
             containers={"wow-agent-alpha": container("running"),
                         "wow-agent-charlie": container("exited", 137, finished="2026-09-19T08:30:00.5Z")},
             image_created="2025-01-01T00:00:00Z")
-        self.fleet = runner.Fleet(self.config, gen=self.fleet.gen, backend=self.docker)
+        self.fleet = runner.Fleet(self.config, backend=self.docker)
         patch = mock.patch.object(subprocess, "run", side_effect=AssertionError("docker must not run"))
         patch.start()
         self.addCleanup(patch.stop)

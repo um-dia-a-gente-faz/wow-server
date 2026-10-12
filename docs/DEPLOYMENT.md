@@ -304,7 +304,7 @@ whose files changed:
 
 Before the game stack, it counts online characters (`characters.characters WHERE online = 1`,
 the same source as `wow_players_online`). If anyone is online, or the query fails, the game
-stack is **deferred**: it logs `DEFERRED game <sha>` (also to `deploy.log`) and the script exits
+stack is **deferred**: it logs `DEFERRED game <sha>` (also to `deploy.log`, once per pending commit: `refs/deployed/game-deferred` records the sha already logged) and the script exits
 75. Other stacks still deploy; the game stack stays pending (each stack is diffed from
 `refs/deployed/<stack>`, which a deferral does not move), and `auto-deploy.sh` keeps polling
 until it goes through. Later merges therefore do not queue behind a deferral.

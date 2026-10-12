@@ -18,11 +18,16 @@ Failure policy (Jev brain): no silent substitution.
   did not offer) is a failed cycle, audited as brain=jev with the reason and
   no LLM call. Only with AGENT_BRAIN_FALLBACK=llm does the LLM decide in
   Jev's place, and then the Decision says `substituted=True`.
-- 401/402/403 (bad key, out of credits) also start a JEV_AUTH_COOLDOWN_S
-  cooldown, and 429 (rate limited) a JEV_RATE_LIMIT_COOLDOWN_S one. During a
-  cooldown Jev is not called at all: the cycle is skipped (or substituted,
-  when the fallback is on). Retrying a dead key or an empty account every
-  3-5 s only burns requests. Other failures have no cooldown.
+- Some failures also start a cooldown, during which Jev is not called at all:
+  the cycle is skipped (or substituted, when the fallback is on). Retrying a
+  dead key, an empty account or a failing provider every 3-5 s only burns
+  requests. 401/402/403 (bad key, out of credits): JEV_AUTH_COOLDOWN_S. 429:
+  the server's Retry-After clamped to [MIN_COOLDOWN_S, MAX_COOLDOWN_S], else
+  JEV_RATE_LIMIT_COOLDOWN_S. 5xx, timeout, network error:
+  JEV_ERROR_COOLDOWN_S. Every cooldown ends up to COOLDOWN_JITTER (10 %) later
+  than that, drawn per Brain, so a fleet does not retry in step; a shorter
+  cooldown never cuts a running longer one. Other failures (other 4xx, a
+  malformed answer, a choice not offered) have no cooldown.
 
 `decide()` returns a Decision that carries everything the audit log needs
 (UM-51): which brain decided, Jev's confidence, model, token usage, latency,
@@ -31,6 +36,7 @@ and, when Jev failed, why (and `substituted` if the LLM stood in).
 
 import logging
 import os
+import random
 import time
 from dataclasses import dataclass, field
 
@@ -39,7 +45,7 @@ from . import candidates as cand
 from .action_specs import LLM_EXCLUDED_ACTIONS  # #531: the one home of the set, shared with api_contract
 from .fleetlimits import FleetLimits
 from .jev import JevClient, JevError
-from .llm import LLMClient, LLMError
+from .llm import COOLDOWN_JITTER, MAX_COOLDOWN_S, MIN_COOLDOWN_S, LLMClient, LLMError
 from .model import ActionRecord, Candidate, Snapshot
 from .tokenbudget import WINDOW_S as JEV_BUDGET_WINDOW_S, TokenBudget
 
@@ -59,9 +65,9 @@ RULE_LOW_CONFIDENCE = "low_confidence_safe_fallback"
 RULE_UNKNOWN = "confidence_unknown"
 
 JEV_AUTH_COOLDOWN_S = 300.0       # 401/402/403: key or credits, will not fix itself in seconds
-JEV_RATE_LIMIT_COOLDOWN_S = 30.0  # 429
-_COOLDOWNS = {401: JEV_AUTH_COOLDOWN_S, 402: JEV_AUTH_COOLDOWN_S,
-              403: JEV_AUTH_COOLDOWN_S, 429: JEV_RATE_LIMIT_COOLDOWN_S}
+JEV_RATE_LIMIT_COOLDOWN_S = 30.0  # 429 without a Retry-After
+JEV_ERROR_COOLDOWN_S = 10.0       # 5xx, timeout, network error
+_AUTH_STATUSES = (401, 402, 403)
 
 # #213: Jev token budget. Rolling window, per agent, input+output tokens (agent/tokenbudget.py).
 JEV_STATUS_BUDGET = "budget_exhausted"
@@ -126,13 +132,14 @@ class Brain:
     def __init__(self, jev=None, llm=None, clock=time.monotonic,
                  min_confidence: float = DEFAULT_JEV_MIN_CONFIDENCE,
                  max_tokens_per_hour: int = 0, budget: TokenBudget | None = None,
-                 fleet: FleetLimits | None = None):
+                 fleet: FleetLimits | None = None, rng: random.Random | None = None):
         self.jev = jev
         self.llm = llm
         self.min_confidence = min_confidence
         self._clock = clock
         self._jev_cooldown_until = 0.0
         self._jev_cooldown_reason: str | None = None
+        self._rng = rng if rng is not None else random.Random()   # one per Brain (#454)
         # One budget object may be shared by several Brains (#454).
         self.budget = budget if budget is not None else TokenBudget(max_tokens_per_hour, clock)
         # ADR 0017: None (the default) means no file is ever touched. Read on the think thread only.
@@ -301,11 +308,24 @@ class Brain:
         self.budget.record(tokens)
 
     def _maybe_cool_down(self, e: JevError):
-        seconds = _COOLDOWNS.get(getattr(e, "status", None) or 0)
-        if seconds:
-            self._jev_cooldown_until = self._clock() + seconds
-            self._jev_cooldown_reason = f"HTTP {e.status}"
-            log.warning("jev returned HTTP %d — not calling it for %.0fs", e.status, seconds)
+        status = getattr(e, "status", None)
+        retry_after = getattr(e, "retry_after", None)
+        if status in _AUTH_STATUSES:
+            seconds = JEV_AUTH_COOLDOWN_S
+        elif status == 429:
+            seconds = (JEV_RATE_LIMIT_COOLDOWN_S if retry_after is None
+                       else min(max(retry_after, MIN_COOLDOWN_S), MAX_COOLDOWN_S))
+        elif isinstance(status, int) and 500 <= status < 600 or getattr(e, "transient", False):
+            seconds = JEV_ERROR_COOLDOWN_S
+        else:
+            return
+        seconds *= 1 + self._rng.uniform(0, COOLDOWN_JITTER)
+        until = self._clock() + seconds
+        if until > self._jev_cooldown_until:   # a shorter cooldown never cuts a running longer one
+            self._jev_cooldown_until = until
+            self._jev_cooldown_reason = f"HTTP {status}" if status is not None else "network error"
+        log.warning("jev failed (%s) — not calling it for %.0fs", f"HTTP {status}" if status is not None
+                    else "network error", seconds)
 
     def _apply_confidence_policy(self, d: Decision, options: list[Candidate]):
         """The confidence rule. `confidence >= threshold` acts as chosen;

@@ -22,6 +22,7 @@ from .auth import AuthRejected
 from .brain import Brain
 from .audit import AuditLogger
 from .http_api import AgentObserver, start_server
+from .lifecycle import Lifecycle
 from .login import authenticate_and_login, connect_and_login
 from .runloop import run_loop
 from .supervisor import supervise_connection
@@ -137,7 +138,7 @@ def main():
             run_session=lambda sess: run_loop(sess, cfg, duration, perception_dump=args.perception_dump,
                                                brain=brain, audit_logger=audit_logger, observer=observer,
                                                stop=stop),
-            log=log, stop=stop,
+            log=log, stop=stop, lifecycle=_build_lifecycle(audit_logger, observer),
         )
     except AuthRejected: sys.exit(1)  # #430: the supervisor already logged the one line
     finally:
@@ -145,6 +146,17 @@ def main():
         if http_server is not None:
             http_server.shutdown()
     log.info("done.")
+
+
+def _build_lifecycle(audit_logger, observer) -> Lifecycle:
+    """#292: the supervisor's state machine (ADR 0015). Each transition is one line in the
+    audit directory (AuditLogger.record_lifecycle) and GET /state shows the snapshot. The
+    clock is the wall clock, so `since` and `at` are unix epoch seconds like the audit `ts`."""
+    lifecycle = Lifecycle(clock=time.time, on_transition=lambda t: audit_logger.record_lifecycle(
+        t.source.value, t.target.value, t.reason, ts=t.at))
+    if observer is not None:
+        observer.lifecycle = lifecycle
+    return lifecycle
 
 
 def _warn_jev_unselected(cfg, log):
