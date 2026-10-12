@@ -268,21 +268,29 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
         ungrouped), and marks each nearby player `in_group` when they are
         in *our* group.
         """
+        # #701: one acquisition for the whole snapshot (measured: ~1.4 ms for 500 objects), so
+        # no section shows a different moment and the live objects are never read after the
+        # recv thread resumes. encode() deep-copies, so the result shares nothing with live
+        # state. Nothing below takes self._lock; HandleMap._lock is a leaf (lock order:
+        # WorldState._lock -> HandleMap._lock, never the reverse).
         with self._lock:
+            me = self.objects.get(self.my_guid)
+            equipment, inventory = build_equipment_and_inventory(me, self.objects, self.items)
             view: dict[str, Any] = {
                 "objects": list(self.objects.values()),
-                "me": self.objects.get(self.my_guid),
+                "me": me,
                 "my_guid": self.my_guid,
                 "window": self.ui_state,
                 "trade": self.trade,
                 "mailbox": self.mailbox,
                 "has_new_mail": self.has_new_mail,
                 "channels": sorted(self.channels),
+                "equipment": equipment,
+                "inventory": inventory,
+                "quest_log": build_quest_log(me, self.quest_texts, self.names),
             }
-        view["equipment"], view["inventory"] = self.build_equipment_and_inventory()
-        view["quest_log"] = self.build_quest_log()
-        out = compose_snapshot(view, my_position, max_range, limit, corpse_position,
-                               pending_invite, chat_inbox, group)
-        # UM-89: every GUID-valued field (guid, *_guid, *_guids) anywhere in
-        # the snapshot becomes a handle; see agent/handles.py.
-        return self.handles.encode(out)
+            out = compose_snapshot(view, my_position, max_range, limit, corpse_position,
+                                   pending_invite, chat_inbox, group)
+            # UM-89: every GUID-valued field (guid, *_guid, *_guids) anywhere in
+            # the snapshot becomes a handle; see agent/handles.py.
+            return self.handles.encode(out)

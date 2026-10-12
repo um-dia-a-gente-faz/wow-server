@@ -395,7 +395,7 @@ def _tail_sample_lines(by_agent: dict) -> list[str]:
     lines: list[str] = []
     for name, help_text, mtype in (
         ("wow_agent_jev_calls_total", "Successful Jev Decisions API calls", "counter"),
-        ("wow_agent_jev_errors_total", "Jev decision errors by bounded status class", "counter"),
+        ("wow_agent_jev_errors_total", "Jev decision errors by bounded status class; budget_exhausted is a skip, not an error: the hourly Jev token budget was spent and Jev was not called", "counter"),
         ("wow_agent_jev_fallback_total", "Cycles where Jev fell back to another brain", "counter"),
         ("wow_agent_jev_prompt_tokens_total", "Jev input tokens consumed", "counter"),
         ("wow_agent_jev_completion_tokens_total", "Jev output tokens consumed", "counter"),
