@@ -123,8 +123,9 @@ consecutive suite starts in that job's log, slowest first:
 | wow-exporter | 8 | 0.1 |
 
 `agent` is not in this job any more. The `agent` job runs it (1755 tests, 142.9 s in run 38232669883; the job took 2m30s
-against its 5-minute limit), so that job is the first place to look if the stdlib suite grows. A suite that grows past about a minute is a reason to look at
-it (what it runs, what it waits on), not a reason to raise the timeout again.
+against the 5-minute limit it had then; 8 minutes since #707, see above), so that job is the first place to look if the stdlib suite grows. A suite that grows past about a minute is a reason to look at
+it (what it runs, what it waits on), not a reason to raise the timeout again. #707 raised this limit for room
+to dump the stacks of a stalled test before it, not because the suite got slower.
 
 Milestone and board naming (`M<n> - <subject>`, label and view rules, *blocked by*) is
 in `CLAUDE.md`, *Milestones and board naming*.
