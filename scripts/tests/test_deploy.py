@@ -187,6 +187,16 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)
         self.assertEqual(self.deploy_log().count("DEFERRED game"), 1)
 
+    def test_unwritable_deferred_ref_does_not_abort_the_deploy(self):
+        self.run_deploy()  # first run: refs/deployed/* at the base commit
+        # a ref under refs/deployed/game-deferred/ makes refs/deployed/game-deferred unwritable
+        git(self.work, "update-ref", "refs/deployed/game-deferred/x", "HEAD")
+        self.merge("docker-compose.yml")
+        self.merge("monitoring/x.yml")
+        r = self.run_deploy(FAKE_ONLINE="3")
+        self.assertEqual(r.returncode, 75, r.stdout + r.stderr)
+        self.assertEqual(self.calls().count("monitoring/docker-compose.yml up -d --build"), 1)
+
     def test_force_after_deferral_deploys_and_clears_ref(self):
         self.merge("docker-compose.yml")
         self.assertEqual(self.run_deploy(FAKE_ONLINE="3").returncode, 75)

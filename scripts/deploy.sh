@@ -87,7 +87,7 @@ case " $STACKS " in *" game "*)
     # once per pending commit: refs/deployed/game-deferred holds the $TO already logged
     if [ "${DRY_RUN:-0}" != 1 ] && [ "$(git rev-parse -q --verify refs/deployed/game-deferred || true)" != "$TO" ]; then
       log "DEFERRED game ${TO:0:7}, players online: $ONLINE"
-      git update-ref refs/deployed/game-deferred "$TO"
+      git update-ref refs/deployed/game-deferred "$TO" || true
     fi
   fi ;;
 esac
