@@ -21,12 +21,13 @@ import unittest
 from unittest import mock
 
 from agent import brain as br
-from agent import config
+from agent import config, httpjson, jev
 from agent import candidates as cand
 from agent import death  # noqa: F401  registers release_spirit/reclaim_corpse
 from agent.deciders import ScriptedDecider
 from agent.fleetlimits import FleetLimits
 from agent.handles import UnknownHandle
+from agent.jev import JevError
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
 
 ME = 1
@@ -333,6 +334,130 @@ class FleetBlockTest(unittest.TestCase):
         assert b is not None and b.fleet is not None
         self.assertIsInstance(b.fleet, FleetLimits)
         self.assertEqual(b.fleet.path, self.path)
+
+
+class _ErrJev:
+    """A Jev client that raises one scripted JevError and counts its calls."""
+    model = "err"
+    last_usage: dict = {}
+    last_latency_ms = 1.0
+
+    def __init__(self, error):
+        self.error, self.calls = error, 0
+
+    def choose_action(self, snapshot, candidates, persona="", history=None):
+        self.calls += 1
+        raise self.error
+
+
+class _Rng:
+    """uniform(a, b) returns a fixed end of the range (0.0 jitter = "a")."""
+
+    def __init__(self, end="a"):
+        self.end = end
+
+    def uniform(self, a, b):
+        return a if self.end == "a" else b
+
+
+class JevCooldownTest(unittest.TestCase):
+    """#636: which Jev failures start a cooldown, for how long, and the jitter on it."""
+
+    def make(self, error, end="a", llm=None):
+        self.now = [1000.0]
+        self.jev = _ErrJev(error)
+        return br.Brain(jev=self.jev, llm=llm, clock=lambda: self.now[0], rng=_Rng(end))
+
+    def fail(self, b):
+        with self.assertRaises(br.BrainError):
+            b.decide(snap(), my_guid=ME)
+
+    def cooldown(self, b):
+        return b._jev_cooldown_until - 1000.0
+
+    def test_5xx_and_transient_errors_cool_down_ten_seconds(self):
+        errors = [JevError(f"HTTP {s}", status=s) for s in (500, 502, 503, 504)]
+        errors.append(JevError("net", transient=True))
+        for e in errors:
+            with self.subTest(status=e.status):
+                b = self.make(e)
+                self.fail(b)
+                self.assertEqual(self.jev.calls, 1)
+                self.now[0] += br.JEV_ERROR_COOLDOWN_S - 1
+                self.fail(b)
+                self.assertEqual(self.jev.calls, 1)   # still cooling: not called
+                self.now[0] += 2
+                self.fail(b)
+                self.assertEqual(self.jev.calls, 2)
+
+    def test_network_error_from_jev_error_builder_cools_down(self):
+        e = jev._jev_error(httpjson.HttpJsonError("network", "http://j", detail="timed out"))
+        self.assertTrue(e.transient)
+        b = self.make(e)
+        self.fail(b)
+        self.assertEqual(b._jev_cooldown_reason, "network error")
+        self.assertEqual(self.cooldown(b), br.JEV_ERROR_COOLDOWN_S)
+
+    def test_429_retry_after(self):
+        for retry_after, want in ((120, 120), (None, 30), (0, 5), (-3, 5), (99999, 900)):
+            with self.subTest(retry_after=retry_after):
+                b = self.make(JevError("x", status=429, retry_after=retry_after))
+                self.fail(b)
+                self.assertEqual(self.cooldown(b), want)
+
+    def test_auth_status_ignores_retry_after(self):
+        b = self.make(JevError("x", status=402, retry_after=1))
+        self.fail(b)
+        self.assertEqual(self.cooldown(b), 300)
+
+    def test_other_failures_start_no_cooldown(self):
+        for e in (JevError("x", status=400), JevError("x", status=404), JevError("malformed"),
+                  jev._jev_error(httpjson.HttpJsonError("non_json", "http://j", body=b"<html>"))):
+            with self.subTest(e=str(e)):
+                b = self.make(e)
+                self.fail(b)
+                self.fail(b)
+                self.assertEqual(self.jev.calls, 2)
+
+    def test_a_shorter_cooldown_never_replaces_a_longer_one(self):
+        b = self.make(JevError("x", status=402))
+        self.fail(b)
+        b.jev.error = JevError("net", transient=True)
+        self.now[0] += 5
+        b._maybe_cool_down(b.jev.error)
+        self.assertEqual(self.cooldown(b), 300)
+        self.assertEqual(b._jev_cooldown_reason, "HTTP 402")
+
+    def test_a_longer_cooldown_replaces_a_shorter_one(self):
+        b = self.make(JevError("net", transient=True))
+        self.fail(b)
+        b._maybe_cool_down(JevError("x", status=402))
+        self.assertEqual((self.cooldown(b), b._jev_cooldown_reason), (300, "HTTP 402"))
+
+    def test_jitter_end_of_range(self):
+        b = self.make(JevError("x", status=429), end="b")
+        self.fail(b)
+        self.assertAlmostEqual(self.cooldown(b), 33.0)
+
+    def test_jitter_never_below_base(self):
+        import random
+        b = self.make(JevError("x", status=429))
+        b._rng = random.Random(7)
+        for _ in range(1000):
+            b._jev_cooldown_until = 0.0
+            b._maybe_cool_down(b.jev.error)
+            self.assertGreaterEqual(self.cooldown(b), 30.0)
+            self.assertLessEqual(self.cooldown(b), 33.0)
+
+    def test_brains_do_not_share_a_generator(self):
+        self.assertIsNot(br.Brain(jev=_Boom())._rng, br.Brain(jev=_Boom())._rng)
+
+    def test_a_network_cooldown_is_substituted_by_the_llm(self):
+        b = self.make(JevError("net", transient=True), llm=ScriptedDecider([("idle", {})]))
+        d = b.decide(snap(), my_guid=ME)
+        self.assertTrue(d.substituted)
+        d = b.decide(snap(), my_guid=ME)   # cooling: Jev not called, the LLM stands in
+        self.assertEqual((self.jev.calls, d.brain, d.substituted), (1, "llm", True))
 
 
 if __name__ == "__main__":
