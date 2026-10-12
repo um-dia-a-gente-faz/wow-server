@@ -134,7 +134,7 @@ jobs:
         run: scripts/check.sh types
 
   # #384: a gate. The floor is in coverage-floors.json and scripts/coverage_floor.py fails when
-  # the total is below it or 1.5 points above it (raise the number in the same PR).
+  # the total is below it or 2 points above it (raise the number in the same PR).
   # `coverage` comes from requirements-dev.txt, never from agent/ (stdlib only).
   coverage:
     name: coverage (agent floor)

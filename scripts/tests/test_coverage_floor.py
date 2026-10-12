@@ -37,18 +37,25 @@ class CheckTest(unittest.TestCase):
 
     def test_at_floor_and_inside_margin(self):
         self.assertEqual(cf.check(60.0, 60), [])
-        self.assertEqual(cf.check(61.49, 60), [])
+        self.assertEqual(cf.check(60 + cf.STALE_MARGIN - 0.01, 60), [])
 
     def test_stale_boundary(self):
-        out = cf.check(61.5, 60)
+        out = cf.check(60 + cf.STALE_MARGIN, 60)
         self.assertEqual(len(out), 1)
         self.assertIn('raise "agent" in coverage-floors.json to 61', out[0])
-        self.assertIn("1.50 points above", out[0])
+        self.assertIn(f"{cf.STALE_MARGIN:.2f} points above", out[0])
+
+    def test_literal_band_for_floor_96(self):
+        # the committed numbers: stale from 98.0, so 0.7 up and 1.3 down from CI's 97.30
+        self.assertEqual(cf.STALE_MARGIN, 2.0)
+        self.assertEqual(cf.check(97.99, 96), [])
+        self.assertIn("to 97", cf.check(98.00, 96)[0])
+        self.assertIn("below the floor 96%", cf.check(95.99, 96)[0])
 
     def test_raise_message_keeps_half_a_point_of_room(self):
         self.assertIn("to 61", cf.check(62.0, 60)[0])      # int(62.0 - 0.5), not 62
         self.assertIn("to 66", cf.check(66.99, 60)[0])
-        self.assertIn("to 98", cf.check(98.5, 97)[0])
+        self.assertIn("to 98", cf.check(99.0, 97)[0])
 
 
 class ConfigTest(unittest.TestCase):
@@ -99,12 +106,12 @@ class MainTest(unittest.TestCase):
         self.assertIn("agent coverage 59.00% (floor 60%)", out)
 
     def test_stale_exits_1(self):
-        code, out, _ = self.run_main(61.5)
+        code, out, _ = self.run_main(60 + cf.STALE_MARGIN)
         self.assertEqual(code, 1)
         self.assertIn('raise "agent"', out)
 
     def test_inside_band_exits_0(self):
-        for m in (60.0, 61.49):
+        for m in (60.0, 60 + cf.STALE_MARGIN - 0.01):
             self.assertEqual(self.run_main(m)[0], 0)
 
     def test_report_only_never_fails(self):

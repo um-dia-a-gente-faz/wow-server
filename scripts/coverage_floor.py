@@ -23,7 +23,7 @@ FLOORS = ROOT / "coverage-floors.json"
 # The floor is int(total - 0.5): at least half a point of room below the measured total.
 # Timing-dependent branches in the world-mock tests and the Python version move the total by a
 # fraction of a point; a floor that lags by less than this is not stale.
-STALE_MARGIN = 1.5
+STALE_MARGIN = 2.0
 
 
 def check(measured: float, floor: int) -> list[str]:

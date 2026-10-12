@@ -263,8 +263,9 @@ statements and run by definition. That is about 9,700 statements, so **one point
 
 - **Below the floor fails**: production statements stopped being covered, either tests were
   lost or code was added untested. The floor sits half a point or more under the measured total.
-- **1.5 or more points above the floor fails too** (`STALE_MARGIN` in
-  `scripts/coverage_floor.py`): a PR that raises coverage raises the number in the same PR.
+- **2 or more points above the floor fails too** (`STALE_MARGIN` in
+  `scripts/coverage_floor.py`; with floor 96 that is from 98.0, which leaves 0.7 up and 1.3
+  down from CI's 97.30, about 70 and 125 statements): a PR that raises coverage raises the number in the same PR.
   The floor is the measured total minus half a point, rounded down (`int(total - 0.5)`);
   the failure message names the number. The margin absorbs run-to-run and Python-version
   differences, so take the number from CI (Python 3.12), not your machine.
