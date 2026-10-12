@@ -38,6 +38,7 @@ ROOTS = {
     "dbc": ["tools/dbc", "tools"],                                # imported by path from tools/ (wowmap)
     "loadtest": ["tools/loadtest", "tools/world-mock"],           # soak.py inserts the repo root and world-mock/
     "wowmap": ["tools/wowmap/wowmap", "tools"],                   # state.py appends tools/
+    "worldknowledge": ["tools/worldknowledge", "tools"],          # build.py inserts tools/ and the checkout root
     "wowmap/pipeline": ["tools/wowmap/pipeline", "tools/wowmap/wowmap"],   # extract_*.py insert ../wowmap
 }
 
@@ -51,6 +52,7 @@ PACKAGE_EDGES = {
     "jev-mock": set(),
     "loadtest": {"world-mock"},          # soak.py: `import server` from tools/world-mock (not in the #387 list; pinned, see PR)
     "wowmap": {"common", "dbc"},         # state.py, app.py, character.py
+    "worldknowledge": {"dbc"},           # build.py: dbc.wdbc
     "world-mock": set(),
 }
 
@@ -66,6 +68,7 @@ AGENT_EDGES = {
     "jev-mock": set(),
     "loadtest": {"handles", "items", "login", "names", "npc", "quests", "runloop", "supervisor"},
     "wowmap": set(),
+    "worldknowledge": {"worldknowledge"},   # build.py: SCHEMA_VERSION and SCHEMA, one definition
     "world-mock": {"auth", "crypt", "opcodes", "packets", "quests", "update_fields", "update_object"},
 }
 

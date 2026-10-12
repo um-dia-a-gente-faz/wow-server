@@ -1,0 +1,102 @@
+"""tools/worldknowledge/build.py against agent/worldknowledge.py (ADR 0016, slice 1): the contract test.
+
+The WDBC bytes are built here, small, with the field counts of build 12340. Field indexes are the
+ones cited in build.py (TrinityCore 3.3.5 DBCStructure.h).
+"""
+import os
+import pathlib
+import struct
+import sys
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools" / "worldknowledge"))
+import build  # noqa: E402
+from agent.worldknowledge import WorldKnowledge  # noqa: E402
+
+
+def wdbc(field_count, records):
+    """records: list of {field: int | float | str}; other fields are 0."""
+    strings, offsets, body = bytearray(b"\x00"), {}, bytearray()
+    for rec in records:
+        fields = [0] * field_count
+        for i, v in rec.items():
+            if isinstance(v, str):
+                if v not in offsets:
+                    offsets[v] = len(strings)
+                    strings += v.encode() + b"\x00"
+                fields[i] = offsets[v]
+            elif isinstance(v, float):
+                fields[i] = struct.unpack("<I", struct.pack("<f", v))[0]
+            else:
+                fields[i] = v & 0xFFFFFFFF
+        body += struct.pack(f"<{field_count}I", *fields)
+    head = struct.pack("<4sIIII", b"WDBC", len(records), field_count, field_count * 4, len(strings))
+    return head + bytes(body) + bytes(strings)
+
+
+def write_dbcs(d, spell_fields=234):
+    spells = [
+        # ID, CastingTimeIndex 28, SpellLevel 39, PowerType 41, ManaCost 42, RangeIndex 46,
+        # Name 136 (enUS slot), NameSubtext 153, ManaCostPct 204
+        {0: 133, 28: 4, 39: 1, 41: 0, 42: 30, 46: 7, 136: "Fireball", 153: "Rank 1", 204: 0},
+        {0: 2098, 28: 0, 39: 12, 41: 3, 42: 40, 46: 0, 136: "Eviscerate", 153: "Rank 2", 204: 5},
+    ]
+    for name, data in {
+        "Spell.dbc": wdbc(spell_fields, spells),
+        "SpellCastTimes.dbc": wdbc(4, [{0: 4, 1: 1500}]),
+        # ID, RangeMin[hostile, friendly] 1-2, RangeMax[hostile, friendly] 3-4
+        "SpellRange.dbc": wdbc(40, [{0: 7, 1: 5.0, 2: 2.0, 3: 35.0, 4: 40.0}]),
+    }.items():
+        with open(os.path.join(d, name), "wb") as f:
+            f.write(data)
+
+
+class BuildTests(unittest.TestCase):
+    def setUp(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        self.dbc = os.path.join(t.name, "dbc")
+        os.mkdir(self.dbc)
+        self.out = os.path.join(t.name, "world.sqlite3")
+
+    def test_bundle_is_read_back_column_by_column(self):
+        write_dbcs(self.dbc)
+        self.assertEqual(build.build(self.dbc, self.out), {"spell": 2})
+        r = WorldKnowledge(self.out)
+        self.addCleanup(r.close)
+        self.assertTrue(r.available)
+        self.assertEqual(r.spell(133), {
+            "id": 133, "name": "Fireball", "rank": "Rank 1", "spell_level": 1, "power_type": 0,
+            "mana_cost": 30, "mana_cost_pct": 0, "cast_time_ms": 1500,
+            "range_min_yd": 5.0, "range_max_yd": 35.0, "range_max_friendly_yd": 40.0})
+        # index 0 on both tables means instant and no range
+        self.assertEqual(r.spell(2098), {
+            "id": 2098, "name": "Eviscerate", "rank": "Rank 2", "spell_level": 12, "power_type": 3,
+            "mana_cost": 40, "mana_cost_pct": 5, "cast_time_ms": 0,
+            "range_min_yd": 0.0, "range_max_yd": 0.0, "range_max_friendly_yd": 0.0})
+        self.assertEqual(r.meta()["client_build"], "12340")
+        self.assertEqual(len(r.meta()["sha256:Spell.dbc"]), 64)
+
+    def test_wrong_field_count_fails_and_keeps_the_previous_output(self):
+        write_dbcs(self.dbc)
+        build.build(self.dbc, self.out)
+        with open(self.out, "rb") as f:
+            before = f.read()
+        write_dbcs(self.dbc, spell_fields=233)
+        with self.assertRaises(ValueError):
+            build.build(self.dbc, self.out)
+        with open(self.out, "rb") as f:
+            self.assertEqual(f.read(), before)
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.out))), ["dbc", "world.sqlite3"])
+
+    def test_rebuild_replaces_the_output(self):
+        write_dbcs(self.dbc)
+        build.build(self.dbc, self.out)
+        self.assertEqual(build.build(self.dbc, self.out), {"spell": 2})
+
+
+if __name__ == "__main__":
+    unittest.main()
