@@ -211,7 +211,7 @@ the wowmap pipeline are pinned in its tables. The `agent/` rules themselves are 
 
 | Path | Owns |
 |---|---|
-| `agents/` | the agent roster (`roster.json`); `scripts/gen_agents_compose.py` generates `docker-compose.agents.yml` from it |
+| `agents/` | the agent roster (`roster.json`) and the stdlib library that reads it: `roster.py` (loader, names, ports), `compose.py` (compose renderer), `character_rules.py` and `realm.py` (character creation); `scripts/gen_agents_compose.py` generates `docker-compose.agents.yml` with it, and `tools/agent-runner` imports it |
 | `exporters/wow-exporter` | game metrics from MySQL, :9300 |
 | `monitoring/`, `grafana/` | monitoring compose project, dashboards, provisioning |
 | `scripts/` | deploy, compose generation, probes, the worldserver console client |

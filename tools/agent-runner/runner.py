@@ -66,11 +66,11 @@ from pathlib import Path
 # command use runner.Config, runner.make_server, runner.scrub and friends.
 from core import RunnerError, scrub
 from docker_backend import DockerBackend
-from fleet import SUPPORTED_API_VERSIONS, Fleet, load_generator
+from fleet import SUPPORTED_API_VERSIONS, Fleet
 from handler import Handler
 
 __all__ =["Config", "DockerBackend", "Fleet", "Handler", "RunnerError", "SUPPORTED_API_VERSIONS",
-           "load_generator", "main", "make_server", "scrub"]
+           "main", "make_server", "scrub"]
 
 LOG = logging.getLogger("agent-runner")
 
