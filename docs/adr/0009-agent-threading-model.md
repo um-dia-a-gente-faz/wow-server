@@ -24,7 +24,7 @@ wrong. This ADR writes the current rules down so a change can be judged against 
 | chat relay | `agent/chat_relay.py`, daemon `chat-relay` | posts heard chat to chat-feed from a queue |
 
 The reconnect supervisor is the main thread: it creates a new session per attempt
-and tears the old one down.
+and tears the old one down. It is called by `Agent.run()` (`agent/root.py`).
 
 ## Who writes, who reads
 

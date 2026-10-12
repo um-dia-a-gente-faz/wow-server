@@ -3,7 +3,7 @@ import logging
 import unittest
 from types import SimpleNamespace
 
-from agent.__main__ import _warn_jev_unselected
+from agent.root import warn_jev_unselected
 
 
 def _cfg(jev_enabled, agent_brain):
@@ -14,7 +14,7 @@ class JevUnselectedWarningTests(unittest.TestCase):
     def _run(self, cfg):
         with self.assertLogs("t", level="WARNING") as cm:
             logging.getLogger("t").warning("sentinel")
-            _warn_jev_unselected(cfg, logging.getLogger("t"))
+            warn_jev_unselected(cfg, logging.getLogger("t"))
         return [m for m in cm.output if "Jev is configured" in m]
 
     def test_warns_when_llm_selected_regardless_of_llm_config(self):

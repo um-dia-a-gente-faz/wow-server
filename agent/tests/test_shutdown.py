@@ -15,7 +15,7 @@ from unittest import mock
 from agent import __main__ as m
 from agent import runloop, supervisor
 from agent import session as session_mod
-from agent.lifecycle import Lifecycle
+from agent.auth import AuthRejected
 from agent.tests.builders import make_session
 from agent.tests.test_reconnect import _NullLog
 
@@ -62,31 +62,61 @@ class SupervisorStopTest(unittest.TestCase):
 
 
 class MainWiresStopTest(unittest.TestCase):
-    """main() must hand the signal event to the supervisor: without it a SIGTERM during a
+    """main() must hand the signal event to Agent.run(): without it a SIGTERM during a
     reconnect backoff (up to 300 s) is ignored and docker kills the container."""
 
-    def test_main_passes_the_signal_event_to_the_supervisor(self):
-        stop, seen = threading.Event(), {}
+    def run_main(self, run, argv=("wow-agent",)):
+        self.stop, self.calls = threading.Event(), []
         cfg = mock.MagicMock(run_duration=0.0)
         cfg.validate.return_value = []
+        agent = mock.Mock()
+        agent.run.side_effect = run
 
-        def supervise(*args, **kw):
-            seen.update(kw)
+        def build(cfg, log, duration, perception_dump=False):
+            self.calls.append(("build", duration, perception_dump))
+            return agent
 
-        with mock.patch.object(sys, "argv", ["wow-agent"]), \
+        def install():
+            self.calls.append(("signals",))
+            return self.stop
+
+        with mock.patch.object(sys, "argv", list(argv)), \
                 mock.patch.object(m, "load_config", return_value=cfg), \
                 mock.patch.object(m, "_setup_logging"), \
-                mock.patch.object(m, "_build_chat_relay"), \
-                mock.patch.object(m, "Brain"), \
-                mock.patch.object(m, "_warn_jev_unselected"), \
-                mock.patch.object(m, "AuditLogger"), \
-                mock.patch.object(m, "_start_observer", return_value=(None, None)), \
-                mock.patch.object(m, "_install_stop_signals", return_value=stop), \
-                mock.patch.object(m, "supervise_connection", side_effect=supervise):
+                mock.patch.object(m, "build_agent", side_effect=build), \
+                mock.patch.object(m, "_install_stop_signals", side_effect=install):
             m.main()
-        self.assertIs(seen.get("stop"), stop)
-        self.assertIsInstance(seen.get("lifecycle"), Lifecycle)   # #292: main() hands the supervisor its machine
-        self.assertEqual(seen["lifecycle"].history(), ())
+        return agent
+
+    def test_main_passes_the_signal_event_to_the_agent_after_the_wiring(self):
+        agent = self.run_main(lambda stop: self.calls.append(("run", stop)))
+        self.assertEqual(self.calls, [("build", None, False), ("signals",), ("run", self.stop)])
+        agent.run.assert_called_once_with(self.stop)
+
+    def test_duration_and_perception_dump_reach_build_agent(self):
+        self.run_main(lambda stop: None, argv=("wow-agent", "--duration", "7", "--perception-dump"))
+        self.assertEqual(self.calls[0], ("build", 7.0, True))
+
+    def test_a_permanent_refusal_exits_one_without_a_traceback(self):
+        def refused(stop):
+            raise AuthRejected("logon proof", 0x03)
+
+        with self.assertRaises(SystemExit) as cm:
+            self.run_main(refused)
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_dry_run_and_list_chars_never_build_an_agent(self):
+        for flag, name in (("--dry-run", "dry_run"), ("--list-chars", "list_characters")):
+            for ok in (True, False):
+                with self.subTest(flag=flag, ok=ok), mock.patch.object(m, name, return_value=ok) as mode:
+                    if ok:
+                        self.run_main(None, argv=("wow-agent", flag))
+                    else:
+                        with self.assertRaises(SystemExit) as cm:
+                            self.run_main(None, argv=("wow-agent", flag))
+                        self.assertEqual(cm.exception.code, 1)
+                    mode.assert_called_once()
+                    self.assertEqual(self.calls, [])
 
 
 class ThinkLoopStopTest(unittest.TestCase):
