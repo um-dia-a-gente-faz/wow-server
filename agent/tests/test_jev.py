@@ -174,6 +174,15 @@ class ChooseActionTest(unittest.TestCase):
                     self.client.choose_action({}, CANDIDATES)
                 self.assertIsNone(cm.exception.status)
 
+    def test_error_carries_retry_after_and_transient(self):
+        http = jev._jev_error(httpjson.HttpJsonError("http", "u", status=429, body=b"{}", retry_after=12.0))
+        self.assertEqual((http.status, http.retry_after, http.transient), (429, 12.0, False))
+        net = jev._jev_error(httpjson.HttpJsonError("network", "u", detail="timed out"))
+        self.assertEqual((net.status, net.retry_after, net.transient), (None, None, True))
+        for kw in ({"detail": "x"}, {}):
+            e = jev._jev_error(httpjson.HttpJsonError("non_json", "u", body=b"x", **kw))
+            self.assertFalse(e.transient)
+
     def test_failure_clears_previous_audit_fields(self):
         with fake_urlopen(decisions_response("attack(guid=4660)")):
             self.client.choose_action({}, CANDIDATES)

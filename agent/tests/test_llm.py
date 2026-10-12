@@ -217,6 +217,13 @@ class FakeClock:
         return self.t
 
 
+class NoJitter:
+    """rng whose uniform(a, b) returns a: exact cooldown lengths (#636)."""
+
+    def uniform(self, a, b):
+        return a
+
+
 def unavailable(status=429, retry_after=None):
     return llm.LLMUnavailable(f"HTTP {status}", status=status, retry_after=retry_after,
                               retryable=status in (404, 429) or status >= 500)
@@ -241,7 +248,7 @@ class ScriptedPost:
 class FallbackTest(unittest.TestCase):
     def make(self, models="a,b,c", **kw):
         clock = FakeClock()
-        return llm.LLMClient("https://free.example/v1", models, clock=clock, **kw), clock
+        return llm.LLMClient("https://free.example/v1", models, clock=clock, **{"rng": NoJitter(), **kw}), clock
 
     def run_script(self, client, script):
         post = ScriptedPost(script)
@@ -364,6 +371,30 @@ class FallbackTest(unittest.TestCase):
         self.assertAlmostEqual(cd["b"], llm.MAX_COOLDOWN_S)
         self.assertAlmostEqual(cd["c"], llm.MIN_COOLDOWN_S)
 
+    def test_cooldown_jitter(self):
+        class Rng:
+            def __init__(self, end):
+                self.end = end
+
+            def uniform(self, a, b):
+                return a if self.end == "a" else b
+
+        for end, want in (("a", 60.0), ("b", 66.0)):
+            client = llm.LLMClient("https://free.example/v1", "a,b", clock=FakeClock(), rng=Rng(end))
+            self.run_script(client, {"a": [unavailable(429)], "b": [chat_response()]})
+            self.assertAlmostEqual(client.cooldowns()["a"], want)
+
+    def test_cooldown_never_below_base(self):
+        import random
+        client = llm.LLMClient("https://free.example/v1", "a", clock=FakeClock(), rng=random.Random(3))
+        for _ in range(1000):
+            s = client._cool_down("a", unavailable(429))
+            self.assertTrue(60.0 <= s <= 66.0)
+
+    def test_clients_do_not_share_a_generator(self):
+        a, b = (llm.LLMClient("u", "m") for _ in range(2))
+        self.assertIsNot(a._rng, b._rng)
+
     def test_routed_model_recorded_from_response(self):
         client, _ = self.make("auto")
         response = chat_response()
@@ -417,7 +448,7 @@ class ThinkAuditFieldsTest(unittest.TestCase):
 
         records = []
         audit = SimpleNamespace(record=lambda **kw: records.append(kw))
-        client = llm.LLMClient("https://free.example/v1", "auto", clock=FakeClock())
+        client = llm.LLMClient("https://free.example/v1", "auto", clock=FakeClock(), rng=NoJitter())
         good = chat_response("no_such_action", {})
         good["model"] = "routed-model"
         good["usage"] = {"prompt_tokens": 100, "completion_tokens": 5}
@@ -465,7 +496,7 @@ class RetryAfterParsingTest(unittest.TestCase):
         import urllib.error
         from email.message import Message
 
-        client = llm.LLMClient("https://free.example/v1", "a,b", clock=FakeClock())
+        client = llm.LLMClient("https://free.example/v1", "a,b", clock=FakeClock(), rng=NoJitter())
         calls = []
 
         def fake_urlopen(req, timeout):
