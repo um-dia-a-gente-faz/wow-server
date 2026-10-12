@@ -1,4 +1,4 @@
-"""Unit tests for the reconnect supervisor in agent.__main__ (UM-43).
+"""Unit tests for the reconnect supervisor in agent.supervisor (UM-43).
 build_session()/run_session() are both fakes; time.sleep is replaced with a
 fake that just records durations instead of actually waiting, so backoff
 timing (5s -> 5min cap) is asserted without the test taking minutes."""
@@ -11,7 +11,7 @@ import threading
 import unittest
 from unittest import mock
 
-from agent import __main__ as main_mod
+from agent import supervisor as main_mod
 from agent.auth import AuthRejected
 
 
@@ -42,7 +42,7 @@ class SupervisorConnectFailureTest(unittest.TestCase):
         def run_session(session):
             return False  # clean stop once we finally connect
 
-        main_mod._supervise_connection(build_session, run_session, log=_NullLog(),
+        main_mod.supervise_connection(build_session, run_session, log=_NullLog(),
                                         sleep=sleep, jitter=lambda b: b,
                                         initial_backoff=5.0, max_backoff=300.0)
 
@@ -60,7 +60,7 @@ class SupervisorConnectFailureTest(unittest.TestCase):
                 raise RuntimeError("connection refused")
             return object()
 
-        main_mod._supervise_connection(build_session, lambda s: False, log=_NullLog(),
+        main_mod.supervise_connection(build_session, lambda s: False, log=_NullLog(),
                                         sleep=sleep, jitter=lambda b: b,
                                         initial_backoff=5.0, max_backoff=15.0)
 
@@ -81,7 +81,7 @@ class SupervisorAuthRejectTest(unittest.TestCase):
                 raise AuthRejected("logon proof", code)
             return _FakeSession()
 
-        main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+        main_mod.supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
                                        jitter=lambda b: b, initial_backoff=5.0, max_backoff=300.0)
         return attempts, sleep, log
 
@@ -91,7 +91,7 @@ class SupervisorAuthRejectTest(unittest.TestCase):
                 attempts, log = [], _RecordingLog()
                 # a bounded sleep: a supervisor that retries a permanent reject fails here, not by hanging
                 with self.assertRaises(AuthRejected) as cm:
-                    main_mod._supervise_connection(self.always_refused(code, attempts),
+                    main_mod.supervise_connection(self.always_refused(code, attempts),
                                                    lambda s: False, log=log,
                                                    sleep=FakeSleep(limit=3), initial_backoff=5.0,
                                                    max_backoff=300.0)
@@ -141,7 +141,7 @@ class SupervisorConnectErrorLogTest(unittest.TestCase):
             return _FakeSession()
 
         with self.assertLogs(log, level="WARNING") as captured:
-            main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+            main_mod.supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
                                            jitter=lambda b: b, initial_backoff=5.0, max_backoff=300.0)
         return attempts, sleep, captured.records
 
@@ -235,7 +235,7 @@ class SupervisorDisconnectTest(unittest.TestCase):
         def run_session(session):
             return run_results[session.n]
 
-        main_mod._supervise_connection(build_session, run_session, log=_NullLog(),
+        main_mod.supervise_connection(build_session, run_session, log=_NullLog(),
                                         sleep=sleep, jitter=lambda b: b,
                                         initial_backoff=5.0, max_backoff=300.0)
 
@@ -263,7 +263,7 @@ class SupervisorDisconnectTest(unittest.TestCase):
             run_calls.append(1)
             return len(run_calls) == 1  # first successful run disconnects, second stops cleanly
 
-        main_mod._supervise_connection(build_session, run_session, log=_NullLog(),
+        main_mod.supervise_connection(build_session, run_session, log=_NullLog(),
                                         sleep=sleep, jitter=lambda b: b,
                                         initial_backoff=5.0, max_backoff=300.0)
 
@@ -283,7 +283,7 @@ class SupervisorDisconnectTest(unittest.TestCase):
             calls.append(1)
             return len(calls) == 1
 
-        main_mod._supervise_connection(lambda: FakeSession(), run_session, log=_NullLog(),
+        main_mod.supervise_connection(lambda: FakeSession(), run_session, log=_NullLog(),
                                         sleep=sleep, initial_backoff=1.0, max_backoff=10.0)
         self.assertEqual(len(calls), 2)
 
@@ -304,13 +304,13 @@ class SupervisorJitterTest(unittest.TestCase):
                 raise RuntimeError("connection refused")
             return object()
 
-        main_mod._supervise_connection(build_session, lambda s: False, log=_NullLog(), sleep=sleep,
+        main_mod.supervise_connection(build_session, lambda s: False, log=_NullLog(), sleep=sleep,
                                        initial_backoff=5.0, max_backoff=300.0, **kwargs)
         return sleep.calls
 
     @staticmethod
     def seeded(seed):
-        return {"jitter": functools.partial(main_mod._equal_jitter, rng=random.Random(seed))}
+        return {"jitter": functools.partial(main_mod.equal_jitter, rng=random.Random(seed))}
 
     def test_seeded_supervisors_spread_their_first_retry(self):
         firsts = [self.retry_waits(**self.seeded(seed))[0] for seed in range(25)]
@@ -343,7 +343,7 @@ class SupervisorJitterTest(unittest.TestCase):
                 raise AuthRejected("logon proof", 0x06)  # transient: a warning line with the wait
             return object()
 
-        main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+        main_mod.supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
                                        jitter=lambda b: 3.0, initial_backoff=5.0, max_backoff=300.0)
         self.assertEqual(sleep.calls, [3.0])
         self.assertIn("retrying in 3s", log.lines[0][1])
@@ -370,14 +370,14 @@ class SupervisorJitterTest(unittest.TestCase):
             runs.append(1)
             return len(runs) == 1  # the first session drops, the second stops cleanly
 
-        main_mod._supervise_connection(build_session, run_session, log=log, sleep=sleep,
+        main_mod.supervise_connection(build_session, run_session, log=log, sleep=sleep,
                                        initial_backoff=5.0, max_backoff=300.0, **kwargs)
         return sleep.calls, log
 
     def test_post_disconnect_wait_is_jittered_and_the_connect_retries_follow_the_backoff(self):
         firsts = []
         for seed in range(25):
-            waits, _ = self.drop_then_fail(2, jitter=functools.partial(main_mod._equal_jitter,
+            waits, _ = self.drop_then_fail(2, jitter=functools.partial(main_mod.equal_jitter,
                                                                        rng=random.Random(seed)))
             self.assertEqual(len(waits), 3)
             for wait, backoff in zip(waits, (5.0, 10.0, 20.0), strict=True):
@@ -402,7 +402,7 @@ class SupervisorJitterTest(unittest.TestCase):
                 raise RuntimeError("connection refused")
             return object()
 
-        main_mod._supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
+        main_mod.supervise_connection(build_session, lambda s: False, log=log, sleep=sleep,
                                        jitter=lambda b: 3.0, initial_backoff=5.0, max_backoff=300.0)
         self.assertEqual(sleep.calls, [3.0])
         warnings = [m for level, m in log.lines if level == "warning"]
@@ -432,7 +432,7 @@ class SupervisorStopDuringWaitTest(unittest.TestCase):
             builds.append(1)
             raise RuntimeError("connection refused")
 
-        main_mod._supervise_connection(build_session, lambda s: False, log=_NullLog(),
+        main_mod.supervise_connection(build_session, lambda s: False, log=_NullLog(),
                                        sleep=_StopOnSleep(stop), stop=stop)
         self.assertEqual(len(builds), 1)
 
@@ -447,7 +447,7 @@ class SupervisorStopDuringWaitTest(unittest.TestCase):
             builds.append(1)
             return Session()
 
-        main_mod._supervise_connection(build_session, lambda s: True, log=_NullLog(),
+        main_mod.supervise_connection(build_session, lambda s: True, log=_NullLog(),
                                        sleep=_StopOnSleep(stop), stop=stop)
         self.assertEqual(len(builds), 1)
         self.assertEqual(len(logouts), 1)
@@ -477,7 +477,7 @@ class SupervisorReconnectCountTest(unittest.TestCase):
             runs.append(1)
             return len(runs) == 1  # first session drops (disconnected), second stops cleanly
 
-        main_mod._supervise_connection(build_session, run_session, log=_NullLog(), sleep=FakeSleep(),
+        main_mod.supervise_connection(build_session, run_session, log=_NullLog(), sleep=FakeSleep(),
                                        initial_backoff=5.0, max_backoff=300.0)
         self.assertEqual(self.m.RECONNECTS, {"connect_failed": 1, "auth_rejected": 1, "disconnected": 1})
 
@@ -486,7 +486,7 @@ class SupervisorReconnectCountTest(unittest.TestCase):
             raise AuthRejected("logon proof", 0x03)  # permanent: raised, never waits
 
         with self.assertRaises(AuthRejected):
-            main_mod._supervise_connection(build_session, lambda s: False, log=_RecordingLog(),
+            main_mod.supervise_connection(build_session, lambda s: False, log=_RecordingLog(),
                                            sleep=FakeSleep(limit=0))
         self.assertEqual(sum(self.m.RECONNECTS.values()), 0)
 

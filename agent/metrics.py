@@ -494,7 +494,7 @@ def render_router(agent: str) -> str:
 
 # ── Reconnect attempts (#402) ─────────────────────────────────────────────
 # Process-wide like the router counters: one count per reconnect wait the supervisor
-# (agent.__main__._supervise_connection) takes, by reason. All reasons render, at 0 until
+# (agent.supervisor.supervise_connection) takes, by reason. All reasons render, at 0 until
 # they happen, so rate() works from the first scrape.
 RECONNECT_REASONS = ("connect_failed", "auth_rejected", "disconnected")
 RECONNECTS: dict[str, int] = dict.fromkeys(RECONNECT_REASONS, 0)

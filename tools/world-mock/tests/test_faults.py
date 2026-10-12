@@ -21,7 +21,9 @@ from agent import opcodes as op  # noqa: E402
 from agent import session as session_mod  # noqa: E402
 from agent import transport  # noqa: E402
 from agent.auth import AuthRejected  # noqa: E402
-from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_connection  # noqa: E402
+from agent.login import connect_and_login  # noqa: E402
+from agent.runloop import run_think_loop  # noqa: E402
+from agent.supervisor import supervise_connection  # noqa: E402
 
 BACKOFF_S = 1.0     # handed to an injected sleep, never really slept
 SESSION_S = 1.0     # how long a healthy session's think loop runs before it ends cleanly
@@ -90,7 +92,7 @@ class FaultInjectionTest(unittest.TestCase):
         self.addCleanup(self.mock.close)
 
     def login(self):
-        sess = _connect_and_login(self.cfg, self.log)
+        sess = connect_and_login(self.cfg, self.log)
         self.addCleanup(sess.logout)
         return sess
 
@@ -102,7 +104,7 @@ class FaultInjectionTest(unittest.TestCase):
         self.sessions = []
 
         def build():
-            self.sessions.append(_connect_and_login(self.cfg, self.log))
+            self.sessions.append(connect_and_login(self.cfg, self.log))
             return self.sessions[-1]
 
         t0 = time.monotonic()
@@ -123,7 +125,7 @@ class FaultInjectionTest(unittest.TestCase):
             if len(sleeps) > MAX_BACKOFFS or time.monotonic() - t0 > RECOVER_S:
                 raise AssertionError(f"supervisor did not recover: backoffs {sleeps}")
 
-        _supervise_connection(build, lambda s: _run_think_loop(s, self.cfg, SESSION_S, time.monotonic()),
+        supervise_connection(build, lambda s: run_think_loop(s, self.cfg, SESSION_S, time.monotonic()),
                               self.log, sleep=sleep, jitter=lambda b: b, initial_backoff=BACKOFF_S)
         self.assertLess(time.monotonic() - t0, RECOVER_S)
         self.assertTrue(burst_applied(self.sessions[-1]), "the session after the fault is not healthy")
@@ -161,7 +163,7 @@ class FaultInjectionTest(unittest.TestCase):
                 self.start(FaultPlan(auth_reject=code))
                 sleeps = []
                 with self.assertRaises(AuthRejected) as cm:
-                    _supervise_connection(lambda: _connect_and_login(self.cfg, self.log),
+                    supervise_connection(lambda: connect_and_login(self.cfg, self.log),
                                           lambda s: False, self.log,
                                           sleep=sleeps.append, initial_backoff=BACKOFF_S)
                 self.assertEqual(cm.exception.code, code)
@@ -175,7 +177,7 @@ class FaultInjectionTest(unittest.TestCase):
         self.start(FaultPlan(stall=1.0, stall_at=6))     # silence right before the login burst
         sess = self.login()
         t0 = time.monotonic()
-        self.assertFalse(_run_think_loop(sess, self.cfg, 0.3, t0))
+        self.assertFalse(run_think_loop(sess, self.cfg, 0.3, t0))
         self.assertLess(time.monotonic() - t0, 0.8)
         self.assertFalse(burst_applied(sess), "the mock did not stall")
         self.assertTrue(sess.recv_thread_alive())
@@ -325,7 +327,7 @@ class FaultInjectionTest(unittest.TestCase):
                 self.start(FaultPlan(auth_reject=code))
                 t0 = time.monotonic()
                 with self.assertRaises(AuthRejected) as cm:
-                    _connect_and_login(self.cfg, self.log)
+                    connect_and_login(self.cfg, self.log)
                 self.assertLess(time.monotonic() - t0, 1.0)
                 self.assertEqual(cm.exception.code, code)
                 self.assertIn(name, str(cm.exception))

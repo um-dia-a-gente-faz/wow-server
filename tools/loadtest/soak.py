@@ -27,7 +27,9 @@ from agent.items import ItemCache  # noqa: E402
 from agent.names import NameCache  # noqa: E402
 from agent.npc import NpcTextCache  # noqa: E402
 from agent.quests import QuestCache  # noqa: E402
-from agent.__main__ import _connect_and_login, _run_think_loop, _supervise_connection  # noqa: E402
+from agent.login import connect_and_login  # noqa: E402
+from agent.runloop import run_think_loop  # noqa: E402
+from agent.supervisor import supervise_connection  # noqa: E402
 
 PASSWORD = "soakpass"   # made-up, only ever registered in the throwaway mock
 BACKOFF_S = 0.2         # reconnect backoff: short, the soak is about recovery, not politeness
@@ -139,7 +141,7 @@ class Agent:
         self.builds += 1
         self.ticks.new_session()
         try:
-            self.session = _connect_and_login(self.cfg, self.log)
+            self.session = connect_and_login(self.cfg, self.log)
             self._count_packets(self.session)
         except Exception:
             self.down_since = self.down_since or time.monotonic()   # a failed login is still "down"
@@ -161,7 +163,7 @@ class Agent:
         sess._recv_packet = counted
 
     def _run(self, sess):
-        down = _run_think_loop(sess, self.cfg, self.deadline - time.monotonic(), time.monotonic())
+        down = run_think_loop(sess, self.cfg, self.deadline - time.monotonic(), time.monotonic())
         self.dropped += sess.dropped_packets
         if down:
             self.down_since = time.monotonic()
@@ -174,7 +176,7 @@ class Agent:
 
     def run(self):
         try:
-            _supervise_connection(self._build, self._run, self.log, sleep=self._sleep,
+            supervise_connection(self._build, self._run, self.log, sleep=self._sleep,
                                   initial_backoff=BACKOFF_S, max_backoff=BACKOFF_S)
         except _Done:
             pass

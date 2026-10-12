@@ -15,7 +15,7 @@ import server  # noqa: E402
 from server import FaultPlan  # noqa: E402
 
 from agent import session as session_mod  # noqa: E402
-from agent.__main__ import _connect_and_login  # noqa: E402
+from agent.login import connect_and_login  # noqa: E402
 
 LOGOUT_BOUND_S = session_mod.LOGOUT_WAIT_S * 2 + 3.0   # recv-thread join + logout wait + 3 s slack
 LOG = logging.getLogger("test")
@@ -49,7 +49,7 @@ class StreamingShutdownTest(unittest.TestCase):
 
     def test_logout_is_bounded_with_stream_and_bad_crypt(self):
         self.start(FaultPlan(bad_crypt_from=9))     # after the login burst, once the stream runs
-        sess = _connect_and_login(self.cfg, LOG)
+        sess = connect_and_login(self.cfg, LOG)
         sock = sess.sock
         self.addCleanup(self.assert_threads_return)     # registered first, runs after the closes below
         self.addCleanup(self.mock.close)
@@ -65,7 +65,7 @@ class StreamingShutdownTest(unittest.TestCase):
 
     def test_mock_close_stops_streaming_handlers(self):
         self.start()
-        sess = _connect_and_login(self.cfg, LOG)
+        sess = connect_and_login(self.cfg, LOG)
         self.addCleanup(sess.logout)
         time.sleep(SETTLE_S)
 

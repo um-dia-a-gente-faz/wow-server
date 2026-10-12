@@ -18,7 +18,7 @@ import server  # noqa: E402
 
 from agent import actions as ac  # noqa: E402
 from agent import candidates  # noqa: E402
-from agent.__main__ import _authenticate_and_login  # noqa: E402
+from agent.login import authenticate_and_login  # noqa: E402
 
 
 def wait_for(pred, timeout=8.0):
@@ -36,7 +36,7 @@ class DeathScenarioTest(unittest.TestCase):
         self.addCleanup(mock.close)
         cfg = SimpleNamespace(wow_host="127.0.0.1", wow_auth_port=mock.auth_port, account=server.DEFAULT_ACCOUNT,
                               password=server.DEFAULT_PASSWORD, verbose_packets=False, dump_packets_dir="")
-        sess, chars = _authenticate_and_login(cfg, logging.getLogger("test"))
+        sess, chars = authenticate_and_login(cfg, logging.getLogger("test"))
         self.addCleanup(lambda: sess.sock and sess.sock.close())
         sess.login_character(chars[0]["guid"])
         self.addCleanup(sess.logout)
