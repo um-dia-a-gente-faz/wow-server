@@ -46,6 +46,8 @@ and tears the old one down. It is called by `Agent.run()` (`agent/root.py`).
 - `WorldState` has one internal lock; its docstring says mutation goes through
   `update_object()` / `remove_guids()` from the recv thread and that `snapshot()`
   and the getters are safe from other threads.
+  `snapshot()` composes and encodes the whole snapshot (every section) inside one
+  acquisition of that lock (#701), so it shows one moment and shares no object with live state.
 - `HandleMap` (`agent/handles.py`) and `AgentObserver` (`_lock` for sequence and
   token totals) have their own small locks.
 - `AgentObserver.action_lock` (#178): held by the think loop for the whole of each
