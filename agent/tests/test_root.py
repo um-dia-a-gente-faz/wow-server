@@ -5,12 +5,14 @@ dry run stays outside the supervisor and the lifecycle."""
 import json
 import logging
 import os
+import sys
 import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from agent import __main__ as main_mod
 from agent import root
 from agent.audit import AuditLogger
 from agent.auth import AuthRejected
@@ -26,6 +28,19 @@ class _Log(_RecordingLog):
 
     def critical(self, *a):
         self._record("critical", *a)
+
+
+class _OrderLog:
+    """Logs into the shared step list, so a log line takes its place among the start-up steps."""
+
+    def __init__(self, order):
+        self.order = order
+
+    def info(self, fmt, *args):
+        self.order.append("log: " + fmt)
+
+    def warning(self, fmt, *args):
+        self.order.append("log: " + fmt)
 
 
 def _agent(**overrides):
@@ -74,6 +89,23 @@ class AgentRunTest(unittest.TestCase):
         run_loop.assert_called_once_with("SESSION", agent.cfg, 1.5, perception_dump=True, brain=None,
                                          audit_logger=agent.audit_logger, observer=None, stop=stop)
 
+    def test_run_session_hands_its_brain_and_observer_to_run_loop(self):
+        brain, observer, stop = object(), object(), threading.Event()
+        agent = _agent(brain=brain, observer=observer)
+        with mock.patch.object(root, "run_loop", return_value=False) as run_loop:
+            agent.run_session("SESSION", stop)
+        self.assertIs(run_loop.call_args.kwargs["brain"], brain)
+        self.assertIs(run_loop.call_args.kwargs["observer"], observer)
+
+    def test_close_stops_the_relay_then_the_observer_and_a_second_close_repeats_both_without_raising(self):
+        order, agent = [], _agent()
+        agent.chat_relay.stop.side_effect = lambda: order.append("chat_relay.stop")
+        agent.http_server.shutdown.side_effect = lambda: order.append("http_server.shutdown")
+        agent.close()
+        self.assertEqual(order, ["chat_relay.stop", "http_server.shutdown"])
+        agent.close()   # close() has no guard: both stops run again and nothing raises
+        self.assertEqual(order, ["chat_relay.stop", "http_server.shutdown"] * 2)
+
     def test_run_end_to_end_writes_the_lifecycle_and_stops_on_the_event(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -105,22 +137,36 @@ class BuildAgentTest(unittest.TestCase):
                                jev_enabled=False, http_port=0, chat_relay_url="", chat_relay_token="",
                                chat_relay_timeout=1.0)
 
-    def test_wires_every_part_in_the_order_main_used_and_does_not_connect(self):
+    def test_records_every_start_up_step_in_the_order_main_used_and_does_not_connect(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         order, brain, observer, server = [], mock.Mock(), root.AgentObserver("Built"), mock.Mock()
-        relay = mock.Mock()
+        relay, real_lifecycle = mock.Mock(), root.build_lifecycle
+        brain.describe.return_value = "llm"
+        brain.restore_jev_spend.side_effect = lambda *a: order.append("restore_jev_spend")
 
         def step(name, value):
             return lambda *a, **kw: (order.append(name), value)[1]
 
+        def audit(*a, **kw):
+            order.append("audit_logger")
+            return AuditLogger(*a, **kw)
+
+        def lifecycle(audit_logger, obs):
+            order.append("lifecycle")
+            return real_lifecycle(audit_logger, obs)
+
         with mock.patch.object(root, "build_chat_relay", side_effect=step("chat_relay", relay)), \
                 mock.patch.object(root.Brain, "from_config", side_effect=step("brain", brain)), \
                 mock.patch.object(root, "warn_jev_unselected", side_effect=step("jev_warning", None)), \
-                mock.patch.object(root, "start_observer", side_effect=step("observer", (observer, server))), \
+                mock.patch.object(root, "AuditLogger", side_effect=audit), \
+                mock.patch.object(root, "start_observer", side_effect=step("start_observer", (observer, server))), \
+                mock.patch.object(root, "build_lifecycle", side_effect=lifecycle), \
                 mock.patch.object(root, "connect_and_login", side_effect=AssertionError("build_agent connected")):
-            agent = root.build_agent(self.cfg(tmp.name), LOG, 12.0, perception_dump=True)
-        self.assertEqual(order, ["chat_relay", "brain", "jev_warning", "observer"])
+            agent = root.build_agent(self.cfg(tmp.name), _OrderLog(order), 12.0, perception_dump=True)
+        self.assertEqual(order, ["chat_relay", "brain", "jev_warning", "log: brain: %s", "audit_logger",
+                                 "log: audit log: %s (retention %d days)", "restore_jev_spend",
+                                 "start_observer", "lifecycle"])
         self.assertEqual((agent.chat_relay, agent.brain, agent.observer, agent.http_server),
                          (relay, brain, observer, server))
         self.assertEqual((agent.duration, agent.perception_dump), (12.0, True))
@@ -141,6 +187,91 @@ class BuildAgentTest(unittest.TestCase):
         self.assertEqual((agent.observer, agent.http_server), (None, None))
         self.assertEqual((agent.duration, agent.perception_dump), (None, False))
         self.assertFalse(agent.chat_relay.enabled)
+
+    def test_the_brain_and_audit_log_lines_are_each_logged_once(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        brain = mock.Mock()
+        brain.describe.return_value = "llm"
+        with mock.patch.object(root.Brain, "from_config", return_value=brain), self.assertLogs(LOG, level="INFO") as cm:
+            agent = root.build_agent(self.cfg(tmp.name), LOG)
+        self.addCleanup(agent.close)
+        messages = [r.getMessage() for r in cm.records]
+        self.assertEqual(sum(m == "brain: llm" for m in messages), 1)
+        self.assertEqual(sum(m.startswith("audit log: ") for m in messages), 1)
+
+    def test_the_brain_and_the_audit_log_reach_the_observer(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        cfg, brain = self.cfg(tmp.name), mock.Mock(model="brain-model")
+        vars(cfg).update(http_port=8123, http_bind="127.0.0.1", persona="", llm_model="cfg-model", control_token="")
+        with mock.patch.object(root.Brain, "from_config", return_value=brain), \
+                mock.patch.object(root, "start_server", return_value=mock.Mock()):
+            agent = root.build_agent(cfg, LOG)
+        self.addCleanup(agent.close)
+        self.assertEqual(agent.observer.model, "brain-model")
+        self.assertEqual(agent.audit_logger.on_record, agent.observer.record_decision)
+
+
+class WiringPartsTest(unittest.TestCase):
+    """The parts build_agent() relies on: the audit log feeds the observer, the control
+    token reaches it, and an enabled chat relay is started."""
+
+    def observer_cfg(self):
+        return SimpleNamespace(http_port=8123, http_bind="127.0.0.1", agent_name="Wired", persona="",
+                               llm_model="m", control_token="tok")
+
+    def start(self, tmp):
+        audit = AuditLogger("Wired", base_dir=tmp)
+        with mock.patch.object(root, "start_server", return_value=mock.Mock()):
+            observer, _server = root.start_observer(self.observer_cfg(), audit, LOG)
+        return audit, observer
+
+    def test_the_audit_log_feeds_the_observer(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        audit, observer = self.start(tmp.name)
+        self.assertEqual(audit.on_record, observer.record_decision)
+
+    def test_the_control_token_reaches_the_observer(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        _audit, observer = self.start(tmp.name)
+        self.assertEqual(observer.control_token, "tok")
+
+    def test_an_enabled_chat_relay_is_started(self):
+        relay = mock.Mock(enabled=True)
+        cfg = SimpleNamespace(chat_relay_url="http://relay", agent_name="Wired", chat_relay_token="",
+                              chat_relay_timeout=1.0)
+        with mock.patch.object(root, "ChatRelay", return_value=relay):
+            self.assertIs(root.build_chat_relay(cfg, LOG), relay)
+        relay.start.assert_called_once_with()
+
+
+class MainLogLinesTest(unittest.TestCase):
+    """The two lines main() logs around the agent run: 'entering agent loop' and 'done.'."""
+
+    def run_main(self):
+        self.agent, self.stop = mock.Mock(), threading.Event()
+        cfg = mock.MagicMock(run_duration=0.0)
+        cfg.validate.return_value = []
+        with mock.patch.object(sys, "argv", ["wow-agent"]), \
+                mock.patch.object(main_mod, "load_config", return_value=cfg), \
+                mock.patch.object(main_mod, "_setup_logging"), \
+                mock.patch.object(main_mod, "build_agent", return_value=self.agent), \
+                mock.patch.object(main_mod, "_install_stop_signals", return_value=self.stop), \
+                self.assertLogs("agent", level="INFO") as cm:
+            main_mod.main()
+        return [r.getMessage() for r in cm.records]
+
+    def test_entering_the_loop_and_done_are_each_logged_once(self):
+        messages = self.run_main()
+        self.assertEqual(sum(m.startswith("entering agent loop") for m in messages), 1)
+        self.assertEqual(sum(m == "done." for m in messages), 1)
+
+    def test_main_runs_the_agent_once_and_leaves_the_closing_to_run(self):
+        self.run_main()
+        self.assertEqual(self.agent.mock_calls, [mock.call.run(self.stop)])
 
 
 class DryRunTest(unittest.TestCase):

@@ -15,7 +15,7 @@ def authenticate_and_login(cfg, log) -> tuple:
     characters. Returns (session, chars) with the session logged in only as
     far as the world connection — no character selected yet. Raises on any
     failure (AuthRejected, a socket error, ...) —
-    callers decide how to react (main()'s --list-chars path exits;
+    callers decide how to react (root.list_characters() for --list-chars returns False;
     connect_and_login()/the reconnect supervisor propagate it up)."""
     log.info("authenticating to %s:%d as %s", cfg.wow_host, cfg.wow_auth_port, cfg.account)
     account, session_key, realms = auth_logon(cfg.wow_host, cfg.wow_auth_port,
@@ -53,7 +53,7 @@ def resolve_character(cfg, chars: list) -> dict:
 def connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
     """Full auth -> connect -> character login sequence, returning a
     WoWSession already logged in as the configured (or first available)
-    character. Raises on failure. Used directly by main() for --dry-run,
+    character. Raises on failure. Used directly by root.dry_run() for --dry-run,
     and as the reconnect supervisor's build_session() for the default
     run-forever mode (UM-43) — each call builds a brand-new WoWSession, and
     therefore a brand-new WorldState (agent.perception), from scratch."""
