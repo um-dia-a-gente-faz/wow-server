@@ -18,7 +18,7 @@ class _Clock:
 
 
 class MemoryTests(unittest.TestCase):
-    FLUSH_BOUND_S = 10
+    FLUSH_BOUND_S = 60  # a slow CI run takes up to 19 s here; far below the 5 min job limit
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
