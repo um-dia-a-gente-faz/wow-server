@@ -7,11 +7,34 @@ across sessions is safe; player names are not cached there for the opposite
 reason)."""
 
 import collections
-import json
+import contextlib
+import logging
 import os
 import time
 
+from . import persist
+
+log = logging.getLogger("agent.items")
+
 DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/wow-agent/items.json")
+CACHE_SCHEMA = 1   # ADR 0018: the `schema` key of items.json
+
+
+def _parse_items_section(section) -> dict[int, dict | None]:
+    """The `items` section of the cache file: {"<entry>": parsed dict or null}. Raises
+    ValueError on any other shape, so load() drops the whole file."""
+    if not isinstance(section, dict):
+        raise ValueError(f"items section is {type(section).__name__}, expected an object")
+    out = {}
+    for key, value in section.items():
+        try:
+            entry = int(key)
+        except ValueError:
+            raise ValueError(f"non-numeric entry key {key[:40]!r}") from None
+        if value is not None and not isinstance(value, dict):
+            raise ValueError(f"entry {entry} is {type(value).__name__}, expected an object or null")
+        out[entry] = value
+    return out
 
 
 class ItemCache:
@@ -29,6 +52,7 @@ class ItemCache:
         self._budget_per_second = budget_per_second
         self._clock = clock
         self.cache_path = cache_path
+        self._no_save: set[str] = set()  # paths whose file is of a newer schema: save() leaves them alone
         self.duplicate_queries = 0
 
     def want_item(self, entry: int):
@@ -65,20 +89,33 @@ class ItemCache:
             self.save()
 
     def load(self, path: str | None = None):
-        try:
-            with open(path or self.cache_path) as f:
-                data = json.load(f)
-        except (OSError, ValueError):
+        """Best-effort, same rules as NameCache.load (ADR 0018): missing or older is a
+        silent cold start; newer is left alone with saving to that path off; unreadable is
+        moved to <path>.corrupt. All or nothing."""
+        path = path or self.cache_path
+        loaded = persist.read_versioned(path, CACHE_SCHEMA)
+        if loaded.status in (persist.MISSING, persist.OLDER):
             return
-        self.items.update({int(k): v for k, v in data.get("items", {}).items()})
+        if loaded.status == persist.NEWER:
+            log.warning("item cache %s is schema %d, newer than %d: not read, not overwritten",
+                        path, loaded.version, CACHE_SCHEMA)
+            self._no_save.add(path)
+            return
+        if loaded.status == persist.OK:
+            try:
+                items = _parse_items_section(loaded.data.get("items", {}))
+            except ValueError as e:
+                log.warning("ignoring unreadable item cache %s: %s", path, e)
+                persist.set_aside(path)
+                return
+            self.items.update(items)
+            return
+        log.warning("ignoring unreadable item cache %s", path)
+        persist.set_aside(path)
 
     def save(self, path: str | None = None):
         path = path or self.cache_path
-        try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            tmp = path + f".tmp{os.getpid()}"
-            with open(tmp, "w") as f:
-                json.dump({"items": self.items}, f)
-            os.replace(tmp, path)
-        except OSError:
-            pass
+        if path in self._no_save:
+            return
+        with contextlib.suppress(OSError):
+            persist.write_versioned(path, CACHE_SCHEMA, {"items": self.items})

@@ -247,7 +247,8 @@ class ParserFuzzTest(unittest.TestCase):
         self.assertIn("session.world_state.names.players.9", _changed(before, snapshot(sess)))
 
     def test_populated_session_never_writes_outside_a_temp_dir(self):
-        with mock.patch("os.replace") as replace, mock.patch("builtins.open", mock.mock_open()) as opened:
+        with (mock.patch("os.replace") as replace, mock.patch("os.fsync"),   # persist.write_atomic fsyncs the fake file
+              mock.patch("builtins.open", mock.mock_open()) as opened):
             sess = populated_session()
             for cache in (sess.world_state.names, sess.world_state.items):
                 cache.save()

@@ -8,6 +8,7 @@ import os
 import struct
 import tempfile
 import unittest
+from unittest import mock
 
 from agent import names as nm
 from agent import packets as pk
@@ -334,6 +335,160 @@ class NameCachePersistenceTest(unittest.TestCase):
             with open(path) as f:
                 data = json.load(f)
             self.assertEqual(data["creatures"]["1"]["name"], "X")
+
+
+def main_loader(cache, path):
+    """NameCache.load as it is on main (bd20f6a), reduced to what it reads: the old reader."""
+    with open(path) as f:
+        data = json.load(f)
+    cache.creatures.update({int(k): v for k, v in data.get("creatures", {}).items()})
+    cache.gameobjects.update({int(k): v for k, v in data.get("gameobjects", {}).items()})
+
+
+def _put(path, content):
+    with open(path, "wb" if isinstance(content, bytes) else "w") as f:
+        f.write(content)
+
+
+def _read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+UNREADABLE_FILES = {
+    "zero bytes": b"",
+    "truncated": b'{"creatures": {"1": {"name": "Bro',
+    "list": b"[]",
+    "bad key": b'{"creatures": {"abc": 1}}',
+    "string schema": b'{"schema": "x"}',
+    "bool schema": b'{"schema": true}',
+    "deep": b"[" * 100000 + b"]" * 100000,
+    "bad utf8": b'{"creatures": {"1": {"name": "\xff"}}}',
+    "gameobjects bad, creatures fine": b'{"creatures": {"1": {"name": "a"}}, "gameobjects": {"x": {}}}',
+}
+
+
+class NameCacheSchemaTest(unittest.TestCase):
+    def test_file_written_by_main_loads_unchanged(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            _put(path, json.dumps({"creatures": {"1": {"name": "A"}, "2": None},
+                                   "gameobjects": {"3": {"name": "B"}}}))
+            c = nm.NameCache()
+            with self.assertNoLogs("agent.names", "WARNING"):
+                c.load(path)
+            self.assertEqual(c.creatures, {1: {"name": "A"}, 2: None})
+            self.assertEqual(c.gameobjects, {3: {"name": "B"}})
+            self.assertFalse(os.path.exists(path + ".corrupt"))
+
+    def test_saved_file_has_schema_1_and_the_old_loader_reads_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            c1 = nm.NameCache()
+            c1.creatures[1] = {"name": "A"}
+            c1.gameobjects[2] = None
+            c1.save(path)
+            self.assertEqual(json.loads(_read(path))["schema"], 1)
+            c2 = nm.NameCache()
+            main_loader(c2, path)
+            self.assertEqual((c2.creatures, c2.gameobjects), ({1: {"name": "A"}}, {2: None}))
+
+    def test_newer_file_loads_nothing_and_is_never_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            other = os.path.join(d, "other.json")
+            _put(path, '{"schema": 2, "creatures": {"1": {"name": "A"}}}')
+            os.utime(path, (1000000000, 1000000000))
+            before = _read(path)
+            c = nm.NameCache(cache_path=path)
+            with self.assertLogs("agent.names", "WARNING") as logs:
+                c.load()
+            self.assertEqual(len(logs.output), 1)
+            self.assertIn(path, logs.output[0])
+            self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
+            c.creatures[5] = {"name": "X"}
+            c.save()
+            c.save(path)
+            c.on_creature_query_response({"entry": 6, "found": True, "name": "Y"})
+            self.assertEqual(_read(path), before)
+            self.assertEqual(os.stat(path).st_mtime, 1000000000)
+            self.assertEqual(sorted(os.listdir(d)), ["names.json"])
+            c.save(other)   # saving is off per path, not per instance
+            self.assertEqual(set(json.loads(_read(other))["creatures"]), {"5", "6"})
+
+    def test_unreadable_files_are_set_aside_and_the_next_save_is_fresh(self):
+        for label, content in UNREADABLE_FILES.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "names.json")
+                _put(path, content)
+                _put(path + ".corrupt", b"older corpse")
+                c = nm.NameCache()
+                with self.assertLogs("agent.names", "WARNING") as logs:
+                    c.load(path)
+                self.assertEqual(len(logs.output), 1)
+                self.assertIn(path, logs.output[0])
+                self.assertNotIn("\n", logs.output[0])
+                self.assertLess(len(logs.output[0]), 500)
+                self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
+                self.assertEqual(_read(path + ".corrupt"), content)
+                self.assertFalse(os.path.exists(path))
+                c.creatures[7] = {"name": "Z"}
+                c.save(path)
+                c2 = nm.NameCache()
+                with self.assertNoLogs("agent.names", "WARNING"):
+                    c2.load(path)
+                self.assertEqual(c2.creatures, {7: {"name": "Z"}})
+
+    def test_failed_move_aside_is_swallowed_and_save_still_replaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            _put(path, b"[]")
+            os.mkdir(path + ".corrupt")
+            c = nm.NameCache()
+            with self.assertLogs("agent.names", "WARNING"):
+                c.load(path)
+            self.assertEqual(_read(path), b"[]")
+            c.creatures[1] = None
+            c.save(path)
+            self.assertEqual(json.loads(_read(path))["creatures"], {"1": None})
+
+    def test_unreadable_in_read_only_directory_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            _put(path, b"[]")
+            os.chmod(d, 0o500)
+            try:
+                c = nm.NameCache()
+                with self.assertLogs("agent.names", "WARNING"):
+                    c.load(path)
+                c.creatures[1] = None
+                c.save(path)   # must not raise either
+            finally:
+                os.chmod(d, 0o700)
+
+    def test_missing_file_is_silent_and_leaves_saving_on(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            c = nm.NameCache()
+            with self.assertNoLogs("agent.names", "WARNING"):
+                c.load(path)
+            c.creatures[1] = None
+            c.save(path)
+            self.assertEqual(json.loads(_read(path))["creatures"], {"1": None})
+
+    def test_older_file_is_a_silent_cold_start_replaced_by_the_next_save(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "names.json")
+            _put(path, '{"schema": 1, "creatures": {"1": {"name": "A"}}}')
+            c = nm.NameCache()
+            with mock.patch.object(nm, "CACHE_SCHEMA", 2):
+                with self.assertNoLogs("agent.names", "WARNING"):
+                    c.load(path)
+                self.assertEqual(c.creatures, {})
+                c.save(path)
+                self.assertEqual(json.loads(_read(path)),
+                                 {"schema": 2, "creatures": {}, "gameobjects": {}})
+            self.assertFalse(os.path.exists(path + ".corrupt"))
 
 
 if __name__ == '__main__':

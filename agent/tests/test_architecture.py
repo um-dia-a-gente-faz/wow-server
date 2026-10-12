@@ -24,6 +24,7 @@ UNLAYERED = {"tests"}
 #   wire and leaf helpers: packets, opcodes, crypt, transport, config, handles, lines, action_names,
 #       known_targets, metrics, api_contract, ports (the typed session contract, #304),
 #       model (the snapshot contract, #288)
+#   state files: persist (ADR 0018)
 #   pure parsers and builders: npc, quests, loot, mail, trade, spells, channels, names,
 #       items, item_compare, update_object, update_fields, movement
 #   state: perception, state;  routing: router, handlers (ADR 0005, 0006)
@@ -48,6 +49,7 @@ LAYERS = {
     "auth": {"packets", "wire"},   # the logon challenge and realm list read through Reader (#517)
     "rules": set(),
     "ports": set(),
+    "persist": set(),   # atomic versioned JSON for the on-disk caches (ADR 0018); stdlib only
     "lifecycle": set(),   # connection lifecycle state machine (#584); stdlib only, nothing wired yet
     # parsers are pure: wire helpers only
     "npc": {"opcodes", "wire"},
@@ -57,9 +59,9 @@ LAYERS = {
     "trade": {"opcodes", "packets", "wire"},
     "spells": {"opcodes", "packets", "wire"},
     "channels": {"opcodes", "wire"},
-    "names": {"opcodes", "wire"},
+    "names": {"opcodes", "persist", "wire"},
     "group": {"opcodes", "wire"},
-    "items": set(),
+    "items": {"persist"},
     "item_compare": set(),
     "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
