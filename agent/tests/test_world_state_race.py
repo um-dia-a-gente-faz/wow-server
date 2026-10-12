@@ -13,7 +13,7 @@ from agent import perception as per
 from agent import update_fields as uf
 from agent import update_object as uo
 
-JOIN_S = 30.0
+JOIN_S = 6.0  # a run takes about 0.3 s; 3 deadlocked race tests + the pin test name themselves in 24 s
 ME = 1
 UNIT = 100
 POS = (0, 0.0, 0.0, 0.0, 0.0)
@@ -69,9 +69,9 @@ def _run_with_writer(write, check):
     r.start()
     r.join(JOIN_S)
     stop.set()
-    w.join(JOIN_S)
-    if r.is_alive():
+    if r.is_alive():  # named before the writer is joined: a deadlock costs one bound, not two
         raise AssertionError(f"thread {r.name!r} (snapshot reader) did not finish in {JOIN_S}s: deadlock?")
+    w.join(JOIN_S)
     if w.is_alive():
         raise AssertionError(f"thread {w.name!r} did not stop in {JOIN_S}s")
     return len(bad), errors

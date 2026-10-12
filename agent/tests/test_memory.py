@@ -18,11 +18,23 @@ class _Clock:
 
 
 class MemoryTests(unittest.TestCase):
+    FLUSH_BOUND_S = 60  # a slow CI run takes up to 19 s here; far below the 5 min job limit
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.path = os.path.join(self._tmp.name, "memory.db")
         self.clock = _Clock()
+
+    def _flush(self, m: Memory, stop: threading.Event | None = None) -> None:
+        """m.flush() with a bound: it waits for the writer thread for as long as that thread lives (#691)."""
+        t = threading.Thread(target=m.flush, daemon=True)
+        t.start()
+        t.join(self.FLUSH_BOUND_S)
+        if t.is_alive():
+            if stop is not None:
+                stop.set()  # a reader hogging the lock may be what starves the writer
+            self.fail(f"flush() still waiting for the writer after {self.FLUSH_BOUND_S:g}s")
 
     def _open(self, path=None) -> Memory:
         m = Memory(self.path if path is None else path, now=self.clock)
@@ -32,7 +44,7 @@ class MemoryTests(unittest.TestCase):
     def test_round_trip_survives_reopen(self):
         m = self._open()
         m.remember("known_target", "Springpaw Cub", {"x": 1.5, "guid": 42})
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recall("known_target", "Springpaw Cub"), {"x": 1.5, "guid": 42})
         self.assertIsNone(m.recall("known_target", "missing"))
         self.assertIsNone(m.recall("goal", "Springpaw Cub"))
@@ -44,7 +56,7 @@ class MemoryTests(unittest.TestCase):
         m = self._open()
         m.remember("failed_target", "a", "stale", ttl=10)
         m.remember("failed_target", "b", "forever")
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recall("failed_target", "a"), "stale")
         self.clock.t += 10          # expires_at <= now counts as expired
         self.assertIsNone(m.recall("failed_target", "a"))
@@ -57,7 +69,7 @@ class MemoryTests(unittest.TestCase):
             m.remember("action", key, key.upper())
         m.remember("action", "a", "A2")      # rewriting a key makes it the newest
         m.remember("other", "z", 0)
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recent("action", 2), [("a", "A2"), ("c", "C")])
         self.assertEqual(m.recent("action", 10), [("a", "A2"), ("c", "C"), ("b", "B")])
         self.assertEqual(m.recent("action", 0), [])
@@ -71,7 +83,7 @@ class MemoryTests(unittest.TestCase):
         self.assertIsNone(m.recall("goal", "x"))
         self.assertEqual(m.recent("goal", 3), [])
         m.remember("goal", "x", 1)             # still usable, in memory
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recall("goal", "x"), 1)
         m.close()
         with open(self.path, "rb") as f:
@@ -86,7 +98,7 @@ class MemoryTests(unittest.TestCase):
             m = self._open()
         self.assertIsNone(m.recall("goal", "x"))
         m.remember("goal", "x", 2)
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recall("goal", "x"), 2)
 
     def test_migrates_fresh_and_version_zero_files(self):
@@ -100,7 +112,7 @@ class MemoryTests(unittest.TestCase):
         sqlite3.connect(empty).close()
         m0 = Memory(empty, now=self.clock)
         m0.remember("goal", "x", "kept")
-        m0.flush()
+        self._flush(m0)
         m0.close()
         again = self._open(empty)
         self.assertEqual(again.recall("goal", "x"), "kept")
@@ -109,7 +121,7 @@ class MemoryTests(unittest.TestCase):
         nested = os.path.join(self._tmp.name, "agent", "memory.db")
         m = self._open(nested)
         m.remember("goal", "x", 3)
-        m.flush()
+        self._flush(m)
         self.assertTrue(os.path.exists(nested))
 
     def test_remember_returns_while_the_writer_is_blocked(self):
@@ -121,15 +133,24 @@ class MemoryTests(unittest.TestCase):
         t.join(2)
         self.assertFalse(t.is_alive(), "remember waited on the writer")
         m._io.release()
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recall("known_target", "a"), 1)
+
+    def test_a_flush_that_never_returns_fails_the_test_by_name(self):
+        m = self._open()
+        m._io.acquire()                        # the writer cannot take its next write, so flush() waits
+        self.addCleanup(lambda: m._io.locked() and m._io.release())
+        m.remember("goal", "x", 1)
+        self.FLUSH_BOUND_S = 0.3
+        with self.assertRaisesRegex(self.failureException, "flush.. still waiting"):
+            self._flush(m)
 
     def test_close_stops_the_writer_thread_and_public_methods_stay_quiet(self):
         m = self._open()
         m.remember("goal", "x", 1)
         m.close()
         self.assertFalse(m._thread.is_alive())
-        m.flush()                              # returns, does not hang
+        self._flush(m)                              # returns, does not hang
         m.remember("goal", "y", 2)             # dropped, no raise
         self.assertIsNone(m.recall("goal", "y"))
         self.assertEqual(m.recent("goal", 5), [])
@@ -138,7 +159,7 @@ class MemoryTests(unittest.TestCase):
         m = self._open()
         m.remember("goal", "bad", object())
         m.remember("goal", "ok", "fine")
-        m.flush()
+        self._flush(m)
         self.assertIsNone(m.recall("goal", "bad"))
         self.assertEqual(m.recall("goal", "ok"), "fine")
 
@@ -146,7 +167,7 @@ class MemoryTests(unittest.TestCase):
         m = Memory(None, now=self.clock)
         self.addCleanup(m.close)
         m.remember("goal", "x", "y")
-        m.flush()
+        self._flush(m)
         self.assertEqual(m.recall("goal", "x"), "y")
 
     def test_in_memory_store_keeps_every_write_under_concurrent_reads(self):
@@ -170,7 +191,7 @@ class MemoryTests(unittest.TestCase):
             r.start()
             for i in range(n):
                 m.remember("action", f"k{i}", i)
-            m.flush()                          # reads overlap the writes: flush before stopping the reader
+            self._flush(m, stop)                   # reads overlap the writes: flush before stopping the reader
             stop.set()
             r.join(10)
             self.assertEqual(errors, [])
@@ -182,7 +203,7 @@ class MemoryTests(unittest.TestCase):
         m = Memory(None, now=self.clock)
         for i in range(2000):
             m.remember("action", f"k{i}", i)
-        m.flush()
+        self._flush(m)
         stop = threading.Event()
         errors = []
 
