@@ -97,8 +97,10 @@ Every claim in #372 was checked against `main`. What is true today:
 `agent/` is stdlib-only and has no database access. Nothing may need a worldserver restart.
 `docs/AGENT-DIRECTION.md` §4 says "no hidden channel, no shared state between agent
 processes" and §5 that no memory is shared: agents must not learn what other agents see or
-decide. #599 adds: the smallest new runtime dependency, nothing hard to undo, and agents
-that keep working, degraded and not stopped, when the shared component is down.
+decide. #599 adds the conservative default: the smallest new runtime dependency and nothing
+hard to undo. #372 (*Scope of the ADR*) sets the failure mode: "gateway down must degrade to
+current behaviour or to the scripted brain, never wedge the think loop". That is the
+keep-working rule used below: with the shared component down, agents keep deciding.
 
 ## Options considered
 
@@ -107,7 +109,7 @@ that keep working, degraded and not stopped, when the shared component is down.
 | **A. In-process**, one shared client object in an agent pool (#252) | Nothing new to run. Depends on #252, which is undecided and reverses "one process per character". | One crash takes every agent down. Not available until the pool exists. | Revert the pool. |
 | **B. Gateway sidecar**: an HTTP proxy on `wow-agents` that all brain calls go through | A new always-on service in the path of every decision, carrying two wire contracts, with its own auth (#294) because it can spend the provider key. The added latency on the same host is estimated at under 1 ms against 252 ms p50, and the memory at about 30 MB (the interpreter floor in `docs/loadtest-baseline.md`). | A proxy that is down fails every agent's cycle. Keeping agents alive then needs a direct path to the provider, which needs the key in the containers, which removes the one security gain. Every snapshot and decision of every agent passes through one process. | Point `*_BASE_URL` back and restart 25 containers. |
 | **C. Shared limiter in a file or DB, written by the agents** | No new process. Needs locks between 25 writers on a bind mount, or a database, which `agent/` may not use. | Fragile under a crash holding a lock; agents would read each other's state. | Remove the setting. |
-| **D. Limits file, one writer, agents read** (chosen) | One small file on a read-only mount, one optional host process later. Agents add a file read per cycle. | Nothing when it is absent or stale: agents fall back to today's per-process policy. It cannot queue requests or react within a second. | Unset one setting, or delete the file. |
+| **D. Limits file, one writer, agents read** (chosen) | One small file on a read-only mount, one optional host process later. Agents add a file read per cycle. | Nothing when it is absent or unreadable: agents fall back to today's per-process policy. It cannot queue requests or react within a second. | Unset one setting, or delete the file. |
 | **E. No shared component**: fix the per-process gaps only | Nothing to run. | No pooled budget, no shared LLM budget (#505), no fleet stop short of stopping containers. | Nothing to undo. |
 
 ## Decision
@@ -129,7 +131,9 @@ limits file. Brain calls stay direct.**
    ```
 
    Keys of `blocks` are the brain names `jev` and `llm`. Times are epoch seconds; the
-   containers and the writer share the host clock. Unknown keys are ignored.
+   containers and the writer share the host clock. Unknown keys are ignored. **The only
+   expiry is `until_ts`.** `written_ts` is informational (for people and for the health
+   signal); no agent decision reads it, and the file has no maximum age.
 3. **One writer.** The file is written by one process on the agent host, by writing a
    temporary file and renaming it over the old one. Agents never write it. Until a writer
    exists, the owner may write it by hand.
@@ -139,10 +143,14 @@ limits file. Brain calls stay direct.**
    `AGENT_BRAIN_FALLBACK=llm`. A blocked LLM fails the cycle without a request. Reflexes are
    not affected.
 5. **Fail open.** A missing, unreadable, oversized, malformed or wrong-version file is no
-   block. A block ends by itself at `until_ts`, so a writer that dies stops refreshing its
-   blocks and the fleet returns to per-process policy within one refresh period. The
-   per-agent `AGENT_MAX_TOKENS_PER_HOUR` stays the backstop that does not depend on the
-   file.
+   block. A block ends by itself at `until_ts` and at no other time. Every block the writer
+   computes (budget, cooldown) has `until_ts` at most two writer periods ahead, 30 s with
+   the 15 s period, and is renewed while its cause lasts. So a writer that dies leaves
+   blocks that lapse by themselves within 30 s, and the fleet is back on per-process policy.
+   A hand-written owner stop may carry a longer `until_ts`. It outlives a dead writer, by
+   design: a stop must not end because a process crashed. It is cleared by removing its
+   entry from the file, or by removing the file. The per-agent `AGENT_MAX_TOKENS_PER_HOUR`
+   is the only cap that does not depend on the file, and its default is 0 (off).
 6. **Only limits cross the boundary.** The file holds brain names, times, reasons and
    counters. It never holds a snapshot, a candidate, a decision or a key. This is what
    keeps it inside `AGENT-DIRECTION` §4 and §5 (open question 1).
@@ -152,7 +160,7 @@ limits file. Brain calls stay direct.**
 
 ### Why the others lose
 
-- **B** fails the rule this ADR was given: with the proxy down, agents stop deciding. The
+- **B** fails the failure-mode rule of #372: with the proxy down, agents stop deciding. The
   variant that survives keeps the keys in the containers and so gives up B's security
   argument, and that argument is thin here anyway: all containers run on one host from one
   `.env`, so anyone who can read a container's environment can read the file. B's other
@@ -179,9 +187,22 @@ proxy can be its writer.
 
 ## Consequences
 
-- A fleet limit is advisory with a delay. With a writer period of 15 s, the worst-case
-  overshoot of a fleet token cap is about 0.4M tokens (15 s at 26,000 tokens per second),
-  under 2 cents.
+- A fleet limit is advisory with a delay. An estimate of the overshoot of a fleet token
+  cap from the writer period alone is about 0.4M tokens (15 s at 26,000 tokens per second),
+  under 2 cents. It is not a worst case. It leaves out the agent's own read delay (one
+  think interval), calls already in flight when the block appears (up to
+  `DEFAULT_TIMEOUT_S`, 20 s) and the lag before a call's spend is in the audit log and seen
+  by the writer. It holds only while the writer runs.
+- **The uncapped case.** When the writer is down there is no fleet cap (an owner stop
+  already in the file stays). When the file is missing, unreadable, malformed (a typo in a
+  hand edit) or of another `version`, there is no fleet cap and no owner stop. With
+  `AGENT_MAX_TOKENS_PER_HOUR` at its default 0 there is then no cap at all: spend is bounded
+  only by the call rate, about $4 per hour by the numbers above. The only thing that
+  notices today is `JevCostBurnHigh` (`monitoring/prometheus-agent-alerts.yml`: more than
+  1 USD in an hour, held for 15 minutes), so at that rate about 30 minutes and about $2
+  later. Each agent logs the problem once, in its own container log; nothing alerts on
+  it. The *Health signal* slice below exists to close this, and open question 4 asks the
+  owner to set the per-agent cap.
 - The file cannot do a token bucket, per-request fairness or sub-second `Retry-After`
   propagation. Fairness between agents stays what it is: the per-agent cap.
 - The provider keys stay in the agent containers.
@@ -190,8 +211,11 @@ proxy can be its writer.
   provider URLs still do.
 - The directory must be mounted, not the file: a single-file bind mount pins the inode and
   the container would never see the renamed file.
-- One more status in the audit log and in `wow_agent_jev_errors_total` (`fleet_blocked`), so
-  a fleet block is not counted as a per-agent budget breach.
+- One more `jev_status` in the audit log, `fleet_blocked`. It is **not** a Jev error and is
+  not counted in `wow_agent_jev_errors_total`: a fleet block is the limit working. Counted
+  there, every blocked agent would have errors and no successful calls, the
+  `JevErrorRatioHigh` ratio would be `+Inf`, and an owner stop or a spent fleet budget would
+  page once per agent, up to 25 times, after 15 minutes.
 - Once the mount exists, the owner can stop every Jev or LLM call in the fleet by writing
   one file, and the characters stay logged in with their reflexes.
 
@@ -204,11 +228,19 @@ Agent side only. Off by default, so merging it changes nothing on the live fleet
 **Files**
 
 - New: `fleetlimits.py` in `agent/` and `test_fleetlimits.py` in `agent/tests/`
-- `agent/brain.py`, `agent/config.py`, `agent/metrics.py`
+- `agent/brain.py`, `agent/config.py` (`agent/metrics.py` is read, not changed)
 - `agent/tests/test_brain_scenarios.py`, `agent/tests/test_metrics.py`,
   `agent/tests/test_architecture.py` (`LAYERS`: the new module, and `fleetlimits` in
   `brain`'s allowed imports)
 - `.env.example` (the standalone-only section), `docs/ARCHITECTURE.md` (the *Deciding* row)
+- `monitoring/prometheus-agent-alerts.yml`: the `JevErrorRatioHigh` description lists the
+  statuses that count and says `fleet_blocked` does not. The expression does not change.
+- `docs/RUNBOOK-ALERTS.md`, `JevErrorRatioHigh`: the same sentence next to the status list,
+  and a "check first" step for `fleet_blocked` (it does not fire this alert; look at the
+  limits file on the agent host and at who wrote the block).
+
+A change under `monitoring/` recreates the monitoring stack only (`stacks_for` in
+`scripts/deploy.sh`), not the game stack.
 
 **Exported names**
 
@@ -224,8 +256,9 @@ Agent side only. Off by default, so merging it changes nothing on the live fleet
 **Behaviour**
 
 - `blocked(brain)` returns `f"{brain} blocked by fleet limits until <ISO time>: <reason>"`
-  while `blocks[brain].until_ts > clock()`, else `None`. The reason is cut to 200
-  characters.
+  while `blocks[brain].until_ts > clock()`, else `None`. That comparison is the whole
+  expiry rule: `written_ts` is not read, and an old file with a block whose `until_ts` is
+  still ahead blocks. The reason is cut to 200 characters.
 - It stats the file on every call and parses it again only when the modification time or
   size changed. It never raises: a missing file, a read error, more than `MAX_BYTES`,
   invalid JSON, a `version` other than `SCHEMA_VERSION`, or a block whose `until_ts` is not
@@ -237,7 +270,12 @@ Agent side only. Off by default, so merging it changes nothing on the live fleet
   the LLM when it is configured).
 - `Brain.decide`, LLM path: when `blocked("llm")` returns a reason, raise `BrainError` with
   it and do not call `self.llm.choose_action`.
-- `AgentMetrics.jev_errors` gains the key `fleet_blocked`.
+- `AgentMetrics.jev_errors` does **not** gain a key. `_derive_jev` (`agent/metrics.py`)
+  counts a status as an error only when it is a key of `m.jev_errors` (the test is
+  `status in m.jev_errors`), so a `fleet_blocked` record moves neither
+  `wow_agent_jev_errors_total` nor `wow_agent_jev_calls_total`. An agent that is blocked for
+  the whole window has a ratio of `0/0`, which is NaN and does not fire
+  (`docs/RUNBOOK-ALERTS.md`, "When it does not fire").
 - With `AGENT_FLEET_LIMITS_FILE` empty, `Brain.fleet` is `None` and no file is touched.
 
 **Done when**
@@ -245,6 +283,7 @@ Agent side only. Off by default, so merging it changes nothing on the live fleet
 | Item | Check |
 |---|---|
 | An active block is reported, an expired one is not | `test_fleetlimits.py`: write a file with `until_ts` 30 s ahead of an injected clock, assert the reason; advance the clock 31 s, assert `None` |
+| `until_ts` is the only expiry | `test_fleetlimits.py`: a file with `written_ts` one day behind the clock and `until_ts` 30 s ahead still blocks; the same file without `written_ts` blocks too |
 | Every bad input fails open | `test_fleetlimits.py`: one case each for missing file, directory instead of file, 70 kB file, invalid JSON, `version: 2`, `until_ts: "soon"`, `blocks` a list; each returns `None` and does not raise |
 | The file is read again only when it changed | `test_fleetlimits.py`: count `open` calls over 3 `blocked()` calls on an unchanged file (1), then replace the file by rename and assert the new block is seen |
 | A replaced file is seen (rename, not in-place write) | same test, using `os.replace` |
@@ -252,7 +291,8 @@ Agent side only. Off by default, so merging it changes nothing on the live fleet
 | The LLM substitutes when configured | `test_brain_scenarios.py`: jev blocked, llm slot scripted; the decision has `brain == "llm"`, `substituted is True`, `jev_status == "fleet_blocked"` |
 | The LLM is not called while blocked | `test_brain_scenarios.py`: llm blocked; `BrainError`, the scripted llm was not called |
 | No setting, no change | `test_brain_scenarios.py`: `Brain.from_config` with an empty `fleet_limits_file` gives `brain.fleet is None`; the existing brain tests pass unchanged |
-| The status is counted | `test_metrics.py`: an audit record with `jev_status: "fleet_blocked"` gives `wow_agent_jev_errors_total{...status="fleet_blocked"} 1` |
+| A fleet block is not a Jev error | `test_metrics.py`: `derive_metrics` over audit records with `jev_status: "fleet_blocked"` leaves every value of `jev_errors` and `jev_calls_total` at 0, and the rendered text has no `status="fleet_blocked"` sample |
+| The alert text and the runbook say so | `grep -n fleet_blocked monitoring/prometheus-agent-alerts.yml docs/RUNBOOK-ALERTS.md` shows the description, the status list and the "check first" step; `git diff` shows the `expr:` line of `JevErrorRatioHigh` unchanged |
 | Everything CI runs | `scripts/check.sh all` |
 
 ### Further slices
@@ -265,12 +305,17 @@ Agent side only. Off by default, so merging it changes nothing on the live fleet
    `wow-agents`: tails the audit directory, sums Jev tokens (`usage`) and LLM tokens
    (`prompt_tokens`, `completion_tokens` of `brain: "llm"` records) over a rolling hour,
    blocks a brain while its fleet cap is exceeded, merges the owner's stop, and rewrites the
-   file every 15 s.
-3. **Per-process resilience.** Jev cooldown on 5xx, timeout and network errors, reading
+   file every 15 s. Every block it computes has `until_ts` at most 30 s ahead (two periods);
+   only the owner's stop may be longer.
+3. **Health signal.** A gauge for the limits file's state (`ok`, `missing`, `invalid`,
+   `off`) and its age from `written_ts` on the agent's `GET /metrics`
+   (`agent/http_api.py`), a counter of fleet-blocked cycles, and an alert when a configured
+   file is not `ok` or, once the writer exists, is older than 60 s.
+4. **Per-process resilience.** Jev cooldown on 5xx, timeout and network errors, reading
    `Retry-After` on a Jev 429, and jitter on cooldown expiry in both clients.
-4. **Shared provider cooldown.** The writer blocks a brain when several agents report 429 in
+5. **Shared provider cooldown.** The writer blocks a brain when several agents report 429 in
    the same window. Build only after the audit log shows it happening (open question 5).
-5. **Console.** The runner serves the file and the fleet's hourly usage for #327; an
+6. **Console.** The runner serves the file and the fleet's hourly usage for #327; an
    admin-only control sets and clears the owner stop.
 
 ## Open questions for the owner
@@ -284,10 +329,12 @@ Each has a default so the first slice is not blocked.
    `JevCostBurnHigh` alert (1 USD per hour) is about 23.8M tokens per hour.
 3. **Fleet LLM cap (#505).** The LLM brain uses free models, so the cap protects a rate
    limit, not money. Default: off; when set, tokens per rolling hour, counted like Jev's.
-4. **Fail open when the writer is down?** Default: yes, as #599 requires, with
-   `AGENT_MAX_TOKENS_PER_HOUR` kept above 0 on every agent as the backstop.
+4. **Fail open when the writer is down?** Default: yes, as the failure-mode rule of #372
+   requires. The owner is asked to set `AGENT_MAX_TOKENS_PER_HOUR` above 0 on every agent:
+   its default is 0, and without it a fleet with no readable limits file has no cap
+   (see *Consequences*).
 5. **What are the providers' rate limits?** Neither Jev's nor the free router's is recorded
-   in this repo. Default: do not build slice 4 until two fleet-wide 429 events are found in
+   in this repo. Default: do not build slice 5 until two fleet-wide 429 events are found in
    the audit log.
 6. **Do the provider keys have to leave the agent containers?** This decision leaves them
    there. Default: accept it, and decide with #294.
