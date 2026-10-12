@@ -383,6 +383,7 @@ class JevCooldownTest(unittest.TestCase):
                 b = self.make(e)
                 self.fail(b)
                 self.assertEqual(self.jev.calls, 1)
+                self.assertEqual(self.cooldown(b), 10.0)
                 self.now[0] += br.JEV_ERROR_COOLDOWN_S - 1
                 self.fail(b)
                 self.assertEqual(self.jev.calls, 1)   # still cooling: not called
