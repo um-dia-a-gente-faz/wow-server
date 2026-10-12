@@ -64,14 +64,17 @@ class CiStallDumpTest(unittest.TestCase):
             self.assertEqual(found, [f"job {job}: CHECK_STALL_DUMP_S is not set"])
 
     def test_a_bound_too_close_to_the_job_limit_is_reported(self):
-        ci = CI.replace('CHECK_STALL_DUMP_S: "240"', 'CHECK_STALL_DUMP_S: "271"')
-        self.assertEqual(len(problems(ci)), 1)
-        self.assertEqual(problems(CI.replace('CHECK_STALL_DUMP_S: "240"', 'CHECK_STALL_DUMP_S: "270"')), [])
+        # agent: 8 min limit, so 450 is the most; coverage: 10 min, so 570.
+        for old, over, ok in (("420", "451", "450"), ("540", "571", "570")):
+            ci = CI.replace(f'CHECK_STALL_DUMP_S: "{old}"', f'CHECK_STALL_DUMP_S: "{over}"')
+            self.assertEqual(len(problems(ci)), 1)
+            self.assertEqual(problems(CI.replace(f'CHECK_STALL_DUMP_S: "{old}"', f'CHECK_STALL_DUMP_S: "{ok}"')), [])
 
     def test_check_sh_and_coverage_floor_honour_the_bound(self):
         # The wiring: the env var is only a promise if the two entry points read it.
         check = (ROOT / "scripts" / "check.sh").read_text()
-        self.assertRegex(check, r"timeout --signal=ABRT -k \d+ \"\$CHECK_STALL_DUMP_S\" bash -c \"exec ")
+        self.assertRegex(check, r'if \[ -n "\$\{CHECK_STALL_DUMP_S:-\}" \]; then\n\s+'
+                                r'timeout --signal=ABRT -k \d+ "\$CHECK_STALL_DUMP_S" bash -c "exec ')
         self.assertIn("CHECK_STALL_DUMP_S", (ROOT / "scripts" / "coverage_floor.py").read_text())
 
 

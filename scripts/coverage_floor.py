@@ -74,6 +74,10 @@ def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline
             p.kill()
             p.communicate()
         sys.exit(1)
+    except BaseException:
+        p.kill()   # what subprocess.run did: Ctrl-C must not leave the test run alive
+        p.wait()
+        raise
     if p.returncode != 0:
         print(f"coverage {cmd[0]} failed (exit {p.returncode})", file=sys.stderr)
         sys.exit(1)

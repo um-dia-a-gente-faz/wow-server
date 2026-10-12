@@ -148,6 +148,24 @@ class RunTest(unittest.TestCase):
         proc.send_signal.assert_called_once_with(signal.SIGABRT)
         proc.kill.assert_not_called()
 
+    def test_communicate_gets_the_time_left_until_the_deadline_or_none(self):
+        for deadline, want in ((time.monotonic() + 50, 50), (None, None)):
+            proc = mock.Mock(returncode=0, **{"communicate.return_value": ("", None)})
+            with mock.patch.object(cf.subprocess, "Popen", return_value=proc):
+                cf._run(["run"], {}, deadline=deadline)
+            got = proc.communicate.call_args_list[0].kwargs["timeout"]
+            if want is None:
+                self.assertIsNone(got)
+            else:
+                self.assertAlmostEqual(got, want, delta=5)
+
+    def test_interrupt_kills_the_child_and_propagates(self):
+        proc = mock.Mock()
+        proc.communicate.side_effect = KeyboardInterrupt
+        with mock.patch.object(cf.subprocess, "Popen", return_value=proc), self.assertRaises(KeyboardInterrupt):
+            cf._run(["run"], {})
+        proc.kill.assert_called_once_with()
+
     def test_run_that_ignores_sigabrt_is_killed(self):
         proc = mock.Mock(returncode=-9)
         proc.communicate.side_effect = [subprocess.TimeoutExpired("x", 1), subprocess.TimeoutExpired("x", 10), ("", None)]

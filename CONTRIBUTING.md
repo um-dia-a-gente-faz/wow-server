@@ -93,8 +93,8 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 
-**A stalled test names itself (#707).** The `agent` job (240 s) and the `coverage` job (420 s for both runs) set `PYTHONFAULTHANDLER=1` and `CHECK_STALL_DUMP_S`; past that many seconds the test process gets SIGABRT, its log shows every thread's stack (test file and line) and the step fails, before `timeout-minutes` cancels it silently.
-Same locally: `PYTHONFAULTHANDLER=1 CHECK_STALL_DUMP_S=60 scripts/check.sh test-agent`.
+**A stalled test names itself (#707).** The `agent` job (420 s, limit 8 minutes) and the `coverage` job (540 s for both runs, limit 10 minutes) set `PYTHONFAULTHANDLER=1` and `CHECK_STALL_DUMP_S`; past that many seconds the test process gets SIGABRT, its log shows every thread's stack (test file and line) and the step fails, before `timeout-minutes` cancels it silently.
+Same locally: `PYTHONFAULTHANDLER=1 CHECK_STALL_DUMP_S=240 scripts/check.sh test-agent`.
 
 **Where the `tools` job's time goes (#591, refreshed in #624).** The job `tools (unit tests, generated files)`
 has a 10-minute timeout. It runs `scripts/check.sh generated test-tools`, which is the

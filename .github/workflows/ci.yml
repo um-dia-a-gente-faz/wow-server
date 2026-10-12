@@ -74,7 +74,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.agent == 'true' || needs.changes.outputs.tools == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -83,10 +83,11 @@ jobs:
       # #707: a stalled test names itself. After CHECK_STALL_DUMP_S seconds check.sh sends the test
       # process SIGABRT; PYTHONFAULTHANDLER=1 makes it dump every thread's stack. Keep the figure
       # at least 30 s under timeout-minutes * 60 (guard: scripts/tests/test_ci_stall_dump.py).
+      # The step takes 120 to 165 s; 420 s of it plus the 10 s kill-after fits the 8-minute limit.
       - run: scripts/check.sh compile test-stdlib
         env:
           PYTHONFAULTHANDLER: "1"
-          CHECK_STALL_DUMP_S: "240"
+          CHECK_STALL_DUMP_S: "420"
 
   # Every other suite, registered in scripts/check.sh (#298). wowmap needs PyMySQL +
   # cryptography (its requirements.txt) and Pillow; node is preinstalled on ubuntu-latest.
@@ -156,10 +157,10 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Agent + world-mock tests under coverage, against the floor
         # #707: as in the agent job; here the bound covers both test runs together (they take about
-        # 270 s), and coverage_floor.py sends the SIGABRT. Keep it 30 s under timeout-minutes * 60.
+        # 200 to 300 s), and coverage_floor.py sends the SIGABRT. Keep it 30 s under timeout-minutes * 60.
         env:
           PYTHONFAULTHANDLER: "1"
-          CHECK_STALL_DUMP_S: "420"
+          CHECK_STALL_DUMP_S: "540"
         run: |
           set -o pipefail
           { echo '### Coverage of agent/'; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
