@@ -94,6 +94,27 @@ per login and only a handful of scripted replies after that (it does not answer
 `CMSG_PING` or `CMSG_KEEP_ALIVE`), so a fault set past 8 never fires. The harness reads recovery from the agent side (reconnect count, time
 back to "online", thread count, `dropped_packets`).
 
+## Lifecycle scenarios (#292)
+
+`tests/test_lifecycle_scenarios.py` builds a whole agent with `agent.root.build_agent()` from a
+real `Config` and runs `Agent.run()` over localhost sockets against a world-mock with a
+`FaultPlan` (or `DeathMock`). Each scenario checks the lifecycle lines in the audit directory
+(ADR 0015), the backoffs the supervisor asked for (the sleep is injected, never slept) and the
+connections the mock saw.
+
+| Test | World-mock | Lifecycle lines expected | Backoffs |
+|---|---|---|---|
+| `test_reconnect_scenarios`: healthy session ends with its duration | `WorldMock()` | `connecting>online connected`, `online>stopping run_ended`, `stopping>stopped run_ended` | none |
+| `test_reconnect_scenarios`: dropped session reconnects once | `FaultPlan(drop_after=8)` | the six lines of a dropped session (`online>backoff disconnected`, `backoff>connecting backoff_elapsed`, `connected`, `run_ended` twice) | `[1.0]` |
+| `test_reconnect_scenarios`: truncated packet reconnects once | `FaultPlan(drop_after=6, truncate=True)` | the same six lines | `[1.0]` |
+| `test_reconnect_scenarios`: transient auth refusals back off and recover | `FaultPlan(auth_reject=6)` twice | `connecting>backoff auth_rejected`, `backoff>connecting backoff_elapsed`, both again, then the three lines of a clean run | `[1.0, 2.0]` |
+| `test_permanent_auth_refusal_fails_after_one_attempt` | `FaultPlan(auth_reject=3)` | `connecting>failed auth_rejected_permanent`; `AuthRejected` leaves `run()` | none |
+| `test_stop_during_a_session_logs_out_once_and_does_not_reconnect` | `WorldMock()`, stop set 0.2 s after `online` | `connected`, `online>stopping stop`, `stopping>stopped stop` | none |
+| `test_a_crash_in_the_session_still_logs_out_and_ends_stopped_crashed` | `WorldMock()`, `root.run_loop` raises | `connected`, `online>stopping crashed`, `stopping>stopped crashed` | none |
+| `test_death_is_game_state_and_not_a_lifecycle_state` | `DeathMock(faults=[FaultPlan(drop_after=12)])` | the six lines of a dropped session; no line mentions death | `[1.0]` |
+
+Every test also checks that the mock's password is in no log record and that no thread is left.
+
 ## Per-client stream (#421)
 
 `WorldMock(stream_hz=N)` / env `MOCK_STREAM_HZ=N`: after login each client gets N ticks a
