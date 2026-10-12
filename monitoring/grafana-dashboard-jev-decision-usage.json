@@ -65,6 +65,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Jev errors / sec",
+      "description": "Failed Jev Decisions calls per second by status. A spent hourly budget (status budget_exhausted) is a skip, not an error, so it is excluded here: see 'Jev cycles skipped: hourly budget spent'.",
       "gridPos": {
         "h": 7,
         "w": 8,
@@ -84,7 +85,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (agent, status) (rate(wow_agent_jev_errors_total[5m]))",
+          "expr": "sum by (agent, status) (rate(wow_agent_jev_errors_total{status!=\"budget_exhausted\"}[5m]))",
           "legendFormat": "{{agent}} {{status}}",
           "datasource": {
             "type": "prometheus",
@@ -700,6 +701,50 @@
         }
       },
       "description": "Rate of exceptions an agent caught and logged instead of raising, by call site (wow_agent_swallowed_errors_total, scraped from each agent's GET /metrics). Non-zero for 10m fires AgentSwallowedErrors."
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Jev cycles skipped: hourly budget spent",
+      "description": "Cycles where an agent's hourly Jev token budget was spent, so Jev was not called (status budget_exhausted). This is the limit working, not an error: it is not in Jev errors / sec and no alert fires on it.",
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "efnf4d4t8vsw0a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "skips/s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (agent) (rate(wow_agent_jev_errors_total{status=\"budget_exhausted\"}[5m]))",
+          "legendFormat": "{{agent}} cycles skipped: hourly budget spent",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "efnf4d4t8vsw0a"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
     }
   ],
   "annotations": {

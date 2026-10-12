@@ -17,6 +17,23 @@
   },
   "schemaVersion": 39,
   "version": 1,
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "efnf4d4t8vsw0a"
+        },
+        "enable": true,
+        "expr": "wow_deploy_timestamp_seconds * 1000",
+        "step": "60s",
+        "useValueForTime": true,
+        "titleFormat": "deploy {{sha}}",
+        "textFormat": "{{stacks}}"
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,

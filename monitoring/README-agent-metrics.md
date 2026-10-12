@@ -62,7 +62,7 @@ On the wow-server VM (192.168.1.64), run the exporter script periodically
 | `wow_agent_decisions_by_prompt_total` | counter | `agent`, `prompt_id` | Cycles by the audit record's `prompt_id`; the 8 ids with the newest record per agent keep their label, older ones are summed under `other`, a missing/empty/non-string id is `none`. A literal id `other` or `none` is summed into that label, never overwritten. The textfile exporter is the only producer (not on the agents' `GET /metrics`); the "Decisions by prompt" panel reads it |
 | `wow_agent_audit_bad_lines_total` | counter | `agent` | Audit lines the exporter skipped: not UTF-8, not JSON, or JSON that is not an object. The agent is the line's directory name (`<audit-dir>/<agent>/`). Skipped lines never stop the run |
 | `wow_agent_jev_calls_total` | counter | `agent` | Successful Jev Decisions requests |
-| `wow_agent_jev_errors_total` | counter | `agent`, `status` | Failed requests (`http_4xx`, `http_5xx`, `error`) |
+| `wow_agent_jev_errors_total` | counter | `agent`, `status` | Failed requests (`http_4xx`, `http_5xx`, `error`); `budget_exhausted` is a skip, not a failed call: the hourly Jev token budget was spent and Jev was not called (#689) |
 | `wow_agent_jev_fallback_total` | counter | `agent` | Cycles where Jev was configured but another brain decided |
 | `wow_agent_jev_prompt_tokens_total` / `wow_agent_jev_completion_tokens_total` | counter | `agent` | Jev input/output tokens |
 | `wow_agent_jev_cost_usd_total` | counter | `agent` | Cumulative provider reported USD cost in retained audit records |
