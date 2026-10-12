@@ -7,6 +7,7 @@ bytes alone. Every save re-reads the file, so fixing it takes effect without a r
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -107,11 +108,46 @@ class CalibrationFileTests(unittest.TestCase):
         self.write(json.dumps(GOOD))
         self.start_up()
         calibration.save_calibration(300, 4, 5)
-        self.assertEqual(json.loads(self.raw()), {
+        expected = {
             "100": {"dx": 1.5, "dy": -2.0},
             "200": {"dx": 0.0, "dy": 3.25},
-            "300": {"dx": 4.0, "dy": 5.0},
-        })
+            "300": {"dx": 4, "dy": 5},  # round(4, 2) is the int 4, written as such
+        }
+        self.assertEqual(json.loads(self.raw()), expected)
+        # the bytes are the ones the save has always written: indent 2, sorted keys, final newline
+        self.assertEqual(self.raw(), (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode())
+
+    def test_a_load_of_a_good_file_leaves_its_bytes_identical(self):
+        for text in (json.dumps(GOOD),
+                     json.dumps({"schema": 1, **GOOD}),
+                     json.dumps({"schema": 1, **GOOD}, indent=4)):
+            with self.subTest(text=text):
+                self.write(text)
+                before = self.raw()
+                self.assertEqual(calibration.load_calibrations(), {"100": {"dx": 1.5, "dy": -2.0},
+                                                                   "200": {"dx": 0.0, "dy": 3.25}})
+                self.assertEqual(calibration._read_store(), {"100": {"dx": 1.5, "dy": -2.0},
+                                                             "200": {"dx": 0.0, "dy": 3.25}})
+                self.assertEqual(self.raw(), before)
+
+    def test_save_refuses_the_reserved_schema_zone_before_touching_the_file(self):
+        self.write(json.dumps(GOOD))
+        before = self.raw()
+        with self.assertRaises(ValueError) as ctx:
+            calibration.save_calibration("schema", 1, 2)
+        self.assertNotIsInstance(ctx.exception, calibration.CalibrationUnreadable)
+        self.assertEqual(self.raw(), before)
+        self.assertFalse(os.path.exists(self.path + ".tmp"))
+
+    def test_the_route_answers_400_for_the_reserved_schema_zone(self):
+        self.write(json.dumps(GOOD))
+        before = self.raw()
+        body = b'{"area_id": "schema", "dx": 1, "dy": 2}'
+        req = Request("POST", "/api/calibrate", {}, {"Content-Length": str(len(body))},
+                      lambda n: body[:n], "10.0.0.9")
+        status, payload = calibration.calibrate(req)
+        self.assertEqual(status, 400)
+        self.assertEqual(self.raw(), before)
 
     def test_fixing_the_file_lifts_the_refusal_without_a_restart(self):
         self.write('{"100": {"dx": 1.5, "dy": -2.0},')
@@ -199,8 +235,9 @@ class CalibrationFileTests(unittest.TestCase):
             self.assertEqual(calibration.load_calibrations(), {})
         self.assertEqual(len(logs.output), 1)
         self.assertIn("newer", logs.output[0])
-        with self.assertRaises(calibration.CalibrationNewer):
+        with self.assertRaises(calibration.CalibrationNewer) as ctx:
             calibration.save_calibration(12, 5, 5)
+        self.assertIn("deploy the newer site", str(ctx.exception))
         self.assertEqual(self.raw(), before)
         self.assertFalse(os.path.exists(self.path + ".tmp"))
 
@@ -214,6 +251,7 @@ class CalibrationFileTests(unittest.TestCase):
             status, payload = calibration.calibrate(req)
         self.assertEqual(status, 500)
         self.assertIn("newer", payload["error"])
+        self.assertIn("deploy the newer site", payload["error"])
         self.assertEqual(self.raw(), before)
 
     def test_schema_1_loads_its_zones_without_a_schema_zone(self):
@@ -235,9 +273,9 @@ class CalibrationFileTests(unittest.TestCase):
                 self.assertEqual(self.raw(), before)
 
     def test_the_committed_store_loads_without_a_warning(self):
-        committed = os.path.join(WOWMAP, "calibration.json")
-        with mock.patch.object(calibration, "CALIBRATION_FILE", committed), \
-                self.assertNoLogs(state.log, "WARNING"):
+        # read a copy: a faulty reader must never rewrite the tracked file
+        shutil.copy(os.path.join(WOWMAP, "calibration.json"), self.path)
+        with self.assertNoLogs(state.log, "WARNING"):
             self.assertEqual(calibration.load_calibrations(), {})
 
 

@@ -51,7 +51,8 @@ def _read_store():
         raise CalibrationUnreadable(f"{CALIBRATION_FILE} is unreadable: schema must be a positive integer")
     if schema > CALIBRATION_SCHEMA:
         raise CalibrationNewer(
-            f"{CALIBRATION_FILE} is schema {schema}, newer than {CALIBRATION_SCHEMA}: not read, not overwritten")
+            f"{CALIBRATION_FILE} is schema {schema}, newer than {CALIBRATION_SCHEMA}: "
+            "not read, not overwritten; deploy the newer site")
     store = {}
     for area_id, value in data.items():
         if not isinstance(value, dict):
@@ -79,7 +80,10 @@ def save_calibration(area_id, dx, dy):
     """Read-modify-write one zone's offset; callers receive the saved value.
 
     The file is re-read on every save, so other zones survive and an unreadable file is
-    refused (CalibrationUnreadable) with its bytes untouched until someone fixes it."""
+    refused (CalibrationUnreadable) with its bytes untouched until someone fixes it.
+    "schema" is the file's version key, not a zone: it is refused (ValueError) before any I/O."""
+    if str(area_id) == "schema":
+        raise ValueError('"schema" is the file version key, not a zone')
     value = {"dx": round(dx, 2), "dy": round(dy, 2)}
     with _lock:
         store = _read_store()
