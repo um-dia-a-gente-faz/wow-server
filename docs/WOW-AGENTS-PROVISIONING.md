@@ -260,8 +260,7 @@ directly in it (`<agent>/<day>.jsonl[.N]`); `lifecycle/` does not count. An agen
 files reads `agent <name>: no decision files` and counts as quiet. `QUIET` names every quiet agent.
 `OK` needs every agent fresh. The verdict is per agent: one healthy agent does not mask a dead one.
 With no agent directory at all, the `QUIET` line has no `from:` list.
-An agent stopped on purpose keeps the verdict at `QUIET` until retention prunes its decision files (14 days; `pull-audit.sh` deletes files and leaves the directory, which then reads `no decision files`).
-The output cannot tell a stopped agent from a dead one: check the guest (`docker ps`, `/healthz`) and whether you stopped it on purpose.
+An agent stopped on purpose keeps the verdict at `QUIET` until retention prunes its files from the mirror (14 days, `AUDIT_RETENTION_DAYS`): `pull-audit.sh` deletes the old files and then the emptied directory, so the agent drops out of the output.
 
 | Verdict | Exit | Meaning | What to do |
 |---|---|---|---|

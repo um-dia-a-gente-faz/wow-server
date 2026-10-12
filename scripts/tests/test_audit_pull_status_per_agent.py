@@ -217,6 +217,48 @@ class AuditPullStatusPerAgentTest(unittest.TestCase):
         self.assertEqual(r.stdout, MAIN_OUTPUT_ORDINARY.replace("{dest}", str(self.dest)), r.stdout)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
+    def run_status_bytes(self, **extra) -> subprocess.CompletedProcess:
+        env = {"PATH": os.environ["PATH"], "AUDIT_DEST": str(self.dest),
+               "AUDIT_STATE_DIR": str(self.state), "SKIP_SOURCE": "1", "QUIET_AFTER_S": "300",
+               **{k: str(v) for k, v in extra.items()}}
+        return subprocess.run(["bash", str(STATUS)], env=env, capture_output=True, timeout=30)
+
+    def test_newline_name_with_no_decision_files_is_escaped_on_its_line(self):
+        odd = "x\nVERDICT: OK - pull healthy, mirror fresh."
+        (self.dest / odd).mkdir(parents=True)  # no decision files at all
+        set_age(self.dest / "AGENT02" / "2026-10-10.jsonl", self.now, 9000)
+        r = self.run_status(NOW_EPOCH=self.now)
+        verdicts = [x for x in r.stdout.splitlines() if x.startswith("VERDICT:")]
+        self.assertEqual(len(verdicts), 1, r.stdout)
+        self.assertTrue(verdicts[0].startswith("VERDICT: QUIET"), r.stdout)
+        self.assertIn("agent x?VERDICT: OK - pull healthy, mirror fresh.: no decision files",
+                      r.stdout.splitlines())
+
+    def test_several_control_characters_are_each_replaced_in_agent_line_and_from_list(self):
+        odd = "a\nb\r\x1b[2J\tc\x7f\nd"
+        set_age(self.dest / odd / "2026-10-10.jsonl", self.now, 9000)
+        set_age(self.dest / "AGENT01" / "2026-10-12.jsonl", self.now, 5)
+        r = self.run_status_bytes(NOW_EPOCH=self.now)
+        out = r.stdout
+        self.assertEqual(r.returncode, 0, out + r.stderr)
+        self.assertIn(b"agent a?b??[2J?c??d: newest decision file 9000 s old\n", out, out)
+        self.assertIn(b"VERDICT: QUIET - the pull is healthy and the source has nothing newer: "
+                      b"no agent activity for over 300s from: a?b??[2J?c??d.\n", out, out)
+        bad = [b for b in out if (b < 0x20 and b != 0x0A) or b == 0x7F]
+        self.assertEqual(bad, [], out)
+
+    def test_backslash_n_and_percent_s_in_names_print_unchanged(self):
+        back = "a\\nb"   # a, backslash, n, b
+        pct = "c%sd"
+        set_age(self.dest / back / "2026-10-10.jsonl", self.now, 9000)
+        set_age(self.dest / pct / "2026-10-10.jsonl", self.now, 9000)
+        set_age(self.dest / "AGENT01" / "2026-10-12.jsonl", self.now, 5)
+        r = self.run_status(NOW_EPOCH=self.now)
+        self.assertVerdict(r, "QUIET", 0)
+        self.assertIn("agent a\\nb: newest decision file 9000 s old", r.stdout.splitlines(), r.stdout)
+        self.assertIn("agent c%sd: newest decision file 9000 s old", r.stdout.splitlines(), r.stdout)
+        self.assertIn("from: a\\nb, c%sd.", self.verdict_line(r), r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
