@@ -224,6 +224,13 @@ class NoJitter:
         return a
 
 
+class FullJitter:
+    """rng whose uniform(a, b) returns b: the longest cooldown, 10 % on top (#636)."""
+
+    def uniform(self, a, b):
+        return b
+
+
 def unavailable(status=429, retry_after=None):
     return llm.LLMUnavailable(f"HTTP {status}", status=status, retry_after=retry_after,
                               retryable=status in (404, 429) or status >= 500)
@@ -383,6 +390,19 @@ class FallbackTest(unittest.TestCase):
             client = llm.LLMClient("https://free.example/v1", "a,b", clock=FakeClock(), rng=Rng(end))
             self.run_script(client, {"a": [unavailable(429)], "b": [chat_response()]})
             self.assertAlmostEqual(client.cooldowns()["a"], want)
+
+    def test_cooldown_is_jittered_after_the_clamp(self):
+        # 99999 s clamps to 900 s first, then the 10 % jitter: 990 s. The returned value
+        # is the one the cooldown was set to.
+        client = llm.LLMClient("https://free.example/v1", "a", clock=FakeClock(), rng=FullJitter())
+        self.assertAlmostEqual(client._cool_down("a", unavailable(429, retry_after=99999)), 990.0)
+        self.assertAlmostEqual(client.cooldowns()["a"], 990.0)
+
+    def test_cool_down_returns_the_jittered_seconds(self):
+        client = llm.LLMClient("https://free.example/v1", "a", clock=FakeClock(), rng=FullJitter())
+        seconds = client._cool_down("a", unavailable(429))
+        self.assertAlmostEqual(seconds, 66.0)
+        self.assertAlmostEqual(client._cooldown_until["a"] - 1000.0, seconds)
 
     def test_cooldown_never_below_base(self):
         import random
