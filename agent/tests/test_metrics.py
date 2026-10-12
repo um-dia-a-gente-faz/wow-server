@@ -358,6 +358,18 @@ class StoredSchemaTest(unittest.TestCase):
         self.assertEqual(rec["future_field"], "kept")
         self.assertEqual(rec["agent"], "A")
 
+    def test_a_newer_line_is_yielded_whole_when_no_callback_is_passed(self):
+        # How Brain.restore_jev_spend and read_audit call it: no on_newer.
+        from agent.audit_schema import SCHEMA_VERSION
+        path = self.write([b'{"schema": %d, "agent": "A", "ts": 4.0, "future_field": "kept"}'
+                           % (SCHEMA_VERSION + 1)])
+        (rec,) = list(iter_records(path))
+        self.assertEqual(rec["schema"], SCHEMA_VERSION + 1)
+        self.assertEqual(rec["future_field"], "kept")
+        records, bad = read_audit([path])
+        self.assertEqual([r["future_field"] for r in records], ["kept"])
+        self.assertEqual(bad, {})
+
     def test_a_malformed_schema_reads_as_zero_and_calls_no_callback(self):
         calls = []
         for raw in (b'"2"', b"true", b"-1", b"null", b"1.5"):
