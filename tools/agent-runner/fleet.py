@@ -11,11 +11,17 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote
 
 import characters
 from core import RunnerError, iso, scrub
 from docker_backend import IMAGE, DockerBackend, allowed_names
+
+_CHECKOUT = str(Path(__file__).resolve().parents[2])   # the repo root, for the agents/ library
+if _CHECKOUT not in sys.path:
+    sys.path.append(_CHECKOUT)
+from agents import roster as roster_lib  # noqa: E402
 
 PROBE_TIMEOUT_S = 2.0
 # #264: agent API versions this runner understands (agent/api_schema.json; a test pins it).
@@ -41,6 +47,14 @@ def load_generator(repo):
     finally:
         sys.path.pop(0)
     return gen_agents_compose
+
+
+def _agent_at(position, entry):
+    """The library's Agent for the merged entry at 0-based `position`. A runtime entry from
+    state.json may carry `retired` and may lack race/class/gender, so it is never passed
+    through roster_lib.parse_roster (decision on #391): only the five known keys are read."""
+    return roster_lib.Agent(index=position + 1, account=entry["account"], character=entry["character"],
+                            race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"))
 
 
 def parse_docker_time(value):
@@ -77,7 +91,7 @@ class Fleet:
     def roster(self):
         """Committed roster plus the runtime `state.json` (D5): its `agents`
         entries replace a roster entry with the same account or are appended."""
-        agents = self.gen.load_roster(self.cfg.repo / "agents" / "roster.json")
+        agents = [a.to_json() for a in roster_lib.load_roster(self.cfg.repo / "agents" / "roster.json")]
         state_path = self.cfg.runtime_dir / "state.json"
         if state_path.exists():
             extra = json.loads(state_path.read_text()).get("agents", [])
@@ -89,10 +103,10 @@ class Fleet:
                     agents.append(entry)
         entries = []
         for i, a in enumerate(agents):
-            slug = a["character"].lower()
-            entries.append({"name": a["character"], "account": a["account"], "slug": slug,
-                            "service": f"agent-{slug}", "container": f"wow-agent-{slug}",
-                            "port": self.gen.FIRST_PORT + i, "planned": a,
+            agent = _agent_at(i, a)
+            entries.append({"name": agent.character, "account": agent.account, "slug": agent.slug,
+                            "service": agent.service, "container": agent.container,
+                            "port": agent.api_port, "planned": a,
                             "retired": bool(a.get("retired"))})
         return entries
 
