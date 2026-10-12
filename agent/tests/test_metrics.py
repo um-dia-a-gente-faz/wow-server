@@ -232,6 +232,7 @@ class FleetRenderTest(unittest.TestCase):
         self.assertEqual(r("A", ("ok", None), 100.0), self.expected("ok"))
         self.assertEqual(r("A", ("missing", None), 100.0), self.expected("missing"))
         self.assertEqual(r("A", ("invalid", None), 100.0), self.expected("invalid"))
+        self.assertEqual(r("A", ("invalid", 87.5), 100.0), self.expected("invalid"))   # no age unless ok
 
     def test_future_written_ts_is_age_zero(self):
         self.assertEqual(self.m.render_fleet("A", ("ok", 200.0), 100.0), self.expected("ok", age=0.0))

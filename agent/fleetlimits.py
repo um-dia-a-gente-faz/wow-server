@@ -6,8 +6,8 @@ call brain X until T, because R", written by one process outside the agents.
      "blocks": {"jev": {"until_ts": 1700000030.0, "reason": "fleet Jev budget spent"}}}
 
 `FleetLimits.blocked(brain)` is what `Brain.decide` asks before a Jev or an LLM
-call. The only expiry is `until_ts`; `written_ts` is informational and is never
-read here. Agents fail open: a missing, unreadable, oversized, malformed or
+call. The only expiry is `until_ts`; `written_ts` is informational, never used
+for expiry, and reported through `health`. Agents fail open: a missing, unreadable, oversized, malformed or
 other-version file blocks nothing, and each distinct problem is logged once
 (not once per think cycle) and again only after the file has been good in
 between.

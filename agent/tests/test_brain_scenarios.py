@@ -386,6 +386,10 @@ class FleetCountTest(unittest.TestCase):
         self.cycle(b)
         self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
 
+    def test_unblocked_llm_cycle_counts_nothing(self):
+        br.Brain(llm=ScriptedDecider([("idle", {})]), fleet=self.fleet("jev")).decide(snap(), my_guid=ME)
+        self.assertEqual(self.counts(), {"jev": 0, "llm": 0})
+
     def test_cooldown_skip_counts_nothing(self):
         b = br.Brain(jev=_Boom(), fleet=self.fleet("jev"))
         b._jev_cooldown_until = b._clock() + 60

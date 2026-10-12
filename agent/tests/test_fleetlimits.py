@@ -2,6 +2,7 @@
 expiry; every bad input fails open (None) and is logged once, not once per cycle."""
 
 import builtins
+import io
 import json
 import logging
 import os
@@ -309,6 +310,24 @@ class HealthTest(_Files):
         before = lim.health
         lim.blocked("jev")
         self.assertIs(lim.health, before)
+
+    def test_failures_after_a_good_read_are_invalid(self):
+        """Each case starts from ok, so a failure path that leaves `health` alone fails here."""
+        lim = self.limits()
+        cases = (
+            mock.patch.object(fl, "open", create=True, side_effect=PermissionError("denied")),   # unreadable
+            mock.patch.object(fl, "open", create=True,
+                              return_value=io.BytesIO(b" " * (fl.MAX_BYTES + 1))),   # grew between stat and read
+            mock.patch.object(fl.os, "stat", side_effect=PermissionError("denied")),   # stat fails, file exists
+        )
+        for failure in cases:
+            self.replace(self.doc(written_ts=NOW))
+            lim.blocked("jev")
+            self.assertEqual(lim.health, ("ok", NOW))
+            self.replace(self.doc(written_ts=NOW))   # a new inode: the next call reads the file
+            with failure:
+                self.assertIsNone(lim.blocked("jev"))
+            self.assertEqual(lim.health, ("invalid", None))
 
     def test_unexpected_exception_is_invalid(self):
         self.write(self.doc(written_ts=NOW))
