@@ -90,8 +90,10 @@ A fitness test in `agent/tests/test_architecture.py` rejects a live loop outside
 
 Issue #251 asked for an event bus, explicit state ownership and race tests. Most of
 it was delivered by other issues since it was written: the session references no
-audit, metrics or relay code (the observers are built in `agent/root.py`, #292), and
-sends go through the router (ADR 0006). The decision narrows #251 to the following.
+audit or relay code and imports only the `swallowed()` logging helper from
+`agent/metrics.py`; the observers are built in the composition root `agent/root.py`
+(since #292); and `think.py` does not call `_send_packet`, its guard sends through
+`actions.base.send`. The decision narrows #251 to the following.
 
 - **No event bus while there is one subscriber.** The only consumer of game events
   outside the handlers is the chat relay (`GameState.chat_relay`, read by
