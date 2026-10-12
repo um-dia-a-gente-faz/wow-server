@@ -200,15 +200,17 @@ class BuildAgentTest(unittest.TestCase):
         self.assertEqual(sum(m == "brain: llm" for m in messages), 1)
         self.assertEqual(sum(m.startswith("audit log: ") for m in messages), 1)
 
-    def test_the_brain_is_handed_to_the_observer_wiring(self):
+    def test_the_brain_and_the_audit_log_reach_the_observer(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        brain = mock.Mock()
+        cfg, brain = self.cfg(tmp.name), mock.Mock(model="brain-model")
+        vars(cfg).update(http_port=8123, http_bind="127.0.0.1", persona="", llm_model="cfg-model", control_token="")
         with mock.patch.object(root.Brain, "from_config", return_value=brain), \
-                mock.patch.object(root, "start_observer", return_value=(None, None)) as start:
-            agent = root.build_agent(self.cfg(tmp.name), LOG)
+                mock.patch.object(root, "start_server", return_value=mock.Mock()):
+            agent = root.build_agent(cfg, LOG)
         self.addCleanup(agent.close)
-        self.assertIs(start.call_args.kwargs["brain"], brain)
+        self.assertEqual(agent.observer.model, "brain-model")
+        self.assertEqual(agent.audit_logger.on_record, agent.observer.record_decision)
 
 
 class WiringPartsTest(unittest.TestCase):
@@ -250,13 +252,14 @@ class MainLogLinesTest(unittest.TestCase):
     """The two lines main() logs around the agent run: 'entering agent loop' and 'done.'."""
 
     def run_main(self):
+        self.agent, self.stop = mock.Mock(), threading.Event()
         cfg = mock.MagicMock(run_duration=0.0)
         cfg.validate.return_value = []
         with mock.patch.object(sys, "argv", ["wow-agent"]), \
                 mock.patch.object(main_mod, "load_config", return_value=cfg), \
                 mock.patch.object(main_mod, "_setup_logging"), \
-                mock.patch.object(main_mod, "build_agent", return_value=mock.Mock()), \
-                mock.patch.object(main_mod, "_install_stop_signals", return_value=threading.Event()), \
+                mock.patch.object(main_mod, "build_agent", return_value=self.agent), \
+                mock.patch.object(main_mod, "_install_stop_signals", return_value=self.stop), \
                 self.assertLogs("agent", level="INFO") as cm:
             main_mod.main()
         return [r.getMessage() for r in cm.records]
@@ -265,6 +268,10 @@ class MainLogLinesTest(unittest.TestCase):
         messages = self.run_main()
         self.assertEqual(sum(m.startswith("entering agent loop") for m in messages), 1)
         self.assertEqual(sum(m == "done." for m in messages), 1)
+
+    def test_main_runs_the_agent_once_and_leaves_the_closing_to_run(self):
+        self.run_main()
+        self.assertEqual(self.agent.mock_calls, [mock.call.run(self.stop)])
 
 
 class DryRunTest(unittest.TestCase):
