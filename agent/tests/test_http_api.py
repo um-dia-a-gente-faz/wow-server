@@ -54,6 +54,7 @@ def _fake_session():
 
 class _ServerCase(unittest.TestCase):
     def setUp(self):
+        join_new_threads(self)   # first, so it runs after the server shutdown: handler threads end with their response
         self.observer = AgentObserver("Luaprata", goal="level up", model="test-model")
         self.session = _fake_session()
         self.think_state = ThinkState()
@@ -223,10 +224,6 @@ class ReadOnlyTest(_ServerCase):
 
 
 class EventsStreamTest(_ServerCase):
-    def setUp(self):
-        join_new_threads(self)   # first, so it runs after the server shutdown: the stream handler thread ends with the response
-        super().setUp()
-
     def test_streams_new_events_and_decisions(self):
         resp = urllib.request.urlopen(self.base + "/events", timeout=5)
         self.addCleanup(resp.close)
