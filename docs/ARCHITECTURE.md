@@ -165,6 +165,7 @@ Who owns what in the tree. Every path below exists on `main`; decisions behind t
 agent layout are in `docs/adr/` (0005 session split, 0006 router, 0007 config schema,
 0008 wowmap split, 0009 threading model as it is today, 0010 agent API contract, 0012 site stack, 0013 admin-only GM control;
 [0017](adr/0017-fleet-decision-gateway.md) fleet-wide LLM/Jev limits, Proposed;
+0018 persisted-state versioning, Proposed, `docs/adr/0018-persisted-state-versioning.md`;
 the endpoint reference is `docs/AGENT-API.md`, generated from `agent/api_schema.json`, with its action catalog section generated from `agent/action_specs.py`).
 Proposed, not accepted yet: [ADR 0016](adr/0016-world-knowledge-service.md), one read-only world-knowledge source (a bundle file) for agents, console and navmesh sidecar.
 
