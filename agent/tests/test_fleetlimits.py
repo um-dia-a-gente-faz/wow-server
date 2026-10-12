@@ -24,7 +24,7 @@ class Clock:
         return self.t
 
 
-class FleetLimitsTest(unittest.TestCase):
+class _Files(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -48,6 +48,8 @@ class FleetLimitsTest(unittest.TestCase):
     def doc(self, until=NOW + 30, reason="fleet Jev budget spent", brain="jev", **kw):
         return {"version": 1, "blocks": {brain: {"until_ts": until, "reason": reason}}, **kw}
 
+
+class FleetLimitsTest(_Files):
     def test_exported_names(self):
         self.assertEqual(fl.SCHEMA_VERSION, 1)
         self.assertEqual(fl.MAX_BYTES, 65536)
@@ -245,6 +247,75 @@ class FleetLimitsTest(unittest.TestCase):
     def test_default_clock_is_wall_time(self):
         self.write(self.doc(until=time.time() + 60))
         self.assertIsNotNone(fl.FleetLimits(self.path).blocked("jev"))
+
+
+class HealthTest(_Files):
+    """ADR 0017 slice 3 (#675): `health` = (state, written_ts), as of the last blocked() call."""
+
+    def health_after(self, data=None):
+        if data is not None:
+            self.write(data)
+        lim = self.limits()
+        lim.blocked("jev")
+        return lim.health
+
+    def test_initial_health_is_missing(self):
+        self.assertEqual(self.limits().health, ("missing", None))
+
+    def test_good_file(self):
+        self.assertEqual(self.health_after(self.doc(written_ts=NOW - 5)), ("ok", NOW - 5))
+
+    def test_missing_file(self):
+        self.assertEqual(self.health_after(), ("missing", None))
+
+    def test_directory_oversized_and_bad_json_are_invalid(self):
+        os.mkdir(self.path)
+        self.assertEqual(self.health_after(), ("invalid", None))
+        os.rmdir(self.path)
+        self.assertEqual(self.health_after(b" " * (fl.MAX_BYTES + 1)), ("invalid", None))
+        self.assertEqual(self.health_after(b"{not json"), ("invalid", None))
+
+    def test_wrong_version_is_invalid(self):
+        self.assertEqual(self.health_after({"version": 2, "blocks": {}})[0], "invalid")
+
+    def test_one_bad_block_is_invalid_and_the_good_one_still_blocks(self):
+        self.write({"version": 1, "written_ts": NOW,
+                    "blocks": {"jev": {"until_ts": NOW + 30, "reason": "x"}, "llm": {"until_ts": "soon"}}})
+        lim = self.limits()
+        self.assertIsNotNone(lim.blocked("jev"))
+        self.assertEqual(lim.health, ("invalid", NOW))
+
+    def test_written_ts_that_is_not_a_finite_number_is_ok_without_age(self):
+        for bad in ("yesterday", True, float("nan"), float("inf")):
+            self.assertEqual(self.health_after(self.doc(written_ts=bad)), ("ok", None), bad)
+        self.assertEqual(self.health_after(self.doc()), ("ok", None))
+
+    def test_transitions(self):
+        self.write(b"{not json")
+        lim = self.limits()
+        lim.blocked("jev")
+        self.assertEqual(lim.health[0], "invalid")
+        self.replace(self.doc(written_ts=NOW))
+        lim.blocked("jev")
+        self.assertEqual(lim.health, ("ok", NOW))
+        os.remove(self.path)
+        lim.blocked("jev")
+        self.assertEqual(lim.health, ("missing", None))
+
+    def test_unchanged_file_leaves_the_same_object(self):
+        self.write(self.doc(written_ts=NOW))
+        lim = self.limits()
+        lim.blocked("jev")
+        before = lim.health
+        lim.blocked("jev")
+        self.assertIs(lim.health, before)
+
+    def test_unexpected_exception_is_invalid(self):
+        self.write(self.doc(written_ts=NOW))
+        lim = self.limits()
+        with mock.patch.object(lim, "_refresh", side_effect=RuntimeError("boom")):
+            self.assertIsNone(lim.blocked("jev"))
+        self.assertEqual(lim.health, ("invalid", None))
 
 
 if __name__ == "__main__":

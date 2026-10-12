@@ -156,6 +156,7 @@ def start_observer(cfg, audit_logger, log, brain=None):
                                  brain="jev" if brain.jev is not None else "llm")
     else:
         observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model)
+    observer.fleet = getattr(brain, "fleet", None)  # #675: /metrics reads its health
     observer.control_token = cfg.control_token  # #178: "" keeps the API read-only
     if audit_logger is not None:
         audit_logger.on_record = observer.record_decision
