@@ -126,11 +126,13 @@ class WindowsMixin:
         currently-known item/container with this entry, same policy as
         apply_creature_query_response."""
         with self._lock:
-            self.items.on_item_query_response(data)
+            self.items.on_item_query_response(data, save=False)
             if data["found"]:
                 for obj in self.objects.values():
                     if obj.object_type in ("item", "container") and obj.entry == data["entry"]:
                         obj.name = data["name"]
+        if data["found"]:
+            self.items.save()  # outside the lock, like the name cache (#705)
 
     # ── Mailbox (UM-60) ────────────────────────────────────────────────────
 

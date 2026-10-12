@@ -128,11 +128,13 @@ class ResolutionMixin:
         with this entry (there can be several, e.g. six identical "Shaker"
         NPCs — see agent/tests/fixtures/update_object/README.md)."""
         with self._lock:
-            self.names.on_creature_query_response(data)
+            self.names.on_creature_query_response(data, save=False)
             if data["found"]:
                 for obj in self.objects.values():
                     if obj.object_type == "unit" and obj.entry == data["entry"]:
                         self._apply_creature_name(obj, data)
+        if data["found"]:
+            self.names.save()  # outside the lock; the recv thread is the only writer of the cache dicts (ADR 0009), so no second lock
 
     def apply_gameobject_query_response(self, data: dict):
         """SMSG_GAMEOBJECT_QUERY_RESPONSE: backfill every currently-known
@@ -140,9 +142,11 @@ class ResolutionMixin:
         GAMEOBJECT_TYPE_MAILBOX), the only way ObjectInfo.is_mailbox() can
         tell a mailbox gameobject apart from any other."""
         with self._lock:
-            self.names.on_gameobject_query_response(data)
+            self.names.on_gameobject_query_response(data, save=False)
             if data["found"]:
                 for obj in self.objects.values():
                     if obj.object_type == "gameobject" and obj.entry == data["entry"]:
                         obj.name = data["name"]
                         obj.gameobject_type = data["type"]
+        if data["found"]:
+            self.names.save()  # outside the lock; see apply_creature_query_response
