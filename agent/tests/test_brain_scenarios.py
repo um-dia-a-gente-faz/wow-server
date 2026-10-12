@@ -496,6 +496,35 @@ class JevCooldownTest(unittest.TestCase):
         b._maybe_cool_down(JevError("x", status=402))
         self.assertEqual((self.cooldown(b), b._jev_cooldown_reason), (300, "HTTP 402"))
 
+    def test_a_cooldown_that_does_not_extend_the_running_one_logs_nothing(self):
+        b = self.make(JevError("x", status=402))
+        self.fail(b)
+        end, reason = b._jev_cooldown_until, b._jev_cooldown_reason
+        self.now[0] += 5
+        with self.assertNoLogs("agent.brain", "WARNING"):
+            b._maybe_cool_down(JevError("net", transient=True))
+        self.assertEqual((b._jev_cooldown_until, b._jev_cooldown_reason), (end, reason))
+
+    def test_a_cooldown_that_extends_the_running_one_logs_one_warning(self):
+        b = self.make(JevError("net", transient=True))
+        self.fail(b)
+        self.now[0] += 2
+        with self.assertLogs("agent.brain", "WARNING") as cm:
+            b._maybe_cool_down(JevError("x", status=402))
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("not calling it for 300s", cm.output[0])
+        self.assertIn("HTTP 402", cm.output[0])
+
+    def test_a_cooldown_started_with_none_running_logs_the_same_line_as_before(self):
+        for error, want in ((JevError("x", status=402), "jev failed (HTTP 402) — not calling it for 300s"),
+                            (JevError("net", transient=True),
+                             "jev failed (network error) — not calling it for 10s")):
+            with self.subTest(error=str(error)):
+                b = self.make(error)
+                with self.assertLogs("agent.brain", "WARNING") as cm:
+                    b._maybe_cool_down(error)
+                self.assertEqual(cm.output, [f"WARNING:agent.brain:{want}"])
+
     def test_jitter_end_of_range(self):
         b = self.make(JevError("x", status=429), end="b")
         self.fail(b)

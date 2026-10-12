@@ -10,6 +10,8 @@ import time
 import unittest
 from unittest import mock
 
+# #670: point CALIBRATION_FILE at a temp file before any wowmap import
+import _calibration_env  # noqa: F401
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import activity  # noqa: E402
 import activity_schema  # noqa: E402
