@@ -284,7 +284,8 @@ class NameCachePersistenceTest(unittest.TestCase):
 
     def test_load_missing_file_is_a_no_op(self):
         c = nm.NameCache()
-        c.load("/nonexistent/path/names.json")
+        with self.assertNoLogs("agent.names", "WARNING"):
+            c.load("/nonexistent/path/names.json")
         self.assertEqual(c.creatures, {})
 
     def test_load_corrupt_file_is_a_no_op(self):
@@ -295,6 +296,27 @@ class NameCachePersistenceTest(unittest.TestCase):
             c = nm.NameCache()
             c.load(path)  # must not raise
             self.assertEqual(c.creatures, {})
+
+    def test_load_survives_malformed_cache_files(self):
+        cases = {
+            "top-level list": "[]",
+            "non-numeric key": '{"creatures": {"abc": {"name": "x"}}}',
+            "wrong value type": '{"creatures": {"1": 5}}',
+            "truncated": '{"creatures": {"1": {"name": "Bro',
+            "empty file": "",
+        }
+        with tempfile.TemporaryDirectory() as d:
+            for label, content in cases.items():
+                with self.subTest(label):
+                    path = os.path.join(d, "names.json")
+                    with open(path, 'w') as f:
+                        f.write(content)
+                    c = nm.NameCache()
+                    with self.assertLogs("agent.names", "WARNING") as logs:
+                        c.load(path)  # must not raise
+                    self.assertEqual(c.creatures, {})
+                    self.assertEqual(c.gameobjects, {})
+                    self.assertIn(path, logs.output[0])
 
     def test_on_creature_response_persists_found_entries(self):
         with tempfile.TemporaryDirectory() as d:
