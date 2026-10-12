@@ -746,11 +746,11 @@ def main(argv=None, *, connect=None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     if connect is None:
-        from agent import __main__ as agent_main
+        from agent.login import connect_and_login
         log = logging.getLogger("agent.probe")
 
         def connect():
-            return agent_main._connect_and_login(cfg, log)
+            return connect_and_login(cfg, log)
 
     chat = None
     if "chat" not in skipped:

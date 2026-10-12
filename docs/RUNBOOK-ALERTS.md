@@ -65,7 +65,7 @@ fire this rule.
 
 **What it means.** One agent logged at least 2 reconnect waits in 15 minutes (`increase(...[15m]) > 1`)
 for 25 minutes. An agent that keeps failing logs waits for as long as it keeps failing, so this rule
-fires on a sustained failure, not on a blip. The supervisor (`agent/__main__.py`, `_supervise_connection`) waits between attempts and counts each
+fires on a sustained failure, not on a blip. The supervisor (`agent/supervisor.py`, `supervise_connection`) waits between attempts and counts each
 wait in `wow_agent_reconnect_attempts_total{agent,reason}`. The `reason` label says why:
 `connect_failed` (login or connect raised), `auth_rejected` (a transient auth refusal),
 `disconnected` (a drop after a good connect). A permanent refusal stops the agent and is not counted,
@@ -81,8 +81,8 @@ so a stopped container shows up in the logs, not here.
 agent, so a fleet-wide cause is the storm alert below, not this one.
 
 **Threshold.** The backoff starts at 5 s, doubles, and caps at 5 min; each wait is jittered between
-half and all of its step. Simulated from the supervisor's model (`agent/__main__.py`,
-`_supervise_connection`, a 10 s connect timeout per failed attempt), not run against Prometheus:
+half and all of its step. Simulated from the supervisor's model (`agent/supervisor.py`,
+`supervise_connection`, a 10 s connect timeout per failed attempt), not run against Prometheus:
 
 - **(a) An agent failing forever.** Waits are counted at 10, 25, 45, 75, 125, 215, 385 and 695 s
   (all-maximum jitter). From 25 s the trailing 15 minutes always hold two or more waits; at the 5-minute

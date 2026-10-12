@@ -55,7 +55,7 @@ exits unless `--allow-non-loopback` is given (the mock still runs locally).
 
 ## What the harness is not
 
-It calls `_run_think_loop` with `brain=None`, not the full `_run_loop`. Absent: the follow
+It calls `run_think_loop` with `brain=None`, not the full `run_loop`. Absent: the follow
 and rest reflex threads, the observer HTTP server, the audit logger and the chat relay.
 `threads_per_agent` counts the agent thread, the recv thread and one mock handler thread
 per agent; a real agent has at least two more. So the numbers are a floor for a connected

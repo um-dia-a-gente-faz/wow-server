@@ -32,6 +32,10 @@ class ActionRegistrationTest(unittest.TestCase):
     def test_entry_point_registers_death_actions(self):
         self.assertLessEqual({"release_spirit", "reclaim_corpse"}, _registry_in_fresh_process("agent.__main__"))
 
+    def test_login_module_registers_death_actions(self):
+        # #292: tools (probe, soak, the world-mock tests) log in through agent.login without agent.__main__.
+        self.assertLessEqual({"release_spirit", "reclaim_corpse"}, _registry_in_fresh_process("agent.login"))
+
     def test_entry_point_registers_every_action_name(self):
         names = _all_action_names()
         self.assertGreater(len(names), 40)

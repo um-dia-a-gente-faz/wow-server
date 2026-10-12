@@ -26,7 +26,7 @@ from agent import packets as pk  # noqa: E402
 from agent import quests as qu  # noqa: E402
 from agent import update_fields as uf  # noqa: E402
 from agent.update_object import parse_update_object  # noqa: E402
-from agent.__main__ import _authenticate_and_login  # noqa: E402
+from agent.login import authenticate_and_login  # noqa: E402
 from agent.auth import AuthRejected, auth_logon  # noqa: E402
 
 
@@ -59,7 +59,7 @@ class WorldMockTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, 4)
 
     def test_login_then_quest_turn_in(self):
-        sess, chars = _authenticate_and_login(self.cfg, logging.getLogger("test"))
+        sess, chars = authenticate_and_login(self.cfg, logging.getLogger("test"))
         self.addCleanup(lambda: sess.sock and sess.sock.close())
         self.assertEqual([c["name"] for c in chars], ["Luaprata", "Dawnrunner", "Jevrun"])
         sess.login_character(chars[0]["guid"])
@@ -98,7 +98,7 @@ class StreamTest(unittest.TestCase):
         self.addCleanup(mock.close)
         cfg = SimpleNamespace(wow_host="127.0.0.1", wow_auth_port=mock.auth_port, account=server.DEFAULT_ACCOUNT,
                               password=server.DEFAULT_PASSWORD, verbose_packets=False, dump_packets_dir="")
-        sess, chars = _authenticate_and_login(cfg, logging.getLogger("test"))
+        sess, chars = authenticate_and_login(cfg, logging.getLogger("test"))
         self.addCleanup(lambda: sess.sock and sess.sock.close())
         seen = collections.Counter()
         real = sess._dispatch
