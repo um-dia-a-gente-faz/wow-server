@@ -95,10 +95,10 @@ class ItemCache:
             available -= 1
         return out
 
-    def on_item_query_response(self, data: dict):
+    def on_item_query_response(self, data: dict, save: bool = True):
         self._in_flight.discard(data["entry"])
         self.items[data["entry"]] = data if data["found"] else None
-        if data["found"]:
+        if save and data["found"]:
             self.save()
 
     def load(self, path: str | None = None):

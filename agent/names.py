@@ -296,16 +296,16 @@ class NameCache:
         self._in_flight.pop(("player", data["guid"]), None)
         self.players[data["guid"]] = data["name"] if data["found"] else None
 
-    def on_creature_query_response(self, data: dict):
+    def on_creature_query_response(self, data: dict, save: bool = True):
         self._in_flight.pop(("creature", data["entry"]), None)
         self.creatures[data["entry"]] = data if data["found"] else None
-        if data["found"]:
+        if save and data["found"]:
             self.save()
 
-    def on_gameobject_query_response(self, data: dict):
+    def on_gameobject_query_response(self, data: dict, save: bool = True):
         self._in_flight.pop(("gameobject", data["entry"]), None)
         self.gameobjects[data["entry"]] = data if data["found"] else None
-        if data["found"]:
+        if save and data["found"]:
             self.save()
 
     def load(self, path: str | None = None):
