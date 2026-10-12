@@ -96,8 +96,8 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 **Where the `tools` job's time goes (#591).** The job `tools (unit tests, generated files)`
 has a 10-minute timeout. It runs `scripts/check.sh generated test`, which is the
 generated-file checks and then every suite in `SUITES` in sequence, then the JevClient
-test against a running jev-mock (about 8 s). Checkout and the two pip installs take about
-6 s. The limit is at least 2x the job's duration: the job in run 38226653245 on `main`
+step against a running jev-mock (about 6 s). Job setup, checkout, `setup-python` and the two pip
+installs take about 8 s before the first suite, and post-job cleanup about 2 s after. The limit is at least 2x the job's duration: the job in run 38226653245 on `main`
 (2026-10-12, a push that ran every job) took 4m33s in total. Wall time per suite is the gap between
 consecutive suite starts in that job's log, slowest first:
 
@@ -116,10 +116,10 @@ consecutive suite starts in that job's log, slowest first:
 | tools-arch | 28 | 0.4 |
 | wow-agents | 19 | 0.2 |
 | dbc | 48 | 0.1 |
-| wowmap-js | - | 0.1 |
+| wowmap-js | 9 | 0.1 |
 | wow-exporter | 8 | 0.1 |
 
-`agent` is most of the job. A suite that grows past about a minute is a reason to look at
+`agent` is most of the job. It is already past that mark (143 s in this run), and the separate `agent` job runs the same suite, so it is the first place to look; #591 only raised the limit. A suite that grows past about a minute is a reason to look at
 it (what it runs, what it waits on), not a reason to raise the timeout again.
 
 Milestone and board naming (`M<n> - <subject>`, label and view rules, *blocked by*) is
