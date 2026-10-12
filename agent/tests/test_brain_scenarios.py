@@ -429,7 +429,7 @@ class JevCooldownTest(unittest.TestCase):
         self.jev = _ErrJev(error)
         return br.Brain(jev=self.jev, llm=llm, clock=lambda: self.now[0], rng=_Rng(end))
 
-    def fail(self, b):
+    def fail_call(self, b):
         with self.assertRaises(br.BrainError):
             b.decide(snap(), my_guid=ME)
 
@@ -442,21 +442,21 @@ class JevCooldownTest(unittest.TestCase):
         for e in errors:
             with self.subTest(status=e.status):
                 b = self.make(e)
-                self.fail(b)
+                self.fail_call(b)
                 self.assertEqual(self.jev.calls, 1)
                 self.assertEqual(self.cooldown(b), 10.0)
                 self.now[0] += br.JEV_ERROR_COOLDOWN_S - 1
-                self.fail(b)
+                self.fail_call(b)
                 self.assertEqual(self.jev.calls, 1)   # still cooling: not called
                 self.now[0] += 2
-                self.fail(b)
+                self.fail_call(b)
                 self.assertEqual(self.jev.calls, 2)
 
     def test_network_error_from_jev_error_builder_cools_down(self):
         e = jev._jev_error(httpjson.HttpJsonError("network", "http://j", detail="timed out"))
         self.assertTrue(e.transient)
         b = self.make(e)
-        self.fail(b)
+        self.fail_call(b)
         self.assertEqual(b._jev_cooldown_reason, "network error")
         self.assertEqual(self.cooldown(b), br.JEV_ERROR_COOLDOWN_S)
 
@@ -464,12 +464,12 @@ class JevCooldownTest(unittest.TestCase):
         for retry_after, want in ((120, 120), (None, 30), (0, 5), (-3, 5), (99999, 900)):
             with self.subTest(retry_after=retry_after):
                 b = self.make(JevError("x", status=429, retry_after=retry_after))
-                self.fail(b)
+                self.fail_call(b)
                 self.assertEqual(self.cooldown(b), want)
 
     def test_auth_status_ignores_retry_after(self):
         b = self.make(JevError("x", status=402, retry_after=1))
-        self.fail(b)
+        self.fail_call(b)
         self.assertEqual(self.cooldown(b), 300)
 
     def test_other_failures_start_no_cooldown(self):
@@ -477,13 +477,13 @@ class JevCooldownTest(unittest.TestCase):
                   jev._jev_error(httpjson.HttpJsonError("non_json", "http://j", body=b"<html>"))):
             with self.subTest(e=str(e)):
                 b = self.make(e)
-                self.fail(b)
-                self.fail(b)
+                self.fail_call(b)
+                self.fail_call(b)
                 self.assertEqual(self.jev.calls, 2)
 
     def test_a_shorter_cooldown_never_replaces_a_longer_one(self):
         b = self.make(JevError("x", status=402))
-        self.fail(b)
+        self.fail_call(b)
         b.jev.error = JevError("net", transient=True)
         self.now[0] += 5
         b._maybe_cool_down(b.jev.error)
@@ -492,13 +492,13 @@ class JevCooldownTest(unittest.TestCase):
 
     def test_a_longer_cooldown_replaces_a_shorter_one(self):
         b = self.make(JevError("net", transient=True))
-        self.fail(b)
+        self.fail_call(b)
         b._maybe_cool_down(JevError("x", status=402))
         self.assertEqual((self.cooldown(b), b._jev_cooldown_reason), (300, "HTTP 402"))
 
     def test_a_cooldown_that_does_not_extend_the_running_one_logs_nothing(self):
         b = self.make(JevError("x", status=402))
-        self.fail(b)
+        self.fail_call(b)
         end, reason = b._jev_cooldown_until, b._jev_cooldown_reason
         self.now[0] += 5
         with self.assertNoLogs("agent.brain", "WARNING"):
@@ -507,7 +507,7 @@ class JevCooldownTest(unittest.TestCase):
 
     def test_a_cooldown_that_extends_the_running_one_logs_one_warning(self):
         b = self.make(JevError("net", transient=True))
-        self.fail(b)
+        self.fail_call(b)
         self.now[0] += 2
         with self.assertLogs("agent.brain", "WARNING") as cm:
             b._maybe_cool_down(JevError("x", status=402))
@@ -527,14 +527,14 @@ class JevCooldownTest(unittest.TestCase):
 
     def test_jitter_end_of_range(self):
         b = self.make(JevError("x", status=429), end="b")
-        self.fail(b)
+        self.fail_call(b)
         self.assertAlmostEqual(self.cooldown(b), 33.0)
 
     def test_jitter_is_applied_after_the_clamp(self):
         # 99999 s clamps to 900 s first, then the 10 % jitter: 990 s, not 900 (jitter
         # lost to the clamp) and not 109 998.9 (clamp lost to the jitter).
         b = self.make(JevError("x", status=429, retry_after=99999), end="b")
-        self.fail(b)
+        self.fail_call(b)
         self.assertAlmostEqual(self.cooldown(b), 990.0)
 
     def test_jitter_never_below_base(self):
@@ -561,7 +561,7 @@ class JevCooldownTest(unittest.TestCase):
         # 30 s Retry-After with the top of the jitter: the log says 33s (what the cooldown is), not 30s.
         b = self.make(JevError("x", status=429, retry_after=30), end="b")
         with self.assertLogs("agent.brain", "WARNING") as cm:
-            self.fail(b)
+            self.fail_call(b)
         self.assertAlmostEqual(self.cooldown(b), 33.0)
         self.assertIn("not calling it for 33s", cm.output[0])
 

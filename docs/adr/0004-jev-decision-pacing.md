@@ -204,7 +204,7 @@ so D7 is an edit to that document, not something this ADR overrides.
 - #202 — this ADR.
 - Follow-ups, one per decision item (all on milestone *M3 - Jev decision brain*):
   - #212 — D3: make `AGENT_THINK_INTERVAL_S` a runtime knob in the generator.
-  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`. Wired: per agent, rolling hour, input+output, breach fails the cycle (`jev_status: budget_exhausted`).
+  - #213 — D4: wire or delete `AGENT_MAX_TOKENS_PER_HOUR`. Wired: per agent, rolling hour, input+output, breach skips the Jev call (`jev_status: budget_exhausted`), a skip and not an error.
   - #214 — D5: stop recording `jev_status: success` for a cycle Jev was never asked.
   - #215 — D6: sleep to a deadline instead of the interval being additive.
   - #216 — F6: verify the native TypeSafe per-token price and correct ADR 0001's
@@ -251,7 +251,7 @@ Two traps worth knowing before writing your own, both hit while producing this A
 ## Update 2026-10-11 (#454): the spend cap moved
 
 The cap wired for D4 (#213) is unchanged in behaviour: rolling hour, per agent,
-input+output tokens, breach fails the cycle as `budget_exhausted`. Its code now
+input+output tokens, breach skips the Jev call as `budget_exhausted`, a skip and not an error. Its code now
 lives in `agent/tokenbudget.py` as `TokenBudget`, which `Brain` holds, so any
 decider can be given the same object and draw from one allowance. Only Jev calls
 are charged, as before; LLM tokens stay out of it. The HTTP transport moved to
