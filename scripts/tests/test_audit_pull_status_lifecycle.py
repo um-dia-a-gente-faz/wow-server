@@ -8,6 +8,7 @@ Runs the real script against a temp audit tree; RSYNC_BIN is a fake, no ssh, no 
 """
 import os
 import pathlib
+import re
 import stat
 import subprocess
 import tempfile
@@ -80,14 +81,35 @@ class AuditPullStatusLifecycleTest(unittest.TestCase):
         touch(self.agent / "lifecycle" / "2026-10-12.jsonl", age_s=5)
         self.assertVerdict(self.run_status(), "QUIET", 0)
 
+    def listing_line(self, name: str, age_s: float) -> str:
+        ts = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime(time.time() - age_s))
+        return f"-rw-r--r--        120 {ts} {name}\n"
+
+    def test_stuck_loop_with_source_check_enabled_reads_quiet_and_labels_ages(self):
+        # The #622 scenario with the source check on, as the timer runs it: the stuck agent
+        # reconnects, so its lifecycle file is fresh on both sides. The source and the mirror
+        # agree (5 s), the decision file is 3600 s old, and the verdict is QUIET, exit 0.
+        touch(self.agent / "2026-10-10.jsonl", age_s=3600)
+        touch(self.agent / "lifecycle" / "2026-10-12.jsonl", age_s=5)
+        listing = (self.listing_line("AGENT01/2026-10-10.jsonl", 3600)
+                   + self.listing_line("AGENT01/lifecycle/2026-10-12.jsonl", 5))
+        r = self.run_status(SKIP_SOURCE="0", AUDIT_SRC_HOST="guest.invalid",
+                            RSYNC_BIN=self.fake, FAKE_RSYNC_LISTING=listing)
+        self.assertVerdict(r, "QUIET", 0)
+        mirror = next(x for x in r.stdout.splitlines() if x.startswith("mirror:"))
+        m = re.search(r"newest audit file (\d+) s old, newest decision file (\d+) s old", mirror)
+        self.assertIsNotNone(m, mirror)
+        self.assertLessEqual(int(m.group(1)), 10, mirror)
+        self.assertGreaterEqual(int(m.group(2)), 3600, mirror)
+        self.assertLessEqual(int(m.group(2)), 3610, mirror)
+
     def test_pull_behind_still_counts_lifecycle_on_source(self):
         # mirror: day file 1000 s old. source: a lifecycle file 10 s old that the mirror
         # has not pulled, i.e. the pull is behind. Must stay PULL BEHIND (exit 1).
         touch(self.agent / "2026-10-12.jsonl", age_s=1000)
-        listing = (f"-rw-r--r--        120 {time.strftime('%Y/%m/%d %H:%M:%S', time.localtime(time.time() - 10))}"
-                   f" AGENT01/lifecycle/2026-10-12.jsonl\n")
         r = self.run_status(SKIP_SOURCE="0", AUDIT_SRC_HOST="guest.invalid",
-                            RSYNC_BIN=self.fake, FAKE_RSYNC_LISTING=listing)
+                            RSYNC_BIN=self.fake,
+                            FAKE_RSYNC_LISTING=self.listing_line("AGENT01/lifecycle/2026-10-12.jsonl", 10))
         self.assertVerdict(r, "PULL BEHIND", 1)
 
 

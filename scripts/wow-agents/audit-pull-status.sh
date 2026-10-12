@@ -69,11 +69,19 @@ mirror_day_newest="${mirror_day_newest%.*}"
 # PULL BEHIND compares the whole tree on both sides, lifecycle files included.
 mirror_newest="$(find "$dest" -type f -name '*.jsonl*' -printf '%T@\n' 2>/dev/null | sort -n | tail -1)"
 mirror_newest="${mirror_newest%.*}"
-if [ -n "$mirror_day_newest" ]; then
-  echo "mirror:        newest audit file $((now - mirror_day_newest)) s old ($dest)"
+# Same base as the source line (whole tree); the decision-file age is reported next to it.
+mirror_line="mirror:        "
+if [ -n "$mirror_newest" ]; then
+  mirror_line+="newest audit file $((now - mirror_newest)) s old"
 else
-  echo "mirror:        no audit files in $dest"
+  mirror_line+="no audit files"
 fi
+if [ -n "$mirror_day_newest" ]; then
+  mirror_line+=", newest decision file $((now - mirror_day_newest)) s old"
+else
+  mirror_line+=", no decision files"
+fi
+echo "$mirror_line ($dest)"
 
 # --- source newest (optional) ---------------------------------------------
 src_newest=""
