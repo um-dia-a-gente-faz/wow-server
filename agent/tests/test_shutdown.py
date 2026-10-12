@@ -191,10 +191,20 @@ class LogoutBoundTest(unittest.TestCase):
         sess._in_world = True
         sess.unexpected_disconnect = False
         sess._send_packet = lambda *a, **k: None
-        sess._recv_packet = lambda: (0x1, b"")  # chatty server, never SMSG_LOGOUT_COMPLETE
+        release = threading.Event()  # a logout with no deadline would loop here for ever: let it out, then fail
+
+        def chatty():
+            if release.is_set():
+                raise ConnectionError("test released a logout that never gave up")
+            return 0x1, b""  # chatty server, never SMSG_LOGOUT_COMPLETE
+
+        sess._recv_packet = chatty
+        self.addCleanup(release.set)
         with mock.patch.object(session_mod, "LOGOUT_WAIT_S", 0.2):
             t0 = time.monotonic()
-            sess.logout()
+            done = self._logout_in_thread(sess, within=3.0)
+            release.set()
+        self.assertTrue(done, "logout has no deadline: it kept reading a chatty server")
         self.assertLess(time.monotonic() - t0, 2.0)
         self.assertIsNone(sess.sock)
 
@@ -220,6 +230,67 @@ class LogoutBoundTest(unittest.TestCase):
             if not done:
                 theirs.close()  # unblock the stuck thread before failing
         self.assertTrue(done, "logout blocked on a silent server: no socket timeout")
+
+    def test_cut_timer_ends_a_read_the_socket_timeout_cannot_bound(self):
+        # #485: a streaming server resets the socket timeout on every byte, so one read can outlast the
+        # deadline. Simulated with a settimeout that does nothing and a read that only shutdown() ends.
+        class NoTimeoutSocket:
+            def __init__(self, sock):
+                self._s = sock
+
+            def settimeout(self, _t):
+                pass
+
+            def __getattr__(self, name):
+                return getattr(self._s, name)
+
+        sess = make_session()
+        ours, theirs = socket.socketpair()
+        self.addCleanup(ours.close)
+        self.addCleanup(theirs.close)
+        sess.sock = NoTimeoutSocket(ours)
+        sess._in_world = True
+        sess._recv_thread = None
+
+        def read():
+            if not ours.recv(1):  # b"" once the cut timer shuts the socket down
+                raise ConnectionError("cut")
+            return 0x1, b""
+
+        sess._recv_packet = read
+        with mock.patch.object(session_mod, "LOGOUT_WAIT_S", 0.3):
+            done = self._logout_in_thread(sess, within=3.0)
+            if not done:
+                theirs.close()  # unblock the stuck thread before failing
+        self.assertTrue(done, "logout stayed in a read past the deadline: the cut timer did not fire")
+        self.assertIsNone(sess.sock)
+
+    def test_cut_timer_is_started_and_cancelled_when_logout_completes(self):
+        timers = []
+
+        class RecordingTimer(threading.Timer):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.was_started = False
+                timers.append(self)
+
+            def start(self):
+                self.was_started = True
+                super().start()
+
+        sess = make_session()
+        sess._in_world = True
+        sess._recv_thread = None
+        sess._recv_packet = lambda: (session_mod.SMSG_LOGOUT_COMPLETE, b"")
+        with mock.patch.object(session_mod, "LOGOUT_WAIT_S", 30.0), \
+                mock.patch.object(session_mod.threading, "Timer", RecordingTimer):
+            sess.logout()
+            leftover = [t for t in timers if not t.finished.is_set()]
+            for t in timers:
+                t.cancel()  # a timer logout left running must not outlive this test
+        self.assertEqual(len(timers), 1)
+        self.assertTrue(timers[0].was_started, "the cut timer was never started")
+        self.assertEqual(leftover, [], "the cut timer was left running after logout returned")
 
     def test_logout_join_of_a_stuck_recv_thread_is_bounded(self):
         sess = make_session()
