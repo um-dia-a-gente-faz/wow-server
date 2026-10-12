@@ -45,9 +45,11 @@ and tears the old one down. It is called by `Agent.run()` (`agent/root.py`).
 - `Transport._lock` serialises writes to the socket, so any thread may send.
 - `WorldState` has one internal lock; its docstring says mutation goes through
   `update_object()` / `remove_guids()` from the recv thread and that `snapshot()`
-  and the getters are safe from other threads. Caveat (#701): `snapshot()` is not
-  consistent under a concurrent writer. It composes the sections from live objects
-  after its lock is released; see "Decision of #251" below.
+  and the getters are safe from other threads.
+  `snapshot()` composes and encodes the whole snapshot inside one acquisition of that
+  lock (#701), so every section built from `WorldState` shows one moment and the result
+  shares no object with live state. `group`, `pending_invite` and `chat_inbox` are session
+  state the caller passes in; that lock does not guard them.
 - `HandleMap` (`agent/handles.py`) and `AgentObserver` (`_lock` for sequence and
   token totals) have their own small locks.
 - `AgentObserver.action_lock` (#178): held by the think loop for the whole of each
@@ -110,13 +112,9 @@ audit or relay code and imports only the `swallowed()` logging helper from
     accepted. Such readers go through `events_snapshot()` / `chat_inbox_snapshot()`
     (#692), pinned by `agent/tests/test_events_snapshot.py`; `test_architecture.py`
     rejects a live loop outside `agent/state.py` and `agent/handlers/`.
-  - `WorldState` getters read under its lock. `WorldState.snapshot()` is NOT yet
-    consistent under a concurrent writer: it copies the object table under its lock,
-    then composes the sections from the live `ObjectInfo` objects after releasing the
-    lock, so a writer can change an object between two of its field reads. This is
-    tracked as #701, which owns the race test and the fix. Until #701 lands, the
-    statement that `snapshot()` is safe from other threads holds only for its
-    lock-held part.
+  - `WorldState` getters read under its lock. Since #701, `WorldState.snapshot()` is
+    consistent under a concurrent writer: it composes and encodes the whole snapshot inside
+    one acquisition of that lock, pinned by `agent/tests/test_world_state_race.py`.
 - **Open questions 1 and 2 stay open.** They ask for a single writer for `GameState`
   and for reflex and think-loop coordination. Both change the threading model.
   Nothing measured so far needs that change, so it is not started. Reopen them when a
