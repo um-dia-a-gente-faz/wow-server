@@ -24,6 +24,7 @@ from agent.audit import AuditLogger
 from agent.config import Config
 from agent.http_api import AgentObserver, make_server, start_server
 from agent.think import ThinkState
+from agent.tests.restore import join_new_threads, reset_counters
 
 SECRET_PASSWORD = "pw-do-not-leak-7f3a"
 SECRET_API_KEY = "sk-do-not-leak-91bc"
@@ -87,8 +88,8 @@ class EndpointsTest(_ServerCase):
 
     def test_metrics_exposes_the_swallowed_error_counter(self):
         from agent import metrics
+        reset_counters(self)
         metrics.SWALLOWED["unit.http"] = 2
-        self.addCleanup(metrics.SWALLOWED.clear)
         with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
             self.assertTrue(r.headers.get_content_type().startswith("text/plain"))
             text = r.read().decode("utf-8")
@@ -96,8 +97,7 @@ class EndpointsTest(_ServerCase):
 
     def test_metrics_exposes_the_router_counters(self):
         from agent import metrics
-        metrics.ROUTER_COUNTS.clear()
-        self.addCleanup(metrics.ROUTER_COUNTS.clear)
+        reset_counters(self)
         metrics.count_router_event("unhandled", 0xFFFE)
         with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
             text = r.read().decode("utf-8")
@@ -107,8 +107,7 @@ class EndpointsTest(_ServerCase):
 
     def test_metrics_exposes_the_reconnect_counter(self):
         from agent import metrics
-        metrics.RECONNECTS.update(dict.fromkeys(metrics.RECONNECT_REASONS, 0))
-        self.addCleanup(metrics.RECONNECTS.update, dict.fromkeys(metrics.RECONNECT_REASONS, 0))
+        reset_counters(self)
         metrics.count_reconnect("disconnected")
         with urllib.request.urlopen(self.base + "/metrics", timeout=5) as r:
             text = r.read().decode("utf-8")
@@ -224,6 +223,10 @@ class ReadOnlyTest(_ServerCase):
 
 
 class EventsStreamTest(_ServerCase):
+    def setUp(self):
+        join_new_threads(self)   # first, so it runs after the server shutdown: the stream handler thread ends with the response
+        super().setUp()
+
     def test_streams_new_events_and_decisions(self):
         resp = urllib.request.urlopen(self.base + "/events", timeout=5)
         self.addCleanup(resp.close)

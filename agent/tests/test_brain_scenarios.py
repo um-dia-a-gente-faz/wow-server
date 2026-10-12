@@ -26,6 +26,7 @@ from agent import candidates as cand
 from agent import death  # noqa: F401  registers release_spirit/reclaim_corpse
 from agent.deciders import ScriptedDecider
 from agent.fleetlimits import FleetLimits
+from agent.tests.restore import reset_counters
 from agent.handles import UnknownHandle
 from agent.jev import JevError
 from agent.reflexes import follow  # noqa: F401  registers follow/assist/stop_following
@@ -348,8 +349,7 @@ class FleetCountTest(unittest.TestCase):
         self.path = os.path.join(tmp.name, "limits.json")
         self.now = self.NOW
         self.metrics = metrics
-        metrics.FLEET_BLOCKED.update(dict.fromkeys(metrics.FLEET_BRAINS, 0))
-        self.addCleanup(metrics.FLEET_BLOCKED.update, dict.fromkeys(metrics.FLEET_BRAINS, 0))
+        reset_counters(self)
 
     def fleet(self, *brains):
         with open(self.path, "w") as f:
