@@ -1,11 +1,14 @@
 """ItemCache persistence (ADR 0018, slice 1): the schema guard, same rules as NameCache."""
 import json
 import os
+import struct
 import tempfile
 import unittest
 from unittest import mock
 
 from agent import items as it
+from agent import loot as lo
+from agent.tests import test_loot as tl
 
 
 def main_loader(cache, path):
@@ -122,6 +125,70 @@ class ItemCacheSchemaTest(unittest.TestCase):
                 self.assertEqual(c.items, {})
                 c.save(path)
                 self.assertEqual(json.loads(_read(path)), {"schema": 2, "items": {}})
+            self.assertFalse(os.path.exists(path + ".corrupt"))
+
+    def test_load_survives_malformed_entries(self):
+        cases = {
+            "item without name": '{"items": {"1": {}}}',
+            "item name not a string": '{"items": {"1": {"name": 5}}}',
+            "item name null": '{"items": {"1": {"name": null}}}',
+            "long non-numeric key": '{"items": {"' + "k" * 10000 + '": {}}}',
+            "newline in key": '{"items": {"\\n3\\n": 5}}',
+            "newline in non-numeric key": '{"items": {"a\\nb": {}}}',
+            "astral non-numeric key": '{"items": {"' + "\U0010ffff" * 40 + '": {}}}',
+            "4301-digit key": '{"items": {"' + "1" * 4301 + '": {"name": "x"}}}',
+        }
+        with tempfile.TemporaryDirectory() as d:
+            for label, content in cases.items():
+                with self.subTest(label):
+                    path = os.path.join(d, "items.json")
+                    _put(path, content)
+                    c = it.ItemCache()
+                    with self.assertLogs("agent.items", "WARNING") as logs:
+                        c.load(path)  # must not raise
+                    self.assertEqual(c.items, {})
+                    self.assertEqual(len(logs.output), 1)  # exactly one warning per failed load
+                    self.assertIn(path, logs.output[0])
+                    self.assertNotIn("\n", logs.output[0])
+                    self.assertLess(len(logs.output[0]), 500)
+                    self.assertLessEqual(len(logs.output[0].replace(path, "")), 300)
+                    self.assertEqual(_read(path + ".corrupt"), content.encode())
+                    self.assertFalse(os.path.exists(path))
+
+    def test_one_bad_entry_keeps_nothing_from_the_file(self):
+        content = '{"items": {"1": {"name": "Sword"}, "2": {"name": 5}}}'
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "items.json")
+            _put(path, content)
+            c = it.ItemCache()
+            with self.assertLogs("agent.items", "WARNING") as logs:
+                c.load(path)
+            self.assertEqual(len(logs.output), 1)
+            self.assertEqual(c.items, {})
+
+    def test_entries_of_the_current_schema_load_unchanged(self):
+        content = ('{"schema": 1, "items": {"1": null, "2": {"name": "Sword", "extra": 1}}}')
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "items.json")
+            _put(path, content)
+            c = it.ItemCache()
+            with self.assertNoLogs("agent.items", "WARNING"):
+                c.load(path)
+            self.assertEqual(c.items, {1: None, 2: {"name": "Sword", "extra": 1}})
+
+    def test_what_the_agent_saves_loads_back_equal(self):
+        found = tl.ParseItemQueryResponseTest._build(None, entry=159, name="Tough Jerky",
+                                                     stats=((4, 12),), damage=((10.0, 20.0, 0),))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "items.json")
+            c1 = it.ItemCache(cache_path=path)
+            c1.on_item_query_response(lo.parse_item_query_response(struct.pack('<I', 999 | 0x80000000)))
+            c1.on_item_query_response(lo.parse_item_query_response(found))  # saves both entries
+            c2 = it.ItemCache()
+            with self.assertNoLogs("agent.items", "WARNING"):
+                c2.load(path)
+            self.assertEqual(c2.items, c1.items)
+            self.assertEqual(c2.items[159]["name"], "Tough Jerky")
             self.assertFalse(os.path.exists(path + ".corrupt"))
 
 

@@ -20,19 +20,32 @@ DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/wow-agent/items.json")
 CACHE_SCHEMA = 1   # ADR 0018: the `schema` key of items.json
 
 
-def _parse_items_section(section) -> dict[int, dict | None]:
-    """The `items` section of the cache file: {"<entry>": parsed dict or null}. Raises
-    ValueError on any other shape, so load() drops the whole file."""
+# Keys every cached item must carry, with the exact type (type(), not isinstance). The
+# parser always sets `name` on a found item (a cstring), so everything ItemCache writes passes.
+_ITEM_REQUIRED: dict[str, type] = {"name": str}
+
+
+def _parse_items_section(section, required: dict[str, type]) -> dict[int, dict | None]:
+    """The `items` section of the cache file: {"<entry>": parsed dict or null}. A null entry is a
+    cached "not found". An object entry must carry every `required` key with that type; the
+    readers index those keys without checking. Raises ValueError on any other shape, so load()
+    drops the whole file."""
     if not isinstance(section, dict):
         raise ValueError(f"items section is {type(section).__name__}, expected an object")
-    out = {}
+    out: dict[int, dict | None] = {}
     for key, value in section.items():
         try:
             entry = int(key)
         except ValueError:
-            raise ValueError(f"non-numeric entry key {key[:40]!r}") from None
-        if value is not None and not isinstance(value, dict):
+            raise ValueError(f"non-numeric entry key {key!r}") from None
+        if value is None:
+            out[entry] = None
+            continue
+        if not isinstance(value, dict):
             raise ValueError(f"entry {entry} is {type(value).__name__}, expected an object or null")
+        for name, kind in required.items():
+            if type(value.get(name)) is not kind:
+                raise ValueError(f"entry {entry} has no usable {name!r}")
         out[entry] = value
     return out
 
@@ -103,9 +116,9 @@ class ItemCache:
             return
         if loaded.status == persist.OK:
             try:
-                items = _parse_items_section(loaded.data.get("items", {}))
+                items = _parse_items_section(loaded.data.get("items", {}), _ITEM_REQUIRED)
             except ValueError as e:
-                log.warning("ignoring unreadable item cache %s: %s", path, e)
+                log.warning("ignoring unreadable item cache %s: %s", path, str(e)[:200])
                 persist.set_aside(path)
                 return
             self.items.update(items)
