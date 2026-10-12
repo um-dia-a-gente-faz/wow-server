@@ -76,10 +76,55 @@ class AtomicWriteChecks:
         self.assertEqual(len(closed), 1)
         self.assertEqual(self.listing(), [os.path.basename(self.target)])
 
-    def test_a_failing_os_close_on_a_new_target_leaves_nothing_but_the_target(self):
-        with mock.patch("os.close", side_effect=OSError("boom")), contextlib.suppress(OSError):
+    def test_a_failed_fdopen_and_a_failing_close_leave_no_temporary(self):
+        before = self.listing() if os.path.isdir(os.path.dirname(self.target)) else []
+        fds, real_open, real_close = [], os.open, os.close
+
+        def spy(*a, **k):
+            fds.append(real_open(*a, **k))
+            return fds[-1]
+
+        def close_leaked():
+            for fd in fds:
+                with contextlib.suppress(OSError):
+                    real_close(fd)
+        self.addCleanup(close_leaked)
+        with mock.patch("os.open", spy), mock.patch("os.fdopen", side_effect=OSError("boom")), \
+                mock.patch("os.close", side_effect=OSError("close boom")), self.assertRaises(OSError):
             self.save(1)
-        self.assertEqual([n for n in self.listing() if n != os.path.basename(self.target)], [])
+        self.assertEqual(self.listing(), before)
+
+    def test_a_planted_file_at_the_temporary_path_is_refused_and_left_alone(self):
+        self.save(1)
+        with open(self.target, "rb") as f:
+            before = f.read()
+        directory, name = os.path.split(self.target)
+        planted = os.path.join(directory, f".{name}.fixed.tmp")
+        with open(planted, "wb") as f:
+            f.write(b"planted")
+        with mock.patch("secrets.token_hex", return_value="fixed"), self.assertRaises(FileExistsError):
+            self.save(2)
+        with open(planted, "rb") as f:
+            self.assertEqual(f.read(), b"planted")
+        with open(self.target, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_the_temporary_of_an_existing_target_is_never_wider_than_it(self):
+        self.save(1)
+        os.chmod(self.target, 0o600)
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        modes, real_open = [], os.open
+
+        def spy(*a, **k):
+            fd = real_open(*a, **k)
+            modes.append(stat.S_IMODE(os.fstat(fd).st_mode))
+            return fd
+        with mock.patch("os.open", spy):
+            self.save(2)
+        self.assertTrue(modes)
+        self.assertEqual([m & ~0o600 for m in modes], [0] * len(modes))
+        self.assertEqual(stat.S_IMODE(os.stat(self.target).st_mode), 0o600)
 
     def test_two_concurrent_saves_never_share_a_temporary_name(self):
         self.save(1)

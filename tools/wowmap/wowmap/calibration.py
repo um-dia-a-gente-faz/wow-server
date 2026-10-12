@@ -82,9 +82,10 @@ calibrations = load_calibrations()
 def _write_atomic(path, text):
     """Write `text` to `path` through a unique temporary file in the same directory: flush, fsync,
     os.replace. On any failure the temporary file is removed, the target is untouched and the
-    original exception propagates. The temporary is created with os.open(0o666), so a new target
-    gets the mode open(..., "w") gave it (0o666 minus the umask, applied by the kernel per call);
-    an existing target keeps its mode through fchmod. No directory fsync (ADR 0018).
+    original exception propagates. The temporary is created exclusively under a random name: for a
+    new target with 0o666, so it gets the mode open(..., "w") gave it (minus the umask, applied by
+    the kernel per call); for an existing target with 0o600, never wider than that target, then
+    fchmod to the target's mode. No directory fsync (ADR 0018).
     Private copy: agent/persist.py, tools/ and scripts/ each carry one until tools/common does."""
     path = os.fspath(path)
     directory, name = os.path.split(path)
@@ -93,7 +94,7 @@ def _write_atomic(path, text):
         mode = stat.S_IMODE(os.stat(path).st_mode)
     except FileNotFoundError:
         mode = None
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666 if mode is None else 0o600)
     try:
         try:
             f = os.fdopen(fd, "w", encoding="utf-8")
