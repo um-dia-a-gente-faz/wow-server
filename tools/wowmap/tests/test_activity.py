@@ -2,6 +2,7 @@ import json
 import os
 import pathlib
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,8 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import activity  # noqa: E402
+import activity_schema  # noqa: E402
+import app  # noqa: E402
 import pagesrc  # noqa: E402
 import routes  # noqa: E402
 from webio import Request  # noqa: E402
@@ -104,6 +107,129 @@ class StoreTests(unittest.TestCase):
             self.assertEqual([e["text"] for e in got], ["m7", "m6", "m5", "m4", "m3"])
             self.assertEqual(reopened.count("Other"), 1)
             self.assertEqual(reopened.latest_t("Rubens", "db"), 7)
+
+
+def user_version(path):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def columns(path):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("PRAGMA table_info(events)").fetchall()
+    finally:
+        conn.close()
+
+
+class MigrationTests(unittest.TestCase):
+    """ADR 0018 slice 6: user_version is the schema version, steps run forward in transactions."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.path = os.path.join(self._dir.name, "activity.sqlite3")
+
+    def write_file(self, script, version):
+        conn = sqlite3.connect(self.path)
+        conn.executescript(script)
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+        conn.close()
+
+    def test_new_file_is_version_1(self):
+        activity.ActivityStore(self.path)
+        self.assertEqual(user_version(self.path), 1)
+        self.assertEqual(activity.ActivityStore(":memory:")._conn.execute(
+            "PRAGMA user_version").fetchone()[0], 1)
+
+    def test_version_0_file_with_today_schema_keeps_rows(self):
+        self.write_file(activity_schema.SCHEMA, 0)
+        conn = sqlite3.connect(self.path)
+        for i in range(3):
+            conn.execute("INSERT INTO events (uid, character, t, kind, text, detail_json, source,"
+                         " inferred) VALUES (?, 'Rubens', ?, 'money', ?, '{}', 'db', 0)",
+                         (f"u{i}", float(i), f"m{i}"))
+        conn.commit()
+        conn.close()
+        store = activity.ActivityStore(self.path)
+        self.assertEqual([e["text"] for e in store.recent("Rubens")], ["m2", "m1", "m0"])
+        self.assertEqual(user_version(self.path), 1)
+
+    def test_newer_file_is_refused_untouched(self):
+        self.write_file("CREATE TABLE other (x INTEGER);", 2)
+        before = pathlib.Path(self.path).read_bytes()
+        with self.assertRaises(sqlite3.DatabaseError) as cm:
+            activity.ActivityStore(self.path)
+        self.assertIn("newer", str(cm.exception))
+        self.assertEqual(pathlib.Path(self.path).read_bytes(), before)
+        self.assertEqual(sorted(os.listdir(self._dir.name)), ["activity.sqlite3"])
+
+    def test_start_activity_disables_feed_on_newer_file(self):
+        self.write_file(activity_schema.SCHEMA, 2)
+        with mock.patch.object(wowmap_state, "ACTIVITY_DB", self.path), \
+                self.assertLogs("wowmap", level="ERROR") as logs:
+            self.assertIsNone(app.start_activity())
+        self.assertEqual(len(logs.records), 1)
+
+    def test_version_0_file_without_character_column_is_refused_unchanged(self):
+        self.write_file("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT NOT NULL UNIQUE,"
+                        " t REAL NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL,"
+                        " detail_json TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL,"
+                        " inferred INTEGER NOT NULL DEFAULT 0);", 0)
+        before = columns(self.path)
+        with self.assertRaises(sqlite3.OperationalError):
+            activity.ActivityStore(self.path)
+        self.assertEqual(user_version(self.path), 0)
+        self.assertEqual(columns(self.path), before)
+
+    def test_reopen_is_a_noop(self):
+        store = activity.ActivityStore(self.path)
+        store.add([activity.event("Rubens", 1, "money", "m", "db", "u1")])
+        del store
+        activity.ActivityStore(self.path)
+        reopened = activity.ActivityStore(self.path)
+        self.assertEqual(user_version(self.path), 1)
+        self.assertEqual(reopened.count("Rubens"), 1)
+
+    def test_failing_step_rolls_back_and_keeps_earlier_steps(self):
+        bad_step = "CREATE TABLE step_two (x INTEGER);\nSELECT * FROM no_such_table;"
+        with mock.patch.object(activity_schema, "MIGRATIONS", (activity_schema.SCHEMA, bad_step)), \
+                mock.patch.object(activity_schema, "SCHEMA_VERSION", 2), \
+                self.assertRaises(sqlite3.OperationalError):
+            activity.ActivityStore(self.path)
+        self.assertEqual(user_version(self.path), 1)
+        conn = sqlite3.connect(self.path)
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        conn.close()
+        self.assertNotIn("step_two", tables)
+
+    def test_refused_store_closes_its_connection(self):
+        self.write_file("CREATE TABLE other (x INTEGER);", 2)
+        made, real = [], sqlite3.connect
+
+        def spy(*a, **k):
+            made.append(real(*a, **k))
+            return made[-1]
+        with mock.patch.object(activity.sqlite3, "connect", spy), self.assertRaises(sqlite3.DatabaseError):
+            activity.ActivityStore(self.path)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            made[0].execute("SELECT 1")
+
+    def test_migrate_leaves_the_callers_connection_outside_a_transaction(self):
+        bad_step = "CREATE TABLE step_two (x INTEGER);\nSELECT * FROM no_such_table;"
+        conn = sqlite3.connect(self.path)
+        self.addCleanup(conn.close)
+        with mock.patch.object(activity_schema, "MIGRATIONS", (activity_schema.SCHEMA, bad_step)), \
+                mock.patch.object(activity_schema, "SCHEMA_VERSION", 2), \
+                self.assertRaises(sqlite3.OperationalError):
+            activity_schema.migrate(conn)
+        self.assertFalse(conn.in_transaction)
+        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertIsNone(conn.execute("SELECT name FROM sqlite_master WHERE name = 'step_two'").fetchone())
 
 
 class ChatTests(unittest.TestCase):
