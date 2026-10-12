@@ -20,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FLOORS = ROOT / "coverage-floors.json"
+# The floor is int(total - 0.5): at least half a point of room below the measured total.
 # Timing-dependent branches in the world-mock tests and the Python version move the total by a
 # fraction of a point; a floor that lags by less than this is not stale.
 STALE_MARGIN = 1.5
@@ -30,7 +31,7 @@ def check(measured: float, floor: int) -> list[str]:
         return [f"agent coverage {measured:.2f}% is below the floor {floor}%: add tests or restore the ones removed"]
     if measured >= floor + STALE_MARGIN:
         return [f'agent coverage {measured:.2f}% is {measured - floor:.2f} points above the floor {floor}%: '
-                f'raise "agent" in coverage-floors.json to {int(measured)}']
+                f'raise "agent" in coverage-floors.json to {int(measured - 0.5)}']
     return []
 
 

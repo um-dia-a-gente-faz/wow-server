@@ -252,7 +252,8 @@ The CI job `coverage (agent floor)` (#384, part of `ci-ok`) runs the `agent/` an
 - **Below the floor fails**: tests were lost or code was added untested.
 - **1.5 or more points above the floor fails too** (`STALE_MARGIN` in
   `scripts/coverage_floor.py`): a PR that raises coverage raises the number in the same PR,
-  to the integer part of the total the failure message names. The margin absorbs run-to-run
+  to the measured total minus half a point, rounded down (`int(total - 0.5)`, so 97 for a
+  total of 98.22), which is the number the failure message names. The margin absorbs run-to-run
   and Python-version differences, so take the number from CI (Python 3.12), not your machine.
 - Reproduce with `pip install -r requirements-dev.txt` and `scripts/check.sh coverage`
   (several minutes; not part of `all`). `python3 scripts/coverage_floor.py --report-only`

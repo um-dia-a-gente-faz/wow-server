@@ -44,8 +44,10 @@ class CheckTest(unittest.TestCase):
         self.assertIn('raise "agent" in coverage-floors.json to 61', out[0])
         self.assertIn("1.50 points above", out[0])
 
-    def test_far_above_names_int_total(self):
+    def test_raise_message_keeps_half_a_point_of_room(self):
+        self.assertIn("to 61", cf.check(62.0, 60)[0])      # int(62.0 - 0.5), not 62
         self.assertIn("to 66", cf.check(66.99, 60)[0])
+        self.assertIn("to 98", cf.check(98.5, 97)[0])
 
 
 class ConfigTest(unittest.TestCase):
