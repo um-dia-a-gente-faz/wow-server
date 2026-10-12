@@ -324,11 +324,11 @@ class Brain:
             return
         seconds *= 1 + self._rng.uniform(0, COOLDOWN_JITTER)
         until = self._clock() + seconds
-        if until > self._jev_cooldown_until:   # a shorter cooldown never cuts a running longer one
-            self._jev_cooldown_until = until
-            self._jev_cooldown_reason = f"HTTP {status}" if status is not None else "network error"
-        log.warning("jev failed (%s) — not calling it for %.0fs", f"HTTP {status}" if status is not None
-                    else "network error", seconds)
+        if until <= self._jev_cooldown_until:   # a shorter cooldown never cuts a running longer one: no log
+            return
+        self._jev_cooldown_until = until
+        self._jev_cooldown_reason = f"HTTP {status}" if status is not None else "network error"
+        log.warning("jev failed (%s) — not calling it for %.0fs", self._jev_cooldown_reason, seconds)
 
     def _apply_confidence_policy(self, d: Decision, options: list[Candidate]):
         """The confidence rule. `confidence >= threshold` acts as chosen;
