@@ -166,6 +166,7 @@ class WiringTest(unittest.TestCase):
         self.assertIn("pip install -r requirements-dev.txt", job)
         self.assertIn("scripts/check.sh coverage", job)
         self.assertIn("pipefail", job)
+        self.assertRegex(job, r"(?m)^\s*exit \$rc$")   # the script's exit code must reach the step
         self.assertIn("timeout-minutes: 10", job)
 
     def test_path_filter_runs_the_job_for_its_inputs(self):
