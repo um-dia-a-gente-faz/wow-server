@@ -201,10 +201,11 @@ class CStringTest(unittest.TestCase):
     def test_undecodable_bytes_are_replaced_not_raised(self):
         self.assertEqual(Reader(b'\xff\x00').cstring(), '�')
 
-    def test_utf8_decoding_on_request(self):
+    def test_utf8_is_the_default_and_an_encoding_can_be_asked_for(self):
         data = 'Pão'.encode() + b'\x00'
+        self.assertEqual(Reader(data).cstring(), 'Pão')   # gh-666: the server sends UTF-8
         self.assertEqual(Reader(data).cstring(encoding='utf-8'), 'Pão')
-        self.assertNotEqual(Reader(data).cstring(), 'Pão')   # the default stays ascii, like pk.cstring
+        self.assertNotEqual(Reader(data).cstring(encoding='ascii'), 'Pão')
 
 
 class WriterRoundTripTest(unittest.TestCase):

@@ -61,7 +61,7 @@ def pf(v: float) -> bytes:
 
 def cstring(data: bytes, off: int) -> tuple[str, int]:
     end = data.index(0, off)
-    return data[off:end].decode('ascii', errors='replace'), end + 1
+    return data[off:end].decode('utf-8', errors='replace'), end + 1
 
 
 def parse_server_header(hdr: bytes) -> tuple[int, int]:
