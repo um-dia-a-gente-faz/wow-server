@@ -60,11 +60,13 @@ class WorldKnowledge:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if version != SCHEMA_VERSION:
                 raise ValueError(f"user_version {version}, expected {SCHEMA_VERSION}")
-            self._meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            conn.execute(_SPELL_SQL, (0,)).fetchall()   # probe: a dropped table or column fails here
         except (sqlite3.Error, ValueError) as e:
             conn.close()
             log.warning("world bundle unavailable: %s: %s", path, e)
             return
+        self._meta = meta
         self._conn = conn
         self.available = True
 

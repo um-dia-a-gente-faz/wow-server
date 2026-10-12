@@ -3,14 +3,22 @@
 The WDBC bytes are built here, small, with the field counts of build 12340. Field indexes are the
 ones cited in build.py (TrinityCore 3.3.5 DBCStructure.h).
 """
+import contextlib
+import hashlib
+import json
 import os
 import pathlib
+import sqlite3
+import stat
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
+TOOLS = ROOT / "tools"
+BUILD_PY = TOOLS / "worldknowledge" / "build.py"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools" / "worldknowledge"))
 import build  # noqa: E402
@@ -37,18 +45,19 @@ def wdbc(field_count, records):
     return head + bytes(body) + bytes(strings)
 
 
-def write_dbcs(d, spell_fields=234):
+def write_dbcs(d, spell_fields=234, cast_times_fields=4, range_fields=40, cast_base=1500, mana=30,
+               power_type=0):
     spells = [
         # ID, CastingTimeIndex 28, SpellLevel 39, PowerType 41, ManaCost 42, RangeIndex 46,
         # Name 136 (enUS slot), NameSubtext 153, ManaCostPct 204
-        {0: 133, 28: 4, 39: 1, 41: 0, 42: 30, 46: 7, 136: "Fireball", 153: "Rank 1", 204: 0},
+        {0: 133, 28: 4, 39: 1, 41: power_type, 42: mana, 46: 7, 136: "Fireball", 153: "Rank 1", 204: 0},
         {0: 2098, 28: 0, 39: 12, 41: 3, 42: 40, 46: 0, 136: "Eviscerate", 153: "Rank 2", 204: 5},
     ]
     for name, data in {
         "Spell.dbc": wdbc(spell_fields, spells),
-        "SpellCastTimes.dbc": wdbc(4, [{0: 4, 1: 1500}]),
+        "SpellCastTimes.dbc": wdbc(cast_times_fields, [{0: 4, 1: cast_base}]),
         # ID, RangeMin[hostile, friendly] 1-2, RangeMax[hostile, friendly] 3-4
-        "SpellRange.dbc": wdbc(40, [{0: 7, 1: 5.0, 2: 2.0, 3: 35.0, 4: 40.0}]),
+        "SpellRange.dbc": wdbc(range_fields, [{0: 7, 1: 5.0, 2: 2.0, 3: 35.0, 4: 40.0}]),
     }.items():
         with open(os.path.join(d, name), "wb") as f:
             f.write(data)
@@ -96,6 +105,76 @@ class BuildTests(unittest.TestCase):
         write_dbcs(self.dbc)
         build.build(self.dbc, self.out)
         self.assertEqual(build.build(self.dbc, self.out), {"spell": 2})
+
+    def test_negative_cast_time_is_read_signed(self):
+        write_dbcs(self.dbc, cast_base=-1000)   # SpellCastTimesEntry.Base is int32 (DBCStructure.h:1508)
+        build.build(self.dbc, self.out)
+        r = WorldKnowledge(self.out)
+        self.addCleanup(r.close)
+        self.assertEqual(r.spell(133)["cast_time_ms"], -1000)
+
+    def test_power_type_is_read_unsigned(self):
+        # SpellEntry.PowerType is uint32 (DBCStructure.h:1432); POWER_HEALTH (-2) is stored as 0xFFFFFFFE
+        write_dbcs(self.dbc, power_type=0xFFFFFFFE)
+        build.build(self.dbc, self.out)
+        r = WorldKnowledge(self.out)
+        self.addCleanup(r.close)
+        self.assertEqual(r.spell(133)["power_type"], 4294967294)
+
+    def test_source_hashes_are_of_the_source_files(self):
+        write_dbcs(self.dbc)
+        build.build(self.dbc, self.out)
+        meta = self.meta()
+        for n in ("Spell.dbc", "SpellCastTimes.dbc", "SpellRange.dbc"):
+            with open(os.path.join(self.dbc, n), "rb") as f:
+                self.assertEqual(meta[f"sha256:{n}"], hashlib.sha256(f.read()).hexdigest())
+        first = meta["sha256:Spell.dbc"]
+        write_dbcs(self.dbc, mana=31)
+        build.build(self.dbc, self.out)
+        self.assertNotEqual(self.meta()["sha256:Spell.dbc"], first)
+
+    def test_output_is_world_readable_whatever_the_umask(self):
+        write_dbcs(self.dbc)
+        old = os.umask(0o077)
+        self.addCleanup(os.umask, old)
+        build.build(self.dbc, self.out)
+        self.assertEqual(stat.S_IMODE(os.stat(self.out).st_mode), 0o644)
+
+    def test_tables_row_marks_spell_as_client_tier(self):
+        write_dbcs(self.dbc)
+        build.build(self.dbc, self.out)
+        with contextlib.closing(sqlite3.connect(self.out)) as conn:
+            self.assertEqual(conn.execute("SELECT name, tier FROM tables").fetchall(), [("spell", "client")])
+
+    def test_wrong_field_count_in_each_table_fails_and_keeps_output(self):
+        for name, bad in {"SpellCastTimes.dbc": {"cast_times_fields": 3},
+                          "SpellRange.dbc": {"range_fields": 39}}.items():
+            with self.subTest(name):
+                write_dbcs(self.dbc)
+                build.build(self.dbc, self.out)
+                with open(self.out, "rb") as f:
+                    before = f.read()
+                write_dbcs(self.dbc, **bad)
+                with self.assertRaises(ValueError):
+                    build.build(self.dbc, self.out)
+                with open(self.out, "rb") as f:
+                    self.assertEqual(f.read(), before)
+
+    def test_import_appends_to_sys_path_and_leaves_its_head_alone(self):
+        code = ("import importlib.util, json, sys; before = list(sys.path); "
+                f"spec = importlib.util.spec_from_file_location('build', {str(BUILD_PY)!r}); "
+                "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+                "print(json.dumps([before, sys.path]))")
+        out = subprocess.run([sys.executable, "-c", code], cwd="/", capture_output=True, text=True,
+                             check=True).stdout
+        before, after = json.loads(out)
+        self.assertEqual(after[:len(before)], before)
+        self.assertEqual(after[len(before):], [str(TOOLS), str(ROOT)])
+
+    def meta(self):
+        r = WorldKnowledge(self.out)
+        self.addCleanup(r.close)
+        return r.meta()
 
 
 if __name__ == "__main__":
