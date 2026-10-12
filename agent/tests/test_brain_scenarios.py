@@ -557,6 +557,14 @@ class JevCooldownTest(unittest.TestCase):
         d = b.decide(snap(), my_guid=ME)   # cooling: Jev not called, the LLM stands in
         self.assertEqual((self.jev.calls, d.brain, d.substituted), (1, "llm", True))
 
+    def test_429_warning_names_the_applied_seconds_not_the_base(self):
+        # 30 s Retry-After with the top of the jitter: the log says 33s (what the cooldown is), not 30s.
+        b = self.make(JevError("x", status=429, retry_after=30), end="b")
+        with self.assertLogs("agent.brain", "WARNING") as cm:
+            self.fail(b)
+        self.assertAlmostEqual(self.cooldown(b), 33.0)
+        self.assertIn("not calling it for 33s", cm.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

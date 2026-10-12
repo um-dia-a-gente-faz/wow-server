@@ -164,6 +164,63 @@ class AlertRuleMetrics(unittest.TestCase):
         self.assertIn("> 26 * 3600", rule_exprs()["BackupStale"])
 
 
+class JevBudgetSkipIsNotAnError(unittest.TestCase):
+    """#689: a spent hourly Jev budget is a skip; the error ratio's numerator excludes it."""
+
+    def test_error_ratio_excludes_budget_exhausted_from_its_numerator(self):
+        self.assertIn('wow_agent_jev_errors_total{status!="budget_exhausted"}',
+                      rule_exprs()["JevErrorRatioHigh"])
+
+
+def jev_ratio_fires(expr: str, errors: dict, calls: dict) -> set[str]:
+    """Agents for which the ratio rule `expr` fires. errors: {(agent, status): rate}, calls:
+    {agent: rate}. A tiny evaluator of this one rule shape: the numerator drops the statuses the
+    expr excludes with status!="..." and sums by agent; a / b matches only agents on both sides
+    (no match, no result); x / 0 is +Inf for x > 0 and NaN for 0 / 0 (NaN never fires); `> 0.2`."""
+    excluded = set(re.findall(r'status!="([^"]+)"', expr))
+    numerator: dict[str, float] = {}
+    for (agent, status), rate in errors.items():
+        if status not in excluded:
+            numerator[agent] = numerator.get(agent, 0.0) + rate
+    fired = set()
+    for agent, top in numerator.items():
+        if agent not in calls:
+            continue
+        bottom = calls[agent]
+        ratio = float("inf") if bottom == 0 and top > 0 else (top / bottom if bottom else float("nan"))
+        if ratio > 0.2:
+            fired.add(agent)
+    return fired
+
+
+class JevErrorRatioArithmetic(unittest.TestCase):
+    """#689 item 4: the rule's meaning, checked with jev_ratio_fires (no Prometheus here)."""
+
+    EXPR = rule_exprs()["JevErrorRatioHigh"]
+    OLD_EXPR = EXPR.replace('{status!="budget_exhausted"}', "")  # the rule before #689
+
+    def test_budget_skips_only_and_no_successful_call_do_not_fire(self):
+        errors = {("a", "budget_exhausted"): 0.5}
+        calls = {"a": 0.0}  # the calls counter exists at zero: no successful call in the window
+        self.assertEqual(jev_ratio_fires(self.EXPR, errors, calls), set())
+
+    def test_the_same_budget_only_agent_fired_before_the_exclusion(self):
+        errors = {("a", "budget_exhausted"): 0.5}
+        self.assertEqual(jev_ratio_fires(self.OLD_EXPR, errors, {"a": 0.0}), {"a"})
+
+    def test_http_5xx_on_a_fifth_of_attempts_fires(self):
+        errors = {("a", "http_5xx"): 0.2}
+        calls = {"a": 0.8}  # 0.2 failed of 1.0 attempts: 0.2 / 0.8 = 0.25 > 0.2
+        self.assertEqual(jev_ratio_fires(self.EXPR, errors, calls), {"a"})
+
+    def test_exactly_twenty_percent_of_successes_does_not_fire(self):
+        self.assertEqual(jev_ratio_fires(self.EXPR, {("a", "http_5xx"): 0.2}, {"a": 1.0}), set())
+
+    def test_budget_skips_do_not_add_to_http_errors(self):
+        errors = {("a", "budget_exhausted"): 5.0, ("a", "http_5xx"): 0.1}
+        self.assertEqual(jev_ratio_fires(self.EXPR, errors, {"a": 1.0}), set())
+
+
 class AlertRuleStructure(unittest.TestCase):
     def test_every_rule_has_required_fields_and_a_valid_severity(self):
         self.assertEqual(rule_problems(RULES.read_text()), [])

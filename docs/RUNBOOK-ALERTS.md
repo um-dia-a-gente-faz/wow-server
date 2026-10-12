@@ -186,10 +186,12 @@ otherwise.
 ## JevErrorRatioHigh
 
 **What it means.** Failed Jev calls exceed 20% of successful calls for one agent, for 15 minutes. The
-two sides are `wow_agent_jev_errors_total{agent,status}` (`http_4xx`, `http_5xx`, `error`,
-`budget_exhausted`) and `wow_agent_jev_calls_total{agent}`, both rates over 15 minutes from the
+two sides are `wow_agent_jev_errors_total{agent,status}` (`http_4xx`, `http_5xx`, `error`) and `wow_agent_jev_calls_total{agent}`, both rates over 15 minutes from the
 audit textfile. A cycle audited as `jev_status: "fleet_blocked"` (the fleet limits file blocked Jev,
 ADR 0017) is the limit working: it counts as neither an error nor a call and does not fire this alert.
+A cycle with `jev_status: "budget_exhausted"` (the hourly Jev token budget is spent, Jev was not called)
+is a skip, not an error: the alert ignores it, its `status="budget_exhausted"` series is excluded from the
+numerator, and it is shown on its own in the "Jev cycles skipped: hourly budget spent" panel.
 
 **When it does not fire.** With no Jev calls and no errors, both rates are zero and the ratio is
 `0/0`, which is NaN, and NaN does not fire. An idle agent, or one that plays on the LLM brain,

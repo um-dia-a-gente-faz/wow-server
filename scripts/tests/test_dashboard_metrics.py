@@ -171,6 +171,31 @@ class DashboardMetricsTest(unittest.TestCase):
         self.assertIn("wow_players_online", self.produced, "producer extraction found nothing")
 
 
+JEV_DASHBOARD = ROOT / "monitoring" / "grafana-dashboard-jev-decision-usage.json"
+
+
+class JevBudgetSkipPanels(unittest.TestCase):
+    """#689: a spent hourly budget is a skip. The error panel excludes it; a panel shows it apart."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doc = json.loads(JEV_DASHBOARD.read_text())
+        cls.panels = {p.get("title"): p for p in cls.doc["panels"]}
+
+    def test_jev_errors_panel_excludes_budget_exhausted(self):
+        exprs = [t["expr"] for t in self.panels["Jev errors / sec"]["targets"]]
+        self.assertTrue(exprs)
+        for expr in exprs:
+            self.assertIn('wow_agent_jev_errors_total{status!="budget_exhausted"}', expr)
+
+    def test_some_target_shows_budget_exhausted_skips(self):
+        exprs = [expr for _, expr in dashboard_exprs(self.doc)]
+        self.assertTrue(any('status="budget_exhausted"' in expr for expr in exprs), exprs)
+
+    def test_budget_skip_panel_is_titled_as_a_skip(self):
+        self.assertIn("Jev cycles skipped: hourly budget spent", self.panels)
+
+
 class SourceNamesTest(unittest.TestCase):
     def test_name_only_in_docstring_is_not_produced(self):
         src = ('"""Module mentions wow_doc_module_total."""\n'
