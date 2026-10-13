@@ -72,6 +72,7 @@ class ItemCacheSchemaTest(unittest.TestCase):
             c.items[5] = {"name": "X"}
             c.save()
             c.on_item_query_response({"entry": 6, "found": True, "name": "Y"})
+            c.save()
             self.assertEqual(_read(path), before)
             self.assertEqual(os.stat(path).st_mtime, 1000000000)
             self.assertEqual(sorted(os.listdir(d)), ["items.json"])
@@ -183,7 +184,8 @@ class ItemCacheSchemaTest(unittest.TestCase):
             path = os.path.join(d, "items.json")
             c1 = it.ItemCache(cache_path=path)
             c1.on_item_query_response(lo.parse_item_query_response(struct.pack('<I', 999 | 0x80000000)))
-            c1.on_item_query_response(lo.parse_item_query_response(found))  # saves both entries
+            c1.on_item_query_response(lo.parse_item_query_response(found))
+            c1.save()
             c2 = it.ItemCache()
             with self.assertNoLogs("agent.items", "WARNING"):
                 c2.load(path)
