@@ -465,6 +465,51 @@ Plain `up -d` with no profile and no service name starts nothing. The first 5
 agents are in both profiles, so `--profile raid` includes the party. Agent N
 publishes its read-only API on port `9600+N` (9601..9625).
 
+### Fleet limits file (ADR 0017, #747)
+
+Every agent service mounts one host directory read-only at `/data/fleet`. The DIRECTORY, never
+the file: the writer replaces the file by rename, and a single-file bind mount would pin the old
+inode. The host path is `/opt/wow-server-metrics/fleet` in the committed compose file and
+`/opt/wow-agent-runtime/fleet` (`<runtime>/fleet`) in the file `tools/agent-runner` renders.
+`AGENT_FLEET_LIMITS_FILE` is passed through from `.env` and is **empty by default**: empty is off,
+the agents touch no file and behave as before. Recreating the agents with this change alone
+changes nothing; the owner arms it.
+
+Create the directory yourself, as the user that runs the writer, before the first
+`docker compose up`: Docker creates a missing bind-mount source as `root`, which the container
+can read (the state is then `missing`, which blocks nothing) but the writer cannot write.
+
+**Arm it, in this order** (on `wow-agents`):
+
+1. Start `tools/fleet-limits` (see its README) with `FLEET_LIMITS_FILE=<fleet dir>/limits.json`.
+2. Check the file appears and is rewritten every 15 s: `ls -l <fleet dir>/limits.json`.
+3. Put `AGENT_FLEET_LIMITS_FILE=/data/fleet/limits.json` in `.env`.
+4. Recreate the agents: `docker compose -f docker-compose.agents.yml up -d` (the same profile or
+   service names you started them with).
+5. `curl -s http://<agent-host>:9601/metrics | grep fleet_limits_state` on one agent: the line with
+   `state="ok"` is `1`. `missing` means the agent cannot see the file (wrong path or directory);
+   `invalid` means it cannot parse it; `off` means the variable did not reach the container.
+
+**An owner stop by hand.** With the writer running, write `owner-stop.json` next to `limits.json`
+(write a temporary file in that directory and `mv` it over):
+
+```json
+{"jev": {"until_ts": 1790000000, "reason": "maintenance window, back at 22:00"}}
+```
+
+`until_ts` is a unix time (`date -d '+2 minutes' +%s`); `jev` and `llm` are the brains. Within one
+writer period (15 s) the writer merges it into `limits.json`, and each agent sees it on its next
+think cycle, with no restart: the audit log then shows `jev_status: "fleet_blocked"`. The stop
+lasts until `until_ts` and no longer, and it outlives a dead writer only through `limits.json`'s
+own entry. **Lift it** by deleting `owner-stop.json` (or the entry). With no writer, put the same
+entry under `"blocks"` in `limits.json`
+(`{"version": 1, "written_ts": <now>, "blocks": {"jev": {"until_ts": ..., "reason": "..."}}}`)
+and lift it by deleting `limits.json`.
+
+**Disarm.** Remove the `AGENT_FLEET_LIMITS_FILE` line from `.env` and recreate the agents. The
+state goes back to `off`. Removing only the file leaves the agents running with state `missing`,
+which is also no block.
+
 ### Pinned images, agent image tag and rollback (#291)
 
 Every `image:` and `FROM` is `name:<version>@sha256:<digest>`; CI fails on

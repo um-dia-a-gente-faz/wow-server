@@ -300,7 +300,12 @@ A change under `monitoring/` recreates the monitoring stack only (`stacks_for` i
 1. **Mount and setting in the fleet.** The compose renderer mounts
    `<runtime>/fleet:/data/fleet:ro` and passes `AGENT_FLEET_LIMITS_FILE=/data/fleet/limits.json`;
    `docs/DEPLOYMENT.md` documents the hand-written owner stop. Touches `scripts/` and the
-   compose file, so it waits for the owner's go-ahead.
+   compose file, so it waits for the owner's go-ahead. **Done (#747)**, narrowed: the
+   directory is always mounted read-only, but `AGENT_FLEET_LIMITS_FILE` is passed through from
+   the host `.env` and is empty by default, so merging changes no behaviour and the kill switch
+   is not armed before the writer runs and the owner has answered the open questions. The owner
+   arms it with `AGENT_FLEET_LIMITS_FILE=/data/fleet/limits.json` (`docs/DEPLOYMENT.md`, "Fleet
+   limits file").
 2. **Writer.** A new tool `fleet-limits` under `tools/`, a stdlib host process on
    `wow-agents`: tails the audit directory, sums Jev tokens (`usage`) and LLM tokens
    (`prompt_tokens`, `completion_tokens` of `brain: "llm"` records) over a rolling hour,

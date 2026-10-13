@@ -73,7 +73,7 @@ SETTINGS: tuple[Setting, ...] = (
     _s("OPENROUTER_API_KEY", str, "", "only read when JEV_PROVIDER=openrouter", secret=True),
     _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "caps Jev tokens per agent per rolling hour (LLM brain and fallback not metered); 0 = unlimited"),
     _s("AGENT_FLEET_LIMITS_FILE", str, "", "fleet limits file (ADR 0017): a JSON file of time-bounded brain blocks "
-       "that Brain reads; empty = off, no file is touched", compose=False),
+       "that Brain reads; empty = off, no file is touched"),
     _s("AGENT_WORLD_BUNDLE", str, "", "path of the world bundle (ADR 0016); empty = off, no file is touched",
        compose=False),
     _s("LOG_LEVEL", str, "INFO", "python logging level"),
