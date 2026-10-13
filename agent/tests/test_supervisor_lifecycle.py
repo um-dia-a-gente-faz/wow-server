@@ -47,11 +47,11 @@ class World:
     exception instance is raised, STOP sets the stop event and returns the value after it."""
 
     def __init__(self, builds, runs=(), stop_on_sleep=None, sleep_raises=None, stop_on_logout=False,
-                 lifecycle=None):
+                 lifecycle=None, start_delay=0.0):
         self.builds, self.runs = list(builds), list(runs)
         self.stop = threading.Event()
         self.stop_on_sleep, self.sleep_raises, self.stop_on_logout = stop_on_sleep, sleep_raises, stop_on_logout
-        self.sleeps, self.states_at_logout = [], []
+        self.sleeps, self.states_at_logout, self.start_delay = [], [], start_delay
         self.lifecycle = lifecycle if lifecycle is not None else Lifecycle(clock=lambda: 0.0)
 
     def build_session(self):
@@ -81,7 +81,7 @@ class World:
     def supervise(self):
         supervise_connection(self.build_session, self.run_session, log=_RecordingLog(), sleep=self.sleep,
                              stop=self.stop, jitter=lambda b: b, initial_backoff=5.0, max_backoff=300.0,
-                             lifecycle=self.lifecycle)
+                             lifecycle=self.lifecycle, start_delay=self.start_delay)
 
     def walk(self):
         return [(t.source.value, t.target.value, t.reason) for t in self.lifecycle.history()]
@@ -174,6 +174,82 @@ class SupervisorLifecycleTest(unittest.TestCase):
         world = World(builds=[OK], runs=[END])
         supervise_connection(world.build_session, world.run_session, log=_RecordingLog(), sleep=world.sleep)
         self.assertEqual(world.lifecycle.history(), ())   # the one passed to World was not used
+
+
+class StartDelayTest(unittest.TestCase):
+    """#539: AGENT_START_DELAY_S is one wait before the first attempt, not before a reconnect."""
+
+    def test_the_delay_is_taken_once_before_the_first_attempt(self):
+        world = World(builds=[OK, OK], runs=[DROP, END], start_delay=30.0)
+        order = world.sleeps
+        build = world.build_session
+        world.build_session = lambda: (order.append("build"), build())[1]
+        world.supervise()
+        self.assertEqual(order[:2], [30.0, "build"])
+        self.assertEqual([s for s in order if s != "build"], [30.0, 5.0])  # the reconnect wait is the backoff
+        self.assertEqual(world.walk()[0], CONNECTED)  # still CONNECTING until the first attempt succeeds
+
+    def test_no_delay_by_default(self):
+        world = World(builds=[OK], runs=[END])
+        world.supervise()
+        self.assertEqual(world.sleeps, [])
+
+    def test_stop_during_the_delay_ends_before_any_attempt(self):
+        world = World(builds=[OK], stop_on_sleep=1, start_delay=30.0)
+        world.supervise()
+        self.assertEqual(world.sleeps, [30.0])
+        self.assertEqual(world.builds, [OK], "connected after a stop")
+        self.assertEqual(world.walk(), [("connecting", "stopping", "stop"), ("stopping", "stopped", "stop")])
+
+    def test_the_logged_delay_is_the_value_as_given(self):
+        import logging
+        world = World(builds=[OK], runs=[END], start_delay=3.5)
+        with self.assertLogs("start-delay-fmt", "INFO") as logs:
+            supervise_connection(world.build_session, world.run_session, log=logging.getLogger("start-delay-fmt"),
+                                 sleep=world.sleep, stop=world.stop, start_delay=3.5)
+        self.assertIn("waiting 3.5s before", logs.output[0])
+
+    def test_a_default_wait_returns_when_stop_is_set(self):
+        import logging
+        stop = threading.Event()
+        threading.Timer(0.05, stop.set).start()
+        t0 = time.monotonic()
+        with self.assertLogs("start-delay-test", "INFO") as logs:
+            supervise_connection(lambda: self.fail("connected"), lambda s: False,
+                                 log=logging.getLogger("start-delay-test"), stop=stop, start_delay=60.0)
+        self.assertLess(time.monotonic() - t0, 5.0)
+        self.assertEqual(logs.output, ["INFO:start-delay-test:waiting 60s before the first connection attempt "
+                                       "(AGENT_START_DELAY_S)"])
+
+
+class AuthPortClosedTest(unittest.TestCase):
+    """#539 point 2: a closed auth port is `connect_failed`, apart from the server's own refusal
+    (`auth_rejected`); no SRP byte is sent, and the retry backs off."""
+
+    def test_refused_connect_is_connect_failed_and_sends_no_srp_packet(self):
+        import socket
+        from agent import auth
+        with socket.socket() as s:  # a free loopback port with nothing listening
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        world = World(builds=[OK], runs=[END])
+        log = _RecordingLog()
+        calls = []
+
+        def build_session():
+            if calls:
+                return World.build_session(world)
+            calls.append(1)
+            auth.auth_logon("127.0.0.1", port, "A", "B")
+
+        with mock.patch.object(auth, "_handshake") as handshake:
+            supervise_connection(build_session, world.run_session, log=log, sleep=world.sleep,
+                                 stop=world.stop, jitter=lambda b: b, initial_backoff=5.0,
+                                 lifecycle=world.lifecycle)
+        handshake.assert_not_called()
+        self.assertEqual(world.walk()[:2], [("connecting", "backoff", "connect_failed"), RETRY])
+        self.assertEqual(world.sleeps, [5.0])
+        self.assertIn("connect failed (ConnectionRefusedError:", log.lines[0][1])
 
 
 class LifecycleNeverChangesTheSupervisorTest(unittest.TestCase):

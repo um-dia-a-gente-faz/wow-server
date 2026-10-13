@@ -16,6 +16,7 @@ from agent import __main__ as main_mod
 from agent import root
 from agent.audit import AuditLogger
 from agent.auth import AuthRejected
+from agent.config import Config
 from agent.lifecycle import Lifecycle
 from agent.tests.builders import make_session
 from agent.tests.test_reconnect import _RecordingLog
@@ -66,8 +67,27 @@ class AgentRunTest(unittest.TestCase):
         self.assertIs(seen["log"], agent.log)
         self.assertEqual((seen["sleep"], seen["jitter"]), ("S", "J"))
         self.assertEqual(seen["build_session"], agent.build_session)
+        self.assertEqual(seen["start_delay"], 0.0)
         agent.chat_relay.stop.assert_called_once_with()
         agent.http_server.shutdown.assert_called_once_with()
+
+    def test_run_hands_the_configured_start_delay_to_the_supervisor(self):
+        agent = _agent(start_delay=42.0)
+        with mock.patch.object(root, "supervise_connection") as sup:
+            agent.run(threading.Event())
+        self.assertEqual(sup.call_args.kwargs["start_delay"], 42.0)
+
+    def test_a_real_config_start_delay_reaches_the_supervisor_through_build_agent(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        env = {"AGENT_START_DELAY_S": "42", "AGENT_AUDIT_DIR": tmp.name, "AGENT_HTTP_PORT": "0"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            cfg = Config()
+        agent = root.build_agent(cfg, _Log())
+        self.addCleanup(agent.close)
+        with mock.patch.object(root, "supervise_connection") as sup:
+            agent.run(threading.Event())
+        self.assertEqual(sup.call_args.kwargs["start_delay"], 42.0)
 
     def test_run_closes_and_lets_the_exception_through(self):
         for crash in (AuthRejected("logon proof", 0x03), ValueError("think loop")):
@@ -135,7 +155,7 @@ class BuildAgentTest(unittest.TestCase):
     def cfg(self, tmp):
         return SimpleNamespace(agent_name="Built", audit_dir=tmp, audit_retention_days=3, agent_brain="llm",
                                jev_enabled=False, http_port=0, chat_relay_url="", chat_relay_token="",
-                               chat_relay_timeout=1.0)
+                               chat_relay_timeout=1.0, start_delay=0.0)
 
     def test_records_every_start_up_step_in_the_order_main_used_and_does_not_connect(self):
         tmp = tempfile.TemporaryDirectory()
@@ -242,7 +262,7 @@ class WiringPartsTest(unittest.TestCase):
     def test_an_enabled_chat_relay_is_started(self):
         relay = mock.Mock(enabled=True)
         cfg = SimpleNamespace(chat_relay_url="http://relay", agent_name="Wired", chat_relay_token="",
-                              chat_relay_timeout=1.0)
+                              chat_relay_timeout=1.0, start_delay=0.0)
         with mock.patch.object(root, "ChatRelay", return_value=relay):
             self.assertIs(root.build_chat_relay(cfg, LOG), relay)
         relay.start.assert_called_once_with()

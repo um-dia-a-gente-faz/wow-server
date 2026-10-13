@@ -24,7 +24,8 @@ def supervise_connection(build_session, run_session, log,
                            initial_backoff: float = INITIAL_RECONNECT_BACKOFF_S,
                            max_backoff: float = MAX_RECONNECT_BACKOFF_S,
                            jitter: Callable[[float], float] | None = None,
-                           lifecycle: Lifecycle | None = None):
+                           lifecycle: Lifecycle | None = None,
+                           start_delay: float = 0.0):
     """Reconnect supervisor (UM-43). `build_session()` does auth+connect+
     login and returns a fresh WoWSession (and therefore fresh WorldState);
     `run_session(session)` drives one full agent run and returns True if it
@@ -54,7 +55,10 @@ def supervise_connection(build_session, run_session, log,
     none is passed, and a passed one must be new). All of them are made on the calling
     thread. Whatever way this function is left, the machine ends terminal: FAILED after a
     permanent refusal, otherwise STOPPED with the reason "stop", "run_ended" or, when an
-    exception is leaving, "crashed"."""
+    exception is leaving, "crashed".
+
+    #539: `start_delay` seconds are waited once, before the first attempt (never on a
+    reconnect), on the same interruptible `sleep`. The lifecycle stays CONNECTING meanwhile."""
     stop = stop or threading.Event()
     sleep = sleep or stop.wait
     if jitter is None:
@@ -66,7 +70,7 @@ def supervise_connection(build_session, run_session, log,
     reason = "crashed"  # stays when an exception leaves the loop
     try:
         reason = _reconnect_loop(build_session, run_session, log, sleep, stop,
-                                 initial_backoff, max_backoff, jitter, move)
+                                 initial_backoff, max_backoff, jitter, move, start_delay)
     finally:
         if not lifecycle.terminal:  # FAILED is already terminal (permanent refusal)
             if lifecycle.state is not State.STOPPING:
@@ -86,9 +90,14 @@ def _move(lifecycle: Lifecycle, log, target: State, reason: str) -> None:
 
 def _reconnect_loop(build_session, run_session, log, sleep, stop: threading.Event,
                     initial_backoff: float, max_backoff: float,
-                    jitter: Callable[[float], float], move) -> str:
+                    jitter: Callable[[float], float], move, start_delay: float = 0.0) -> str:
     """The loop of supervise_connection(). Returns why it ended, "stop" or "run_ended".
     A permanent refusal and a crash leave by exception."""
+    if start_delay > 0:
+        log.info("waiting %gs before the first connection attempt (AGENT_START_DELAY_S)", start_delay)
+        sleep(start_delay)
+        if stop.is_set():
+            return "stop"
     backoff = initial_backoff
     attempt = 0
     while True:

@@ -64,6 +64,19 @@ class SchemaTests(unittest.TestCase):
                     Config()
                 self.assertIn(name, str(cm.exception))
 
+    def test_start_delay_is_read_and_bounded_0_to_300(self):
+        for raw, ok in (("0", True), ("60", True), ("300", True), ("-1", False), ("301", False)):
+            with mock.patch.dict("os.environ", {"AGENT_START_DELAY_S": raw}, clear=True):
+                c = Config()
+                self.assertEqual(c.start_delay, float(raw))
+                self.assertEqual([p for p in c.validate(require_character=False) if "START_DELAY" in p] == [], ok, raw)
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(Config().start_delay, 0.0)
+        with mock.patch.dict("os.environ", {"AGENT_START_DELAY_S": "soon"}, clear=True):
+            with self.assertRaises(ConfigError) as cm:
+                Config()
+            self.assertIn("AGENT_START_DELAY_S", str(cm.exception))
+
     def test_empty_numeric_uses_default(self):
         with mock.patch.dict("os.environ", {"AGENT_RUN_DURATION_S": "", "VERBOSE_PACKETS": " "}, clear=True):
             c = Config()

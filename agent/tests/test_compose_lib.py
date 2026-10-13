@@ -2,6 +2,7 @@
 
 Runs from the repo root (`discover -t . -s agent/tests`), so `agents` imports as a namespace package."""
 import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -21,6 +22,15 @@ def entries():
 class ComposeLibraryTests(unittest.TestCase):
     def test_render_is_the_committed_file(self):
         self.assertEqual(compose.render(entries()), (REPO / "docker-compose.agents.yml").read_text())
+
+    def test_start_delay_is_three_seconds_per_roster_position_modulo_sixty(self):
+        text = compose.render([{"account": f"A{i}", "character": f"Name{'abcdefghijklmnopqrstuvwxyz'[i]}",
+                                "retired": i == 2} for i in range(26)])
+        delays = [int(m) for m in re.findall(r'AGENT_START_DELAY_S: "(\d+)"', text)]
+        # retired entries are rendered like any other, so they count in the position
+        self.assertEqual(len(delays), 26)
+        self.assertEqual([delays[i] for i in (0, 1, 19, 20, 25)], [0, 3, 57, 0, 15])
+        self.assertEqual(delays[:4], [0, 3, 6, 9])
 
     def test_the_script_renders_with_the_library(self):
         for name in ("render", "derive", "HEADER", "SERVICE", "JEV_MOCK", "DEFAULT_AUDIT_DIR", "RAID_SIZE"):
