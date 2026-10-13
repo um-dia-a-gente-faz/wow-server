@@ -116,8 +116,28 @@ class StallStopTest(unittest.TestCase):
         self.assertEqual([c[1] for c in calls if c[0] == "send"], [signal.SIGUSR1, signal.SIGUSR1, signal.SIGINT])
         p.kill.assert_not_called()
 
+    def test_stopped_cannot_be_swallowed_by_except_exception(self):
+        self.assertTrue(issubclass(ef.Stopped, BaseException))
+        self.assertFalse(issubclass(ef.Stopped, Exception))
+
     def test_the_soft_stop_is_the_dumps_and_the_interrupt_wait(self):
         self.assertEqual(ef.SOFT_STOP_S, 2 + 2 + 10)
+
+
+class SuperviseTest(unittest.TestCase):
+    def test_an_interrupted_supervisor_kills_its_child_and_propagates(self):
+        p = mock.Mock()
+        p.wait.side_effect = [KeyboardInterrupt, 0]
+        with mock.patch.object(ef.subprocess, "Popen", return_value=p), self.assertRaises(KeyboardInterrupt):
+            ef.supervise(5, ["discover"])
+        p.kill.assert_called_once_with()
+
+    def test_the_child_runs_with_the_bound_in_its_environment(self):
+        p = mock.Mock(**{"wait.return_value": 0})
+        with mock.patch.object(ef.subprocess, "Popen", return_value=p) as popen:
+            self.assertEqual(ef.supervise(5, ["discover", "-s", "x"]), 0)
+        self.assertEqual(popen.call_args.args[0][1:], [str(SCRIPT), "discover", "-s", "x"])
+        self.assertEqual(popen.call_args.kwargs["env"]["CHECK_STALL_DUMP_S"], "5")
 
 
 class RealProcessTest(unittest.TestCase):
@@ -154,10 +174,13 @@ class RealProcessTest(unittest.TestCase):
     def test_a_stall_shows_the_failure_then_the_dump_naming_the_test_then_the_summary(self):
         d = self.make_dir("""
             import threading, unittest
+            def second_thread_waits():
+                threading.Event().wait()
             class T(unittest.TestCase):
                 def test_a_fails(self):
                     self.fail("early-failure-marker")
                 def test_b_blocks_forever(self):
+                    threading.Thread(target=second_thread_waits, daemon=True).start()
                     threading.Event().wait()
                 def test_c_never_runs(self):
                     pass
@@ -171,10 +194,63 @@ class RealProcessTest(unittest.TestCase):
         self.assertLess(err.index("early-failure-marker"), stall)     # printed when it failed, before the stall
         dump = err[stall:err.index("stall: sending SIGINT")]
         self.assertIn("test_b_blocks_forever", dump)                  # the first (non-fatal) dump names the test
-        self.assertEqual(dump.count("most recent call first"), 2)     # two dumps
+        self.assertIn("second_thread_waits", dump)                    # and another thread: all_threads=True
+        self.assertEqual(dump.count("stall: sending SIGUSR1"), 2)     # two dumps
         self.assertIn("Stopped: stopped by SIGINT", err)
         self.assertIn("FAILED (failures=1, errors=1)", err)           # unittest's summary was reached
+        self.assertIn("Ran 2 tests", err)                             # the stop ended the run: test_c never ran
         self.assertNotIn("stall: sending SIGABRT", err)
+
+    def test_unittest_options_and_warnings_reach_unittest(self):
+        d = self.make_dir("""
+            import unittest, warnings
+            class T(unittest.TestCase):
+                def test_a_warns_and_fails(self):
+                    warnings.warn("gh714-warning-marker", DeprecationWarning)
+                    self.fail("first")
+                def test_b_fails(self):
+                    self.fail("second")
+            """)
+        r = self.run_script("discover", "-s", d, "-f")
+        self.assertIn("DeprecationWarning: gh714-warning-marker", r.stderr)   # unittest's default warnings filter
+        self.assertIn("Ran 1 test", r.stderr)                                 # -f: stop after the first failure
+        r = self.run_script("discover", "-s", d, "-v")
+        self.assertIn("test_b_fails (", r.stderr)                             # -v: one line per test
+
+    def sigint_run(self, extra_env):
+        """Start a test that blocks, send SIGINT once it is running; {entry point: (returncode, stderr)}."""
+        d = self.make_dir("""
+            import sys, threading, unittest
+            class T(unittest.TestCase):
+                def test_blocks(self):
+                    sys.stderr.write("READY\\n")
+                    sys.stderr.flush()
+                    threading.Event().wait()
+            """)
+        env = {k: v for k, v in os.environ.items() if k != "CHECK_STALL_DUMP_S"}
+        out = {}
+        for name, cmd in (("ours", [str(SCRIPT), "discover", "-s", d]), ("ref", ["-m", "unittest", "discover", "-s", d])):
+            p = subprocess.Popen([sys.executable, *cmd], cwd=ROOT, env={**env, **extra_env},
+                                 stderr=subprocess.PIPE, text=True)
+            while "READY" not in p.stderr.readline():
+                pass
+            p.send_signal(signal.SIGINT)
+            err = p.stderr.read()
+            out[name] = (p.wait(timeout=30), err)
+        return out
+
+    def test_without_a_bound_sigint_ends_the_run_as_python_m_unittest_does(self):
+        out = self.sigint_run({})
+        self.assertEqual(out["ours"][0], out["ref"][0])
+        self.assertEqual(out["ours"][0], -signal.SIGINT)
+        self.assertIn("KeyboardInterrupt", out["ours"][1])
+        self.assertNotIn("Stopped", out["ours"][1])
+
+    def test_with_a_bound_sigint_stops_softly_and_the_summary_is_printed(self):
+        code, err = self.sigint_run({"CHECK_STALL_DUMP_S": "100"})["ours"]   # what coverage_floor's runs have
+        self.assertEqual(code, 1)
+        self.assertIn("Stopped: stopped by SIGINT", err)
+        self.assertIn("FAILED (errors=1)", err)
 
     def test_a_normal_run_prints_dots_and_the_summary_only(self):
         d = self.make_dir("import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n")

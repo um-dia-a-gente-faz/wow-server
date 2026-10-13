@@ -346,6 +346,8 @@ class RunTest(unittest.TestCase):
         for cmd in runs:
             self.assertIn("--omit=agent/tests/*", cmd)
             self.assertIn("--source=agent", cmd)
+            self.assertIn("scripts/early_failures.py", cmd)   # #714: failures print as they happen, stall stop
+            self.assertNotIn("unittest", cmd)
         self.assertIn("tools/world-mock/tests", runs[1])
         self.assertIn("-a", runs[1])
         for _, data in calls:

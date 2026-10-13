@@ -3,7 +3,7 @@
 A stalled test must name itself in the log instead of ending as a silent cancel at
 `timeout-minutes`. Each job sets PYTHONFAULTHANDLER=1 and CHECK_STALL_DUMP_S (read by
 scripts/check.sh and scripts/coverage_floor.py, through scripts/early_failures.py: dump, soft stop,
-SIGABRT), and the figure stays at least MARGIN_S (30 s plus the soft stop's wait, #714) under the job's
+SIGABRT, kill), and the figure stays at least MARGIN_S under the job's
 limit so the dump and the summary reach the log first. Reads the workflow
 as text, so the mutant tests feed a copy with the dump removed.
 """
@@ -23,7 +23,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import early_failures  # noqa: E402
 
-MARGIN_S = 30 + early_failures.SOFT_STOP_S
+# 44 s: the kill comes 24 s after the bound at the latest (SOFT_STOP_S + the 10 s wait for SIGABRT), leaving 20 s
+# for job setup (measured 5 to 13 s) and the log: 420 + 24 + 7 < 480, 540 + 24 + 13 < 600.
+MARGIN_S = early_failures.SOFT_STOP_S + 10 + 20   # SIGABRT, + the wait before the kill, + setup and log
 
 
 def problems(ci_text):

@@ -6,7 +6,8 @@
 
 1. A failure or error prints its id and traceback to stderr the moment it happens (unittest only
    prints them in its final summary, which a killed run never reaches); dots and summary are unchanged.
-2. The process registers SIGUSR1 as a non-fatal dump of every thread's stack, and SIGINT as a soft
+2. The process registers SIGUSR1 as a non-fatal dump of every thread's stack and, only when
+   CHECK_STALL_DUMP_S is set, SIGINT as a soft
    stop: the running test fails with Stopped, the rest are skipped, unittest prints its summary.
 3. --stall-after N runs the real process and, past N seconds, walks stall_stop(): dump, dump, SIGINT,
    SIGABRT (a fatal dump when PYTHONFAULTHANDLER=1), kill. scripts/coverage_floor.py uses stall_stop too.
@@ -22,12 +23,14 @@ import unittest
 
 # (signal, seconds to wait for the process to exit before the next one)
 STEPS = ((signal.SIGUSR1, 2), (signal.SIGUSR1, 2), (signal.SIGINT, 10), (signal.SIGABRT, 10))
-# Time from the deadline to the end of the soft stop: what CI keeps free under the job limit.
+# Seconds from the bound to SIGABRT; the kill follows at most 10 s later (24 s in all, the worst case CI keeps free).
 SOFT_STOP_S = sum(wait for sig, wait in STEPS if sig != signal.SIGABRT)
 
 
-class Stopped(Exception):
-    """Raised in the running test by SIGINT."""
+class Stopped(BaseException):
+    """Raised in the running test by SIGINT under a stall bound. A BaseException so that a test's
+    `except Exception` cannot swallow the stop; `except BaseException` still can, and then SIGABRT's
+    fatal dump (the next step) is the fallback."""
 
 
 class EarlyResult(unittest.TextTestResult):
@@ -57,6 +60,10 @@ class EarlyResult(unittest.TextTestResult):
             self._show("FAIL" if fail else "ERROR", self.failures if fail else self.errors)
 
 
+class EarlyRunner(unittest.TextTestRunner):
+    resultclass = EarlyResult   # a class, so unittest builds it from the command line (-v, -f, -b, warnings)
+
+
 def _soft_stop(sig, frame):
     signal.signal(sig, signal.default_int_handler)   # a second one is a plain KeyboardInterrupt
     if EarlyResult.live is None:
@@ -79,7 +86,8 @@ def stall_stop(p: subprocess.Popen) -> int:
 
 
 def supervise(seconds: float, args: list[str]) -> int:
-    p = subprocess.Popen([sys.executable, __file__, *args])
+    # the bound in the child's environment is what arms its SIGINT handler (see main)
+    p = subprocess.Popen([sys.executable, __file__, *args], env={**os.environ, "CHECK_STALL_DUMP_S": f"{seconds:g}"})
     try:
         return p.wait(timeout=seconds)
     except subprocess.TimeoutExpired:
@@ -100,9 +108,9 @@ def main(argv: list[str]) -> int:
         return supervise(float(argv[1]), argv[3:])
     sys.path[0] = os.getcwd()   # what `python -m unittest` has: the repo root, not scripts/
     faulthandler.register(signal.SIGUSR1, all_threads=True)
-    signal.signal(signal.SIGINT, _soft_stop)
-    unittest.main(module=None, argv=["python -m unittest", *argv],
-                  testRunner=unittest.TextTestRunner(resultclass=EarlyResult))
+    if os.environ.get("CHECK_STALL_DUMP_S"):   # a stall bound is in force: SIGINT is the soft stop, not Ctrl-C
+        signal.signal(signal.SIGINT, _soft_stop)
+    unittest.main(module=None, argv=["python -m unittest", *argv], testRunner=EarlyRunner)
     return 0   # unreachable: unittest.main exits
 
 
