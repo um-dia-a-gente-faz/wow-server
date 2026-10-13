@@ -339,7 +339,7 @@ to run without the file, and `git reset --hard` leaves it alone (it's ignored).
 | `MYSQL_ROOT_PASSWORD` | `database` (+ healthcheck), `wow-exporter`, `wowmap` | Only applied when `db_data` is first initialised. On the existing VM, set it to the password the DB **already** uses — changing it here does not change MySQL. |
 | `ACCESS_PASSWORD` | `trinitycore-wowserver` web UI (:3000) | Username stays `admin`. |
 | `AGENT_PASSWORD` | `docker-compose.agents.yml` | Shared password of AGENT01..AGENT25 (also read by `scripts/create_agent_roster.py`). |
-| `WOW_AGENT_TAG` | `docker-compose.agents.yml` | Git SHA of the `wow-agent` image the agents run (#291). Printed by `scripts/build-agent-image.sh`. |
+| `WOW_AGENT_TAG` | `docker-compose.agents.yml` | Git SHA of the `wow-agent` image the agents run (#291). Printed by `scripts/build-agent-image.sh`. The agent-runner's image status follows it (#730): restart `agent-runner` after changing it, since the runner reads it from its environment. |
 | `LLM_API_KEY` | agents (future LLM layer) | Router key from the FreeLLMAPI instance at `192.168.1.72:3001` (the old docker-stack one is gone); never paste it into docs. |
 
 One-time setup on the VM:

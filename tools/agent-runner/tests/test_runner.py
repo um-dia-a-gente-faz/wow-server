@@ -32,6 +32,7 @@ _EP = api_contract.load()["endpoints"]
 
 TOKEN = "t0ken-for-tests"
 PASSWORD = "hunter2-agent-password"
+TAG = "3f9c2ab"  # WOW_AGENT_TAG the fleet runs in these tests (#730)
 
 FAKE_DOCKER = """\
 #!/usr/bin/env python3
@@ -284,7 +285,7 @@ class RunnerCase(unittest.TestCase):
 
         patch_env = mock.patch.dict(os.environ, {
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
-            "FAKE_DOCKER_DIR": str(self.fake), "AGENT_PASSWORD": PASSWORD})
+            "FAKE_DOCKER_DIR": str(self.fake), "AGENT_PASSWORD": PASSWORD, "WOW_AGENT_TAG": TAG})
         patch_env.start()
         self.addCleanup(patch_env.stop)
 
@@ -447,6 +448,21 @@ class StatusTest(RunnerCase):
         self.assertTrue(self.req("/agents")[1]["image"]["stale"])
         self.set_state(containers={})
         self.assertEqual(self.req("/agents")[1]["image"]["present"], False)
+
+    def test_image_is_the_sha_tagged_image_the_fleet_runs(self):
+        self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
+        self.assertEqual(self.req("/agents")[1]["image"]["name"], f"wow-agent:{TAG}")
+        self.assertIn(["image", "inspect", "--format", "{{.Created}}", f"wow-agent:{TAG}"], self.calls())
+        self.assertFalse([c for c in self.calls() if "wow-agent:latest" in c])
+
+    def test_unset_tag_still_answers_200_and_never_inspects_latest(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("WOW_AGENT_TAG", None)
+            status, body = self.req("/agents")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["image"], {"name": "wow-agent:(WOW_AGENT_TAG not set or invalid)",
+                                         "created": None, "stale": None, "present": False})
+        self.assertFalse([c for c in self.calls() if c[:2] == ["image", "inspect"]])
 
 
 class ActionTest(RunnerCase):
@@ -824,6 +840,20 @@ class FakeDockerTest(RunnerCase):
         self.assertEqual(by_name["Bravo"]["container"]["state"], "absent")
         self.assertEqual(by_name["Charlie"]["container"]["exit_code"], 137)
         self.assertTrue(self.fleet.status()["image"]["present"])
+
+    def test_image_follows_the_tag_at_each_status_call(self):
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": "aaa111"}):
+            self.assertEqual(self.fleet.status()["image"]["name"], "wow-agent:aaa111")
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": "bbb222"}):
+            self.assertEqual(self.fleet.status()["image"]["name"], "wow-agent:bbb222")
+        self.assertIn(("image", "wow-agent:aaa111"), self.docker.calls)
+        self.assertIn(("image", "wow-agent:bbb222"), self.docker.calls)
+
+    def test_tag_outside_the_grammar_is_unset_and_docker_is_not_asked(self):
+        for tag in ["", "a b", "x;y"]:
+            with self.subTest(tag=tag), mock.patch.dict(os.environ, {"WOW_AGENT_TAG": tag}):
+                self.assertEqual(self.fleet.status()["image"]["present"], False)
+        self.assertFalse([c for c in self.docker.calls if c[0] == "image"])
 
     def test_start_and_stop_ask_the_backend_for_that_service_only(self):
         self.fleet.start("Bravo")

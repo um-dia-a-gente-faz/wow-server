@@ -23,6 +23,12 @@ Restart=on-failure
 runner refuses to start without a token. Locally:
 `AGENT_RUNNER_TOKEN=x python3 tools/agent-runner/runner.py`.
 
+The runner's image status (`GET /agents`, `image`) follows `WOW_AGENT_TAG`: it reports
+`wow-agent:<WOW_AGENT_TAG>`, read from the runner's environment at each request (#730). Unset or not a
+valid Docker tag, it reports `present: false` and names the tag as not set; it never falls back to
+`latest`. The variable comes from the unit's `EnvironmentFile`, so restart the runner after changing
+it in `.env` (the environment is read once at start, and compose inherits it too).
+
 | Variable | Default | |
 |---|---|---|
 | `AGENT_RUNNER_TOKEN` | required | shared token; `Authorization: Bearer <token>` |
