@@ -93,8 +93,8 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 
-**A stalled test names itself (#707).** The `agent` job (420 s, limit 8 minutes) and the `coverage` job (540 s for both runs, limit 10 minutes) set `PYTHONFAULTHANDLER=1` and `CHECK_STALL_DUMP_S`; past that many seconds the test process gets SIGABRT, its log shows every thread's stack (test file and line) and the step fails, before `timeout-minutes` cancels it silently.
-Same locally: `PYTHONFAULTHANDLER=1 CHECK_STALL_DUMP_S=240 scripts/check.sh test-agent`.
+**A stalled test names itself (#707, #714).** Every unittest suite runs through `scripts/early_failures.py` (same arguments as `python3 -m unittest`, same exit codes): a failing test prints its id and traceback to stderr the moment it fails, not only in unittest's final summary, and the dots stay. The `agent` job (420 s, limit 8 minutes) and the `coverage` job (540 s for both runs, limit 10 minutes) set `PYTHONFAULTHANDLER=1` and `CHECK_STALL_DUMP_S`; past that many seconds the process gets SIGUSR1 twice 2 s apart (a non-fatal dump of every thread's stack: a deadlock shows the same frames twice, a crawl different ones), then SIGINT (the running test fails with `Stopped`, the rest are skipped and unittest prints its summary, 10 s allowed), then SIGABRT (fatal dump) and kill. The step fails, before `timeout-minutes` cancels it silently; the bounds stay 44 s (30 + the 14 s soft stop) under the limit.
+Same locally: `PYTHONFAULTHANDLER=1 CHECK_STALL_DUMP_S=240 scripts/check.sh test-agent`. `wowmap-js` (node's runner) is the one suite without it.
 
 **Where the `tools` job's time goes (#591, refreshed in #624).** The job `tools (unit tests, generated files)`
 has a 10-minute timeout. It runs `scripts/check.sh generated test-tools`, which is the

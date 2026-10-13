@@ -9,7 +9,6 @@ import io
 import json
 import pathlib
 import re
-import signal
 import subprocess
 import sys
 import tempfile
@@ -279,16 +278,17 @@ class RunTest(unittest.TestCase):
             cf._run(["run"], {})
         self.assertEqual(cm.exception.code, 1)
 
-    def test_run_past_the_deadline_gets_sigabrt_then_exits_1(self):
-        # #707: with PYTHONFAULTHANDLER=1 the SIGABRT is what dumps every thread's stack.
+    def test_run_past_the_deadline_gets_the_stall_sequence_then_exits_1(self):
+        # #714: early_failures.stall_stop (dump, dump, SIGINT, SIGABRT, kill; tested in test_early_failures)
         proc = mock.Mock(returncode=-6)
-        proc.communicate.side_effect = [subprocess.TimeoutExpired("x", 1), ("", None)]
+        proc.communicate.side_effect = subprocess.TimeoutExpired("x", 1)
         with mock.patch.object(cf.subprocess, "Popen", return_value=proc), \
+                mock.patch.object(cf.early_failures, "stall_stop") as stop, \
                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
             cf._run(["run"], {}, deadline=time.monotonic() - 1)
         self.assertEqual(cm.exception.code, 1)
-        proc.send_signal.assert_called_once_with(signal.SIGABRT)
-        proc.kill.assert_not_called()
+        stop.assert_called_once_with(proc)
+        proc.send_signal.assert_not_called()   # the sequence is stall_stop's, not repeated here
 
     def test_communicate_gets_the_time_left_until_the_deadline_or_none(self):
         for deadline, want in ((time.monotonic() + 50, 50), (None, None)):
@@ -306,14 +306,6 @@ class RunTest(unittest.TestCase):
         proc.communicate.side_effect = KeyboardInterrupt
         with mock.patch.object(cf.subprocess, "Popen", return_value=proc), self.assertRaises(KeyboardInterrupt):
             cf._run(["run"], {})
-        proc.kill.assert_called_once_with()
-
-    def test_run_that_ignores_sigabrt_is_killed(self):
-        proc = mock.Mock(returncode=-9)
-        proc.communicate.side_effect = [subprocess.TimeoutExpired("x", 1), subprocess.TimeoutExpired("x", 10), ("", None)]
-        with mock.patch.object(cf.subprocess, "Popen", return_value=proc), \
-                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            cf._run(["run"], {}, deadline=time.monotonic() - 1)
         proc.kill.assert_called_once_with()
 
     def test_measure_bounds_both_runs_by_one_deadline_from_the_env(self):

@@ -2,8 +2,9 @@
 
 A stalled test must name itself in the log instead of ending as a silent cancel at
 `timeout-minutes`. Each job sets PYTHONFAULTHANDLER=1 and CHECK_STALL_DUMP_S (read by
-scripts/check.sh and scripts/coverage_floor.py, which send SIGABRT), and the figure stays
-at least MARGIN_S under the job's limit so the dump reaches the log first. Reads the workflow
+scripts/check.sh and scripts/coverage_floor.py, through scripts/early_failures.py: dump, soft stop,
+SIGABRT), and the figure stays at least MARGIN_S (30 s plus the soft stop's wait, #714) under the job's
+limit so the dump and the summary reach the log first. Reads the workflow
 as text, so the mutant tests feed a copy with the dump removed.
 """
 import pathlib
@@ -18,7 +19,11 @@ from test_ci_suite_jobs import job_spans  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 JOBS = ("agent", "coverage")
-MARGIN_S = 30
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import early_failures  # noqa: E402
+
+MARGIN_S = 30 + early_failures.SOFT_STOP_S
 
 
 def problems(ci_text):
@@ -64,18 +69,30 @@ class CiStallDumpTest(unittest.TestCase):
             self.assertEqual(found, [f"job {job}: CHECK_STALL_DUMP_S is not set"])
 
     def test_a_bound_too_close_to_the_job_limit_is_reported(self):
-        # agent: 8 min limit, so 450 is the most; coverage: 10 min, so 570.
-        for old, over, ok in (("420", "451", "450"), ("540", "571", "570")):
-            ci = CI.replace(f'CHECK_STALL_DUMP_S: "{old}"', f'CHECK_STALL_DUMP_S: "{over}"')
-            self.assertEqual(len(problems(ci)), 1)
-            self.assertEqual(problems(CI.replace(f'CHECK_STALL_DUMP_S: "{old}"', f'CHECK_STALL_DUMP_S: "{ok}"')), [])
+        # agent: 8 min limit; coverage: 10 min. The most is the limit less MARGIN_S.
+        for old, limit in (("420", 8 * 60), ("540", 10 * 60)):
+            most = limit - MARGIN_S
+            over = CI.replace(f'CHECK_STALL_DUMP_S: "{old}"', f'CHECK_STALL_DUMP_S: "{most + 1}"')
+            self.assertEqual(len(problems(over)), 1)
+            self.assertEqual(problems(CI.replace(f'CHECK_STALL_DUMP_S: "{old}"', f'CHECK_STALL_DUMP_S: "{most}"')), [])
 
     def test_check_sh_and_coverage_floor_honour_the_bound(self):
-        # The wiring: the env var is only a promise if the two entry points read it.
+        # The wiring: the env var is only a promise if the two entry points read it and hand it to the
+        # one supervisor (scripts/early_failures.py).
         check = (ROOT / "scripts" / "check.sh").read_text()
         self.assertRegex(check, r'if \[ -n "\$\{CHECK_STALL_DUMP_S:-\}" \]; then\n\s+'
-                                r'timeout --signal=ABRT -k \d+ "\$CHECK_STALL_DUMP_S" bash -c "exec ')
-        self.assertIn("CHECK_STALL_DUMP_S", (ROOT / "scripts" / "coverage_floor.py").read_text())
+                                r'cmd="\$\{cmd/early_failures\.py/early_failures\.py --stall-after \$CHECK_STALL_DUMP_S --\}"')
+        cf = (ROOT / "scripts" / "coverage_floor.py").read_text()
+        self.assertIn("CHECK_STALL_DUMP_S", cf)
+        self.assertIn("early_failures.stall_stop(p)", cf)
+
+    def test_every_unittest_suite_goes_through_the_supervisor(self):
+        check = (ROOT / "scripts" / "check.sh").read_text()
+        self.assertNotIn("-m unittest", check)
+        suites = re.findall(r'^\s+"[\w-]+\|(.*)"$', check, re.M)
+        self.assertGreater(len(suites), 10)
+        for cmd in suites:   # the one exception: node's own runner
+            self.assertTrue(cmd.startswith("node --test ") or cmd.startswith("python3 scripts/early_failures.py discover "), cmd)
 
 
 if __name__ == "__main__":
