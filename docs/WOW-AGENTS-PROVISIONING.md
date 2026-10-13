@@ -105,7 +105,7 @@ never creates or overwrites `.env`**; it checks `.env` and prints what is missin
 
 Create `/opt/wow-server/.env`, mode 600, owner root, from the wow-server VM's `.env`
 over a trusted channel or by hand. The agents need `AGENT_PASSWORD` and `WOW_AGENT_TAG` (both required; the tag is
-the commit SHA that `scripts/build-agent-image.sh` prints, see section 3),
+the commit SHA that `scripts/build-agent-image.sh` prints, see section 3; the runner's unit must load this file with `EnvironmentFile=`, which is mandatory: see the comment in section 3),
 `AGENT_BRAIN` (`llm` default, or `jev`) with that brain's own settings,
 `LLM_BASE_URL`/`LLM_API_KEY`/`LLM_MODEL` or `JEV_BASE_URL`/`JEV_API_KEY`/`JEV_MODEL`, optionally `AGENT_HTTP_PUBLISH_IP`. The guest does **not** need
 `MYSQL_ROOT_PASSWORD` or `ACCESS_PASSWORD`; leave them out. Do not copy
@@ -130,6 +130,10 @@ git pull --ff-only
 scripts/build-agent-image.sh   # builds wow-agent:<sha> and prints the SHA
 # set WOW_AGENT_TAG=<that sha> in /opt/wow-server/.env (the previous value is the rollback)
 sudo systemctl restart agent-runner   # the runner reads WOW_AGENT_TAG at start; restart it after every change
+# the unit must keep `EnvironmentFile=/opt/wow-server/.env` (tools/agent-runner/README.md, "Run"): it is the
+# only way the runner sees WOW_AGENT_TAG. Without it the status says reason: tag_unset, and a plain start
+# lets compose build the checkout under the tag from .env if that image is missing (#734: reasoned from the
+# code and Compose's documented behaviour, NOT run).
 # later, to roll the fleet onto a new build, in this order (docs/DEPLOYMENT.md, "Agent image"):
 # build, set the tag, restart agent-runner, then recreate:
 #   scripts/build-agent-image.sh

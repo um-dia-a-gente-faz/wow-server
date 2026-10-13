@@ -23,6 +23,16 @@ Restart=on-failure
 runner refuses to start without a token. Locally:
 `AGENT_RUNNER_TOKEN=x python3 tools/agent-runner/runner.py`.
 
+The `EnvironmentFile=/opt/wow-server/.env` line is mandatory, not a convenience. The runner reads
+`WOW_AGENT_TAG` from its own environment, and that line is the only way the tag gets there. Without it,
+the status says `reason: tag_unset` (the fleet page shows the banner), and a plain start runs
+`docker compose` with no `--build`. Compose then reads `WOW_AGENT_TAG` from the checkout's `.env`
+(the runner passes the checkout as the project directory), and if that image is missing it builds the
+checkout under that tag, because the agent service has `build: .`. That is the build the #732 rule
+exists to refuse. Reasoned from the code and Compose's documented behaviour, NOT run (no docker on the
+review host, #734). The fix is the unit line, not a runner change: keep it, and restart the runner after
+any change to the tag.
+
 The runner's image status (`GET /agents`, `image`) follows `WOW_AGENT_TAG`: it reports
 `wow-agent:<WOW_AGENT_TAG>`, read from the runner's environment at each request (#730). Unset or not a
 valid Docker tag, it reports `present: false` and names the tag as not set; it never falls back to
@@ -140,6 +150,14 @@ An agent entry keeps its signals separate:
 5. Records the agent in `<runtime>/state.json`, regenerates the runner's compose file
    (`AGENT_NAME` is the character name, so audit files land under that name) and starts the
    container. Answers 201 with the new agent's status entry and a `character` block.
+
+The build rule of `start` (see below) is checked after the validation (step 1) and the roster duplicate
+check, and before anything is created (#734). When the pinned
+image is missing and `WOW_AGENT_TAG` is not the checkout's HEAD, the create answers the same 409 that
+`start` would (`image_not_built`, with its `detail`), and nothing changes: no account, no character, no
+state entry, no compose file. A present image, or a tag the rule does not refuse, goes on as before. With
+`WOW_AGENT_TAG` unset or invalid the create answers 409 `tag_unset` before anything is created (#734, second
+Decision; `start` keeps its 502 path). A create asks for no build.
 
 If the character exists but the container did not start, the answer is 502 with
 `partial`: `character_created`, `recorded`, `container_started` and the account and

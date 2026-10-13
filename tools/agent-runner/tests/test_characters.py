@@ -5,17 +5,19 @@ real ones from scripts/create_agent_roster.py. The protocol call itself
 live check, see the PR's How to test."""
 
 import json
+import os
 import sys
 import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import characters
-from test_runner import PASSWORD, TOKEN, RunnerCase
+from test_runner import OTHER_TAG, PASSWORD, TOKEN, RunnerCase
 
 
 class World:
@@ -216,6 +218,87 @@ class CreateTest(CharCase):
         self.assertEqual(self.state()["agents"][0]["character"], "Sunleaf")  # recorded: retry works
         self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
         self.assertEqual(self.req("/agents/Sunleaf/start", "POST")[0], 200)
+
+    def test_a_create_refused_for_its_image_leaves_state_compose_and_realm_untouched(self):
+        # #734 Decision: the image is missing and the tag is not the checkout's HEAD, so the start
+        # would answer 409: the create answers that 409 before anything is created or recorded
+        self.fleet.write_compose()
+        state = json.dumps({"agents": [{"account": "AGENT03", "character": "Hotel", "race": 10,
+                                        "class": 8, "gender": 0}]}, indent=2) + "\n"
+        (self.runtime / "state.json").write_text(state)
+        compose_before = (self.runtime / "docker-compose.agents.yml").read_bytes()
+        self.set_state(containers={}, image_created=None)
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
+            status, body = self.create()
+        self.assertEqual((status, body["error"]), (409, "image_not_built"))
+        self.assertEqual(body["detail"], f"wow-agent:{OTHER_TAG} is not built and the checkout is at {self.tag}: "
+                         "check out that commit and run scripts/build-agent-image.sh, or set WOW_AGENT_TAG "
+                         "to an image that exists")
+        self.assertEqual((self.runtime / "state.json").read_bytes(), state.encode())
+        self.assertEqual((self.runtime / "docker-compose.agents.yml").read_bytes(), compose_before)
+        self.assertEqual((self.world.logins, self.world.accounts_created, self.world.created), ([], [], []))
+        self.assertEqual(self.compose_calls(), [])
+
+    def test_a_create_with_the_tag_unset_or_invalid_is_refused_before_anything(self):
+        # #734 Decision (second): no valid tag means the start at the end of a create can only fail,
+        # so the create answers 409 tag_unset before the realm, the state file or compose is touched
+        self.fleet.write_compose()
+        state = json.dumps({"agents": [{"account": "AGENT03", "character": "Hotel", "race": 10,
+                                        "class": 8, "gender": 0}]}, indent=2) + "\n"
+        (self.runtime / "state.json").write_text(state)
+        compose_before = (self.runtime / "docker-compose.agents.yml").read_bytes()
+        self.set_state(containers={}, image_created=None)
+        for tag in (None, "a b"):
+            with self.subTest(tag=tag), mock.patch.dict(os.environ):
+                if tag is None:
+                    os.environ.pop("WOW_AGENT_TAG", None)
+                else:
+                    os.environ["WOW_AGENT_TAG"] = tag
+                status, body = self.create()
+            self.assertEqual((status, body.get("error")), (409, "tag_unset"))
+            self.assertEqual(body.get("detail"), "WOW_AGENT_TAG is unset or not a valid tag in the agent-runner "
+                             "environment, so the new agent could not be started: set it (EnvironmentFile) "
+                             "and restart agent-runner")
+        self.assertEqual((self.runtime / "state.json").read_bytes(), state.encode())
+        self.assertEqual((self.runtime / "docker-compose.agents.yml").read_bytes(), compose_before)
+        self.assertEqual((self.world.logins, self.world.accounts_created, self.world.created), ([], [], []))
+        self.assertEqual(self.compose_calls(), [])
+
+    def test_a_refused_create_of_a_new_runner_writes_no_state_and_no_compose_file(self):
+        self.set_state(containers={}, image_created=None)
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
+            self.assertEqual(self.create()[0], 409)
+        self.assertFalse((self.runtime / "state.json").exists())
+        self.assertFalse((self.runtime / "docker-compose.agents.yml").exists())
+        self.assertEqual(self.world.created, [])
+
+    def test_a_create_whose_build_rule_passes_is_built_and_created_as_before(self):
+        # the checkout's own tag, image missing: the build the start would do still happens
+        self.set_state(containers={}, image_created=None)
+        status, body = self.create()
+        self.assertEqual(status, 201)
+        self.assertEqual(self.world.created, [("AGENT07", "Sunleaf", 10, 8, 0)])
+        up = [c for c in self.compose_calls() if "up" in c]
+        self.assertIn("--build", up[-1])
+
+    def test_a_present_image_of_another_tag_is_not_refused_and_not_built(self):
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
+            status, _ = self.create()
+        self.assertEqual(status, 201)
+        up = [c for c in self.compose_calls() if "up" in c]
+        self.assertNotIn("--build", up[-1])
+
+    def test_validation_and_duplicate_errors_still_answer_first_when_the_image_is_refused(self):
+        # bad input and a name already in the roster come before the build rule, as before
+        self.set_state(containers={}, image_created=None)
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
+            status, body = self.create(name="Alpha")
+            self.assertEqual(status, 409)
+            self.assertIn("already used by an agent in the roster", body["error"])
+            status, body = self.create(name="Aaab1")
+            self.assertEqual(status, 400)
+        self.assertEqual(self.world.logins, [])
+        self.assertEqual(self.compose_calls(), [])
 
     def test_missing_password_is_a_503_and_nothing_happens(self):
         self.fleet._character_service.env = {}
