@@ -38,6 +38,11 @@ class HandlerTest(unittest.TestCase):
         self.sess = make_session()
         self.sess.world_state.names.cache_path = os.path.join(tmp.name, "names.json")
 
+    def test_zero_is_stored_as_a_value(self):
+        self.sess._dispatch(opcodes.SMSG_CLIENTCACHE_VERSION, struct.pack("<I", 0))
+        self.assertEqual(self.sess.client_cache_version, 0)
+        self.assertEqual(self.sess.world_state.names.server_cache_id, 0)
+
     def test_defaults_to_none(self):
         self.assertIsNone(self.sess.client_cache_version)
 
@@ -80,6 +85,16 @@ class ArrivalOrderTest(unittest.TestCase):
         self.assertEqual(sess.client_cache_version, 6)
         sess.world_state.names.load()
         self.assertEqual(sess.world_state.names.creatures, {})   # known before the load: not used
+
+    def test_short_packet_in_the_drain_drops_that_packet_and_the_login_goes_on(self):
+        stream = (server_packet(opcodes.SMSG_ADDON_INFO, b"")
+                  + server_packet(opcodes.SMSG_CLIENTCACHE_VERSION, b"\x01\x02")
+                  + server_packet(opcodes.SMSG_TUTORIAL_FLAGS, b"\x00" * 32))
+        sess = self.session(stream)
+        sess._drain_pre_login()
+        self.assertIsNone(sess.client_cache_version)
+        self.assertEqual(sess.dropped_packets, 1)
+        self.assertEqual(sess.sock.pos, len(sess.sock.data))   # the whole stream was consumed
 
     def test_packet_after_the_load_discards_what_the_load_read(self):
         sess = self.session()

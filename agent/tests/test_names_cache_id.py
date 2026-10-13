@@ -17,7 +17,7 @@ ORDERS = ("server first", "load first")
 def cache_file(path, cache_id="absent", creatures=None):
     """A schema-2 names.json; cache_id "absent" leaves the key out (a file from before #751)."""
     doc = {"schema": 2, "creatures": creatures if creatures is not None else {"1": {"name": "Old"}},
-           "gameobjects": {}}
+           "gameobjects": {"2": {"name": "Chest", "type": 3}}}
     if cache_id != "absent":
         doc["cache_id"] = cache_id
     _put(path, json.dumps(doc))
@@ -61,6 +61,7 @@ class CacheIdRuleTest(unittest.TestCase):
                 with self.assertNoLogs("agent.names", "INFO"):
                     c = met(order, self.path, 5)
                 self.assertEqual(c.creatures, {1: {"name": "Old"}})
+                self.assertEqual(c.gameobjects, {2: {"name": "Chest", "type": 3}})
 
     def test_file_without_an_id_is_kept_and_the_next_save_stamps_the_server_id(self):
         for order in ORDERS:
@@ -81,6 +82,29 @@ class CacheIdRuleTest(unittest.TestCase):
                 self.assertEqual(c.creatures, {1: {"name": "Old"}})
                 c.save()
                 self.assertEqual(json.loads(_read(self.path))["cache_id"], 5)
+
+    def test_id_zero_is_a_known_id(self):
+        for order in ORDERS:
+            with self.subTest(order, case="server 0 against file 5"):
+                cache_file(self.path, cache_id=5)
+                c = met(order, self.path, 0)
+                self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
+                c.save()
+                self.assertEqual(json.loads(_read(self.path))["cache_id"], 0)
+            with self.subTest(order, case="file 0 against server 5"):
+                cache_file(self.path, cache_id=0)
+                c = met(order, self.path, 5)
+                self.assertEqual((c.creatures, c.gameobjects), ({}, {}))
+            with self.subTest(order, case="0 against 0"):
+                cache_file(self.path, cache_id=0)
+                with self.assertNoLogs("agent.names", "INFO"):
+                    c = met(order, self.path, 0)
+                self.assertEqual(c.creatures, {1: {"name": "Old"}})
+            with self.subTest(order, case="server unknown, file 0"):
+                cache_file(self.path, cache_id=0)
+                c = met(order, self.path, None)
+                c.save()
+                self.assertEqual(json.loads(_read(self.path))["cache_id"], 0)
 
     def test_a_none_after_a_known_server_id_changes_nothing(self):
         c = nm.NameCache()
