@@ -308,7 +308,8 @@ A change under `monitoring/` recreates the monitoring stack only (`stacks_for` i
    file every 15 s. Every block it computes has `until_ts` at most 30 s ahead (two periods);
    only the owner's stop may be longer. **Done (#745)**: `tools/fleet-limits/fleet_limits.py`
    re-reads the last hour's audit files every period instead of tailing them (ceiling and
-   upgrade path in the code); an expired owner entry is not a block; nothing reads the file
+   upgrade path in the code); an expired owner entry is not a block and is logged once at WARNING;
+   a deleted owner file clears the stop, an invalid one keeps the previous stop and says so; nothing reads the file
    until slice 1.
 3. **Health signal.** A gauge for the limits file's state (`ok`, `missing`, `invalid`,
    `off`) and its age from `written_ts` on the agent's `GET /metrics`

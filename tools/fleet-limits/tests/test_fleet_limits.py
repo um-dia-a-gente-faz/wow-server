@@ -306,6 +306,68 @@ class Shell(TmpCase):
                 w.cycle(NOW + 15)   # the same problem as last cycle is not logged again
             self.assertEqual(self.written()["blocks"]["jev"]["reason"], "keep me", bad[:20])
 
+    def test_a_rotation_between_the_live_file_and_dot_1_does_not_count_a_file_twice(self):
+        # AuditLogger._rotate_if_needed: .N -> .N+1 from the highest down, then live -> .1
+        live = self.audit_file("alpha", "d.jsonl", [jev(NOW - 5)], NOW)
+        old1 = self.audit_file("alpha", "d.jsonl.1", [jev(NOW - 9)], NOW)
+        real, rotated = fl._read_file, []
+
+        def read_then_rotate(path, *args):
+            yield from real(path, *args)
+            if not rotated:
+                rotated.append(1)
+                os.replace(old1, str(live) + ".2")
+                os.replace(live, str(live) + ".1")
+                live.write_text("")   # a fresh live file, as the logger's next append makes
+
+        with mock.patch.object(fl, "_read_file", read_then_rotate):
+            sums = fl.hour_sums(fl.read_audit(str(self.audit), NOW, lambda *a, **k: None), NOW)
+        self.assertEqual(rotated, [1])
+        self.assertEqual(sums[0], 150, "the live file was read once; the rotated copy of it is the same file")
+
+    def test_an_expired_owner_entry_is_logged_once_per_distinct_entry(self):
+        w = self.writer()
+        self.owner.write_text(json.dumps({"jev": {"until_ts": NOW - 100, "reason": "typo"}}))
+        with self.assertLogs("fleet_limits", "WARNING") as logs:
+            w.cycle(NOW)
+        msg = logs.records[0].getMessage()
+        self.assertEqual(logs.records[0].levelname, "WARNING")
+        self.assertIn("jev", msg)
+        self.assertIn("2023-11-14", msg)   # the until_ts as a date
+        self.assertEqual(self.written()["blocks"], {})
+        with self.assertNoLogs("fleet_limits", "WARNING"):   # it stays in the file for days: quiet
+            w.cycle(NOW + 15)
+            w.cycle(NOW + 30)
+        self.owner.write_text(json.dumps({"jev": {"until_ts": NOW - 100}, "llm": {"until_ts": NOW - 50}}))
+        with self.assertLogs("fleet_limits", "WARNING") as logs:   # a new expired entry logs again
+            w.cycle(NOW + 45)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("llm", logs.records[0].getMessage())
+
+    def test_an_invalid_owner_file_says_what_is_in_force(self):
+        self.owner.write_text("{oops")
+        with self.assertLogs("fleet_limits", "WARNING") as logs:
+            w = self.writer()
+            w.cycle(NOW)
+        self.assertIn("no owner stop", logs.records[0].getMessage())
+        self.assertNotIn("keeping the previous", logs.records[0].getMessage())
+        self.owner.write_text(json.dumps({"jev": {"until_ts": NOW + 900, "reason": "r"}}))
+        w.cycle(NOW + 15)
+        self.owner.write_text("{oops")
+        with self.assertLogs("fleet_limits", "WARNING") as logs:
+            w.cycle(NOW + 30)
+        self.assertIn("keeping the previous", logs.records[0].getMessage())
+
+    def test_a_dropped_owner_entry_is_logged_by_the_running_writer_once(self):
+        # through Writer.cycle, not compute: the shell must hand its warner to build
+        w = self.writer()
+        self.owner.write_text(json.dumps({"jev": {"until_ts": "soon"}}))
+        with self.assertLogs("fleet_limits", "WARNING") as logs:
+            w.cycle(NOW)
+        self.assertEqual(len(logs.records), 1)
+        with self.assertNoLogs("fleet_limits", "WARNING"):
+            w.cycle(NOW + 15)
+
     def test_an_invalid_owner_file_at_start_means_no_owner_stop(self):
         self.owner.write_text("{oops")
         with self.assertLogs("fleet_limits", "WARNING") as logs:
@@ -465,8 +527,56 @@ class Loop(TmpCase):
         self.assertEqual(len([r for r in logs.records if "cycle failed" in r.getMessage()]), 1)
 
     def test_keyboard_interrupt_is_not_swallowed_by_the_cycle_guard_and_exits_cleanly(self):
-        with mock.patch.object(fl, "hour_sums", side_effect=KeyboardInterrupt):
-            self.assertEqual(fl.main([], env=self.env(), stop=threading.Event()), 0)
+        stop, calls = threading.Event(), []
+
+        def interrupt(records, now):
+            calls.append(1)
+            if len(calls) > 1:   # the guard swallowed the interrupt: end the loop instead of hanging
+                stop.set()
+                return 0, 0
+            raise KeyboardInterrupt
+
+        with mock.patch.object(fl, "hour_sums", interrupt):
+            self.assertEqual(fl.main([], env=self.env(FLEET_LIMITS_PERIOD_S=0.01), stop=stop), 0)
+        self.assertEqual(len(calls), 1)
+
+    def test_the_loop_waits_the_period_between_cycles(self):
+        stop, times = threading.Event(), []
+        t = threading.Thread(target=fl.main, kwargs={
+            "argv": [], "stop": stop, "env": self.env(FLEET_LIMITS_PERIOD_S=60),
+            "clock": lambda: times.append(1) or NOW})
+        t.start()
+        try:
+            for _ in range(500):
+                if times:
+                    break
+                stop.wait(0.01)
+            stop.wait(0.3)   # a loop that did not wait would have run dozens of cycles by now
+        finally:
+            stop.set()
+            t.join(10)
+        self.assertEqual(len(times), 1)
+
+    def test_sigterm_ends_a_real_process_cleanly_between_cycles(self):
+        import signal
+        proc = subprocess.Popen([sys.executable, str(TOOL / "fleet_limits.py")], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, cwd=str(self.tmp),
+                                env={"PATH": os.environ.get("PATH", ""), **self.env(FLEET_LIMITS_PERIOD_S=0.05)})
+        try:
+            for _ in range(500):
+                if self.limits.exists() or proc.poll() is not None:
+                    break
+                threading.Event().wait(0.02)
+            self.assertTrue(self.limits.exists())
+            proc.send_signal(signal.SIGTERM)
+            out, err = proc.communicate(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.written()["version"], 1)
 
     def test_sigterm_handler_is_restored(self):
         import signal

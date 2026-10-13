@@ -49,8 +49,12 @@ and `mv` it over, so the writer never sees half of it):
 
 `until_ts` is a unix time; only `jev` and `llm` mean anything. An entry whose `until_ts` is not a
 finite number, or whose brain is another, is dropped with one warning. An entry whose `until_ts`
-has passed is not a block (it does not hide a computed one). To lift the stop, delete the file or
-the entry. Reasons are cut to 200 characters.
+has passed is not a block (it does not hide a computed one) and is logged once at WARNING with the
+brain and the time, so a mistyped time does not fail silently; an expired entry that stays in the
+file is not logged again, a new one is. To lift the stop, delete the file or
+the entry. Reasons are cut to 200 characters. A file that is invalid JSON or unreadable keeps the
+previous valid stop if there is one (the log line says which: "keeping the previous one" or "no
+owner stop applies"); a deleted file clears the stop.
 
 ## Sample systemd unit
 

@@ -24,6 +24,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import UTC, datetime
 
 log = logging.getLogger("fleet_limits")
 
@@ -80,6 +81,13 @@ def hour_sums(records, now):
     return jev, llm
 
 
+def _iso(ts):
+    try:
+        return datetime.fromtimestamp(ts, tz=UTC).isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return f"{ts:.0f}"
+
+
 def _ignore(key, message, exc_info=False):
     pass
 
@@ -101,6 +109,9 @@ def _owner_blocks(owner_stop, now, warn):
                  f"owner stop entry {str(brain)[:40]!r} dropped: want jev or llm with a finite numeric until_ts")
             continue
         if until <= now:
+            warn(f"owner-expired-{brain}-{until}",
+                 f"owner stop for {brain} not applied: until_ts {_iso(until)} is not in the future "
+                 f"(now {_iso(now)}); it blocks nothing")
             continue
         reason = entry.get("reason")
         text = " ".join(reason.split()) if isinstance(reason, str) else ""
@@ -144,8 +155,15 @@ class Warner:
             log.warning("%s", message, exc_info=exc_info)
 
 
-def _read_file(path):
+def _read_file(path, read):
+    """The records of one file, unless the same file (device, inode) was already read this cycle:
+    a rotation between the read of `<day>.jsonl` and the open of `<day>.jsonl.1` renames the
+    live file to `.1`, and counting it twice is a false block."""
     with open(path, "rb") as f:
+        st = os.fstat(f.fileno())
+        if (st.st_dev, st.st_ino) in read:
+            return
+        read.add((st.st_dev, st.st_ino))
         for line in f:
             try:
                 rec = json.loads(line.decode("utf-8", "replace"))
@@ -162,6 +180,7 @@ def read_audit(base, now, warn):
     opening (rotation) is skipped quietly; any other trouble is a warning and that input counts
     as no usage."""
     cutoff = now - WINDOW_S
+    read: set[tuple[int, int]] = set()   # (st_dev, st_ino) of the files read so far this cycle
     try:
         agents = sorted(e.path for e in os.scandir(base) if e.is_dir())
     except OSError as e:
@@ -185,11 +204,15 @@ def read_audit(base, now, warn):
                 # a few MB). Ceiling: tens of MB a cycle. Upgrade: remember an offset per file
                 # (keyed by inode) and a running per-agent window.
                 if stat.S_ISREG(st.st_mode) and st.st_mtime > cutoff:
-                    yield from _read_file(path)
+                    yield from _read_file(path, read)
             except FileNotFoundError:
                 continue
             except OSError as e:
                 warn(f"read:{path}", f"audit file {path[-80:]!r} unreadable ({type(e).__name__}), counted as no usage")
+
+
+def _in_force(previous):
+    return "keeping the previous one" if previous else "no owner stop applies"
 
 
 def read_owner(path, previous, warn):
@@ -201,7 +224,7 @@ def read_owner(path, previous, warn):
     except FileNotFoundError:
         return None
     except OSError as e:
-        warn("owner-read", f"owner stop file unreadable ({type(e).__name__}), keeping the previous one")
+        warn("owner-read", f"owner stop file unreadable ({type(e).__name__}), {_in_force(previous)}")
         return previous
     try:
         if len(raw) > MAX_BYTES:
@@ -210,7 +233,7 @@ def read_owner(path, previous, warn):
         if not isinstance(doc, dict):
             raise ValueError("not an object")
     except (ValueError, RecursionError) as e:
-        warn("owner-invalid", f"owner stop file invalid ({e}), keeping the previous one")
+        warn("owner-invalid", f"owner stop file invalid ({e}), {_in_force(previous)}")
         return previous
     return doc
 
