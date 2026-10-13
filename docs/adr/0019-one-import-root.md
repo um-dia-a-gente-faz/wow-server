@@ -5,6 +5,15 @@
 Proposed (#753, the ADR part of #347). The owner accepts it later. This ADR changes no code:
 it records the inventory, the rule and the first slice. #347 stays open for the slices.
 
+## Amends on acceptance
+
+[ADR 0014](0014-tools-common-in-docker-images.md) (Accepted): rule 5 below replaces its flat
+image layout (`COPY common/*.py ./common/`, `from common.env import ...`) with the checkout's
+paths (`./tools/common/`, `from tools.common.env import ...`). Its decision to share
+`tools/common` through the `tools/` build context stands. The note in 0014 is written by
+slice 7, when the layout changes; until then 0014 is true. (The repo's convention: ADR 0012
+"Supersedes on acceptance", ADR 0013 "Amendments".)
+
 Every statement about the code was read on `main` at `ffccd08` (the commit this PR is based
 on). Counts come from the commands quoted next to them. Three things are not in the repo and
 are listed as open questions instead of being asserted: what is installed on `wow-agents`,
@@ -57,10 +66,22 @@ How the root gets there in each context:
 ### Inventory of `sys.path` edits
 
 ```
-$ git grep -nE 'sys\.path(\.insert|\.append|\.pop|\[:0\]|\[0\] *=)' -- '*.py' ':!*/tests/*'   # 24 lines, 21 files
-$ git grep -nE 'sys\.path(\.insert|\.append|\.pop|\[:0\]|\[0\] *=)' -- '*/tests/*'             # 79 lines, 62 files
-$ git grep -n 'sys.path' -- '*.py' | wc -l                                                      # 132 (comments and strings too)
+$ P='sys\.path(\.insert|\.append|\.pop|\.extend|\[[^]]*\] *=| *\+=| *=[^=])|site\.addsitedir'
+$ git grep -nE "$P" -- '*.py' ':!*/tests/*'   # 24 lines, 21 files
+$ git grep -nE "$P" -- '*/tests/*'            # 80 lines, 62 files
+$ git grep -n 'sys.path' -- '*.py' | wc -l    # 136 (comments and strings too)
 ```
+
+The pattern counts `sys.path.insert/append/pop/extend`, `sys.path[...] =`, `sys.path +=`,
+`sys.path =` and `site.addsitedir`. Only `extend`, `+=`, `=` and `addsitedir` have no match today;
+the widening adds one test line, `sys.path[:] = _saved_path` in
+`tools/fleet-limits/tests/test_fleet_limits.py` (a restore, still an edit), so the test total is
+80, not the 79 the narrower `insert|append|pop|[:0]|[0] =` form finds.
+Deliberately not counted: the two `mock.patch.object(sys, "path", ...)` lines in
+`exporters/wow-exporter/tests/test_collector.py` (47 and 62), which restore on exit, and the five
+subprocess `PYTHONPATH` settings (`tools/world-mock/tests/test_sigterm.py:35`,
+`tools/wowmap/tests/test_calibration.py:241` and `:362`, `test_calibration_env.py:58`,
+`test_runtime_imports.py:22`), which change the child's path, not the test process's.
 
 Production, 24 lines in 21 files:
 
@@ -77,7 +98,7 @@ Production, 24 lines in 21 files:
 | `tools/wowmap/pipeline/extract_icons.py`, `extract_maps.py`, `extract_models.py`, `overlay_debug.py`, `scatter_debug.py` | 5 | `../wowmap`, the runtime modules |
 | `docs/spikes/map-engine-spike/build_art.py` | 1 | `wowmap/` and `pipeline/` (a spike, not run by CI) |
 
-Tests, 79 lines in 62 files, by directory (`git grep -cE ... -- '*/tests/*'`, counted per
+Tests, 80 lines in 62 files, by directory (`git grep -cE ... -- '*/tests/*'`, counted per
 file): `tools/wowmap/tests` 21, `scripts/tests` 9, `tools/world-mock/tests` 6, `agent/tests` 5,
 `tools/agent-runner/tests` 3, `tools/chat-feed/tests` 3, `tools/common/tests` 3,
 `tools/dbc/tests` 3, `tools/tests` 3, `exporters/wow-exporter/tests` 2,
@@ -89,7 +110,10 @@ Three kinds of edit, from the inserted expression:
    directory is not a package (wowmap, and the five hyphenated tools).
 2. **`scripts/`** (`ROOT / "scripts"` 6, `REPO / "scripts"` 4, `repo / "scripts"` 1), for tests
    that import a script as a module (`agent/tests/test_roster.py`, `test_compose_lib.py`, ...).
-3. **The checkout root** (`ROOT` 11, `REPO` 3, `parents[2]` 4, `parents[3]` 1). Some of these
+3. **The checkout root** (`ROOT` 11, `REPO` 3, `parents[3]` 1). The four `parents[2]` lines
+   (`tools/dbc/tests/test_item_tables.py`, `test_reputation_panel.py`, `test_wdbc.py`,
+   `tools/wowmap/tests/test_item_tooltip.py`) insert `tools/`, not the root, and are counted
+   with kind 1. Some of these
    `ROOT` names are the tool's own directory, not the root: `tools/world-mock/tests/test_faults.py`
    has `ROOT = parents[1]`, which is `tools/world-mock`, and imports `server` flat. Only those
    whose `ROOT` is the checkout are kind 3.
@@ -198,7 +222,7 @@ exists. The `agent` package never imports `agents/` or `tools/`
   shims."** The list leaves out `fleet-limits` (added later, #745). A shim
   needs the package to be importable, which is the thing missing.
 - **"Acceptance: `grep ... sys.path.insert` returns nothing outside tests."** The count of
-  tests is 79 lines, and 8 of the 24 production lines are not `insert` (five `append`, one `pop`, one `[:0]`, one `[0] =`).
+  tests is 80 lines, and 8 of the 24 production lines are not `insert` (five `append`, one `pop`, one `[:0]`, one `[0] =`).
 
 ### What ADR 0018 says that does not follow
 
@@ -214,7 +238,7 @@ below keeps the copy unless the owner picks one of those (open question 4).
 
 1. **Do nothing.** Cost: none now. The next tool copies one of 24 production hacks; the
    `ROOTS` table keeps growing a row per tool; the five hyphenated tools stay un-importable;
-   the 79 test edits stay. Breaks nothing. Undo: nothing to undo.
+   the 80 test edits stay. Breaks nothing. Undo: nothing to undo.
 2. **#347 as written: `pyproject.toml`, `pip install -e .` in CI and dev, delete every
    edit.** Cost: a build backend that no lock names (above); the `agent` CI job either installs
    something or keeps its edits; this machine and, as far as the repo shows, `wow-agents` have
@@ -271,7 +295,7 @@ whole.
    run `python -m tools.<name>.<module>`. The build contexts stay `./tools` (ADR 0014's
    reason holds: the agent image's `.dockerignore` stays out of it), so the Dockerfile writes
    `COPY common/*.py ./tools/common/`. Imports in the code read `tools.common.env`, the same in
-   a checkout and in an image. This reverses ADR 0014's flat layout, not its decision to share
+   a checkout and in an image. This amends ADR 0014's flat layout (see "Amends on acceptance"), not its decision to share
    `tools/common` through the `tools/` context. The agent image is unchanged: `agent/` only.
 6. **No install.** Nothing may require `pip install -e .`, a `.pth` file or a package build.
    If `pyproject.toml` is added, it carries only `[tool.*]` tables (ruff, mypy) and has neither
@@ -308,6 +332,17 @@ dynamic import the architecture test forbids.
 - `mypy.ini`'s `mypy_path` loses `tools/wowmap/wowmap:tools/wowmap/pipeline:tools` and
   `explicit_package_bases` can then resolve `tools.*` from `.`. mypy can check the other tools
   by adding them to `files`; that is a separate decision (they have no baseline).
+- **#347's acceptance item "every script and tool runs from any cwd" is dropped, and reversed.**
+  Today the `sys.path` edits make `python3 /opt/wow-server/scripts/jev_probe.py` work from any
+  directory. After the slices, the checkout root must be the working directory. Option 3
+  therefore shares Option 4's failure mode: a launcher that does not set it fails with a silent
+  `ImportError` at its next start (from `/`, `python3 -c "import agent"` fails). Today's
+  launchers: the images set `WORKDIR /app`, `dev/docker-compose.yml` sets `working_dir: /repo`,
+  the cron line in `monitoring/README-agent-metrics.md` does `cd /opt/wow-server`, and
+  `scripts/check.sh` does `cd` to the root. The two README units (`tools/agent-runner/README.md`,
+  `tools/fleet-limits/README.md`) have no `WorkingDirectory` and need it, which is why slices 5
+  and 6 carry a host step. The other two acceptance items of #347 (no `sys.path.insert` in
+  production, CI and images still pass) are met at slice 10.
 - Running a script by path (`python3 scripts/foo.py`) stops being supported for the scripts that
   import `agents`/`agent`; docs and CI use `python3 -m scripts.foo`. `scripts/` is
   owner-gated, so that slice waits.
@@ -335,8 +370,9 @@ stacks), `tools/dbc/tests` and `exporters/` (monitoring), `scripts/tests` (owner
 **Files**
 
 - `tools/tests/test_audit_reader_keys.py`: remove the `ROOT` assignment's guarded insert
-  (`if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))`); `ROOT` stays if the file
-  still uses it.
+  (`if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))`) and `import sys`, which
+  nothing else in the file uses (ruff F401 fails otherwise). `ROOT` stays: the lines that
+  follow use it.
 - `tools/tests/test_roster_accounts.py`: remove `sys.path.insert(0, str(ROOT))`; keep the
   `ROOT / "tools"` line, `common` is imported flat.
 - `tools/agent-runner/tests/test_runner.py`: remove `sys.path.insert(0, str(REPO))`; keep
@@ -349,28 +385,35 @@ stacks), `tools/dbc/tests` and `exporters/` (monitoring), `scripts/tests` (owner
 
 **Behaviour of the new test** (rule by rule)
 
-1. It counts lines matching `sys\.path(\.insert|\.append|\.pop|\[:0\]|\[0\] *=)` in tracked
-   `.py` files under `agent`, `agents`, `scripts`, `tools`, `monitoring`, `exporters`, `docs`,
-   splitting a file into "test" when a path component is `tests`. It walks the tree
-   (no git needed) and skips `__pycache__`.
-2. `PRODUCTION_EDITS = 24` and `TEST_EDITS = 75` (79 minus the four removed; the guarded
-   two-line insert is one matching line). The test fails when a count is above its constant, with
-   the message "a new sys.path edit; import from the checkout root instead (ADR 0019)", and
-   fails when it is below, with "lower the constant" (a ratchet that cannot be forgotten).
+1. It counts lines matching the pattern `P` of the Inventory (`sys.path` `insert`, `append`,
+   `pop`, `extend`, `[...] =`, `+=`, `=`, and `site.addsitedir`) in `.py` files under `agent`,
+   `agents`, `scripts`, `tools`, `monitoring`, `exporters`, `docs`, splitting a file into "test"
+   when a path component is `tests`. It walks the tree (no git needed) and skips `__pycache__`.
+2. One number per class, the raw count: `PRODUCTION_EDITS = 24` and `TEST_EDITS = 76` (the 80
+   of the Inventory minus the four removed; the guarded two-line insert is one matching
+   line). The test fails when a count is above its constant, with the message "a new sys.path
+   edit; import from the checkout root instead (ADR 0019). A legitimate edit (a `-I` subprocess,
+   rule 3): raise the constant in the same PR with the reason in a comment, or name the file in
+   `ALLOWED`", and fails when it is below, with "lower the constant" (a ratchet that cannot be
+   forgotten).
 3. `NO_EDITS` is a set of the four files above; the test fails if any has a matching line.
-4. The one deliberate exception, `scripts/early_failures.py`, is in an `ALLOWED` set that is
-   subtracted from the production count and is checked to still contain a match (a stale entry
-   fails).
+4. `ALLOWED` names the deliberate edits, today only `scripts/early_failures.py`. It is not
+   subtracted from any count (the constants stay raw). It is checked for staleness only: every
+   path in it must still exist and still hold a matching line.
+5. The new test sits in `tools/tests`, so it is itself counted as a test file. It must not
+   contain a literal matching line in its own source: the fixture line is built from parts
+   (for example `"sys." + "path.insert(0, x)"`).
 
 **Done when**
 
 | Item | Test or command |
 |---|---|
-| The four files have no `sys.path` edit and their suites pass from the root | `python3 scripts/early_failures.py discover -s tools/tests`, `-s tools/agent-runner/tests`, `-s tools/worldknowledge/tests` (or `scripts/check.sh test-tools-arch test-agent-runner test-worldknowledge`) |
+| The four files have no `sys.path` edit, their suites pass from the root, and ruff finds no unused `import sys` (F401) | `scripts/check.sh test-tools-arch test-agent-runner test-worldknowledge lint` |
 | A new edit anywhere fails the new test | `test_sys_path_edits`: a temporary copy of the tree walk with one added line (the test exposes `count_edits(root)`), expects the over-count failure |
 | The count is a ratchet in both directions | same module: a count one below the constant fails |
 | The four files are checked | same module, `NO_EDITS` |
-| The stale exception fails | same module, `ALLOWED` with a file that has no match fails |
+| The stale exception fails, and `ALLOWED` is not subtracted | same module: `ALLOWED` with a path that is missing or has no match fails; the production count stays 24 with `early_failures.py` in `ALLOWED` |
+| The new test has no literal matching line | same module: it scans its own source and finds none |
 | Nothing else changed | `git diff --stat` shows only the four test files and the new test; `git diff origin/main --name-only -- scripts .github docker-compose.yml tools/common tools/chat-feed tools/dbc tools/wowmap tdb monitoring exporters` is empty |
 | The whole suite passes | `scripts/check.sh all` |
 
@@ -392,20 +435,28 @@ One issue each, in dependency order. A slice marked "owner's go-ahead" touches a
    `tools/world-mock/tests` edits and the two production lines. Stack: none. Owner's go-ahead
    (`scripts/`, `.github/workflows/`). Host step: none; developers rerun `dev/` compose.
 4. **Rename `jev-mock` to `jev_mock`.** `ci.yml` lines 116 and 122, `dev/docker-compose.yml`,
-   `scripts/check.sh`, docs. Stack: none. Owner's go-ahead. Host step: none.
+   `scripts/check.sh`, `ruff.toml` (line 62 names `tools/jev-mock/server.py`), docs. Stack:
+   none. Owner's go-ahead. Host step: none.
 5. **Rename `fleet-limits` to `fleet_limits`.** README unit text, `scripts/check.sh`,
-   `ruff.toml`. Stack: none. Host step on `wow-agents`: if the unit was installed, edit
+   docs. Stack: none. Host step on `wow-agents`: if the unit was installed, edit
    `ExecStart` to the new path (or run `python3 -m tools.fleet_limits.fleet_limits` with
    `WorkingDirectory=/opt/wow-server`), `systemctl daemon-reload`, restart it, in the same
    sitting as the checkout update. Open question 1.
 6. **Rename `agent-runner` to `agent_runner`; drop its three production edits and the tests'.**
-   Same host step on `wow-agents` for the runner unit, which restarts the control plane (the
-   fleet page shows the runner as down until then). Whether restarting the runner stops the
+   Host step on `wow-agents`, exactly: the unit becomes
+   `ExecStart=/usr/bin/python3 -m tools.agent_runner.runner` with
+   `WorkingDirectory=/opt/wow-server`, then `systemctl daemon-reload` and a restart of the
+   unit. Editing the path alone is not enough: once `characters.py` and `fleet.py` drop their
+   edits, a script started by path has only its own directory on `sys.path`, so `tools.common`
+   and `agents` fail with `ImportError`. The restart takes the control plane down (the fleet
+   page shows the runner as down until then). Whether restarting the runner stops the
    agent containers it started is not established here: `Fleet` shells out to `docker compose`
    and holds no child process, but this slice's author must read `tools/agent-runner/docker_backend.py`
    for it and say so. Stack: none. Owner's go-ahead (`scripts/check.sh`).
 7. **Images mirror the checkout (rule 5).** `tools/common`, `tools/dbc`, `tools/chat-feed`,
-   `tools/wowmap` Dockerfiles and imports change from `common.x` to `tools.common.x`.
+   `tools/wowmap` Dockerfiles and imports change from `common.x` to `tools.common.x`. The same
+   PR adds the note to `docs/adr/0014-tools-common-in-docker-images.md` (Status line and an
+   Amendments section: the image layout is now the checkout's, see ADR 0019).
    Rename `chat-feed` to `chat_feed` here, together with `docker-compose.yml`
    (`dockerfile: chat_feed/Dockerfile`), the `stacks_for` pattern and `ci.yml`. Stack: **game
    and monitoring both** (`tools/common/*` is both; `docker-compose.yml` and `tools/chat-feed/*`
@@ -426,7 +477,7 @@ One issue each, in dependency order. A slice marked "owner's go-ahead" touches a
    `ImportError` the first time after the checkout moves). Stack: monitoring for `monitoring/`.
    Owner's go-ahead. Removes the remaining production lines and the `scripts` test edits.
 10. **Shrink the tables.** `ROOTS` in `tools/tests/test_architecture.py` to one entry,
-    `mypy_path` to `.`, the ratchet constants to 0 (only `early_failures.py` left), and the
+    `mypy_path` to `.`, the ratchet constants to the `-I` subprocess inserts and `early_failures.py`, and the
     docs map in `docs/ARCHITECTURE.md`.
 11. **Optional:** `pyproject.toml` with `[tool.ruff]` and `[tool.mypy]` only (rule 6), moving
     `ruff.toml` and `mypy.ini`. Not needed by any slice above.
@@ -446,9 +497,12 @@ One issue each, in dependency order. A slice marked "owner's go-ahead" touches a
    `persist.py` copy can go)? Options: a repo-root build context with a `.dockerignore` for
    it, or a second named context. Default: neither; the copy and its byte-identity test stay,
    as ADR 0018 slice 4 says, and slice 7 does not depend on the answer.
-5. **Direct file runs.** After the first slice `python3 tools/tests/test_audit_reader_keys.py`
-   (a test file run by path from another directory) stops working for the four files, because
-   the root is no longer inserted. Default: accepted; the supported forms are the
-   `scripts/check.sh` suites and `python3 -m unittest` from the root.
+5. **Direct file runs.** Measured on the first slice's files: run by path
+   (`python3 tools/tests/test_audit_reader_keys.py`), `test_audit_reader_keys.py` and
+   `test_roster_accounts.py` fail from any directory, the root included (`No module named
+   'agent'` / `'agents'`), because they no longer insert the root. `test_runner.py` and
+   `test_build.py` still work, because `fleet.py` and `build.py` append the root themselves
+   (that stops being true when slices 6 and 9 drop those edits). Default: accepted; the
+   supported forms are the `scripts/check.sh` suites and `python3 -m unittest` from the root.
 6. **The deliberate exception in `early_failures.py`.** Default: kept (rule 2), because it
    makes a script run like `python -m unittest` and is not a way to import anything.
