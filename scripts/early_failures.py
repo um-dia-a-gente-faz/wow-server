@@ -87,7 +87,7 @@ def stall_stop(p: subprocess.Popen) -> int:
 
 def supervise(seconds: float, args: list[str]) -> int:
     # the bound in the child's environment is what arms its SIGINT handler (see main)
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))   # the except below kills the child
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))   # the finally below kills the child
     p = subprocess.Popen([sys.executable, __file__, *args], env={**os.environ, "CHECK_STALL_DUMP_S": f"{seconds:g}"})
     try:
         return p.wait(timeout=seconds)
@@ -95,10 +95,9 @@ def supervise(seconds: float, args: list[str]) -> int:
         print(f"\nstall: still running after {seconds:g} s", file=sys.stderr, flush=True)
         stall_stop(p)
         return 1
-    except BaseException:
+    finally:   # on every exit, including an exception raised inside the except above; a no-op once the child is reaped
         p.kill()
         p.wait()
-        raise
 
 
 def main(argv: list[str]) -> int:
