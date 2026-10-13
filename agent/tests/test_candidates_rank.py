@@ -103,6 +103,11 @@ class DefenceWithoutTarget(unittest.TestCase):
             with self.subTest(shape=label):
                 self.assertEqual(attacks(gen(u)), [])
 
+    def test_in_combat_an_idle_elite_or_unresolved_unit_is_still_not_pulled(self):
+        for kw in ({"rank": "elite"}, {"resolved": False}):
+            with self.subTest(kw=kw):
+                self.assertEqual(attacks(gen(unit(**kw), me_in_combat=True)), [])
+
 
 class OtherProvidersKeepElitesAndUnresolved(unittest.TestCase):
     """The new conditions belong to the unprovoked pull only."""
