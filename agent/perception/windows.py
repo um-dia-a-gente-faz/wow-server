@@ -126,12 +126,11 @@ class WindowsMixin:
         currently-known item/container with this entry, same policy as
         apply_creature_query_response."""
         with self._lock:
-            self.items.on_item_query_response(data, save=False)
+            self.items.on_item_query_response(data)
             if data["found"]:
                 for obj in self.objects.values():
                     if obj.object_type in ("item", "container") and obj.entry == data["entry"]:
                         obj.name = data["name"]
-        # No items.json write: nothing reads it, and a save is 5 to 10 ms of recv thread (#712).
 
     # ── Mailbox (UM-60) ────────────────────────────────────────────────────
 

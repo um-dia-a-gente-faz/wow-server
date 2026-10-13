@@ -224,10 +224,12 @@ class NameCache:
     on another thread, needs a lock.
 
     Each answered creature/gameobject query is one whole-file save. drain() sends at most
-    budget_per_second (10) queries in any second, so at most 10 saves a second, 9.7 ms
-    median each for a 1 MB file: 97 ms of recv thread a second at the cap, just under the
-    100 ms line, so no batching (#712).
-    Raise the budget or grow the file past that and batching becomes due.
+    budget_per_second (10) queries per second, so saves average at most 10 a second;
+    answers delivered together after a lag can exceed that in one second. At 9.7 ms median
+    for a 1 MB file that is about 97 ms of recv thread a second, just under the 100 ms line,
+    so no batching (#712). Measured on a dev host, not the 0.25-CPU agent container (about
+    half of a save is CPU), so it is slower there. Raise the budget or grow the file past
+    about 1.3 MB and batching becomes due.
     """
 
     def __init__(self, budget_per_second: int = 10, clock=time.monotonic,
