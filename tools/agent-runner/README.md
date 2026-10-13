@@ -155,9 +155,9 @@ The build rule of `start` (see below) is checked after the validation (step 1) a
 check, and before anything is created (#734). When the pinned
 image is missing and `WOW_AGENT_TAG` is not the checkout's HEAD, the create answers the same 409 that
 `start` would (`image_not_built`, with its `detail`), and nothing changes: no account, no character, no
-state entry, no compose file. A present image, or a tag the rule does not refuse, goes on as before; a
-create asks for no build, so with the tag unset the character is created and the start's compose error
-comes back as the 502 `partial` below.
+state entry, no compose file. A present image, or a tag the rule does not refuse, goes on as before. With
+`WOW_AGENT_TAG` unset or invalid the create answers 409 `tag_unset` before anything is created (#734, second
+Decision; `start` keeps its 502 path). A create asks for no build.
 
 If the character exists but the container did not start, the answer is 502 with
 `partial`: `character_created`, `recorded`, `container_started` and the account and

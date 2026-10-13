@@ -239,6 +239,31 @@ class CreateTest(CharCase):
         self.assertEqual((self.world.logins, self.world.accounts_created, self.world.created), ([], [], []))
         self.assertEqual(self.compose_calls(), [])
 
+    def test_a_create_with_the_tag_unset_or_invalid_is_refused_before_anything(self):
+        # #734 Decision (second): no valid tag means the start at the end of a create can only fail,
+        # so the create answers 409 tag_unset before the realm, the state file or compose is touched
+        self.fleet.write_compose()
+        state = json.dumps({"agents": [{"account": "AGENT03", "character": "Hotel", "race": 10,
+                                        "class": 8, "gender": 0}]}, indent=2) + "\n"
+        (self.runtime / "state.json").write_text(state)
+        compose_before = (self.runtime / "docker-compose.agents.yml").read_bytes()
+        self.set_state(containers={}, image_created=None)
+        for tag in (None, "a b"):
+            with self.subTest(tag=tag), mock.patch.dict(os.environ):
+                if tag is None:
+                    os.environ.pop("WOW_AGENT_TAG", None)
+                else:
+                    os.environ["WOW_AGENT_TAG"] = tag
+                status, body = self.create()
+            self.assertEqual((status, body.get("error")), (409, "tag_unset"))
+            self.assertEqual(body.get("detail"), "WOW_AGENT_TAG is unset or not a valid tag in the agent-runner "
+                             "environment, so the new agent could not be started: set it (EnvironmentFile) "
+                             "and restart agent-runner")
+        self.assertEqual((self.runtime / "state.json").read_bytes(), state.encode())
+        self.assertEqual((self.runtime / "docker-compose.agents.yml").read_bytes(), compose_before)
+        self.assertEqual((self.world.logins, self.world.accounts_created, self.world.created), ([], [], []))
+        self.assertEqual(self.compose_calls(), [])
+
     def test_a_refused_create_of_a_new_runner_writes_no_state_and_no_compose_file(self):
         self.set_state(containers={}, image_created=None)
         with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
