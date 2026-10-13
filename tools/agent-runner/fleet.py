@@ -442,13 +442,19 @@ class Fleet:
 
     def create_agent(self, body):
         """Create the character on the realm, record it, start its container.
-        A failure after the character exists reports exactly what exists."""
+        #734: the order is validation, the roster duplicate, then the build rule `start` would apply
+        (create asks for no build), all before the first side effect (the account, the character,
+        the state, compose). A refusal there answers the start's 409 and changes nothing. A failure
+        after the character exists reports exactly what exists."""
         try:
             account, name, race, class_, gender = self.characters.validate(body)
         except characters.CharacterError as err:
             raise RunnerError(scrub(str(err)), status=err.status) from err
         with self._create_lock:
             taken = {e["name"].lower() for e in self.roster() if e["account"] != account}
+            if name is not None and name.lower() in taken:
+                raise RunnerError(f"name {name!r} is already used by an agent in the roster", status=409)
+            self._build_wanted(False)
             try:
                 made = self.characters.create(account, name, race, class_, gender, taken)
             except characters.CharacterError as err:

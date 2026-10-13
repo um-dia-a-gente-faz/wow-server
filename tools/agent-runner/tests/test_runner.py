@@ -595,6 +595,22 @@ class ActionTest(RunnerCase):
         self.assertIn("checkout is at unknown", body["detail"])
         self.assertEqual(self.compose_calls(), [])
 
+    def test_a_build_is_refused_when_git_raises_or_times_out(self):
+        # #734 Decision: head_commit() answers "" for OSError and TimeoutExpired; the start is refused
+        self.set_state(containers={}, image_created=None)
+        real = subprocess.run
+        for failure in (OSError("git is not installed"), subprocess.TimeoutExpired(["git"], 15)):
+            def git_fails(args, _failure=failure, **kw):
+                if args[0] == "git":
+                    raise _failure
+                return real(args, **kw)
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(subprocess, "run", side_effect=git_fails):
+                status, body = self.req("/agents/Bravo/start", "POST")
+                self.assertEqual((status, body["error"]), (409, "image_not_built"))
+                self.assertIn("checkout is at unknown", body["detail"])
+        self.assertEqual(self.compose_calls(), [])
+
     def test_build_asked_with_no_valid_tag_is_refused_before_compose(self):
         self.set_state(containers={}, image_created=None)
         for tag in (None, "a b"):
@@ -958,6 +974,47 @@ class FakeDockerTest(RunnerCase):
         self.assertEqual([c for c in self.docker.calls if c[0] in ("head", "source")], [])
         ups = [c for c in self.docker.calls if c[0] == "compose" and "up" in c[1]]
         self.assertEqual(["--build" in c[1] for c in ups], [False, False])
+
+    # #734 Decision: the comparison edges of the pinned tag with the checkout's HEAD. The image is
+    # missing, so a start that matched would build: each edge must be refused, each mutant fails.
+    HEAD = "0123456789ab"
+
+    def absent_image_at(self, head):
+        self.docker = FakeDockerBackend(containers={}, image_created=None, head=head)
+        self.fleet.backend = self.docker
+
+    def refused_build(self, tag):
+        self.absent_image_at(self.HEAD)
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": tag}), \
+                self.assertRaises(runner.RunnerError) as cm:
+            self.fleet.start("Bravo")
+        self.assertEqual((cm.exception.status, str(cm.exception)), (409, "image_not_built"))
+        self.assertEqual([c for c in self.docker.calls if c[0] == "compose"], [])
+
+    def test_the_head_itself_is_built_when_the_image_is_missing(self):
+        # the positive control for the edges below: a refusal of everything would pass them
+        self.absent_image_at(self.HEAD)
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": self.HEAD}):
+            self.assertTrue(self.fleet.start("Bravo")[1]["built"])
+
+    def test_a_prefix_of_the_head_is_refused(self):
+        self.refused_build(self.HEAD[:7])
+
+    def test_the_head_as_a_prefix_of_a_longer_tag_is_refused(self):
+        self.refused_build(self.HEAD + "0")
+
+    def test_the_head_in_upper_case_is_refused(self):
+        self.refused_build(self.HEAD.upper())
+
+    def test_build_asked_with_the_tag_unset_makes_no_git_call_even_when_git_fails(self):
+        self.absent_image_at("")       # git cannot say the head
+        with mock.patch.dict(os.environ):
+            os.environ.pop("WOW_AGENT_TAG", None)
+            with self.assertRaises(runner.RunnerError) as cm:
+                self.fleet.start("Bravo", build=True)
+        self.assertEqual((cm.exception.status, str(cm.exception)), (409, "image_not_built"))
+        self.assertNotIn(("head",), self.docker.calls)
+        self.assertEqual([c for c in self.docker.calls if c[0] == "compose"], [])
 
     def test_status_comes_from_the_backend(self):
         by_name = {a["name"]: a for a in self.fleet.status()["agents"]}

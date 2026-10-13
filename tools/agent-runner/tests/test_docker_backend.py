@@ -45,6 +45,17 @@ class AllowListTest(unittest.TestCase):
                 self.backend.compose(["up", "-d"], name, 5, ALLOWED)
 
 
+class HeadCommitTest(unittest.TestCase):
+    """#734: head_commit() answers "" when git cannot run or does not finish; it never raises."""
+
+    def test_oserror_and_timeout_answer_empty(self):
+        backend = docker_backend.DockerBackend("wow-agents", Path("/checkout"), Path("/runtime/c.yml"))
+        for failure in (OSError("git is not installed"), subprocess.TimeoutExpired(["git"], 15)):
+            with self.subTest(failure=type(failure).__name__), \
+                    mock.patch.object(subprocess, "run", side_effect=failure):
+                self.assertEqual(backend.head_commit(), "")
+
+
 class ImageRefTest(unittest.TestCase):
     """#730: the image status follows WOW_AGENT_TAG, read when asked, never `latest`."""
 
