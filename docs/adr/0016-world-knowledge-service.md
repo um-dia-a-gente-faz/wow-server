@@ -327,9 +327,11 @@ setting is added, no compose file changes. Needs no database.
 1. **Done in #742.** `agent/spells.py::get_spell_info` reads the bundle first and `SPELL_TABLE`
    second; the bundle path is the setting `AGENT_WORLD_BUNDLE` in `agent/config.py::SETTINGS`
    (empty = off). Narrowed: the set of spells does not change yet. An id outside `SPELL_TABLE`
-   still gives `None`, bundle or not; for an id in the table the bundle corrects `name`,
+   still gives `None`, bundle or not; for an id in the table the bundle corrects
    `power_type`, `cast_time_ms`, `range_yd`, `min_level` and (unless `mana_cost_pct` > 0)
-   `power_cost`. Which bundle spells an agent may consider is a later decision.
+   `power_cost`; the table's `name` stays (the bundle keeps the rank apart, so 133 and 143 would
+   collide) and a name difference is only logged. `root.load_world_bundle` passes `spells` a lookup
+   callable, so `spells` imports nothing new. Which bundle spells an agent may consider is a later decision.
 2. Mount the bundle read-only into agent containers (`scripts/gen_agents_compose.py`, the
    runner) and document the rebuild-and-copy step in `docs/DEPLOYMENT.md`.
 3. Handle `SMSG_CLIENTCACHE_VERSION`: keep the cache id and discard `names.json` when it

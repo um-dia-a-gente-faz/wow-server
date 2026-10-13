@@ -14,6 +14,7 @@ from .chat_relay import ChatRelay
 from .http_api import AgentObserver, ObserverServer, start_server
 from .lifecycle import Lifecycle
 from .login import authenticate_and_login, connect_and_login
+from .metrics import swallowed
 from .runloop import run_loop
 from .supervisor import supervise_connection
 from .worldknowledge import WorldKnowledge
@@ -96,15 +97,28 @@ def build_agent(cfg, log, duration: float | None = None, perception_dump: bool =
                  duration=duration, perception_dump=perception_dump, start_delay=cfg.start_delay)
 
 
+def guarded_lookup(wk, log):
+    """spells.get_spell_info's lookup: wk.spell, but a reader that raises is counted, logged
+    (throttled) and answers None, so the table entry stands. spells.py holds no broad except."""
+    def lookup(spell_id: int):
+        try:
+            return wk.spell(spell_id)
+        except Exception:  # noqa: BLE001 - never worse than the table
+            swallowed("root.world_bundle", log)
+            return None
+    return lookup
+
+
 def load_world_bundle(cfg, log) -> None:
-    """ADR 0016 further slice 1: with AGENT_WORLD_BUNDLE set, open the bundle once, hand it to
-    spells.get_spell_info and log how it compares with SPELL_TABLE. Empty = nothing is touched."""
+    """ADR 0016 further slice 1: with AGENT_WORLD_BUNDLE set, open the bundle once, hand its
+    lookup to spells.get_spell_info and log how it compares with SPELL_TABLE. Empty = nothing
+    is touched."""
     path = getattr(cfg, "world_bundle", "")
     if not path:
         return
-    wk = WorldKnowledge(path)
-    spells.set_world_knowledge(wk)
-    for line in spells.compare_with_table(wk):
+    lookup = guarded_lookup(WorldKnowledge(path), log)
+    spells.set_world_knowledge(lookup)
+    for line in spells.compare_with_table(lookup):
         log.info("%s", line)
 
 
