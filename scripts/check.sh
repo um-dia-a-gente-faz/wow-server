@@ -49,7 +49,17 @@ generated() {
 suite() {
   local s
   for s in "${SUITES[@]}"; do
-    if [ "${s%%|*}" = "$1" ]; then echo "== test-$1"; bash -c "${s#*|}"; return; fi
+    if [ "${s%%|*}" = "$1" ]; then
+      echo "== test-$1"
+      # #707: CHECK_STALL_DUMP_S set (CI only) = SIGABRT after that many seconds; with PYTHONFAULTHANDLER=1
+      # python then dumps every thread's stack and dies. `exec` makes the test process timeout's direct child.
+      if [ -n "${CHECK_STALL_DUMP_S:-}" ]; then
+        timeout --signal=ABRT -k 10 "$CHECK_STALL_DUMP_S" bash -c "exec ${s#*|}"
+      else
+        bash -c "${s#*|}"
+      fi
+      return
+    fi
   done
   echo "unknown suite: $1" >&2; return 2
 }
