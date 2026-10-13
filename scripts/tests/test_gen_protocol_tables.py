@@ -1,4 +1,6 @@
 """scripts/gen_protocol_tables.py (#290): parse, render, and the drift check."""
+import contextlib
+import io
 import pathlib
 import sys
 import tempfile
@@ -80,6 +82,37 @@ class SpliceTest(unittest.TestCase):
     def test_replaces_only_the_marked_block(self):
         old = f"doc\n{gen.BEGIN}\nX = 1\n{gen.END}\ntail\n"
         self.assertEqual(gen.splice(old, "Y = 2\n"), f"doc\n{gen.BEGIN}\nY = 2\n{gen.END}\ntail\n")
+
+
+class UpdateFieldsSectionTest(unittest.TestCase):
+    """#725: agent/update_fields.py is owned only between its BEGIN and END markers. An edit
+    inside the block is drift and the write run repairs it; text after END is hand-written and
+    neither reported nor touched (pinned as intended, the generator is not changed)."""
+
+    def setUp(self):
+        self.orig = (gen.ROOT / "agent/update_fields.py").read_text()
+        self.block = gen.generated("UpdateFields.h")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = pathlib.Path(tmp.name) / "update_fields.py"
+
+    def test_edit_inside_the_block_is_reported_and_repaired(self):
+        inside = self.orig.replace("GAMEOBJECT_LEVEL = OBJECT_END + 0x000A", "GAMEOBJECT_LEVEL = OBJECT_END + 0x000B")
+        self.assertNotEqual(inside, self.orig, "anchor GAMEOBJECT_LEVEL not found")
+        self.path.write_text(inside)
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gen.sync(self.path, self.block, check=True), 1)
+            self.assertEqual(gen.sync(self.path, self.block, check=False), 0)
+        self.assertEqual(self.path.read_text(), self.orig)
+
+    def test_text_after_the_block_is_neither_reported_nor_touched(self):
+        after = self.orig.replace(gen.END + "\n", gen.END + "\nHAND_EDIT = 1\n", 1)
+        self.assertNotEqual(after, self.orig)
+        self.path.write_text(after)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gen.sync(self.path, self.block, check=True), 0)
+            self.assertEqual(gen.sync(self.path, self.block, check=False), 0)
+        self.assertEqual(self.path.read_text(), after)
 
 
 class DriftTest(unittest.TestCase):

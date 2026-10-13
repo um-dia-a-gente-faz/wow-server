@@ -72,6 +72,7 @@ GAMEOBJECT_FLAGS = OBJECT_END + 0x0003  # Size: 1, Type: INT, Flags: PUBLIC
 GAMEOBJECT_FACTION = OBJECT_END + 0x0009  # Size: 1, Type: INT, Flags: PUBLIC
 GAMEOBJECT_LEVEL = OBJECT_END + 0x000A  # Size: 1, Type: INT, Flags: PUBLIC
 # --- END GENERATED ---
+# Below the END marker is hand-written: gen_protocol_tables.py rewrites only the block above it (#725).
 
 # UnitFlags (UNIT_FIELD_FLAGS bits): UNIT_FLAG_IN_COMBAT is UnitDefines.h `enum UnitFlags`, TrinityCore
 # branch 3.3.5, src/server/game/Entities/Unit/UnitDefines.h. Read by perception (every unit's in_combat)
