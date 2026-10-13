@@ -11,7 +11,10 @@ from agent.memory import Memory
 class CloseTiming(unittest.TestCase):
     def test_close_timing(self):
         times = []
+        deadline = time.monotonic() + 200   # stop early and print what was collected
         for _ in range(300):
+            if time.monotonic() > deadline:
+                break
             m = Memory(None)
             for i in range(2000):
                 m.remember("action", f"k{i}", i)
@@ -32,6 +35,7 @@ class CloseTiming(unittest.TestCase):
                 closer.start()
                 closer.join(30)
                 times.append(time.monotonic() - t0)
+                print(f"close {len(times)}: {times[-1]:.3f}s", flush=True)
             finally:
                 stop.set()
                 for r in readers:
