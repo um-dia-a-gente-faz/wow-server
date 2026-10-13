@@ -35,6 +35,7 @@ MIGRATIONS = (
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 _CLOSE_TIMEOUT_S = 5.0
+_FLUSH_TIMEOUT_S = 30.0
 
 
 class Memory:
@@ -42,6 +43,11 @@ class Memory:
         self._now = now
         self._closed = False
         self._warned = False
+        self._flush_warned = False
+        self._close_result = False
+        self._close_claim = threading.Lock()       # held for good by the one close() that runs
+        self._close_done = threading.Event()
+        self._drained = False                      # the writer consumed the stop sentinel
         self._ops: queue.SimpleQueue = queue.SimpleQueue()
         self._io = threading.Lock()         # the writer holds it per operation
         self._writer, self._reader = _open(path, self._warn)
@@ -83,31 +89,67 @@ class Memory:
             (kind, self._now(), n))
         return [(key, _decode(text)) for key, text in rows]
 
-    def flush(self) -> None:
-        """Block until every write queued before this call has reached the file."""
+    def flush(self, timeout: float = _FLUSH_TIMEOUT_S) -> bool:
+        """Wait until every write queued before this call has been executed by the writer.
+
+        False when the store is closed, the writer is dead, or `timeout` seconds passed first (one warning
+        per store). False means "not confirmed": queued writes stay queued and run if the writer recovers."""
         if self._closed:
-            return
+            return False
+        timeout = max(0.0, timeout)
         done = threading.Event()
         self._ops.put(done)
-        while not done.wait(0.1):
+        deadline = time.monotonic() + timeout
+        while not done.wait(max(0.0, min(0.1, deadline - time.monotonic()))):
             if not self._thread.is_alive():
-                return
+                return False
+            if time.monotonic() >= deadline:
+                if not self._flush_warned:
+                    self._flush_warned = True
+                    log.warning("agent memory: flush timed out after %gs; writes still queued", timeout)
+                return False
+        return True
 
-    def close(self) -> None:
-        """Flush what is queued, stop the writer thread and close both connections."""
-        if self._closed:
-            return
+    def close(self, timeout: float = _CLOSE_TIMEOUT_S) -> bool:
+        """Flush what is queued, stop the writer thread and close both connections.
+
+        False when the writer did not finish in `timeout` (or the reader lock was not taken in `timeout`):
+        a connection the writer still uses stays open and the writer closes it itself. Returns within
+        2 x timeout. The store counts as closed either way; a second call returns the first result."""
+        timeout = max(0.0, timeout)
+        if not self._close_claim.acquire(blocking=False):   # another call is closing, or has closed
+            self._close_done.wait(2 * timeout)               # same bound as the first call's own work
+            return self._close_result
         self._closed = True
+        try:
+            self._close_result = self._close(timeout)
+        finally:
+            self._close_done.set()
+        return self._close_result
+
+    def _close(self, timeout: float) -> bool:
         self._ops.put(None)
-        self._thread.join(_CLOSE_TIMEOUT_S)
-        with self._read_lock:
-            self._reader.close()
+        self._thread.join(timeout)
+        ok = self._drained and not self._thread.is_alive()   # a writer that died early never took the sentinel
+        # In-memory mode the reader is the writer's connection: the writer closes it, never close() here.
+        if self._reader is not self._writer and self._read_lock.acquire(timeout=timeout):
+            try:
+                self._reader.close()
+            finally:
+                self._read_lock.release()
+        elif self._reader is not self._writer:
+            ok = False
+        if not ok:
+            log.warning("agent memory: close timed out after %gs; queued writes may be lost if the process exits",
+                        timeout)
+        return ok
 
     def _run(self) -> None:
         try:
             while True:
                 op = self._ops.get()
                 if op is None:
+                    self._drained = True
                     break
                 if isinstance(op, threading.Event):
                     op.set()
