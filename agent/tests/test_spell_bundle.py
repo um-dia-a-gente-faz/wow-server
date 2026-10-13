@@ -155,7 +155,14 @@ class StartupTest(Base):
     def test_set_path_wires_the_reader_and_logs_the_comparison(self):
         make_bundle(self.path, [FIREBALL])
         log = logging.getLogger("test.742")
-        with self.assertLogs(log, level="INFO") as cm:
+        opened = []
+
+        def real(path):
+            opened.append(wk.WorldKnowledge(path))
+            self.addCleanup(opened[-1].close)
+            return opened[-1]
+        with mock.patch.object(root, "WorldKnowledge", side_effect=real), \
+                self.assertLogs(log, level="INFO") as cm:
             root.load_world_bundle(self.cfg(self.path), log)
         self.assertEqual(sp.get_spell_info(133).power_cost, 28)
         self.assertEqual({r.levelname for r in cm.records}, {"INFO"})
@@ -166,6 +173,14 @@ class StartupTest(Base):
                          "'Fireball Bundle' rank 'Rank 1'; min_level table 1 bundle 3; "
                          "power_cost table 30 bundle 28; power_type table 0 bundle 3; "
                          "cast_time_ms table 2500 bundle 2400; range_yd table 30.0 bundle 36.0")
+
+    def test_root_installs_the_guarded_lookup_not_the_raw_reader(self):
+        reader = mock.Mock(spell=mock.Mock(side_effect=RuntimeError("boom")))
+        log = logging.getLogger("test.742")
+        with mock.patch.object(root, "WorldKnowledge", return_value=reader), \
+                self.assertLogs(log, level="INFO"):
+            root.load_world_bundle(self.cfg("x"), log)   # must not raise
+        self.assertEqual(sp.get_spell_info(133), sp.SPELL_TABLE[133])
 
     def test_identical_rows_log_no_difference(self):
         base = sp.SPELL_TABLE[133]
