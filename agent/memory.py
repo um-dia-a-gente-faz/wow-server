@@ -45,6 +45,9 @@ class Memory:
         self._warned = False
         self._flush_warned = False
         self._close_result = False
+        self._close_claim = threading.Lock()       # held for good by the one close() that runs
+        self._close_done = threading.Event()
+        self._drained = False                      # the writer consumed the stop sentinel
         self._ops: queue.SimpleQueue = queue.SimpleQueue()
         self._io = threading.Lock()         # the writer holds it per operation
         self._writer, self._reader = _open(path, self._warn)
@@ -93,6 +96,7 @@ class Memory:
         per store). False means "not confirmed": queued writes stay queued and run if the writer recovers."""
         if self._closed:
             return False
+        timeout = max(0.0, timeout)
         done = threading.Event()
         self._ops.put(done)
         deadline = time.monotonic() + timeout
@@ -112,12 +116,21 @@ class Memory:
         False when the writer did not finish in `timeout` (or the reader lock was not taken in `timeout`):
         a connection the writer still uses stays open and the writer closes it itself. Returns within
         2 x timeout. The store counts as closed either way; a second call returns the first result."""
-        if self._closed:
+        timeout = max(0.0, timeout)
+        if not self._close_claim.acquire(blocking=False):   # another call is closing, or has closed
+            self._close_done.wait(2 * timeout)               # same bound as the first call's own work
             return self._close_result
         self._closed = True
+        try:
+            self._close_result = self._close(timeout)
+        finally:
+            self._close_done.set()
+        return self._close_result
+
+    def _close(self, timeout: float) -> bool:
         self._ops.put(None)
         self._thread.join(timeout)
-        ok = not self._thread.is_alive()
+        ok = self._drained and not self._thread.is_alive()   # a writer that died early never took the sentinel
         # In-memory mode the reader is the writer's connection: the writer closes it, never close() here.
         if self._reader is not self._writer and self._read_lock.acquire(timeout=timeout):
             try:
@@ -129,7 +142,6 @@ class Memory:
         if not ok:
             log.warning("agent memory: close timed out after %gs; queued writes may be lost if the process exits",
                         timeout)
-        self._close_result = ok
         return ok
 
     def _run(self) -> None:
@@ -137,6 +149,7 @@ class Memory:
             while True:
                 op = self._ops.get()
                 if op is None:
+                    self._drained = True
                     break
                 if isinstance(op, threading.Event):
                     op.set()

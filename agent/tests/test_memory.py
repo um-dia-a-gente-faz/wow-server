@@ -28,12 +28,42 @@ class MemoryTests(unittest.TestCase):
         self.path = os.path.join(self._tmp.name, "memory.db")
         self.clock = _Clock()
 
-    def _flush(self, m: Memory, stop: threading.Event | None = None) -> None:
+    def _flush(self, m: Memory, stop: threading.Event | None = None, release=lambda: None) -> None:
         """m.flush() bounded by FLUSH_BOUND_S; the bounded method itself must confirm (#691, #708)."""
-        if not m.flush(self.FLUSH_BOUND_S):
+        if not self._bounded(release, m.flush, self.FLUSH_BOUND_S):
             if stop is not None:
                 stop.set()  # a reader hogging the lock may be what starves the writer
             self.fail(f"flush() not confirmed after {self.FLUSH_BOUND_S:g}s")
+
+    def _bounded(self, release, fn, *args, **kw):
+        """fn(*args) in a daemon thread, joined within JOIN_BOUND_S. When it is still running, call `release`
+        (undo the stall), join again and fail by name: a call that must time out cannot hang the suite (#708)."""
+        out: list = []
+
+        def run():
+            try:
+                out.append(fn(*args, **kw))
+            except Exception as e:
+                out.append(e)
+
+        t = threading.Thread(target=run, name="bounded-call", daemon=True)
+        t.start()
+        t.join(self.JOIN_BOUND_S)
+        if t.is_alive():
+            release()
+            t.join(self.JOIN_BOUND_S)
+            self.fail(f"{getattr(fn, '__name__', fn)}() did not return within {self.JOIN_BOUND_S:g}s")
+        if isinstance(out[0], Exception):
+            raise out[0]
+        return out[0]
+
+    @staticmethod
+    def _release_io(m: Memory):
+        return lambda: m._io.locked() and m._io.release()
+
+    @staticmethod
+    def _release_read(m: Memory):
+        return lambda: m._read_lock.locked() and m._read_lock.release()
 
     def _reap(self, stop: threading.Event, *threads: threading.Thread) -> None:
         """Stop the spinners and join every thread, bounded; fail by name if one stays (#691). Safe to call twice."""
@@ -183,7 +213,7 @@ class MemoryTests(unittest.TestCase):
         m.remember("goal", "x", 1)
         self.FLUSH_BOUND_S = 0.3
         with self.assertRaisesRegex(self.failureException, r"flush.. not confirmed after 0.3s"):
-            self._flush(m)
+            self._flush(m, release=self._release_io(m))
 
     def test_close_stops_the_writer_thread_and_public_methods_stay_quiet(self):
         m = self._open()
@@ -333,18 +363,18 @@ class MemoryTests(unittest.TestCase):
         self._stalled(m)
         with self.assertLogs("agent.memory", "WARNING") as logs:
             t0 = time.monotonic()
-            self.assertFalse(m.flush(timeout=0.3))
+            self.assertFalse(self._bounded(self._release_io(m), m.flush, timeout=0.3))
             self.assertLess(time.monotonic() - t0, 5)
         self.assertEqual(len(logs.records), 1)
         self.assertIn("flush timed out after 0.3s; writes still queued", logs.output[0])
         with self.assertNoLogs("agent.memory", "WARNING"):
-            self.assertFalse(m.flush(timeout=0.1))
+            self.assertFalse(self._bounded(self._release_io(m), m.flush, timeout=0.1))
 
     def test_a_timed_out_flush_leaves_the_write_queued_and_a_later_flush_confirms(self):
         m = self._open()
         self._stalled(m)
         with self.assertLogs("agent.memory", "WARNING"):
-            self.assertFalse(m.flush(timeout=0.1))
+            self.assertFalse(self._bounded(self._release_io(m), m.flush, timeout=0.1))
         m._io.release()
         self.assertTrue(m.flush())
         self.assertEqual(m.recall("goal", "stalled"), 1)
@@ -360,22 +390,22 @@ class MemoryTests(unittest.TestCase):
         m = self._open()
         m._ops.put(None)
         m._thread.join(self.JOIN_BOUND_S)
-        self.assertFalse(m.flush(timeout=30))
+        self.assertFalse(self._bounded(lambda: None, m.flush, timeout=30))
 
     def _check_close_timeout(self, m: Memory) -> None:
         self._stalled(m)
         with self.assertLogs("agent.memory", "WARNING") as logs:
             t0 = time.monotonic()
-            self.assertFalse(m.close(timeout=0.3))
+            self.assertFalse(self._bounded(self._release_io(m), m.close, timeout=0.3))
             self.assertLess(time.monotonic() - t0, 5)
         self.assertEqual(len(logs.records), 1)
         self.assertIn("close timed out after 0.3s; queued writes may be lost", logs.output[0])
         # closed in effect, and a second close answers at once with the same value
         t0 = time.monotonic()
-        self.assertFalse(m.close(timeout=30))
+        self.assertFalse(self._bounded(self._release_io(m), m.close, timeout=30))
         self.assertLess(time.monotonic() - t0, 1)
-        self.assertFalse(m.flush())
-        self.assertIsNone(m.recall("goal", "stalled"))
+        self.assertFalse(self._bounded(self._release_io(m), m.flush))
+        self.assertIsNone(self._bounded(self._release_io(m), m.recall, "goal", "stalled"))
         with self.assertNoLogs("agent.memory", "WARNING"):   # the writer finishes its queue without failing
             m._io.release()
             m._thread.join(self.JOIN_BOUND_S)
@@ -390,16 +420,29 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(self._file_rows(), [("stalled",)])
 
     def test_a_timed_out_close_leaves_the_in_memory_connection_to_the_draining_writer(self):
-        # The writer is busy, not stalled on _io, so the lock is free between its writes: only close() itself
-        # decides whether it closes the connection under the writer ("Cannot operate on a closed database").
+        # The writer is parked between two writes, outside _io, so the lock is free: only close() itself decides
+        # whether it closes the connection under the writer ("Cannot operate on a closed database").
         m = Memory(None, now=self.clock)
+        gate = threading.Event()
         self.addCleanup(self._unstall, m)
-        m._io.acquire()                        # queue the whole backlog first, then let the writer loose
-        for i in range(100000):
+        self.addCleanup(gate.set)
+        ops = m._ops
+
+        class Gated:
+            put = staticmethod(ops.put)
+
+            @staticmethod
+            def get():
+                gate.wait()
+                return ops.get()
+
+        m._ops = Gated
+        for i in range(3):   # the first wakes the writer from the real queue; the rest wait behind the gate
             m.remember("action", f"k{i}", i)
-        m._io.release()
         with self.assertLogs("agent.memory", "WARNING") as logs:
-            self.assertFalse(m.close(timeout=0.05))
+            self.assertFalse(self._bounded(gate.set, m.close, timeout=0.05))
+            self.assertTrue(m._thread.is_alive())
+            gate.set()
             m._thread.join(self.JOIN_BOUND_S)
         self.assertEqual(len(logs.records), 1, logs.output)
         self.assertIn("close timed out", logs.output[0])
@@ -408,11 +451,93 @@ class MemoryTests(unittest.TestCase):
     def test_close_returns_false_when_the_reader_lock_cannot_be_taken(self):
         m = self._open()
         m._read_lock.acquire()
-        self.addCleanup(lambda: m._read_lock.locked() and m._read_lock.release())
+        self.addCleanup(m._reader.close)       # close() skips it when the lock is not obtained
+        self.addCleanup(self._release_read(m))
         with self.assertLogs("agent.memory", "WARNING"):
             t0 = time.monotonic()
-            self.assertFalse(m.close(timeout=0.3))
+            self.assertFalse(self._bounded(self._release_read(m), m.close, timeout=0.3))
             self.assertLess(time.monotonic() - t0, 5)
+
+    def test_a_negative_timeout_neither_raises_nor_waits(self):
+        for t in (-2, -1):
+            with self.subTest(timeout=t):
+                m = Memory(os.path.join(self._tmp.name, f"neg{-t}.db"), now=self.clock)
+                m._read_lock.acquire()
+                self.addCleanup(m._reader.close)
+                self.addCleanup(self._release_read(m))
+                with self.assertLogs("agent.memory", "WARNING"):
+                    self.assertFalse(self._bounded(self._release_read(m), m.close, timeout=t))
+                m2 = Memory(None, now=self.clock)
+                self.addCleanup(m2.close)
+                self._stalled(m2)
+                with self.assertLogs("agent.memory", "WARNING"):
+                    self.assertFalse(self._bounded(self._release_io(m2), m2.flush, timeout=t))
+
+    def test_close_returns_false_when_the_writer_died_before_the_sentinel(self):
+        m = self._open()
+        calls = []
+
+        class Broken:
+            def execute(self, *a):
+                calls.append(a)
+                raise RuntimeError("not an sqlite error")
+
+            def close(self):
+                pass
+
+        real = m._writer
+        self.addCleanup(real.close)
+        m._writer = Broken()
+        m.remember("goal", "a", 1)
+        m.remember("goal", "b", 2)
+        m._thread.join(self.JOIN_BOUND_S)
+        self.assertFalse(m._thread.is_alive())
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            self.assertIs(m.close(), False)
+        self.assertEqual(len(logs.records), 1)
+
+    def test_a_second_close_during_the_first_returns_the_first_result_and_closes_each_connection_once(self):
+        for path in (None, self.path):
+            with self.subTest(file=path is not None):
+                self._second_close_case(path)
+
+    def _second_close_case(self, path):
+        m = Memory(path, now=self.clock)
+        closes = []
+
+        class Spy:
+            def __init__(self, conn, name):
+                self.c, self.name = conn, name
+
+            def __getattr__(self, attr):
+                return getattr(self.c, attr)
+
+            def close(self):
+                closes.append(self.name)
+                self.c.close()
+
+        shared = m._reader is m._writer
+        m._writer = Spy(m._writer, "writer")
+        m._reader = m._writer if shared else Spy(m._reader, "reader")
+        self._stalled(m)
+        got = {}
+        first = threading.Thread(target=lambda: got.update(first=m.close(timeout=30)), daemon=True)
+        second = threading.Thread(target=lambda: got.update(second=m.close(timeout=30)), daemon=True)
+        self.addCleanup(self._reap, threading.Event(), first, second)
+        first.start()
+        limit = time.monotonic() + self.JOIN_BOUND_S
+        while not m._closed and time.monotonic() < limit:   # first is inside close(), joining the writer
+            time.sleep(0.01)
+        self.assertTrue(m._closed, "close() never began")
+        second.start()
+        second.join(0.3)
+        self.assertTrue(second.is_alive(), "the second close() answered before the first finished")
+        m._io.release()
+        first.join(self.JOIN_BOUND_S)
+        second.join(self.JOIN_BOUND_S)
+        self.assertEqual(got, {"first": True, "second": True})
+        self.assertEqual(sorted(closes), ["reader", "writer"] if not shared else ["writer"])
+
 
     def test_close_is_true_on_a_healthy_store_and_a_second_close_repeats_it(self):
         for path in (None, self.path):
