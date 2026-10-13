@@ -22,6 +22,8 @@ import time
 import uuid
 from collections.abc import Callable
 
+from .metrics import swallowed
+
 log = logging.getLogger(__name__)
 
 # Forward-only: append a migration, never edit one that has shipped.
@@ -36,6 +38,15 @@ MIGRATIONS = (
 SCHEMA_VERSION = len(MIGRATIONS)
 _CLOSE_TIMEOUT_S = 5.0
 _FLUSH_TIMEOUT_S = 30.0
+_READ_TIMEOUT_S = 5.0   # how long recall/recent wait for the connection lock before giving up with nothing
+_MAX_TIMEOUT_S = threading.TIMEOUT_MAX / 4   # join/acquire raise OverflowError above TIMEOUT_MAX; close() doubles it
+
+
+def _bound(timeout: float) -> float:
+    """A timeout the threading primitives accept: NaN and negatives are 0, infinity is a very long wait."""
+    if timeout != timeout:
+        return 0.0
+    return max(0.0, min(timeout, _MAX_TIMEOUT_S))
 
 
 class Memory:
@@ -96,7 +107,7 @@ class Memory:
         per store). False means "not confirmed": queued writes stay queued and run if the writer recovers."""
         if self._closed:
             return False
-        timeout = max(0.0, timeout)
+        timeout = _bound(timeout)
         done = threading.Event()
         self._ops.put(done)
         deadline = time.monotonic() + timeout
@@ -116,7 +127,7 @@ class Memory:
         False when the writer did not finish in `timeout` (or the reader lock was not taken in `timeout`):
         a connection the writer still uses stays open and the writer closes it itself. Returns within
         2 x timeout. The store counts as closed either way; a second call returns the first result."""
-        timeout = max(0.0, timeout)
+        timeout = _bound(timeout)
         if not self._close_claim.acquire(blocking=False):   # another call is closing, or has closed
             self._close_done.wait(2 * timeout)               # same bound as the first call's own work
             return self._close_result
@@ -130,7 +141,9 @@ class Memory:
     def _close(self, timeout: float) -> bool:
         self._ops.put(None)
         self._thread.join(timeout)
-        ok = self._drained and not self._thread.is_alive()   # a writer that died early never took the sentinel
+        alive = self._thread.is_alive()   # after the join: a dead writer's _drained is final
+        dead = not alive and not self._drained   # it died early and never took the sentinel
+        ok = self._drained and not alive
         # In-memory mode the reader is the writer's connection: the writer closes it, never close() here.
         if self._reader is not self._writer and self._read_lock.acquire(timeout=timeout):
             try:
@@ -139,7 +152,9 @@ class Memory:
                 self._read_lock.release()
         elif self._reader is not self._writer:
             ok = False
-        if not ok:
+        if dead:
+            log.warning("agent memory: writer is not running; queued writes were not written")
+        elif not ok:
             log.warning("agent memory: close timed out after %gs; queued writes may be lost if the process exits",
                         timeout)
         return ok
@@ -158,7 +173,8 @@ class Memory:
                 with self._io:
                     try:
                         self._writer.execute(sql, params)
-                    except sqlite3.Error as e:
+                    except Exception as e:   # noqa: BLE001 - any bad write (a lone surrogate, say) is dropped; the writer lives on
+                        swallowed("memory.write", log, level=logging.DEBUG)   # counted; _warn is the one warning
                         self._warn("write failed", e)
         finally:
             with self._io:   # in-memory mode shares this connection with the readers
@@ -167,14 +183,20 @@ class Memory:
     def _read(self, sql: str, params: tuple) -> list:
         if self._closed:
             return []
-        with self._read_lock:
+        if not self._read_lock.acquire(timeout=_READ_TIMEOUT_S):
+            self._warn("read timed out", TimeoutError(f"no lock after {_READ_TIMEOUT_S:g}s"))
+            return []
+        try:
             if self._closed:   # close() began while this call waited for the lock: the connection may be closed
                 return []
             try:
                 return self._reader.execute(sql, params).fetchall()
-            except sqlite3.Error as e:
+            except Exception as e:  # noqa: BLE001 - a read never raises
+                swallowed("memory.read", log, level=logging.DEBUG)
                 self._warn("read failed", e)
                 return []
+        finally:
+            self._read_lock.release()
 
     def _warn(self, what: str, exc: Exception) -> None:
         if not self._warned:   # once per store: a broken file would otherwise log on every call

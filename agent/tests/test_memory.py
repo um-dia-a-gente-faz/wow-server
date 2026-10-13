@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from agent import memory
 from agent.memory import Memory
@@ -241,7 +242,8 @@ class MemoryTests(unittest.TestCase):
         self.addCleanup(lambda: m._io.locked() and m._io.release())
         m.remember("goal", "x", 1)
         self.FLUSH_BOUND_S = 0.3
-        with self.assertRaisesRegex(self.failureException, r"flush.. not confirmed after 0.3s"):
+        with self.assertLogs("agent.memory", "WARNING"), \
+                self.assertRaisesRegex(self.failureException, r"flush.. not confirmed after 0.3s"):
             self._flush(m, release=self._release_io(m))
 
     def test_close_stops_the_writer_thread_and_public_methods_stay_quiet(self):
@@ -256,7 +258,9 @@ class MemoryTests(unittest.TestCase):
 
     def test_unserialisable_value_is_dropped_not_raised(self):
         m = self._open()
-        m.remember("goal", "bad", object())
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            m.remember("goal", "bad", object())
+        self.assertIn("is not JSON, dropped", logs.output[0])
         m.remember("goal", "ok", "fine")
         self._flush(m)
         self.assertIsNone(m.recall("goal", "bad"))
@@ -502,28 +506,117 @@ class MemoryTests(unittest.TestCase):
                 with self.assertLogs("agent.memory", "WARNING"):
                     self.assertFalse(self._bounded(self._release_io(m2), m2.flush, timeout=t))
 
-    def test_close_returns_false_when_the_writer_died_before_the_sentinel(self):
+    def _capture_thread_errors(self) -> list:
+        """Replace threading.excepthook for this test, so a dying writer prints no traceback (#741)."""
+        seen: list = []
+        old = threading.excepthook
+        threading.excepthook = seen.append
+        self.addCleanup(setattr, threading, "excepthook", old)
+        return seen
+
+    def test_close_returns_false_and_says_the_writer_is_not_running_when_it_died_before_the_sentinel(self):
         m = self._open()
-        calls = []
-
-        class Broken:
-            def execute(self, *a):
-                calls.append(a)
-                raise RuntimeError("not an sqlite error")
-
-            def close(self):
-                pass
-
-        real = m._writer
-        self.addCleanup(real.close)
-        m._writer = Broken()
-        m.remember("goal", "a", 1)
-        m.remember("goal", "b", 2)
+        seen = self._capture_thread_errors()
+        m._ops.put(1)   # not a write: the loop itself fails to unpack it, which is not a bad write
         m._thread.join(self.JOIN_BOUND_S)
         self.assertFalse(m._thread.is_alive())
         with self.assertLogs("agent.memory", "WARNING") as logs:
-            self.assertIs(m.close(), False)
+            t0 = time.monotonic()
+            self.assertIs(self._bounded(lambda: None, m.close), False)
+            self.assertLess(time.monotonic() - t0, 5)
         self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.output[0].split(":", 2)[2],
+                         "agent memory: writer is not running; queued writes were not written")
+        self.assertEqual([e.exc_type for e in seen], [TypeError])   # and nothing reached stderr
+
+    def _survives(self, kind, key, value):
+        m = Memory(self.path, now=self.clock)
+        self.addCleanup(m.close)
+        seen = self._capture_thread_errors()
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            m.remember(kind, key, value, 1)
+            m.remember(kind, key, value, 2)   # a second bad write: still one warning in all
+            m.remember("goal", "good", "kept")
+            self._flush(m)
+            self.assertEqual(m.recall("goal", "good"), "kept")
+        self.assertTrue(m._thread.is_alive())
+        self.assertEqual(seen, [])
+        return m, logs
+
+    def test_a_lone_surrogate_in_the_kind_or_the_key_drops_that_write_with_one_warning(self):
+        for where, args in (("kind", ("\ud800", "k")), ("key", ("a", "\ud800"))):
+            with self.subTest(where=where):
+                self.setUp()
+                m, logs = self._survives(*args, 1)
+                self.assertEqual(len(logs.records), 1, logs.output)
+                self.assertIn("write failed", logs.output[0])
+                self.assertEqual(m.recent(args[0], 5), [])
+                m.remember("goal", "again", 2)   # and it goes on
+                self._flush(m)
+                self.assertEqual(m.recall("goal", "again"), 2)
+
+    def test_a_lone_surrogate_in_the_value_is_stored_escaped_and_read_back(self):
+        # json.dumps escapes it to ASCII, so it never reaches sqlite as a surrogate: no warning
+        m = Memory(self.path, now=self.clock)
+        self.addCleanup(m.close)
+        with self.assertNoLogs("agent.memory", "WARNING"):
+            m.remember("goal", "v", "\ud800")
+            self._flush(m)
+            self.assertEqual(m.recall("goal", "v"), "\ud800")
+        self.assertTrue(m._thread.is_alive())
+
+    def test_reads_with_a_lone_surrogate_argument_return_nothing_and_release_the_lock(self):
+        for path in (self.path, None):
+            with self.subTest(file=path is not None):
+                m = Memory(path, now=self.clock)
+                self.addCleanup(m.close)
+                with self.assertLogs("agent.memory", "WARNING") as logs:
+                    self.assertIsNone(self._bounded(self._release_io(m), m.recall, "\ud800", "k"))
+                    self.assertEqual(self._bounded(self._release_io(m), m.recent, "\ud800", 3), [])
+                self.assertEqual(len(logs.records), 1)
+                self.assertIn("read failed", logs.output[0])
+                self.assertFalse(m._read_lock.locked())
+                m.remember("goal", "x", 1)   # in memory the writer shares that lock
+                self._flush(m)
+                self.assertEqual(m.recall("goal", "x"), 1)
+
+    def test_a_reader_behind_a_stalled_writer_in_memory_gives_up_with_one_warning(self):
+        patch = mock.patch.object(memory, "_READ_TIMEOUT_S", 0.2)
+        patch.start()
+        self.addCleanup(patch.stop)
+        m = Memory(None, now=self.clock)
+        self.addCleanup(m.close)
+        self._stalled(m)
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            t0 = time.monotonic()
+            self.assertIsNone(self._bounded(self._release_io(m), m.recall, "goal", "stalled"))
+            self.assertEqual(self._bounded(self._release_io(m), m.recent, "goal", 3), [])
+            self.assertLess(time.monotonic() - t0, 5)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("read timed out", logs.output[0])
+        self.assertTrue(m._io.locked())   # the stall is still the test's: the reader released nothing it never took
+
+    def test_an_infinite_timeout_neither_raises_nor_overflows(self):
+        for path in (None, self.path):
+            with self.subTest(file=path is not None):
+                m = Memory(path, now=self.clock)
+                m.remember("goal", "x", 1)
+                self.assertIs(self._bounded(lambda: None, m.flush, float("inf")), True)
+                self.assertIs(self._bounded(lambda: None, m.close, float("inf")), True)
+                self.assertIs(self._bounded(lambda: None, m.close, float("inf")), True)
+
+    def test_a_nan_timeout_counts_as_zero(self):
+        m = Memory(None, now=self.clock)
+        self.addCleanup(m.close)
+        self._stalled(m)
+        nan = float("nan")
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            t0 = time.monotonic()
+            self.assertIs(self._bounded(self._release_io(m), m.flush, nan), False)
+            self.assertIs(self._bounded(self._release_io(m), m.close, nan), False)
+            self.assertLess(time.monotonic() - t0, 5)
+        self.assertIn("flush timed out after 0s", logs.output[0])
+        self.assertIn("close timed out after 0s", logs.output[1])
 
     def test_a_second_close_during_the_first_returns_the_first_result_and_closes_each_connection_once(self):
         for path in (None, self.path):
