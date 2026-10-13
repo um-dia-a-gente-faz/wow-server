@@ -37,6 +37,8 @@ python3 scripts/gen_protocol_tables.py --source /tmp/tc \
   before (`ed93932`, 2020) no value changed; four opcodes were renamed in the header
   (`CMSG_ATTACK_SWING`, `CMSG_ATTACK_STOP`, `SMSG_QUEST_GIVER_QUEST_DETAILS`,
   `SMSG_QUEST_GIVER_OFFER_REWARD_MESSAGE`), and the agent keeps its older names for them.
+  #751 moved the pin to `92127cd6252edb96fbfa36540db0eba17d0031fa` (3.3.5 head of 2026-10-13) to
+  add `SMSG_CLIENTCACHE_VERSION`; regenerating changed no existing value.
 
 ## Opcodes (`Server/Protocol/Opcodes.h`)
 
@@ -930,3 +932,25 @@ Source: TrinityCore `3.3.5` @ `41d89b32c015`, `src/server/authserver/Server/Auth
 
 So read up to the result byte, branch, then read the rest. `agent/auth.py::_reply` does this once for both
 steps and raises `AuthRejected` (carries `.code`).
+
+## `SMSG_CLIENTCACHE_VERSION` (#751)
+
+Source: TrinityCore `3.3.5` @ `92127cd6252edb96fbfa36540db0eba17d0031fa`.
+
+- **Opcode** `0x4AB`: `Server/Protocol/Opcodes.h`, `SMSG_CLIENTCACHE_VERSION = 0x4AB`.
+- **Payload** one `uint32`, little endian, 4 bytes: `WorldPackets::ClientConfig::ClientCacheVersion::Write`
+  (`Server/Packets/ClientConfigPackets.cpp`) is `_worldPacket << uint32(CacheVersion);`, built by
+  `WorldSession::SendClientCacheVersion(uint32 version)` (`Handlers/AuthHandler.cpp`).
+- **When** `WorldSession::InitializeSessionCallback` (`Server/WorldSession.cpp`) sends, in this order:
+  `SendAuthResponse(AUTH_OK, true)` (or `SendAuthWaitQueue`), `SendAddonsInfo()`,
+  `SendClientCacheVersion(sWorld->getIntConfig(CONFIG_CLIENTCACHE_VERSION))`, `SendTutorialsData()`.
+  So it follows `SMSG_AUTH_RESPONSE` and precedes `SMSG_TUTORIAL_FLAGS`, and always precedes the
+  character list (which answers a `CMSG_CHAR_ENUM` sent after). `WoWSession.connect` reads until
+  `SMSG_TUTORIAL_FLAGS`, so the packet is handled there, before `login_character` loads `names.json`.
+  The router also has the handler, for an arrival after the load.
+- **Value** `World::LoadDBVersion` (`World/World.cpp`): `SELECT db_version, cache_id FROM version`,
+  `m_int_configs[CONFIG_CLIENTCACHE_VERSION] = fields[1].GetUInt32()`; `World::LoadConfigSettings`
+  overrides it with `ClientCacheVersion` from the worldserver config when that is non-zero and positive.
+- The agent keeps it as `client_cache_version` on the session and hands it to `NameCache`
+  (`set_server_cache_id`); `names.json` carries it as the additive key `cache_id`. It is not in `GET /state`
+  (no packet of that login phase is).

@@ -114,6 +114,12 @@ class ResolutionMixin:
         obj.rank = data.get("rank", "") if data.get("rank") != "normal" else ""
         obj.creature_type = data.get("creature_type_name")
 
+    def apply_server_cache_id(self, cache_id: int | None):
+        """SMSG_CLIENTCACHE_VERSION (#751): hand the id to the name cache under the lock; a
+        stale cache drops its file names in memory (no disk I/O, the next save rewrites the file)."""
+        with self._lock:
+            self.names.set_server_cache_id(cache_id)
+
     def apply_name_query_response(self, data: dict):
         """SMSG_NAME_QUERY_RESPONSE (agent.names.parse_name_query_response):
         backfill .name on the matching player object, if it's still around."""

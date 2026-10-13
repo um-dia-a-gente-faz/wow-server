@@ -433,7 +433,7 @@ class NameCacheSchemaTest(unittest.TestCase):
             c.creatures[4] = {"name": "C"}
             c.save(path)
             self.assertEqual(json.loads(_read(path)),
-                             {"schema": 2, "creatures": {"4": {"name": "C"}}, "gameobjects": {}})
+                             {"schema": 2, "cache_id": None, "creatures": {"4": {"name": "C"}}, "gameobjects": {}})
 
     def test_saved_file_has_the_current_schema_and_the_old_loader_reads_it(self):
         with tempfile.TemporaryDirectory() as d:
@@ -541,7 +541,7 @@ class NameCacheSchemaTest(unittest.TestCase):
                 self.assertEqual(c.creatures, {})
                 c.save(path)
                 self.assertEqual(json.loads(_read(path)),
-                                 {"schema": 2, "creatures": {}, "gameobjects": {}})
+                                 {"schema": 2, "cache_id": None, "creatures": {}, "gameobjects": {}})
             self.assertFalse(os.path.exists(path + ".corrupt"))
 
     def test_schema_1_entries_are_not_loaded_and_the_next_save_replaces_them(self):

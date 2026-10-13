@@ -339,8 +339,14 @@ setting is added, no compose file changes. Needs no database.
    merging changes no behaviour. The owner arms it with `AGENT_WORLD_BUNDLE=/data/world/world.sqlite3`;
    `docs/DEPLOYMENT.md`, "World bundle", has the build command and the rebuild-and-copy steps. A
    rebuilt bundle is seen at the agent's next start (the reader is unchanged).
-3. Handle `SMSG_CLIENTCACHE_VERSION`: keep the cache id and discard `names.json` when it
-   changes; the same for `items.json` if `ItemCache.load` has a caller by then.
+3. **Done in #751.** `SMSG_CLIENTCACHE_VERSION` is parsed (`session.parse_clientcache_version`) and
+   kept as `client_cache_version`; `names.json` carries it as the additive key `cache_id`
+   (`CACHE_SCHEMA` stays 2). Both ids known and different: the names that came from the file are
+   dropped in memory (not set aside) and the next save writes the new id, one INFO line. A file
+   without `cache_id` is kept and stamped at its next save; an unknown server id changes nothing and
+   never writes `null` over a known id. The packet arrives before `NameCache.load` (it precedes
+   `SMSG_TUTORIAL_FLAGS`, which `connect` waits for); the rule also runs on a later arrival. `items.json`
+   is out of scope: `ItemCache.load` still has no caller.
 4. More client-tier tables as M9 issues need them (`AreaTable`, `Map`, `TaxiNodes`).
 5. Server-tier tables (spawns, quest starters, vendors) from the `world` database, only if
    open question 1 is answered yes.

@@ -1,5 +1,5 @@
 // Excerpt of TrinityCore (GPL-2.0) src/server/game/Entities/Object/Updates/UpdateFields.h
-// commit 41d89b32c01577508005bad98992d76b0b1abc43
+// commit 92127cd6252edb96fbfa36540db0eba17d0031fa
 // Written by scripts/gen_protocol_tables.py --source: do not edit by hand.
 enum EObjectFields
     OBJECT_FIELD_GUID                         = 0x0000, // Size: 2, Type: LONG, Flags: PUBLIC

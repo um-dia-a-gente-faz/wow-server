@@ -20,7 +20,7 @@ from .router import Context, PacketRouter
 from .metrics import swallowed
 from .state import GameState
 from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
-from .wire import Reader
+from .wire import PacketTruncated, Reader
 
 from .handlers import build_router
 from .handlers import world as _world
@@ -38,6 +38,7 @@ from .opcodes import (
     CMSG_LOGOUT_REQUEST,
     SMSG_LOGOUT_COMPLETE,
     SMSG_TUTORIAL_FLAGS,
+    SMSG_CLIENTCACHE_VERSION,
     CMSG_PING,
     SMSG_PONG,
     SMSG_AUTH_CHALLENGE,
@@ -142,15 +143,21 @@ class WoWSession(Transport, GameState):
         if result != 0x0C:
             raise RuntimeError(f"World auth failed: {result:#x}")
 
-        # Drain pre-login packets
+        self._drain_pre_login()
+        return True
+
+    def _drain_pre_login(self):
+        """Read until SMSG_TUTORIAL_FLAGS, the last packet WorldSession::InitializeSessionCallback
+        sends. SMSG_CLIENTCACHE_VERSION is sent before it (after AUTH_RESPONSE and ADDON_INFO), so
+        it is always handled here, before login_character loads the name cache (#751)."""
         while True:
             opcode, payload = self._recv_packet()
             if opcode == SMSG_TIME_SYNC_REQ:
                 handle_time_sync(self.ctx, payload)
+            elif opcode == SMSG_CLIENTCACHE_VERSION:
+                self._dispatch_guarded(opcode, payload)
             elif opcode == SMSG_TUTORIAL_FLAGS:
                 break
-
-        return True
 
     def create_character(self, name: str, race: int, class_: int, gender: int = 0,
                           skin: int = 0, face: int = 0, hair_style: int = 0,
@@ -440,6 +447,23 @@ def handle_time_sync(ctx, payload):
     ctx.send(CMSG_TIME_SYNC_RESP, struct.pack('<II', counter, 0))
 
 
+def parse_clientcache_version(payload: bytes) -> int | None:
+    """SMSG_CLIENTCACHE_VERSION (0x4AB): WorldPackets::ClientConfig::ClientCacheVersion::Write
+    (ClientConfigPackets.cpp, 3.3.5 @ 92127cd) is one uint32, little endian. None if short."""
+    try:
+        return Reader(payload, SMSG_CLIENTCACHE_VERSION).u32()
+    except PacketTruncated:
+        return None
+
+
+def handle_clientcache_version(ctx, payload):
+    version = parse_clientcache_version(payload)
+    if version is None:
+        raise PacketTruncated(SMSG_CLIENTCACHE_VERSION, 0, 4)   # the router counts it as truncated
+    ctx.state.client_cache_version = version
+    ctx.state.world_state.apply_server_cache_id(version)
+
+
 def handle_logout_complete(ctx, payload):
     st = ctx.state
     if not st._logout_requested:
@@ -458,6 +482,7 @@ def register(router):
         SMSG_PONG: lambda ctx, payload: None,
         SMSG_STANDSTATE_UPDATE: lambda ctx, payload: None,
         SMSG_LOGOUT_COMPLETE: handle_logout_complete,
+        SMSG_CLIENTCACHE_VERSION: handle_clientcache_version,
     })
 
 
