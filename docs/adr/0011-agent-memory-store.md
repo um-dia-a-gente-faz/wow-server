@@ -27,6 +27,8 @@ goal. An unattended run that restarts mid-way starts blind (#98).
   touching the disk. Reads use a second connection; in the in-memory store there is one
   connection, shared by the readers and the writer behind one lock. `flush()` waits for the
   queue, and `close()` drains it, stops the writer and closes the connections.
+  Once `close()` begins, `recall` and `recent` return nothing without taking the lock, including
+  a call that was already waiting for it (#691).
 - Schema version is `PRAGMA user_version`. Migrations are forward-only: a list of SQL
   strings in `MIGRATIONS`, each applied in its own transaction, with the version bumped in
   the same transaction. Never edit a migration that has shipped; append one.

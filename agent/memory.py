@@ -126,6 +126,8 @@ class Memory:
         if self._closed:
             return []
         with self._read_lock:
+            if self._closed:   # close() began while this call waited for the lock: the connection may be closed
+                return []
             try:
                 return self._reader.execute(sql, params).fetchall()
             except sqlite3.Error as e:

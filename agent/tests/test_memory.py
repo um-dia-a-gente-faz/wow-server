@@ -3,6 +3,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 
 from agent import memory
@@ -18,6 +19,7 @@ class _Clock:
 
 
 class MemoryTests(unittest.TestCase):
+    JOIN_BOUND_S = 10
     FLUSH_BOUND_S = 60  # a slow CI run takes up to 19 s here; far below the 5 min job limit
 
     def setUp(self):
@@ -35,6 +37,40 @@ class MemoryTests(unittest.TestCase):
             if stop is not None:
                 stop.set()  # a reader hogging the lock may be what starves the writer
             self.fail(f"flush() still waiting for the writer after {self.FLUSH_BOUND_S:g}s")
+
+    def _reap(self, stop: threading.Event, *threads: threading.Thread) -> None:
+        """Stop the spinners and join every thread, bounded; fail by name if one stays (#691). Safe to call twice."""
+        stop.set()
+        stuck = []
+        for t in threads:
+            t.join(self.JOIN_BOUND_S)
+            if t.is_alive():
+                stuck.append(t.name)
+        if stuck:
+            self.fail(f"threads still alive after {self.JOIN_BOUND_S:g}s: {stuck}")
+
+    def _start_readers(self, m: Memory, n: int) -> tuple[threading.Event, list, list]:
+        """n threads named 'reader' that hammer m until stopped or until m starts closing. Reaped at cleanup,
+        whatever the test does, so a failing assertion cannot leave them spinning for the rest of the process.
+        Returns (stop, errors, readers)."""
+        stop = threading.Event()
+        errors: list = []
+
+        def reader():
+            try:
+                # A closed store answers without a lock, so a reader that kept calling would only spin on the GIL
+                # and starve the writer and the closer: stop when close() begins.
+                while not stop.is_set() and not m._closed:
+                    m.recall("action", "k5")
+                    m.recent("action", 10)
+            except Exception as e:   # the reader must never raise either
+                errors.append(e)
+
+        readers = [threading.Thread(target=reader, name="reader", daemon=True) for _ in range(n)]
+        self.addCleanup(self._reap, stop, *readers)
+        for r in readers:
+            r.start()
+        return stop, errors, readers
 
     def _open(self, path=None) -> Memory:
         m = Memory(self.path if path is None else path, now=self.clock)
@@ -176,24 +212,11 @@ class MemoryTests(unittest.TestCase):
         for _trial in range(3):
             m = Memory(None, now=self.clock)
             self.addCleanup(m.close)
-            stop = threading.Event()
-            errors = []
-
-            def reader(m=m, stop=stop, errors=errors):
-                try:
-                    while not stop.is_set():
-                        m.recall("action", "k5")
-                        m.recent("action", 10)
-                except Exception as e:   # the reader must never raise either
-                    errors.append(e)
-
-            r = threading.Thread(target=reader, daemon=True)
-            r.start()
+            stop, errors, readers = self._start_readers(m, 1)
             for i in range(n):
                 m.remember("action", f"k{i}", i)
             self._flush(m, stop)                   # reads overlap the writes: flush before stopping the reader
-            stop.set()
-            r.join(10)
+            self._reap(stop, *readers)
             self.assertEqual(errors, [])
             self.assertEqual(len(m.recent("action", n + 10)), n)
             self.assertEqual(m.recall("action", f"k{n - 1}"), n - 1)
@@ -204,28 +227,31 @@ class MemoryTests(unittest.TestCase):
         for i in range(2000):
             m.remember("action", f"k{i}", i)
         self._flush(m)
-        stop = threading.Event()
-        errors = []
-
-        def reader():
-            try:
-                while not stop.is_set():
-                    m.recall("action", "k5")
-                    m.recent("action", 10)
-            except Exception as e:
-                errors.append(e)
-
-        readers = [threading.Thread(target=reader, daemon=True) for _ in range(3)]
-        for r in readers:
-            r.start()
-        closer = threading.Thread(target=m.close, daemon=True)
+        stop, errors, readers = self._start_readers(m, 3)
+        closer = threading.Thread(target=m.close, name="closer", daemon=True)
+        self.addCleanup(self._reap, stop, closer)
         closer.start()
         closer.join(5)
         self.assertFalse(closer.is_alive(), "close() hung while readers ran")
-        stop.set()
-        for r in readers:
-            r.join(5)
+        self._reap(stop, *readers)
         self.assertEqual(errors, [])
+
+    def test_a_read_that_waited_for_the_lock_while_close_began_returns_nothing_quietly(self):
+        m = Memory(None, now=self.clock)
+        m.remember("goal", "x", 1)
+        self._flush(m)
+        got = []
+        m._read_lock.acquire()                 # the reader passes the closed check, then waits here
+        t = threading.Thread(target=lambda: got.append(m.recall("goal", "x")), name="late-reader", daemon=True)
+        self.addCleanup(self._reap, threading.Event(), t)
+        t.start()
+        time.sleep(0.2)
+        m._closed = True                       # what close() does first
+        m._reader.close()                      # ... and what it does under the lock
+        with self.assertNoLogs("agent.memory", "WARNING"):
+            m._read_lock.release()
+            t.join(self.JOIN_BOUND_S)
+        self.assertEqual(got, [None])
 
     def test_writes_queued_before_close_reach_the_file_without_flush(self):
         m = self._open()
