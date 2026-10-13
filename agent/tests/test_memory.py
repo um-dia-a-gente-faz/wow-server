@@ -72,6 +72,13 @@ class MemoryTests(unittest.TestCase):
             r.start()
         return stop, errors, readers
 
+    def _start_closer(self, close, stop: threading.Event) -> threading.Thread:
+        """Run close in a thread named 'closer', reaped at cleanup like the readers."""
+        closer = threading.Thread(target=close, name="closer", daemon=True)
+        self.addCleanup(self._reap, stop, closer)
+        closer.start()
+        return closer
+
     def _open(self, path=None) -> Memory:
         m = Memory(self.path if path is None else path, now=self.clock)
         self.addCleanup(m.close)
@@ -223,18 +230,60 @@ class MemoryTests(unittest.TestCase):
 
     def test_close_while_readers_run_on_the_in_memory_store_neither_crashes_nor_hangs(self):
         # The writer used to close the shared in-memory connection without the lock the readers hold.
+        # Only a read already inside the connection when close() begins can meet that close, so one close
+        # seldom shows it: repeat (a trial takes about 15 ms).
+        for _trial in range(25):
+            m = Memory(None, now=self.clock)
+            for i in range(2000):
+                m.remember("action", f"k{i}", i)
+            self._flush(m)
+            stop, errors, readers = self._start_readers(m, 3)
+            closer = self._start_closer(m.close, stop)
+            closer.join(5)
+            self.assertFalse(closer.is_alive(), "close() hung while readers ran")
+            self._reap(stop, *readers)
+            self.assertEqual(errors, [])
+
+    def test_a_thread_that_cannot_be_stopped_fails_the_test_by_name(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        stuck = threading.Thread(target=release.wait, name="stuck", daemon=True)
+        stuck.start()
+        self.JOIN_BOUND_S = 0.2
+        with self.assertRaisesRegex(self.failureException, r"threads still alive after 0.2s: \['stuck'\]"):
+            self._reap(threading.Event(), stuck)
+        release.set()
+        stuck.join(10)
+        self.assertFalse(stuck.is_alive())
+
+    def test_a_closer_that_hangs_is_named_at_cleanup(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        ran = unittest.TestResult()
+
+        class Failing(MemoryTests):
+            JOIN_BOUND_S = 0.2
+
+            def runTest(inner):
+                inner._start_closer(release.wait, threading.Event())
+
+        Failing().run(ran)
+        self.assertEqual(len(ran.failures), 1)
+        self.assertIn("['closer']", ran.failures[0][1])
+
+    def test_readers_are_stopped_at_cleanup_when_the_test_fails_first(self):
         m = Memory(None, now=self.clock)
-        for i in range(2000):
-            m.remember("action", f"k{i}", i)
-        self._flush(m)
-        stop, errors, readers = self._start_readers(m, 3)
-        closer = threading.Thread(target=m.close, name="closer", daemon=True)
-        self.addCleanup(self._reap, stop, closer)
-        closer.start()
-        closer.join(5)
-        self.assertFalse(closer.is_alive(), "close() hung while readers ran")
-        self._reap(stop, *readers)
-        self.assertEqual(errors, [])
+        self.addCleanup(m.close)
+        ran = unittest.TestResult()
+
+        class Failing(MemoryTests):
+            def runTest(inner):
+                self.readers = inner._start_readers(m, 2)[2]
+                inner.fail("before stop.set()")
+
+        Failing().run(ran)
+        self.assertEqual(len(ran.failures), 1)
+        self.assertEqual([r.is_alive() for r in self.readers], [False, False])
 
     def test_a_read_that_waited_for_the_lock_while_close_began_returns_nothing_quietly(self):
         m = Memory(None, now=self.clock)
@@ -243,7 +292,8 @@ class MemoryTests(unittest.TestCase):
         got = []
         m._read_lock.acquire()                 # the reader passes the closed check, then waits here
         t = threading.Thread(target=lambda: got.append(m.recall("goal", "x")), name="late-reader", daemon=True)
-        self.addCleanup(self._reap, threading.Event(), t)
+        self.addCleanup(self._reap, threading.Event(), t, m._thread)
+        self.addCleanup(m._ops.put, None)      # close() is bypassed below, so stop the writer thread by hand
         t.start()
         time.sleep(0.2)
         m._closed = True                       # what close() does first
