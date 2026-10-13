@@ -29,14 +29,11 @@ class MemoryTests(unittest.TestCase):
         self.clock = _Clock()
 
     def _flush(self, m: Memory, stop: threading.Event | None = None) -> None:
-        """m.flush() with a bound: it waits for the writer thread for as long as that thread lives (#691)."""
-        t = threading.Thread(target=m.flush, daemon=True)
-        t.start()
-        t.join(self.FLUSH_BOUND_S)
-        if t.is_alive():
+        """m.flush() bounded by FLUSH_BOUND_S; the bounded method itself must confirm (#691, #708)."""
+        if not m.flush(self.FLUSH_BOUND_S):
             if stop is not None:
                 stop.set()  # a reader hogging the lock may be what starves the writer
-            self.fail(f"flush() still waiting for the writer after {self.FLUSH_BOUND_S:g}s")
+            self.fail(f"flush() not confirmed after {self.FLUSH_BOUND_S:g}s")
 
     def _reap(self, stop: threading.Event, *threads: threading.Thread) -> None:
         """Stop the spinners and join every thread, bounded; fail by name if one stays (#691). Safe to call twice."""
@@ -185,7 +182,7 @@ class MemoryTests(unittest.TestCase):
         self.addCleanup(lambda: m._io.locked() and m._io.release())
         m.remember("goal", "x", 1)
         self.FLUSH_BOUND_S = 0.3
-        with self.assertRaisesRegex(self.failureException, "flush.. still waiting"):
+        with self.assertRaisesRegex(self.failureException, r"flush.. not confirmed after 0.3s"):
             self._flush(m)
 
     def test_close_stops_the_writer_thread_and_public_methods_stay_quiet(self):
@@ -193,7 +190,7 @@ class MemoryTests(unittest.TestCase):
         m.remember("goal", "x", 1)
         m.close()
         self.assertFalse(m._thread.is_alive())
-        self._flush(m)                              # returns, does not hang
+        self.assertFalse(m.flush())                 # returns at once, does not hang
         m.remember("goal", "y", 2)             # dropped, no raise
         self.assertIsNone(m.recall("goal", "y"))
         self.assertEqual(m.recent("goal", 5), [])
@@ -311,6 +308,120 @@ class MemoryTests(unittest.TestCase):
         again = self._open()
         self.assertEqual(len(again.recent("action", 1000)), 500)
         self.assertEqual(again.recall("action", "k499"), 499)
+
+    def _stalled(self, m: Memory) -> None:
+        """Hold the writer inside its first write: it has a queued row and cannot take _io. Undone at cleanup."""
+        m._io.acquire()
+        self.addCleanup(self._unstall, m)
+        m.remember("goal", "stalled", 1)
+
+    def _unstall(self, m: Memory) -> None:
+        if m._io.locked():
+            m._io.release()
+        m._ops.put(None)   # stop the writer even if the test never closed the store
+        self._reap(threading.Event(), m._thread)
+
+    def _file_rows(self) -> list:
+        conn = sqlite3.connect(self.path)
+        try:
+            return conn.execute("SELECT key FROM memory WHERE kind = 'goal'").fetchall()
+        finally:
+            conn.close()
+
+    def test_flush_with_a_stalled_writer_returns_false_in_time_and_warns_once(self):
+        m = self._open()
+        self._stalled(m)
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            t0 = time.monotonic()
+            self.assertFalse(m.flush(timeout=0.3))
+            self.assertLess(time.monotonic() - t0, 5)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("flush timed out after 0.3s; writes still queued", logs.output[0])
+        with self.assertNoLogs("agent.memory", "WARNING"):
+            self.assertFalse(m.flush(timeout=0.1))
+
+    def test_a_timed_out_flush_leaves_the_write_queued_and_a_later_flush_confirms(self):
+        m = self._open()
+        self._stalled(m)
+        with self.assertLogs("agent.memory", "WARNING"):
+            self.assertFalse(m.flush(timeout=0.1))
+        m._io.release()
+        self.assertTrue(m.flush())
+        self.assertEqual(m.recall("goal", "stalled"), 1)
+
+    def test_flush_is_true_on_a_healthy_store_and_false_on_a_closed_one(self):
+        m = self._open()
+        m.remember("goal", "x", 1)
+        self.assertTrue(m.flush())
+        m.close()
+        self.assertFalse(m.flush())
+
+    def test_flush_returns_false_when_the_writer_died(self):
+        m = self._open()
+        m._ops.put(None)
+        m._thread.join(self.JOIN_BOUND_S)
+        self.assertFalse(m.flush(timeout=30))
+
+    def _check_close_timeout(self, m: Memory) -> None:
+        self._stalled(m)
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            t0 = time.monotonic()
+            self.assertFalse(m.close(timeout=0.3))
+            self.assertLess(time.monotonic() - t0, 5)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("close timed out after 0.3s; queued writes may be lost", logs.output[0])
+        # closed in effect, and a second close answers at once with the same value
+        t0 = time.monotonic()
+        self.assertFalse(m.close(timeout=30))
+        self.assertLess(time.monotonic() - t0, 1)
+        self.assertFalse(m.flush())
+        self.assertIsNone(m.recall("goal", "stalled"))
+        with self.assertNoLogs("agent.memory", "WARNING"):   # the writer finishes its queue without failing
+            m._io.release()
+            m._thread.join(self.JOIN_BOUND_S)
+        self.assertFalse(m._thread.is_alive())
+
+    def test_close_with_a_stalled_writer_in_memory_returns_false_and_the_writer_finishes_cleanly(self):
+        self._check_close_timeout(Memory(None, now=self.clock))
+
+    def test_close_with_a_stalled_writer_on_a_file_returns_false_and_the_row_reaches_the_file(self):
+        m = self._open()
+        self._check_close_timeout(m)
+        self.assertEqual(self._file_rows(), [("stalled",)])
+
+    def test_a_timed_out_close_leaves_the_in_memory_connection_to_the_draining_writer(self):
+        # The writer is busy, not stalled on _io, so the lock is free between its writes: only close() itself
+        # decides whether it closes the connection under the writer ("Cannot operate on a closed database").
+        m = Memory(None, now=self.clock)
+        self.addCleanup(self._unstall, m)
+        m._io.acquire()                        # queue the whole backlog first, then let the writer loose
+        for i in range(100000):
+            m.remember("action", f"k{i}", i)
+        m._io.release()
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            self.assertFalse(m.close(timeout=0.05))
+            m._thread.join(self.JOIN_BOUND_S)
+        self.assertEqual(len(logs.records), 1, logs.output)
+        self.assertIn("close timed out", logs.output[0])
+        self.assertFalse(m._thread.is_alive())
+
+    def test_close_returns_false_when_the_reader_lock_cannot_be_taken(self):
+        m = self._open()
+        m._read_lock.acquire()
+        self.addCleanup(lambda: m._read_lock.locked() and m._read_lock.release())
+        with self.assertLogs("agent.memory", "WARNING"):
+            t0 = time.monotonic()
+            self.assertFalse(m.close(timeout=0.3))
+            self.assertLess(time.monotonic() - t0, 5)
+
+    def test_close_is_true_on_a_healthy_store_and_a_second_close_repeats_it(self):
+        for path in (None, self.path):
+            m = Memory(path, now=self.clock)
+            m.remember("goal", "x", 1)
+            with self.assertNoLogs("agent.memory", "WARNING"):
+                self.assertIs(m.close(), True)
+                self.assertIs(m.close(), True)
+            self.assertFalse(m._thread.is_alive())
 
     def test_writer_thread_is_a_daemon(self):
         m = self._open()

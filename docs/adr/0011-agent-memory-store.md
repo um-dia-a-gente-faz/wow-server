@@ -70,6 +70,20 @@ Initial assignments, none of which writes yet:
 A new kind is added here in the same PR that first writes it. Two modules writing one
 kind is a design change, not a drive-by edit.
 
+## What a timed-out flush or close means
+
+`flush(timeout=30.0)` and `close(timeout=5.0)` return a bool and never raise.
+
+- `flush() == False` (closed store, dead writer, or the timeout passed): the writes are **not
+  confirmed**, not necessarily lost. They stay queued and the writer still executes them if it
+  recovers. One warning per store.
+- `close() == False` (the writer did not drain in time, or the reader lock was not taken in time):
+  queued writes **may be lost if the process exits**, because the writer is a daemon thread. close()
+  does not close a connection the writer still uses: in-memory it closes nothing and the writer closes
+  its connection when it finishes; with a file it closes only the separate reader. The store counts as
+  closed, and a second `close()` returns the first result at once.
+- A consumer on a shutdown path logs a `False` and goes on. It never retries in a loop.
+
 ## Consequences
 
 - `remember` is asynchronous. A reader in the same process sees a write only after
