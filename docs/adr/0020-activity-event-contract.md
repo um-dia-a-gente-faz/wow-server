@@ -56,7 +56,7 @@ one, and no contract emitted by agents can cover it.
 | `buy` | `db` | **yes** | `db:<guid>:<t>:buy:+<item>` | Partly, the same way: `BuyItemAction`, no `SMSG_BUY_FAILED`; `SMSG_BUY_ITEM` is a broadcast of the vendor's stock, not an acknowledgement (`handle_buy_item` in `agent/handlers/npc.py`) | `db` only |
 | `trade`, "Gave", "Received" | `db` | **yes** | `db:<guid>:<t>:trade:-<item>` or `+<item>` | The agent sees its own trade steps (`handle_trade_status` in `agent/handlers/trade.py`, event `trade_status`). Which items changed hands at completion was not checked for this ADR | `db` only, and only when both traders are online and the same item and count leave one and reach the other in one poll |
 | `money` | `db` | no | `db:<guid>:<t>:money:` | Yes: the total in `session.coinage`, and the cause for looted money (`handle_loot_money_notify`, event `loot_money`, `money`) and quest money (`money_reward`) | `db` only |
-| `chat` (say, yell, channel) | `chat`, from chat-feed | no | `chat:<id>`; the id is `<inode>:<offset>` for a `Server.log` line and `relay:<n>` for an event an agent POSTed | Yes, and this path is already agent-emitted: `handle_messagechat` in `agent/handlers/chat.py` feeds `ChatRelay` (`agent/chat_relay.py`), which POSTs to chat-feed's `/api/chat/ingest` | Only if an agent is in earshot. The relay is the only way a human's chat reaches the feed: `docs/AGENT-DIRECTION.md` (known findings) says this build writes no player chat to any log |
+| `chat` (say, yell, channel) | `chat`, from chat-feed | no | `chat:<id>`; the id is `<inode>:<offset>` for a `Server.log` line and `relay:<n>` for an event an agent POSTed | Yes, and this path is already agent-emitted: `handle_messagechat` in `agent/handlers/chat.py` feeds `ChatRelay` (`agent/chat_relay.py`), which POSTs to chat-feed's `/api/chat/ingest` | Through the `Server.log` path if it carries chat, or through the relay if an agent is in earshot. Which of the two is live is not verified here: `docs/AGENT-DIRECTION.md` says the log is empty, `docker-compose.yml` and the chat-feed README say it was verified live |
 | `combat`, `loot`, `sell`, `buy`, `trade`, `chat`, `whisper`, `quest`, `item`, `item_lost`, `mail`, `move`, `group`, `action` (13 mapped kinds plus the default) | `audit`, `audit_event` | no | `audit:<agent>:<cycle>:<ts>` | These are the agent's own decisions: the action name, its arguments and `result.ok`. They record an intent and whether the action returned ok, not what happened in the game (a `loot` line does not say what dropped) | None |
 
 Kinds that no source produces today but the agent knows: `kill` (`handle_party_kill_log`,
@@ -77,10 +77,14 @@ above. The DB poller stays for them, unchanged, and its inferred events stay fla
   and the inferred ones are `trade`, `sell`, `buy`, `item_lost` and the quest hand-in. Loot and
   combat exist in the feed only as agent decisions (`audit`).
 - **"`ChatFollower` ... which itself regex-parses `Server.log` (`SAY_RE`, ...)."** The parser
-  exists (`parse_chat_line` in `tools/chat-feed/app.py`), but `docs/AGENT-DIRECTION.md` says the
-  build writes no chat to any log, and `agent/chat_relay.py` says the same. The stream the feed
-  actually carries is the agents' relay (`relay:<n>` ids). Chat is already the one kind that is
-  emitted by agents.
+  exists (`parse_chat_line` in `tools/chat-feed/app.py`) and both paths are wired and started: the
+  `tail_log` thread reads `Server.log`, and `/api/chat/ingest` takes the agents' relay. The repo
+  contradicts itself on which one carries chat: `docker-compose.yml` (the `TC_WORLD__Logger__chat__log`
+  line, "Verified on the live image") and `tools/chat-feed/README.md` say the log path was verified
+  live, and the frozen fixture's `chat_last_id` is a log-form id; `docs/AGENT-DIRECTION.md` (known
+  findings) and `agent/chat_relay.py` say the log is empty. **Which one is live is not verified
+  here.** What is certain is that the relay is agent-emitted code, so chat is the one kind that
+  can already be agent-emitted.
 - **"`AuditTailer`: tails agent audit files."** True, and it reads decision lines only: it lists
   day files by `_DAY_FILE_RE` in `<base>/<agent>/`, so `lifecycle/` is not seen.
 - **"Define the shape in `agent/api_schema.json` next to the HTTP API."** That file describes the
@@ -97,8 +101,8 @@ above. The DB poller stays for them, unchanged, and its inferred events stay fla
 - **"Reuse the typed audit record work in #277."** Done and closed: `agent/audit_schema.py`
   (`SCHEMA_VERSION = 2`). ADR 0018 then settled that the log changes by addition only.
 - **"chat-feed: golden-line tests and a staleness metric."** Out of this ADR. `tools/chat-feed/`
-  is a game-stack path (`stacks_for`), and the parser it would test is not the live source
-  (above). It is a separate issue if anyone wants it.
+  is a game-stack path (`stacks_for`), and which path is live is not verified (above). It is a
+  separate issue if anyone wants it.
 
 ### The transport that exists
 
@@ -107,8 +111,13 @@ above. The DB poller stays for them, unchanged, and its inferred events stay fla
   by `find "$dest" -type f -name '*.jsonl*' -mtime +N`). ADR 0002 D4.
 - A line has `schema` (`SCHEMA_VERSION = 2`, `agent/audit_schema.py`). `AuditRecord.to_json` writes
   every field it knows plus the unknown keys it kept in `extra`. `iter_records` in `agent/metrics.py`
-  keeps the stored `schema` and counts lines newer than it knows (`on_newer`). The two raw readers,
-  `audit_event` and `Fleet._last_record`, use `.get`.
+  keeps the stored `schema` and offers an `on_newer` callback for lines newer than it knows; no
+  caller outside the tests passes it (`grep -rn on_newer --include=*.py . | grep -v /tests/` shows
+  only `agent/metrics.py`), so nothing counts newer lines today. The readers and what each does with
+  an `events` key: `iter_records` yields the dict whole; `load_records` (`tools/agent_dev/replay.py`)
+  and `tools/agent_dev/capture_scenario.py` go through `AuditRecord.from_json`, which keeps it in
+  `extra`; three readers parse the line themselves with `.get` and ignore it: `audit_event`,
+  `Fleet._last_record` and `tools/fleet-limits/fleet_limits.py` (`_read_file`, `hour_sums`).
 - Every line in a day file is read as one think cycle by `iter_records` users and by
   `AuditTailer`; that is why the lifecycle lines live in a subdirectory
   (`AuditLogger.record_lifecycle` says so). A new record kind in the day file would be counted as a
@@ -179,19 +188,29 @@ character, and an agent's event replaces the DB event for the same fact.**
    - *Known kind, `detail` of the wrong type*: that event is dropped and counted; the decision
      event of the same line is still stored.
    - *Older agent code, newer line* (after a rollback): `AuditRecord.from_json` puts `events`
-     in `extra` and `to_json` writes it back; `iter_records` counts the line as newer (`on_newer`).
+     in `extra` and `to_json` writes it back; `iter_records` would offer it to `on_newer`, which nobody passes, so it is not counted.
      An agent that rolled back appends lines without `events` to the same file: legal, the version
      belongs to the line.
-   - *Order of deploy*: ADR 0018's "guard before bump" holds already (the counting reader, #635,
-     is on `main`); ADR 0010's "consumers first" applies: wowmap merges and deploys first.
+   - *Order of deploy*: ADR 0018's "guard before bump" holds only in part (the
+     reader that can count newer lines, #635, is on `main`, but no caller uses it); ADR 0010's "consumers first" applies: wowmap merges and deploys first.
 4. **Identity and idempotence.** The uid is derived from the event and the character, never from a
    counter: `agent:<agent>:<kind>:<t:.3f>:<key>`, where `<key>` is the kind's natural key
    (`level`: the `to` value). Reading the same line twice, after a wowmap restart (when
    `AuditTailer._since` is rebuilt from `latest_t`), or after a rotation, adds nothing.
 5. **Loss, stated.** The buffer is a bounded deque (20), oldest dropped, and the drain happens in
-   `think.record` before `AuditLogger.record`; if the write raises `OSError` the drained events are
-   lost, and an agent that dies loses what it had not written. This is a feed, not a ledger; the
-   DB path covers a character for as long as it stays.
+   `think.record` before `AuditLogger.record`. Events are lost in these cases, and for `level` the
+   feed then shows the `db` row (about 10 s after the fact: `PlayerSaveInterval=5000` and the 5 s
+   poll) and never an `agent` row:
+   - the write raises `OSError` after the drain;
+   - the process dies, or stops cleanly: `run_think_loop` (`agent/runloop.py`) returns without a
+     last `record`. **There is no final flush in the first slice**; slice 5 decides again;
+   - the session reconnects: the buffer is an attribute of the `WoWSession`, and `connect_and_login`
+     builds a new one per login;
+   - more than 20 events fall between two lines (the period is the larger of
+     `AGENT_THINK_INTERVAL_S`, default 3.0, and the cycle, which includes the brain call and the
+     action).
+
+   This is a feed, not a ledger. For `kill` and `death` no `db` row exists behind it.
 6. **Which kinds, in order.** Only facts the agent holds exactly, one per slice: `level`, `quest`
    (turn-in), `item` (from `item_received`), `money` (from `loot_money` and quest rewards), `kill`,
    `death`. Not in the contract: `session` (lifecycle has its own file and its own ADR 0015
@@ -229,7 +248,10 @@ chat-feed variant recreates the game stack. F fixes none of what #390 complains 
   `inferred` false, and the DB rows for the same facts disappear. The feed stops showing the same
   level-up twice with two `uid` forms.
 - Delay: an event reaches the feed after the next think cycle, up to 5 s for the tailer and up to
-  30 s for the pull. The think interval was not measured for this ADR.
+  30 s for the pull, so about 38 s plus any cycle longer than the 3.0 s default of
+  `AGENT_THINK_INTERVAL_S`. The `db` row shows first (about 10 s) and is replaced, so the feed is not
+  slower than today. `on_record` also hands the line to `AgentObserver.record_decision`, so `events`
+  appears in `GET /brain` decisions and the SSE stream.
 - The audit line grows by one key when there is an event. `AuditLogger` rotates at 10 MiB
   (`DEFAULT_MAX_BYTES`); an event is under 100 bytes.
 - The humans' feed is unchanged and stays inferred. That is the price of not asking the server
@@ -260,8 +282,11 @@ no `tools/chat-feed/`, no `tools/common/`, no `docker-compose.yml`.
 
 - `agent/audit_schema.py` (`events`, `SCHEMA_VERSION = 3`, the kind table with `level` and its
   required key `to`), `agent/audit.py` (`record` takes `events`), `agent/think.py` (`record` drains
-  the buffer), `agent/state.py` (the bounded buffer and `emit_activity`), `agent/handlers/spells.py`
-  (`handle_levelup_info` calls it), `agent/config.py` (`AGENT_ACTIVITY_EVENTS`; with `compose=True`
+  the buffer), `agent/state.py` (the bounded buffer, the flag and the two `GameState` methods),
+  `agent/ports.py` (the two methods join the `EventLog` protocol that `think` types the session
+  with), `agent/login.py` (`connect_and_login` sets the flag on the session from `cfg`, as it
+  sets `sess.chat_relay`), `agent/handlers/spells.py` (`handle_levelup_info` calls
+  `ctx.state.emit_activity`), `agent/config.py` (`AGENT_ACTIVITY_EVENTS`; with `compose=True`
   the config tests require `docker-compose.agents.yml` and `.env.example` to carry it, as the header
   of `config.py` says)
 - `tools/wowmap/wowmap/activity.py` (`agent_events`, the loop in `AuditTailer.scan_once`, the
@@ -275,16 +300,26 @@ no `tools/chat-feed/`, no `tools/common/`, no `docker-compose.yml`.
 
 - `agent/audit_schema.py`: `ACTIVITY_KINDS: dict[str, tuple[str, ...]]`, kind to required `detail`
   keys (`{"level": ("to",)}`); `AuditRecord.events: list`
-- `agent/state.py`: `emit_activity(kind: str, **detail) -> None`, `drain_activity() -> list[dict]`
+- `agent/state.py`: `GameState.activity_events: bool = False` (an attribute, set by
+  `agent/login.py`), `GameState.emit_activity(kind: str, **detail) -> None` and
+  `GameState.drain_activity() -> list[dict]`. They are methods, not module functions: handlers reach
+  them as `ctx.state.emit_activity` and `think` as `c.session.drain_activity()` (typed by
+  `ports.EventLog`). No new `LAYERS` edge in `agent/tests/test_architecture.py` is needed:
+  `state` stays `{changes, perception}` and does not read the config (the caller sets the flag),
+  `handlers` do not import `state`, `login` already imports `config` and `session`, `think` already
+  imports `ports`
 - `tools/wowmap/wowmap/activity.py`: `agent_events(rec: dict, agent: str) -> list[dict]` (feed
   events, never raises), `fact_key(e: dict) -> tuple | None`
 
 **Behaviour**
 
-1. `emit_activity` does nothing when the setting is off. When on, it appends
+1. `emit_activity` does nothing while `activity_events` is false. When true, it appends
    `{"kind", "t": time.time(), "detail"}` to a deque of at most 20 (the oldest falls off).
+   `connect_and_login` sets `sess.activity_events = cfg.activity_events` before `login_character`.
 2. `handle_levelup_info` calls `emit_activity("level", to=data["level"])` after `record_event`.
-3. `think.record` calls `drain_activity()` and passes the list to `AuditLogger.record`; `to_json`
+3. `drain_activity` is called on the think thread while the receive thread appends. It pops from
+   the left until the deque is empty (`popleft` until `IndexError`); it never copies and then
+   clears, which would lose an event appended between the two. `think.record` calls it and passes the list to `AuditLogger.record`; `to_json`
    writes `events` only when the list is not empty; `AuditRecord.from_json` reads it.
 4. `agent_events` returns one feed event per element whose `kind` is in wowmap's table and whose
    required `detail` keys are present with the right type (`to` an int, not a bool). `character` is
@@ -304,6 +339,7 @@ no `tools/chat-feed/`, no `tools/common/`, no `docker-compose.yml`.
 | Item | Test or command |
 |---|---|
 | With the setting off nothing is buffered and a recorded line has no `events` key | `python3 -m unittest agent.tests.test_audit_events -v` |
+| A drain that runs while another thread appends loses and duplicates nothing (one thread appends numbered events while the other drains in a loop; the union of the drains is all of them, in order) | same |
 | With it on, `SMSG_LEVELUP_INFO` produces one `{"kind": "level", "detail": {"to": N}}` on the next line, with a wall-clock `t`; the 21st event drops the oldest | same |
 | The writer emits exactly the fields of `AuditRecord` and the golden line `v3.jsonl` round-trips; `v0`, `v1` and `v2` still load with `events` empty | `python3 -m unittest agent.tests.test_audit_schema -v` |
 | The wowmap reader parses the same `v3.jsonl` line (read by relative path) into the `level` event described above | `python3 -m unittest discover -s tools/wowmap/tests -p 'test_activity_agent_events.py' -v` |
@@ -317,8 +353,8 @@ no `tools/chat-feed/`, no `tools/common/`, no `docker-compose.yml`.
 
 Human steps, left unticked in the PR: roll the agent image on `wow-agents`, set
 `AGENT_ACTIVITY_EVENTS=1` for one agent, level it, and see one `agent` row and no `db` row for that
-level in the feed. Verify `SMSG_LEVELUP_INFO` is sent to the leveller only against TrinityCore's
-`Player::GiveLevel` (this ADR trusts the parser's own docstring, `parse_levelup_info`).
+level in the feed. `SMSG_LEVELUP_INFO` goes to the leveller only: TrinityCore 3.3.5 at `92127cd`, `Player::GiveLevel`,
+`src/server/game/Entities/Player/Player.cpp:2437`, `SendDirectMessage` at `:2468`.
 
 **Further slices**, in dependency order, one issue each:
 
@@ -329,11 +365,19 @@ level in the feed. Verify `SMSG_LEVELUP_INFO` is sent to the leveller only again
 4. `item` from `handle_item_push_result` (`player_guid` must be the agent's own) and `money` from
    `loot_money` and quest rewards; both need slice 3.
 5. `kill` and `death`: new kinds in the feed, no DB equivalent, so no de-duplication. `death` carries
-   `killer_guid` only as the agent's guess and names it so.
+   `killer_guid` only as the agent's guess and names it so. Neither has a `db` row behind it, so
+   the buffer size and a final flush on a clean stop are decided again here.
 6. Turn the setting on for the whole fleet, an owner decision (open question 1).
 7. When no `db` row has been superseded for N days for agent characters, stop the DB poller's covered
    kinds for characters in `Activity.agent_names`. Not before.
 8. If the delay of B matters: move the list to its own file (option C), a new ADR 0018 row.
+
+## Found outside this ADR's scope
+
+- ADR 0018's inventory is stale in two rows: `AuditLogger.record_lifecycle` has a caller
+  (`build_lifecycle`, `agent/root.py:129`), and the audit row does not list `tools/fleet-limits`
+  (`fleet_limits.py`) as a reader of the audit files. Not edited here.
+- `chat:relay:<n>` can collide after a chat-feed restart (Consequences). Tracked in its own issue.
 
 ## Open questions for the owner
 
@@ -344,7 +388,7 @@ level in the feed. Verify `SMSG_LEVELUP_INFO` is sent to the leveller only again
    slice 3, then a column, because the match gets slower than one query at 500 rows per character.
 4. **Chat.** Default: stays on the relay. Moving it needs a cross-hearer dedupe the audit path
    lacks.
-5. **`chat:relay:<n>` after a chat-feed restart.** Default: out of this ADR, open a separate issue
+5. **`chat:relay:<n>` after a chat-feed restart.** Default: out of this ADR, tracked in its own issue
    (a game-stack path, owner's go-ahead) that makes the id unique across restarts.
 6. **The text of an agent event.** Default: wowmap renders it from `kind` and `detail`, in the
    language it uses now. The alternative, carrying text in the line, makes the agent the owner of
