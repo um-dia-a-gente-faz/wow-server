@@ -29,6 +29,7 @@ class Agent:
     http_server: ObserverServer | None
     lifecycle: Lifecycle
     duration: float | None = None      # None = forever
+    start_delay: float = 0.0           # #539: one wait before the first connection attempt
     perception_dump: bool = False
 
     def build_session(self):
@@ -48,7 +49,7 @@ class Agent:
         or the crash of a session. `supervisor_kwargs` (sleep, jitter, initial_backoff,
         max_backoff) are for tests."""
         stop = stop or threading.Event()
-        supervisor_kwargs.setdefault("start_delay", getattr(self.cfg, "start_delay", 0.0))
+        supervisor_kwargs.setdefault("start_delay", self.start_delay)
         try:
             supervise_connection(build_session=self.build_session,
                                  run_session=lambda sess: self.run_session(sess, stop),
@@ -89,7 +90,7 @@ def build_agent(cfg, log, duration: float | None = None, perception_dump: bool =
     return Agent(cfg=cfg, log=log, chat_relay=chat_relay, brain=brain, audit_logger=audit_logger,
                  observer=observer, http_server=http_server,
                  lifecycle=build_lifecycle(audit_logger, observer),
-                 duration=duration, perception_dump=perception_dump)
+                 duration=duration, perception_dump=perception_dump, start_delay=cfg.start_delay)
 
 
 def build_lifecycle(audit_logger, observer) -> Lifecycle:

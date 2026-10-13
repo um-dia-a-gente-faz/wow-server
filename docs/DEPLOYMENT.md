@@ -386,8 +386,11 @@ of them need about 3.2 GB of RAM (limit, not measured use) and 6 CPUs at the
 cap; size the VM from `docker stats` once they run.
 
 **Start stagger (#539).** The generator gives the agent at 0-based roster position `i`
-`AGENT_START_DELAY_S = min(3 * i, 60)` (`agents/compose.py`), so a fleet-wide `up -d`
-reaches the auth server over about a minute instead of all at once. The agent waits that
+`AGENT_START_DELAY_S = (3 * i) % 60`, so a fleet-wide `up -d` reaches the auth server over
+about a minute instead of all at once (positions 0 to 19 get 0 to 57 s, 20 to 24 get 0 to 12 s
+again). The constants are `START_DELAY_STEP_S` and `START_DELAY_PERIOD_S` in
+`agents/compose.py`; there is no per-agent override. The delay is taken at every process start,
+so a container restarted by `restart: unless-stopped` waits it again. The agent waits that
 long once, before its first connection attempt, and logs it; the wait is not repeated on a
 reconnect (those use the jittered backoff, #402), and a SIGTERM ends it at once. Retired
 entries still count in the position, and agents the runner adds get the delay of their

@@ -21,7 +21,7 @@ the transition table can be tested on its own and read by the HTTP observer late
 
 | State | Meaning |
 |---|---|
-| CONNECTING | `build_session()` is running: auth, realm, world login |
+| CONNECTING | `build_session()` is running: auth, realm, world login; also the one start-delay wait before the first attempt (#539) |
 | ONLINE | In world, `run_session()` is running |
 | BACKOFF | Waiting before the next connect attempt |
 | STOPPING | Stop requested, the run ended or the supervisor is unwinding. The session is logged out if there is one: there is none on `BACKOFF > STOPPING` and `CONNECTING > STOPPING` |
@@ -38,7 +38,7 @@ Any other pair is invalid and changes nothing.
 | CONNECTING | ONLINE | connected |
 | CONNECTING | BACKOFF | connect failed or transient auth refusal |
 | CONNECTING | FAILED | permanent auth refusal |
-| CONNECTING | STOPPING | the supervisor is unwound by an exception that `build_session()` let through (no stop check runs before connecting today) |
+| CONNECTING | STOPPING | the supervisor is unwound by an exception that `build_session()` let through (no stop check runs before connecting today), or a stop is requested during the start-delay wait before the first attempt (#539) |
 | ONLINE | BACKOFF | disconnected |
 | ONLINE | STOPPING | stop requested, the run ended, or `run_session()` raised |
 | BACKOFF | CONNECTING | backoff elapsed |
@@ -61,7 +61,7 @@ Any other pair is invalid and changes nothing.
 | `auth_rejected_permanent` | CONNECTING > FAILED | `AuthRejected` with a permanent code |
 | `disconnected` | ONLINE > BACKOFF | `run_session()` returned true and no stop was requested |
 | `backoff_elapsed` | BACKOFF > CONNECTING | the wait ended and no stop was requested |
-| `stop` | ONLINE > STOPPING, BACKOFF > STOPPING, STOPPING > STOPPED | the stop event is set (SIGTERM, SIGINT) |
+| `stop` | CONNECTING > STOPPING, ONLINE > STOPPING, BACKOFF > STOPPING, STOPPING > STOPPED | the stop event is set (SIGTERM, SIGINT) |
 | `run_ended` | ONLINE > STOPPING, STOPPING > STOPPED | `run_session()` returned false and no stop was requested (the duration elapsed) |
 | `crashed` | CONNECTING > STOPPING, ONLINE > STOPPING, BACKOFF > STOPPING, STOPPING > STOPPED | an exception is leaving the supervisor and the machine is not terminal |
 
@@ -76,7 +76,8 @@ Settled in #292 before the supervisor was wired.
    therefore not always clean: a reader that needs to know checks the reason.
 2. **`CONNECTING > STOPPING` stays, and no stop check is added before connecting.** The row is what
    the unwind rule uses from `CONNECTING`. A stop check before `build_session()` would change what
-   the agent does on SIGTERM, and that is a separate decision.
+   the agent does on SIGTERM, and that is a separate decision. The start-delay wait (#539) checks
+   `stop` after it, and nothing else does.
 3. **One writer.** Only the thread that runs the supervisor calls `to()`, and the callback never
    calls `to()`. Callbacks then run in transition order, so records written from the callback are
    in order. Other threads read. A signal handler never touches the machine: the lock is not

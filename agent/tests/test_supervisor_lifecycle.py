@@ -201,6 +201,14 @@ class StartDelayTest(unittest.TestCase):
         self.assertEqual(world.builds, [OK], "connected after a stop")
         self.assertEqual(world.walk(), [("connecting", "stopping", "stop"), ("stopping", "stopped", "stop")])
 
+    def test_the_logged_delay_is_the_value_as_given(self):
+        import logging
+        world = World(builds=[OK], runs=[END], start_delay=3.5)
+        with self.assertLogs("start-delay-fmt", "INFO") as logs:
+            supervise_connection(world.build_session, world.run_session, log=logging.getLogger("start-delay-fmt"),
+                                 sleep=world.sleep, stop=world.stop, start_delay=3.5)
+        self.assertIn("waiting 3.5s before", logs.output[0])
+
     def test_a_default_wait_returns_when_stop_is_set(self):
         import logging
         stop = threading.Event()

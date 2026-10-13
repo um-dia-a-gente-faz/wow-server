@@ -432,7 +432,7 @@ services:
       WOW_CHARACTER: Moggor
       AGENT_NAME: Moggor
       AGENT_HTTP_PORT: 9621
-      AGENT_START_DELAY_S: "60"
+      AGENT_START_DELAY_S: "0"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9621:9621"
     labels:
@@ -449,7 +449,7 @@ services:
       WOW_CHARACTER: Velkaelanar
       AGENT_NAME: Velkaelanar
       AGENT_HTTP_PORT: 9622
-      AGENT_START_DELAY_S: "60"
+      AGENT_START_DELAY_S: "3"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9622:9622"
     labels:
@@ -466,7 +466,7 @@ services:
       WOW_CHARACTER: Thalvis
       AGENT_NAME: Thalvis
       AGENT_HTTP_PORT: 9623
-      AGENT_START_DELAY_S: "60"
+      AGENT_START_DELAY_S: "6"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9623:9623"
     labels:
@@ -483,7 +483,7 @@ services:
       WOW_CHARACTER: Quelthas
       AGENT_NAME: Quelthas
       AGENT_HTTP_PORT: 9624
-      AGENT_START_DELAY_S: "60"
+      AGENT_START_DELAY_S: "9"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9624:9624"
     labels:
@@ -500,7 +500,7 @@ services:
       WOW_CHARACTER: Zulari
       AGENT_NAME: Zulari
       AGENT_HTTP_PORT: 9625
-      AGENT_START_DELAY_S: "60"
+      AGENT_START_DELAY_S: "12"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9625:9625"
     labels:

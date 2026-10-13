@@ -94,7 +94,7 @@ def _reconnect_loop(build_session, run_session, log, sleep, stop: threading.Even
     """The loop of supervise_connection(). Returns why it ended, "stop" or "run_ended".
     A permanent refusal and a crash leave by exception."""
     if start_delay > 0:
-        log.info("waiting %.0fs before the first connection attempt (AGENT_START_DELAY_S)", start_delay)
+        log.info("waiting %gs before the first connection attempt (AGENT_START_DELAY_S)", start_delay)
         sleep(start_delay)
         if stop.is_set():
             return "stop"
