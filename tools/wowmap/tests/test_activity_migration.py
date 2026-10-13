@@ -31,11 +31,11 @@ VERSIONS = (0, *range(1, activity_schema.SCHEMA_VERSION + 1))
 
 # sha256 of each shipped fixture, CRLF normalised. Pinned by hand: a changed fixture must fail.
 PINS = {
-    0: "89aba20c464dd1e6cb6d445101d8d02edcddc576ea9719c27ca3c9aa30e4f747",
-    1: "557c8ebbc9a30f599b90dd956947c3b69c64ac94cb8f317264b795a58363c381",
+    0: "a5d9db65b9d2eee07a1dd6dc5583a7f40c9f6f0c550e071f68d665eac415d02e",
+    1: "e3a3be70b578c367b1618959dd3df29c96cea4c2b3f20b95f3b17ecea53c843a",
 }
 # A row both fixtures hold: a uid that is in the fixture, re-added by the test (add() must refuse it).
-DUP_UID = "db:1:104.000:money:"
+DUP_UID = "db:1:101.000:money:"
 # What recent(character, 50) returns at read time, newest first, for the fixtures' rows.
 # 'Rubens' and 'rubens' are one character to the store (the column is NOCASE), so both sets are here.
 _ROWS_V1 = {
@@ -44,10 +44,10 @@ _ROWS_V1 = {
          "source": "db", "inferred": False},
         {"t": 105.0, "kind": "item", "text": "Got Refreshing Spring Water ×5",
          "detail": {"item": 159, "count": 5}, "source": "db", "inferred": False},
-        {"t": 104.0, "kind": "money", "text": "Money +26c", "detail": {"delta": 26, "total": 1026},
-         "source": "db", "inferred": False},
         {"t": 102.0, "kind": "chat", "text": 'Said "hi"', "detail": {"kind": "say", "channel": None},
          "source": "chat", "inferred": False},
+        {"t": 101.0, "kind": "money", "text": "Money +26c", "detail": {"delta": 26, "total": 1026},
+         "source": "db", "inferred": False},
         {"t": 101.0, "kind": "sell", "text": "Sold Linen Cloth ×2",
          "detail": {"item": 2589, "count": 2, "sell_price": 13, "money": 26}, "source": "db", "inferred": True},
         {"t": 100.0, "kind": "level", "text": "Reached level 11", "detail": {"from": 10, "to": 11},
@@ -60,7 +60,7 @@ _ROWS_V1 = {
          "source": "audit", "inferred": False},
     ],
 }
-_META_V1 = {"chat_last_id": "1700000000123-0"}
+_META_V1 = {"chat_last_id": "2490369:5120"}
 ROWS = {0: _ROWS_V1, 1: _ROWS_V1}
 META = {0: _META_V1, 1: _META_V1}
 
@@ -184,7 +184,7 @@ class ActivityMigrationTests(unittest.TestCase):
                 self.assertEqual(store.recent("Nobody", 50), [])
                 # A uid the fixture holds is refused: nothing is added, the count is unchanged.
                 before = store.count("Rubens")
-                self.assertEqual(store.add([activity.event("Rubens", 104.0, "money", "again", "db", DUP_UID)]), 0)
+                self.assertEqual(store.add([activity.event("Rubens", 101.0, "money", "again", "db", DUP_UID)]), 0)
                 self.assertEqual(store.count("Rubens"), before)
                 self.assertEqual(store.add([activity.event("Rubens", 200.0, "money", "new write", "db",
                                                            f"new:{n}")]), 1)
