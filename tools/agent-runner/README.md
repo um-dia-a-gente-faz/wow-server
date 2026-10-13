@@ -26,12 +26,18 @@ runner refuses to start without a token. Locally:
 The runner's image status (`GET /agents`, `image`) follows `WOW_AGENT_TAG`: it reports
 `wow-agent:<WOW_AGENT_TAG>`, read from the runner's environment at each request (#730). Unset or not a
 valid Docker tag, it reports `present: false` and names the tag as not set; it never falls back to
-`latest`. The variable comes from the unit's `EnvironmentFile`, so restart the runner after changing
+`latest`. When `present` is false, `reason` says why: `tag_unset` (no valid tag) or `missing` (the tag
+is valid and the image is not built). The key is absent when the image is present. The variable comes from the unit's `EnvironmentFile`, so restart the runner after changing
 it in `.env` (the environment is read once at start, and compose inherits it too).
 
 **When the runner builds (#131 as changed by #730).** The runner never rebuilds an existing pinned
 tag on its own. Without `?build=1`, `start` adds `--build` only when `WOW_AGENT_TAG` gives a valid
-image reference and that image is missing. A stale image (`stale: true`: older than the last commit
+image reference and that image is missing. #732: a build (automatic or `?build=1`) runs only when the tag
+is the checkout's HEAD, the 12-digit commit `scripts/build-agent-image.sh` tags with (`git rev-parse --short=12 HEAD`).
+Otherwise `start` answers HTTP 409 and does not call compose: `error` is `image_not_built` (the image is
+missing) or `tag_is_not_head` (`?build=1` on a present image); `detail` names the tag and the checkout's
+commit and says to check that commit out and run `scripts/build-agent-image.sh`. A git failure counts as
+not HEAD. A tag that is not a commit SHA can therefore never be built through the runner. A stale image (`stale: true`: older than the last commit
 touching `agent/` or `Dockerfile`) triggers nothing; it is information only, meaning "build a new image
 and move the tag". `?build=1` is the explicit rebuild. With the tag unset or invalid, `start` adds no
 `--build`, and compose reports the missing variable (HTTP 502, the scrubbed detail).
@@ -77,7 +83,7 @@ must be a roster service or container. `inspect` and `compose` call it before an
 | `GET /healthz` | `{"ok": true}`, no token |
 | `GET /agents` | every configured agent, plus `image` (present, created, stale) |
 | `GET /agents/<name>` | one agent (name is the character, case-insensitive) |
-| `POST /agents/<name>/start` | `compose up -d <service>`; adds `--build` only when `WOW_AGENT_TAG` names a valid image that is missing, or with `?build=1` (#131, changed by #730: see below) |
+| `POST /agents/<name>/start` | `compose up -d <service>`; adds `--build` only when `WOW_AGENT_TAG` names a valid image that is missing, or with `?build=1`, and only when the tag is the checkout's HEAD (else 409, #732; #131, changed by #730: see below) |
 | `POST /agents/<name>/stop` | `compose stop <service>` |
 | `POST /agents` | create a level-1 character, record it, start its container (below) |
 | `POST /agents/<name>/retire` | stop the container and mark the agent retired; the character is never deleted |

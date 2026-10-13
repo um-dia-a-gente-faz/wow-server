@@ -129,8 +129,11 @@ cd /opt/wow-server
 git pull --ff-only
 scripts/build-agent-image.sh   # builds wow-agent:<sha> and prints the SHA
 # set WOW_AGENT_TAG=<that sha> in /opt/wow-server/.env (the previous value is the rollback)
-# later, to roll the fleet onto a new build, in this order: build, set the tag, then recreate:
+sudo systemctl restart agent-runner   # the runner reads WOW_AGENT_TAG at start; restart it after every change
+# later, to roll the fleet onto a new build, in this order (docs/DEPLOYMENT.md, "Agent image"):
+# build, set the tag, restart agent-runner, then recreate:
 #   scripts/build-agent-image.sh
+#   sudo systemctl restart agent-runner
 #   docker compose -f docker-compose.agents.yml up -d --force-recreate agent-luaprata
 ```
 

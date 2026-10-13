@@ -32,7 +32,7 @@ _EP = api_contract.load()["endpoints"]
 
 TOKEN = "t0ken-for-tests"
 PASSWORD = "hunter2-agent-password"
-TAG = "3f9c2ab"  # WOW_AGENT_TAG the fleet runs in these tests (#730)
+OTHER_TAG = "0123456789ab"  # a valid tag that is not the test checkout's HEAD (#732)
 
 FAKE_DOCKER = """\
 #!/usr/bin/env python3
@@ -282,10 +282,13 @@ class RunnerCase(unittest.TestCase):
         for cmd in (["init", "-q"], ["add", "-A"],
                     ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
             subprocess.run(["git", "-C", str(self.repo), *cmd], check=True, env=env)
+        # #732: the pinned tag is the checkout's HEAD, as `scripts/build-agent-image.sh` makes it
+        self.tag = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--short=12", "HEAD"],
+                                  capture_output=True, text=True, check=True).stdout.strip()
 
         patch_env = mock.patch.dict(os.environ, {
             "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
-            "FAKE_DOCKER_DIR": str(self.fake), "AGENT_PASSWORD": PASSWORD, "WOW_AGENT_TAG": TAG})
+            "FAKE_DOCKER_DIR": str(self.fake), "AGENT_PASSWORD": PASSWORD, "WOW_AGENT_TAG": self.tag})
         patch_env.start()
         self.addCleanup(patch_env.stop)
 
@@ -451,8 +454,8 @@ class StatusTest(RunnerCase):
 
     def test_image_is_the_sha_tagged_image_the_fleet_runs(self):
         self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
-        self.assertEqual(self.req("/agents")[1]["image"]["name"], f"wow-agent:{TAG}")
-        self.assertIn(["image", "inspect", "--format", "{{.Created}}", f"wow-agent:{TAG}"], self.calls())
+        self.assertEqual(self.req("/agents")[1]["image"]["name"], f"wow-agent:{self.tag}")
+        self.assertIn(["image", "inspect", "--format", "{{.Created}}", f"wow-agent:{self.tag}"], self.calls())
         self.assertFalse([c for c in self.calls() if "wow-agent:latest" in c])
 
     def test_unset_tag_still_answers_200_and_never_inspects_latest(self):
@@ -461,8 +464,19 @@ class StatusTest(RunnerCase):
             status, body = self.req("/agents")
         self.assertEqual(status, 200)
         self.assertEqual(body["image"], {"name": "wow-agent:(WOW_AGENT_TAG not set or invalid)",
-                                         "created": None, "stale": None, "present": False})
+                                         "created": None, "stale": None, "present": False,
+                                         "reason": "tag_unset"})
         self.assertFalse([c for c in self.calls() if c[:2] == ["image", "inspect"]])
+
+    def test_image_reason_says_why_the_image_is_not_present(self):
+        # #732: tag_unset when WOW_AGENT_TAG names no valid image, missing when docker has no such image;
+        # no reason at all when it is present
+        self.set_state(containers={}, image_created=None)
+        self.assertEqual(self.req("/agents")[1]["image"]["reason"], "missing")
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": "a b"}):
+            self.assertEqual(self.req("/agents")[1]["image"]["reason"], "tag_unset")
+        self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
+        self.assertNotIn("reason", self.req("/agents")[1]["image"])
 
 
 class ActionTest(RunnerCase):
@@ -539,6 +553,59 @@ class ActionTest(RunnerCase):
         self.assertTrue(body["built"])
         up = [c for c in self.compose_calls() if "up" in c][-1]
         self.assertIn("--build", up)
+
+    def test_a_missing_image_whose_tag_is_not_the_checkout_is_refused_before_compose(self):
+        # #732 Decision: the runner never builds a pinned tag from a different checkout
+        self.set_state(containers={}, image_created=None)
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
+            status, body = self.req("/agents/Bravo/start", "POST")
+        self.assertEqual((status, body["error"]), (409, "image_not_built"))
+        self.assertEqual(body["detail"], f"wow-agent:{OTHER_TAG} is not built and the checkout is at {self.tag}: "
+                         "check out that commit and run scripts/build-agent-image.sh, or set WOW_AGENT_TAG "
+                         "to an image that exists")
+        self.assertEqual(self.compose_calls(), [])
+
+    def test_an_explicit_build_of_a_present_image_whose_tag_is_not_the_checkout_is_refused(self):
+        self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": OTHER_TAG}):
+            status, body = self.req("/agents/Bravo/start?build=1", "POST")
+        self.assertEqual((status, body["error"]), (409, "tag_is_not_head"))
+        self.assertIn(f"wow-agent:{OTHER_TAG} is not the checkout's commit {self.tag}", body["detail"])
+        self.assertEqual(self.compose_calls(), [])
+
+    def test_the_head_is_read_by_git_in_the_checkout_with_an_argument_list_and_a_timeout(self):
+        calls, real = [], subprocess.run
+
+        def spy(args, **kw):
+            calls.append((args, kw))
+            return real(args, **kw)
+        with mock.patch.object(subprocess, "run", side_effect=spy):
+            self.assertEqual(self.fleet.backend.head_commit(), self.tag)
+        self.assertEqual(len(calls), 1)
+        args, kw = calls[0]
+        self.assertEqual(args, ["git", "-C", str(self.repo), "rev-parse", "--short=12", "HEAD"])
+        self.assertIn("timeout", kw)
+
+    def test_a_build_is_refused_when_git_cannot_read_the_checkout_head(self):
+        # git -C on a path that is not there fails: a failed head is never a match
+        self.set_state(containers={}, image_created=None)
+        self.fleet.backend.repo = self.repo / "not-there"
+        status, body = self.req("/agents/Bravo/start", "POST")
+        self.assertEqual((status, body["error"]), (409, "image_not_built"))
+        self.assertIn("checkout is at unknown", body["detail"])
+        self.assertEqual(self.compose_calls(), [])
+
+    def test_build_asked_with_no_valid_tag_is_refused_before_compose(self):
+        self.set_state(containers={}, image_created=None)
+        for tag in (None, "a b"):
+            with self.subTest(tag=tag), mock.patch.dict(os.environ):
+                if tag is None:
+                    os.environ.pop("WOW_AGENT_TAG", None)
+                else:
+                    os.environ["WOW_AGENT_TAG"] = tag
+                status, body = self.req("/agents/Bravo/start?build=1", "POST")
+            self.assertEqual((status, body["error"]), (409, "image_not_built"))
+        self.assertEqual(self.compose_calls(), [])
 
     def test_stop_on_an_absent_agent_is_a_no_op_that_reports_absent(self):
         status, body = self.req("/agents/Bravo/stop", "POST")
@@ -876,11 +943,21 @@ class FakeDockerTest(RunnerCase):
         self.docker = FakeDockerBackend(
             containers={"wow-agent-alpha": container("running"),
                         "wow-agent-charlie": container("exited", 137, finished="2026-09-19T08:30:00.5Z")},
-            image_created="2025-01-01T00:00:00Z")
+            image_created="2025-01-01T00:00:00Z", head=self.tag)
         self.fleet = runner.Fleet(self.config, backend=self.docker)
         patch = mock.patch.object(subprocess, "run", side_effect=AssertionError("docker must not run"))
         patch.start()
         self.addCleanup(patch.stop)
+
+    def test_a_start_that_wants_no_build_makes_no_git_call(self):
+        # #732: the image is present and no build is asked: neither the head nor the stale check is read
+        self.fleet.start("Bravo")
+        with mock.patch.dict(os.environ):
+            os.environ.pop("WOW_AGENT_TAG", None)     # no valid tag: compose runs without --build
+            self.fleet.start("Bravo")
+        self.assertEqual([c for c in self.docker.calls if c[0] in ("head", "source")], [])
+        ups = [c for c in self.docker.calls if c[0] == "compose" and "up" in c[1]]
+        self.assertEqual(["--build" in c[1] for c in ups], [False, False])
 
     def test_status_comes_from_the_backend(self):
         by_name = {a["name"]: a for a in self.fleet.status()["agents"]}

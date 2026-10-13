@@ -165,12 +165,14 @@ class Fleet:
 
     def image(self):
         """Image build time, and whether `agent/` or the Dockerfile changed since (#131). The image is
-        the one WOW_AGENT_TAG names when asked (#730); with no valid tag, docker is not asked."""
+        the one WOW_AGENT_TAG names when asked (#730); with no valid tag, docker is not asked. When it
+        is not present, `reason` says why: tag_unset, or missing (#732)."""
         ref = image_ref()
         name = ref or "wow-agent:(WOW_AGENT_TAG not set or invalid)"
         created_raw = self.backend.image_created(ref) if ref else None
         if created_raw is None:
-            return {"name": name, "created": None, "stale": None, "present": False}
+            return {"name": name, "created": None, "stale": None, "present": False,
+                    "reason": "missing" if ref else "tag_unset"}
         created = parse_docker_time(created_raw)
         stale = None
         try:
@@ -309,14 +311,37 @@ class Fleet:
             raise RunnerError(f"{e['name']} is retired; start is refused", status=409)
         with self._write_lock:
             self.write_compose()
-            # #730 Decision: an automatic build only fills a missing image under a valid tag. A stale
-            # image never triggers one (a rollback would rebuild the checkout under the old tag), and
-            # with no valid tag compose reports the missing variable.
-            image = self.image()
-            build = build or (image_ref() is not None and not image["present"])
+            build = self._build_wanted(build)
             args = ["up", "-d"] + (["--build"] if build else [])
             self._compose(args, e["service"], BUILD_TIMEOUT_S if build else UP_TIMEOUT_S)
         return self.one(name), {"built": build}
+
+    def _build_wanted(self, asked):
+        """Whether `start` runs `compose up --build`. A build is wanted when asked (?build=1) or when a
+        valid tag names a missing image (#730). A stale image never triggers one (a rollback would
+        rebuild the checkout under the old tag), and with no valid tag and no ask compose reports the
+        missing variable. #732 Decision: a wanted build runs only when the tag is the checkout's HEAD,
+        the commit scripts/build-agent-image.sh tags with; otherwise 409 and compose is not called.
+        A start that wants no build reads no git."""
+        ref = image_ref()
+        if ref is None:
+            if asked:
+                raise RunnerError("image_not_built", status=409, detail="WOW_AGENT_TAG is unset or not a valid "
+                                  "tag, so there is no image to build: set it to the commit's SHA, check out "
+                                  "that commit and run scripts/build-agent-image.sh")
+            return False
+        present = self.backend.image_created(ref) is not None
+        if present and not asked:
+            return False
+        tag, head = ref.partition(":")[2], self.backend.head_commit()
+        if head == tag:
+            return True
+        advice = "check out that commit and run scripts/build-agent-image.sh, or set WOW_AGENT_TAG to an image that exists"
+        if present:
+            raise RunnerError("tag_is_not_head", status=409,
+                              detail=f"{ref} is not the checkout's commit {head or 'unknown'}: {advice}")
+        raise RunnerError("image_not_built", status=409,
+                          detail=f"{ref} is not built and the checkout is at {head or 'unknown'}: {advice}")
 
     def stop(self, name):
         e = self.find(name)

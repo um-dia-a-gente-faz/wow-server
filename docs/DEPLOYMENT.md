@@ -476,7 +476,10 @@ Every `image:` and `FROM` is `name:<version>@sha256:<digest>`; CI fails on
 from `WOW_AGENT_TAG` in `.env`, the one setting.
 
 The agent-runner never rebuilds an existing pinned tag on its own. It builds only a missing
-`wow-agent:<WOW_AGENT_TAG>`, and only when the tag is valid (#730). The stale flag in its status
+`wow-agent:<WOW_AGENT_TAG>`, and only when the tag is valid (#730). #732: it also builds only when the
+tag is the checkout's HEAD (`git rev-parse --short=12 HEAD`, the form the script tags with); otherwise
+`start` answers HTTP 409 (`image_not_built`, or `tag_is_not_head` for `?build=1` on a present image) and
+docker is not called, so a checkout can never be built under another checkout's tag. The stale flag in its status
 (the image is older than the last change to `agent/` or the Dockerfile) is information only: it
 means "build a new image and move the tag".
 
