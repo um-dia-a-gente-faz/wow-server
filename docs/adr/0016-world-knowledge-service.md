@@ -332,8 +332,13 @@ setting is added, no compose file changes. Needs no database.
    `power_cost`; the table's `name` stays (the bundle keeps the rank apart, so 133 and 143 would
    collide) and a name difference is only logged. `root.load_world_bundle` passes `spells` a lookup
    callable, so `spells` imports nothing new. Which bundle spells an agent may consider is a later decision.
-2. Mount the bundle read-only into agent containers (`scripts/gen_agents_compose.py`, the
-   runner) and document the rebuild-and-copy step in `docs/DEPLOYMENT.md`.
+2. **Done in #749.** The directory `<runtime>/world` (`/opt/wow-server-metrics/world` in the
+   committed compose file) is mounted read-only at `/data/world` in every agent service
+   (`agents/compose.py`, `tools/agent-runner`), the directory and not the file, as ADR 0017 does for
+   the fleet. `AGENT_WORLD_BUNDLE` is passed through from the host `.env` and is empty by default, so
+   merging changes no behaviour. The owner arms it with `AGENT_WORLD_BUNDLE=/data/world/world.sqlite3`;
+   `docs/DEPLOYMENT.md`, "World bundle", has the build command and the rebuild-and-copy steps. A
+   rebuilt bundle is seen at the agent's next start (the reader is unchanged).
 3. Handle `SMSG_CLIENTCACHE_VERSION`: keep the cache id and discard `names.json` when it
    changes; the same for `items.json` if `ItemCache.load` has a caller by then.
 4. More client-tier tables as M9 issues need them (`AreaTable`, `Map`, `TaxiNodes`).

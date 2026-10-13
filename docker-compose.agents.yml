@@ -66,6 +66,9 @@ x-agent: &agent-defaults
     # #747 (ADR 0017): the fleet limits file, e.g. /data/fleet/limits.json. Empty = off: no file is
     # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
     AGENT_FLEET_LIMITS_FILE: ${AGENT_FLEET_LIMITS_FILE:-}
+    # #749 (ADR 0016): the world bundle file, e.g. /data/world/world.sqlite3. Empty = off: no file is
+    # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
+    AGENT_WORLD_BUNDLE: ${AGENT_WORLD_BUNDLE:-}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
     # all interfaces inside the container so the published port works; the
@@ -86,6 +89,9 @@ x-agent: &agent-defaults
     # #747: the DIRECTORY of the fleet limits file, read-only. Never the file: a single-file bind
     # mount pins the inode, and the writer replaces the file by rename (ADR 0017, Consequences).
     - /opt/wow-server-metrics/fleet:/data/fleet:ro
+    # #749: the DIRECTORY of the world bundle, read-only. Never the file: tools/worldknowledge/build.py
+    # replaces the bundle by rename, and a single-file bind mount would pin the old inode.
+    - /opt/wow-server-metrics/world:/data/world:ro
 
 services:
   agent-luaprata:

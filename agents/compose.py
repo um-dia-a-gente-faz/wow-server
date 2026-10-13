@@ -8,6 +8,7 @@ from . import roster
 
 DEFAULT_AUDIT_DIR = "/opt/wow-server-metrics/audit"
 DEFAULT_FLEET_DIR = "/opt/wow-server-metrics/fleet"
+DEFAULT_WORLD_DIR = "/opt/wow-server-metrics/world"
 RAID_SIZE = 25  # the size the HEADER text describes; the port range it names ends at FIRST_PORT + 24
 
 # #539: agent i (0-based position in the list given to render) waits (i * START_DELAY_STEP_S) %
@@ -85,6 +86,9 @@ x-agent: &agent-defaults
     # #747 (ADR 0017): the fleet limits file, e.g. /data/fleet/limits.json. Empty = off: no file is
     # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
     AGENT_FLEET_LIMITS_FILE: ${AGENT_FLEET_LIMITS_FILE:-}
+    # #749 (ADR 0016): the world bundle file, e.g. /data/world/world.sqlite3. Empty = off: no file is
+    # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
+    AGENT_WORLD_BUNDLE: ${AGENT_WORLD_BUNDLE:-}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (@API_PORTS@). Bound to
     # all interfaces inside the container so the published port works; the
@@ -105,6 +109,9 @@ x-agent: &agent-defaults
     # #747: the DIRECTORY of the fleet limits file, read-only. Never the file: a single-file bind
     # mount pins the inode, and the writer replaces the file by rename (ADR 0017, Consequences).
     - /opt/wow-server-metrics/fleet:/data/fleet:ro
+    # #749: the DIRECTORY of the world bundle, read-only. Never the file: tools/worldknowledge/build.py
+    # replaces the bundle by rename, and a single-file bind mount would pin the old inode.
+    - /opt/wow-server-metrics/world:/data/world:ro
 
 services:
 """
@@ -167,10 +174,12 @@ def derive(position: int, entry: dict) -> roster.Agent:
                         race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"))
 
 
-def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: str = DEFAULT_FLEET_DIR) -> str:
+def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: str = DEFAULT_FLEET_DIR,
+           world_dir: str = DEFAULT_WORLD_DIR) -> str:
     """The compose file text. `audit_dir` is the host path mounted at /data/audit;
     tools/agent-runner passes its own so the checkout's committed file stays the
-    default (#136, ADR 0002 D5). `fleet_dir` is the host path mounted read-only at /data/fleet (#747)."""
+    default (#136, ADR 0002 D5). `fleet_dir` is the host path mounted read-only at /data/fleet (#747);
+    `world_dir` the one mounted read-only at /data/world (#749)."""
     seen = set()
     blocks = []
     for i, a in enumerate(agents):
@@ -187,4 +196,5 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: st
     header = HEADER.replace("@API_PORTS@", f"{roster.FIRST_PORT}-{last_port}")
     text = header + "\n".join(blocks + [JEV_MOCK])
     return (text.replace(f"- {DEFAULT_AUDIT_DIR}:/data/audit", f"- {audit_dir}:/data/audit")
-            .replace(f"- {DEFAULT_FLEET_DIR}:/data/fleet:ro", f"- {fleet_dir}:/data/fleet:ro"))
+            .replace(f"- {DEFAULT_FLEET_DIR}:/data/fleet:ro", f"- {fleet_dir}:/data/fleet:ro")
+            .replace(f"- {DEFAULT_WORLD_DIR}:/data/world:ro", f"- {world_dir}:/data/world:ro"))
