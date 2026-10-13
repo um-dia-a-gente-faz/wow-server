@@ -180,7 +180,10 @@ const Fleet = (() => {
       banner.append(el('div', 'fl-banner warn', 'The agent image is older than the last change to agent/ or the Dockerfile; '
         + 'a running agent may lack the observability API (#131). Start with a rebuild to refresh it.'));
     } else if (runnerOk && data.image && data.image.present === false) {
-      banner.append(el('div', 'fl-banner warn', 'The agent image has not been built yet.'));
+      // #732: the runner says why; WOW_AGENT_TAG unset or invalid is not "not built yet".
+      banner.append(el('div', 'fl-banner warn', data.image.reason === 'tag_unset'
+        ? 'WOW_AGENT_TAG is not set (or not a valid tag) in the agent-runner environment.'
+        : 'The agent image has not been built yet.'));
     }
 
     const t = counts(rows);
@@ -239,7 +242,7 @@ const Fleet = (() => {
 
   async function act(name, action) {
     const verb = action === 'stop' ? 'Stop' : 'Start';
-    const extra = action === 'start' ? ' This may rebuild the image and take a while.' : ' The character will log out.';
+    const extra = action === 'start' ? ' This builds the image if it is missing.' : ' The character will log out.';
     if (!confirm(`${verb} agent ${name}?${extra}`)) return;
     busy.add(name); render();
     try {

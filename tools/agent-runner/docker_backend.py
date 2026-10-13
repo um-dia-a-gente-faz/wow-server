@@ -94,15 +94,26 @@ class DockerBackend:
             return ""
         return git.stdout.strip() if git.returncode == 0 else ""
 
+    def head_commit(self):
+        """The checkout's HEAD in the form `scripts/build-agent-image.sh` tags with (12 hex digits);
+        "" when git cannot say (#732: a failed head never matches a tag)."""
+        try:
+            git = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--short=12", "HEAD"],
+                                 capture_output=True, text=True, timeout=DOCKER_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return git.stdout.strip() if git.returncode == 0 else ""
+
 
 class FakeDockerBackend:
     """Test double (#279). Answers from what it was given and records each call:
-    ("inspect", names), ("compose", verb_args, service), ("image", ref), ("source",)."""
+    ("inspect", names), ("compose", verb_args, service), ("image", ref), ("source",), ("head",)."""
 
-    def __init__(self, containers=None, image_created=None, source_commit="", compose_error=None):
+    def __init__(self, containers=None, image_created=None, source_commit="", compose_error=None, head=""):
         self.containers = containers or {}
         self._image_created = image_created
         self._source_commit = source_commit
+        self._head = head
         self.compose_error = compose_error
         self.calls = []
 
@@ -124,3 +135,7 @@ class FakeDockerBackend:
     def last_source_commit(self):
         self.calls.append(("source",))
         return self._source_commit
+
+    def head_commit(self):
+        self.calls.append(("head",))
+        return self._head

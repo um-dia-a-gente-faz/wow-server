@@ -109,7 +109,9 @@ cycle both pass, then commits it here and to `.env.example`):
 
 ```sh
 scripts/build-agent-image.sh                 # builds wow-agent:<sha> from this checkout, prints the SHA
-# set WOW_AGENT_TAG=<that sha> in .env, then:
+# set WOW_AGENT_TAG=<that sha> in .env, then restart the runner (it reads the tag at start;
+# the order is in docs/DEPLOYMENT.md, "Agent image"):
+sudo systemctl restart agent-runner
 docker compose -f docker-compose.agents.yml up -d agent-<name>
 ```
 

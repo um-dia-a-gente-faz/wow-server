@@ -299,6 +299,13 @@ class PageTests(unittest.TestCase):
         markup = re.search(r'<section id="fleet".*?</section>', pagesrc.PAGE, re.S).group(0)
         self.assertNotIn("innerHTML", markup)
 
+    def test_banner_says_why_the_image_is_not_present(self):
+        # #732: the runner's reason picks the text; tag_unset names the variable, the rest keeps the old text
+        self.assertIn("data.image.reason === 'tag_unset'", pagesrc.FLEET_JS)
+        self.assertIn("WOW_AGENT_TAG is not set (or not a valid tag) in the agent-runner environment.", pagesrc.FLEET_JS)
+        self.assertIn("The agent image has not been built yet.", pagesrc.FLEET_JS)
+        self.assertIn("This builds the image if it is missing.", pagesrc.FLEET_JS)
+
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_fleet_script_parses(self):
         script = pagesrc.FLEET_JS.replace("<script>", "").replace("</script>", "")
