@@ -308,11 +308,21 @@ Update the whole table with one command, then paste it over `"agent_modules"`:
 command rewrites the file. Take the numbers from CI's log (it prints
 `module <path> stmts=<n> cover=<pct> floor=<n>` for every listed file) when your Python is not 3.12.
 
-Modules that moved between local runs of the same tree (timing-dependent branches in the
-session and memory tests) get a floor below the lowest percent seen, not `int(percent - 2)`:
-`agent/memory.py` (5 to 8 of 123 statements missed over five runs) and `agent/session.py` (10 to 12 of 272): floors 91 and 93.
+Three modules move between CI runs of the same tree (timing-dependent branches): `agent/auth.py`
+(4 or 6 of 137 statements missed), `agent/memory.py` (5 or 8 of 123) and `agent/session.py`
+(10 or 12 of 272). Their floors (93, 91 and 93) sit below the lowest
+value seen minus 2.
 
-What the per-module gate catches (measured locally, Python 3.14, from one run with a coverage context
+The table is CI's: `"python": "3.12"` in `coverage-floors.json` names the interpreter, and other
+interpreters count statements differently (9,698 on 3.14 against 9,851; `agent/model.py` 11
+against 91). On another interpreter the gate still runs and still fails on real problems, with one
+notice on stderr, and `--print-modules` says its output must not be pasted: take the numbers from the
+CI job's log. Two edge cases: a module that grows from 49 to 50 statements fails with the JSON line to
+add (`audit_schema.py`, `lines.py` and `perception/fields.py` sit at 46 on CI); a listed module that
+shrinks under 50 stays listed and checked, with no demand to remove it.
+
+What the per-module gate catches (measured locally, Python 3.14, against floors of
+`int(local percent - 2)`, not the committed table; from one run with a coverage context
 per test file: the statements only that file covers, taken off the module): deleting a test file alone
 fails the gate for 52 of the 110 files in `agent/tests/` (and 1 of 6 in `tools/world-mock/tests/`),
 against 3 for the total alone. The smallest loss that goes red is 2 statements, in a 51 to 60-statement module

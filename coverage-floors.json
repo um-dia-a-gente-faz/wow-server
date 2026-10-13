@@ -1,4 +1,5 @@
 {
+  "python": "3.12",
   "agent": 96,
   "agent_modules": {
     "agent/__main__.py": 84,

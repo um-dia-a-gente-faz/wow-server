@@ -131,15 +131,27 @@ class ConfigTest(unittest.TestCase):
                         '{"agent": 101, "agent_modules": {}}', '{"agent": 60, "agent_modules": []}',
                         '{"agent": 60, "agent_modules": {"agent/a.py": "90"}}',
                         '{"agent": 60, "agent_modules": {"agent/a.py": 101}}'):
+            if content and content.startswith('{"agent'):
+                content = content.replace("{", '{"python": "3.12", ', 1)   # each case fails for its own key
             with self.subTest(content=content):
                 code, err = self.run_main(content)
                 self.assertEqual(code, 2)
                 self.assertIn("coverage-floors.json", err)
 
+    def test_python_key_is_required_and_major_minor(self):
+        ok = '"agent": 60, "agent_modules": {}'
+        for content in ("{" + ok + "}", "{" + ok + ', "python": 3.12}', "{" + ok + ', "python": "3"}',
+                        "{" + ok + ', "python": "3.12.1"}', "{" + ok + ', "python": "x.y"}', "{" + ok + ', "python": ""}'):
+            with self.subTest(content=content):
+                code, err = self.run_main(content)
+                self.assertEqual(code, 2)
+                self.assertIn('"python"', err)
+
     def test_committed_file_is_valid(self):
         data = json.loads((ROOT / "coverage-floors.json").read_text())
-        self.assertEqual(list(data), ["agent", "agent_modules"])
-        self.assertEqual(cf.load_floors(ROOT / "coverage-floors.json"), (data["agent"], data["agent_modules"]))
+        self.assertEqual(list(data), ["python", "agent", "agent_modules"])
+        self.assertEqual(data["python"], "3.12")
+        self.assertEqual(cf.load_floors(ROOT / "coverage-floors.json"), (data["agent"], data["agent_modules"], "3.12"))
         self.assertEqual(list(data["agent_modules"]), sorted(data["agent_modules"]))
         for path in data["agent_modules"]:
             self.assertTrue((ROOT / path).is_file(), path)
@@ -150,12 +162,13 @@ class MainTest(unittest.TestCase):
 
     FILES = {"agent/a.py": mod(100, 90.0, [3]), "agent/small.py": mod(10, 10.0)}
 
-    def run_main(self, measured, argv=(), spec=True, files=None):
+    def run_main(self, measured, argv=(), spec=True, files=None, python="3.12"):
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "floors.json"
-            p.write_text('{"agent": 60, "agent_modules": {"agent/a.py": 88}}')
+            p.write_text('{"python": "3.12", "agent": 60, "agent_modules": {"agent/a.py": 88}}')
             result = (measured, self.FILES if files is None else files)
             with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", return_value=result), \
+                    mock.patch.object(cf, "running_python", return_value=python), \
                     mock.patch.object(cf.importlib.util, "find_spec", return_value=spec), \
                     contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
                 code = cf.main(list(argv))
@@ -181,6 +194,8 @@ class MainTest(unittest.TestCase):
             code, out, _ = self.run_main(m, ["--report-only"])
             self.assertEqual(code, 0)
             self.assertIn(f"agent coverage {m:.2f}%", out)
+        code, _, _ = self.run_main(10.0, ["--report-only"], files={"agent/a.py": mod(100, 10.0), "agent/new.py": mod(60, 90.0)})
+        self.assertEqual(code, 0)
 
     def test_module_below_its_floor_exits_1_with_its_lines(self):
         code, out, _ = self.run_main(61.0, files={"agent/a.py": mod(100, 80.0, [7, 8])})
@@ -217,13 +232,38 @@ class MainTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "floors.json"
-            p.write_text('{"agent": 60, "agent_modules": {}}')
-            with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", noisy), \
+            p.write_text('{"python": "3.12", "agent": 60, "agent_modules": {}}')
+            with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", noisy), mock.patch.object(cf, "running_python", return_value="3.12"), \
                     mock.patch.object(cf.importlib.util, "find_spec", return_value=True), \
                     contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
                 cf.main(["--print-modules"])
         self.assertEqual(json.loads(out.getvalue()), {"agent/a.py": 88})
         self.assertIn("TABLE", err.getvalue())
+
+    def test_other_interpreter_prints_one_notice_and_still_gates(self):
+        code, out, err = self.run_main(50.0, python="3.14")
+        self.assertEqual(code, 1)
+        self.assertIn("is below the floor", out)
+        self.assertEqual(err.count("Python 3.12"), 1)
+        self.assertIn("this is 3.14", err)
+        self.assertIn("differ by interpreter", err)
+        self.assertNotIn("Python 3.12", out)
+
+    def test_matching_interpreter_prints_no_notice(self):
+        _, out, err = self.run_main(61.0)
+        self.assertEqual(err, "")
+        self.assertNotIn("interpreter", out)
+
+    def test_print_modules_on_another_interpreter_warns_on_stderr_and_keeps_stdout_json(self):
+        code, out, err = self.run_main(61.0, ["--print-modules"], python="3.14")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"agent/a.py": 88})
+        self.assertIn("do NOT paste", err)
+        self.assertIn("coverage-floors.json", err)
+        self.assertEqual(err.count("Python 3.12"), 1)
+
+    def test_print_modules_on_the_matching_interpreter_does_not_warn(self):
+        self.assertNotIn("do NOT paste", self.run_main(61.0, ["--print-modules"])[2])
 
     def test_not_installed_exits_2(self):
         code, _, err = self.run_main(60.0, spec=None)
@@ -306,7 +346,9 @@ class RunTest(unittest.TestCase):
         self.assertEqual(total, 97.5)
         self.assertEqual(files, {"agent/x.py": (60, 91.5, [4, 5])})
         # the JSON report is written next to the data file, in the temporary directory
-        self.assertTrue(any("json" in c[:4] for c, _ in calls))
+        json_cmd = next(c for c, _ in calls if "json" in c[:4])
+        self.assertEqual(len({data for _, data in calls}), 1)
+        self.assertEqual(pathlib.Path(json_cmd[json_cmd.index("-o") + 1]).parent, pathlib.Path(calls[0][1]).parent)
         runs = [c for c, _ in calls if "run" in c[:4]]
         self.assertEqual(len(runs), 2)
         for cmd in runs:

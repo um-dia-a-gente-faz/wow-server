@@ -14,6 +14,7 @@ stdlib only: it shells out to `python -m coverage` and never imports it.
 import contextlib
 import importlib.util
 import json
+import re
 import os
 import signal
 import subprocess
@@ -86,7 +87,11 @@ def modules_table(measured: dict[str, tuple[int, float, list[int]]]) -> dict[str
     return {p: module_floor(m[1]) for p, m in sorted(measured.items()) if m[0] >= MODULE_MIN_STMTS}
 
 
-def load_floors(path: Path) -> tuple[int, dict[str, int]]:
+def running_python() -> str:
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
+def load_floors(path: Path) -> tuple[int, dict[str, int], str]:
     def bad(why: str) -> None:
         print(f"coverage-floors.json: {why}", file=sys.stderr)
         sys.exit(2)
@@ -108,7 +113,10 @@ def load_floors(path: Path) -> tuple[int, dict[str, int]]:
     if not isinstance(mods, dict) or any(
             not isinstance(k, str) or type(v) is not int or not 0 <= v <= 100 for k, v in mods.items()):
         bad('"agent_modules" must map file paths to integers from 0 to 100')
-    return floor, mods
+    py = data.get("python")
+    if not isinstance(py, str) or not re.fullmatch(r"\d+\.\d+", py):
+        bad('"python" must be a "major.minor" string, the interpreter the numbers were measured on')
+    return floor, mods, py
 
 
 def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline: float | None = None) -> str:
@@ -158,10 +166,16 @@ def measure() -> tuple[float, dict[str, tuple[int, float, list[int]]]]:
 
 
 def main(argv: list[str]) -> int:
-    floor, mod_floors = load_floors(FLOORS)
+    floor, mod_floors, py = load_floors(FLOORS)
     if importlib.util.find_spec("coverage") is None:
         print("coverage is not installed: pip install -r requirements-dev.txt", file=sys.stderr)
         return 2
+    if running_python() != py:
+        note = (f"coverage-floors.json: the floors were measured on Python {py}, this is {running_python()}; "
+                f"per-module numbers differ by interpreter")
+        if "--print-modules" in argv:
+            note += ": do NOT paste this output into coverage-floors.json, take the numbers from the CI job's log"
+        print(note, file=sys.stderr)
     if "--print-modules" in argv:
         with contextlib.redirect_stdout(sys.stderr):   # stdout is the JSON and nothing else
             _, files = measure()
