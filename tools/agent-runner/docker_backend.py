@@ -6,13 +6,25 @@ the allow-list, and every method that names a container or service calls it befo
 """
 
 import json
+import os
+import re
 import subprocess
 
 from core import RunnerError, scrub
 
-IMAGE = "wow-agent:latest"
 DOCKER_TIMEOUT_S = 15
 MAX_DETAIL_CHARS = 600
+# Docker's tag grammar. A tag outside it is treated as unset, never passed to docker (#730).
+TAG_GRAMMAR = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+
+
+def image_ref():
+    """The agent image the fleet runs: `wow-agent:<WOW_AGENT_TAG>`, read from the environment now
+    (#730). None when the tag is unset or not a valid tag; nothing falls back to `latest`. The
+    runner's environment is what its `docker compose` inherits, and it overrides `.env` there, so
+    this names the image compose starts (the systemd unit loads `.env` into it)."""
+    tag = os.environ.get("WOW_AGENT_TAG", "")
+    return f"wow-agent:{tag}" if TAG_GRAMMAR.fullmatch(tag) else None
 
 
 def allowed_names(entries):
@@ -66,9 +78,9 @@ class DockerBackend:
             detail = scrub((res.stderr or res.stdout or "").strip())[-MAX_DETAIL_CHARS:]
             raise RunnerError(f"docker compose {verb_args[0]} failed (exit {res.returncode})", detail=detail)
 
-    def image_created(self):
-        """The image's Created time as docker prints it, or None when the image is absent."""
-        res = self._run(["image", "inspect", "--format", "{{.Created}}", IMAGE])
+    def image_created(self, ref):
+        """The image's Created time as docker prints it, or None when `ref` is absent."""
+        res = self._run(["image", "inspect", "--format", "{{.Created}}", ref])
         return res.stdout.strip() if res.returncode == 0 else None
 
     def last_source_commit(self):
@@ -85,7 +97,7 @@ class DockerBackend:
 
 class FakeDockerBackend:
     """Test double (#279). Answers from what it was given and records each call:
-    ("inspect", names), ("compose", verb_args, service), ("image",), ("source",)."""
+    ("inspect", names), ("compose", verb_args, service), ("image", ref), ("source",)."""
 
     def __init__(self, containers=None, image_created=None, source_commit="", compose_error=None):
         self.containers = containers or {}
@@ -105,8 +117,8 @@ class FakeDockerBackend:
         if self.compose_error:
             raise RunnerError(f"docker compose {verb_args[0]} failed (exit 1)", detail=self.compose_error)
 
-    def image_created(self):
-        self.calls.append(("image",))
+    def image_created(self, ref):
+        self.calls.append(("image", ref))
         return self._image_created
 
     def last_source_commit(self):

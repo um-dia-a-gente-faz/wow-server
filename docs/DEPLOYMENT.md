@@ -339,7 +339,7 @@ to run without the file, and `git reset --hard` leaves it alone (it's ignored).
 | `MYSQL_ROOT_PASSWORD` | `database` (+ healthcheck), `wow-exporter`, `wowmap` | Only applied when `db_data` is first initialised. On the existing VM, set it to the password the DB **already** uses — changing it here does not change MySQL. |
 | `ACCESS_PASSWORD` | `trinitycore-wowserver` web UI (:3000) | Username stays `admin`. |
 | `AGENT_PASSWORD` | `docker-compose.agents.yml` | Shared password of AGENT01..AGENT25 (also read by `scripts/create_agent_roster.py`). |
-| `WOW_AGENT_TAG` | `docker-compose.agents.yml` | Git SHA of the `wow-agent` image the agents run (#291). Printed by `scripts/build-agent-image.sh`. |
+| `WOW_AGENT_TAG` | `docker-compose.agents.yml` | Git SHA of the `wow-agent` image the agents run (#291). Printed by `scripts/build-agent-image.sh`. The agent-runner's image status follows it (#730): restart `agent-runner` after changing it, since the runner reads it from its environment. |
 | `LLM_API_KEY` | agents (future LLM layer) | Router key from the FreeLLMAPI instance at `192.168.1.72:3001` (the old docker-stack one is gone); never paste it into docs. |
 
 One-time setup on the VM:
@@ -475,13 +475,30 @@ Every `image:` and `FROM` is `name:<version>@sha256:<digest>`; CI fails on
 (and `wow-agent:latest`, a convenience only). The compose file reads the tag
 from `WOW_AGENT_TAG` in `.env`, the one setting.
 
+The agent-runner never rebuilds an existing pinned tag on its own. It builds only a missing
+`wow-agent:<WOW_AGENT_TAG>`, and only when the tag is valid (#730). The stale flag in its status
+(the image is older than the last change to `agent/` or the Dockerfile) is information only: it
+means "build a new image and move the tag".
+
+Rebuild and roll, in this order:
+
 ```bash
-scripts/build-agent-image.sh                       # prints the new SHA
-# set WOW_AGENT_TAG=<new sha> in .env, then recreate:
-docker compose -f docker-compose.agents.yml --profile raid up -d
-# rollback: set WOW_AGENT_TAG back to the previous SHA (the old image is still
-# on the host unless pruned; otherwise check out that commit and rebuild), up -d again.
+git -C /opt/wow-server pull --ff-only             # 1. the checkout at the commit to ship
+scripts/build-agent-image.sh                      # 2. builds wow-agent:<sha>, prints the SHA
+# 3. set WOW_AGENT_TAG=<sha> in /opt/wow-server/.env
+sudo systemctl restart agent-runner               # 4. the runner and the compose it spawns read the tag at start
+docker compose -f docker-compose.agents.yml --profile raid up -d   # 5. start or recreate the agents
+# 6. check GET /agents on the runner: image.name is wow-agent:<sha>, present is true
+#    (tools/agent-runner/README.md has the call)
 ```
+
+Rollback, with the same order: set `WOW_AGENT_TAG` back to the previous SHA in `.env`, restart
+`agent-runner`, then check `GET /agents` shows the image `present: true` before starting any agent (if
+it is `false`, the old image was pruned: stop, check out that commit and run `scripts/build-agent-image.sh`).
+Then start the agents and check `GET /agents` again. The runner does not rebuild a pinned tag on
+its own, so a rollback to a SHA whose image is still on the host starts that image unchanged. If the
+old image was pruned and you start anyway, `start` builds the checkout under that old tag, which
+overwrites what the SHA names.
 
 **Bumping pins.** Look up the new tag's multi-arch digest in the registry
 (Docker Hub `.../tags/<tag>` `digest`, or `gcr.io/v2/<repo>/tags/list`), change

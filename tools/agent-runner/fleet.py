@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import characters
 from core import RunnerError, iso, scrub
-from docker_backend import IMAGE, DockerBackend, allowed_names
+from docker_backend import DockerBackend, allowed_names, image_ref
 
 _CHECKOUT = str(Path(__file__).resolve().parents[2])   # the repo root, for the agents/ library
 if _CHECKOUT not in sys.path:
@@ -164,10 +164,13 @@ class Fleet:
                 "since": parse_docker_time(st.get("FinishedAt"))}
 
     def image(self):
-        """Image build time, and whether `agent/` or the Dockerfile changed since (#131)."""
-        created_raw = self.backend.image_created()
+        """Image build time, and whether `agent/` or the Dockerfile changed since (#131). The image is
+        the one WOW_AGENT_TAG names when asked (#730); with no valid tag, docker is not asked."""
+        ref = image_ref()
+        name = ref or "wow-agent:(WOW_AGENT_TAG not set or invalid)"
+        created_raw = self.backend.image_created(ref) if ref else None
         if created_raw is None:
-            return {"name": IMAGE, "created": None, "stale": None, "present": False}
+            return {"name": name, "created": None, "stale": None, "present": False}
         created = parse_docker_time(created_raw)
         stale = None
         try:
@@ -177,7 +180,7 @@ class Fleet:
                 stale = int(last) > when.timestamp()
         except (ValueError, TypeError):
             stale = None
-        return {"name": IMAGE, "created": created, "stale": stale, "present": True}
+        return {"name": name, "created": created, "stale": stale, "present": True}
 
     # ── per-agent signals ────────────────────────────────────────────
     def agent_api(self, port):
@@ -306,8 +309,11 @@ class Fleet:
             raise RunnerError(f"{e['name']} is retired; start is refused", status=409)
         with self._write_lock:
             self.write_compose()
+            # #730 Decision: an automatic build only fills a missing image under a valid tag. A stale
+            # image never triggers one (a rollback would rebuild the checkout under the old tag), and
+            # with no valid tag compose reports the missing variable.
             image = self.image()
-            build = build or not image["present"] or image["stale"] is True
+            build = build or (image_ref() is not None and not image["present"])
             args = ["up", "-d"] + (["--build"] if build else [])
             self._compose(args, e["service"], BUILD_TIMEOUT_S if build else UP_TIMEOUT_S)
         return self.one(name), {"built": build}

@@ -23,6 +23,23 @@ Restart=on-failure
 runner refuses to start without a token. Locally:
 `AGENT_RUNNER_TOKEN=x python3 tools/agent-runner/runner.py`.
 
+The runner's image status (`GET /agents`, `image`) follows `WOW_AGENT_TAG`: it reports
+`wow-agent:<WOW_AGENT_TAG>`, read from the runner's environment at each request (#730). Unset or not a
+valid Docker tag, it reports `present: false` and names the tag as not set; it never falls back to
+`latest`. The variable comes from the unit's `EnvironmentFile`, so restart the runner after changing
+it in `.env` (the environment is read once at start, and compose inherits it too).
+
+**When the runner builds (#131 as changed by #730).** The runner never rebuilds an existing pinned
+tag on its own. Without `?build=1`, `start` adds `--build` only when `WOW_AGENT_TAG` gives a valid
+image reference and that image is missing. A stale image (`stale: true`: older than the last commit
+touching `agent/` or `Dockerfile`) triggers nothing; it is information only, meaning "build a new image
+and move the tag". `?build=1` is the explicit rebuild. With the tag unset or invalid, `start` adds no
+`--build`, and compose reports the missing variable (HTTP 502, the scrubbed detail).
+
+A rollback is: set `WOW_AGENT_TAG` back to an earlier SHA, restart the runner, start the agents. If that
+image is still on the host, it starts as it is. If it was pruned, it is missing, so `start` builds the
+checkout under that old tag: check out that commit and run `scripts/build-agent-image.sh` first.
+
 | Variable | Default | |
 |---|---|---|
 | `AGENT_RUNNER_TOKEN` | required | shared token; `Authorization: Bearer <token>` |
@@ -60,7 +77,7 @@ must be a roster service or container. `inspect` and `compose` call it before an
 | `GET /healthz` | `{"ok": true}`, no token |
 | `GET /agents` | every configured agent, plus `image` (present, created, stale) |
 | `GET /agents/<name>` | one agent (name is the character, case-insensitive) |
-| `POST /agents/<name>/start` | `compose up -d <service>`; adds `--build` when the image is missing or older than the last commit touching `agent/` or `Dockerfile`, or with `?build=1` |
+| `POST /agents/<name>/start` | `compose up -d <service>`; adds `--build` only when `WOW_AGENT_TAG` names a valid image that is missing, or with `?build=1` (#131, changed by #730: see below) |
 | `POST /agents/<name>/stop` | `compose stop <service>` |
 | `POST /agents` | create a level-1 character, record it, start its container (below) |
 | `POST /agents/<name>/retire` | stop the container and mark the agent retired; the character is never deleted |
