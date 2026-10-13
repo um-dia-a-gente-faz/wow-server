@@ -284,10 +284,54 @@ the total from 97.25% to 95.61%, under the floor. Deleting `test_probe.py` alone
 `test_candidates.py` alone (97.22%) does not, because other tests cover the same code. So a
 deleted test file fails the gate only when it was the only coverage of about 125 or more
 statements, which holds for 3 of the 105 test files today. It does not see smaller losses, and
-it says nothing about which module lost them; per-module floors or diff coverage would, and
-are part 2.
+it says nothing about which module lost them; the per-module floors below do.
 
-Only `agent/` has a floor so far; the `tools/` packages follow in a separate issue.
+### Per-module floors (#700)
+
+`coverage-floors.json` also has `"agent_modules"`: one floor per production file under `agent/`
+with 50 or more statements (smaller files move by whole points per line). The value is
+`int(percent - 2)` of what CI (Python 3.12) measures, so a module starts with 2 to 3 points of room.
+It comes from the same measurement run as the total (`coverage json`), so the job takes no longer.
+**Lower bound only**: a module that got better never fails and no PR has to raise its number
+(raise it when you like, with `--print-modules`). Three failures, all naming the module:
+
+- `agent/x.py coverage 88.00% is below its floor 90%: missing lines 12-18, 40`: statements
+  stopped being covered in that module. Read the line ranges, add the test or restore the one removed.
+  Do not lower the floor to get green unless the code was deliberately removed with its tests.
+- `agent/x.py has 50 statements and no floor: add "agent/x.py": 95 ...`: a new or grown module
+  without an entry. Paste the line into `"agent_modules"` (sorted by path).
+- `agent/x.py is in "agent_modules" but no longer exists`: you deleted or renamed the file.
+  Remove (or rename) that line.
+
+Update the whole table with one command, then paste it over `"agent_modules"`:
+`python3 scripts/coverage_floor.py --print-modules` (runs the measurement; stdout is only the JSON). No
+command rewrites the file. Take the numbers from CI's log (it prints
+`module <path> stmts=<n> cover=<pct> floor=<n>` for every listed file) when your Python is not 3.12.
+
+Three modules move between CI runs of the same tree (timing-dependent branches): `agent/auth.py`
+(4 or 6 of 137 statements missed), `agent/memory.py` (5 or 8 of 123) and `agent/session.py`
+(10 or 12 of 272). Their floors (93, 91 and 93) sit below the lowest
+value seen minus 2.
+
+The table is CI's: `"python": "3.12"` in `coverage-floors.json` names the interpreter, and other
+interpreters count statements differently (9,698 on 3.14 against 9,851; `agent/model.py` 11
+against 91). On another interpreter the gate still runs and still fails on real problems, with one
+notice on stderr, and `--print-modules` says its output must not be pasted: take the numbers from the
+CI job's log. Two edge cases: a module that grows from 49 to 50 statements fails with the JSON line to
+add (`audit_schema.py`, `lines.py` and `perception/fields.py` sit at 46 on CI); a listed module that
+shrinks under 50 stays listed and checked, with no demand to remove it.
+
+What the per-module gate catches (measured locally, Python 3.14, against floors of
+`int(local percent - 2)`, not the committed table; from one run with a coverage context
+per test file: the statements only that file covers, taken off the module): deleting a test file alone
+fails the gate for 52 of the 110 files in `agent/tests/` (and 1 of 6 in `tools/world-mock/tests/`),
+against 3 for the total alone. The smallest loss that goes red is 2 statements, in a 51 to 60-statement module
+(`test_item_compare.py`, `test_packets.py` and `test_supervisor_lifecycle.py` each lose only that);
+in the largest modules (270 to 360 statements) it is 10 to 11. Still not caught: the 34 files under 50 statements (890 statements in all),
+a loss inside a module's 2 to 3 points of room (up to 10 statements in a 300-statement module), and untested
+new lines in a module that stays above its floor (diff coverage would see that; not built).
+
+Only `agent/` has floors so far; `tools/` floors and diff coverage are not built.
 
 ## Secrets
 
