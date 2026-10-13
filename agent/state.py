@@ -27,6 +27,7 @@ class GameState:
         self._running = False
         self._in_world = False
         self.dropped_packets = 0  # packets whose handler raised
+        self.client_cache_version: int | None = None  # SMSG_CLIENTCACHE_VERSION (#751); None until it arrives
 
         # Game state
         self.player_guid = 0

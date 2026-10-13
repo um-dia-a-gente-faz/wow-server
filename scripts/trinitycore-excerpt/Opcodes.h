@@ -1,5 +1,5 @@
 // Excerpt of TrinityCore (GPL-2.0) src/server/game/Server/Protocol/Opcodes.h
-// commit 41d89b32c01577508005bad98992d76b0b1abc43
+// commit 92127cd6252edb96fbfa36540db0eba17d0031fa
 // Written by scripts/gen_protocol_tables.py --source: do not edit by hand.
 enum Opcodes : uint16
     CMSG_CHAR_CREATE                                = 0x036,
@@ -171,3 +171,4 @@ enum Opcodes : uint16
     CMSG_TIME_SYNC_RESP                             = 0x391,
     SMSG_GM_MESSAGECHAT                             = 0x3B3,
     CMSG_KEEP_ALIVE                                 = 0x407,
+    SMSG_CLIENTCACHE_VERSION                        = 0x4AB,

@@ -245,6 +245,14 @@ class NameCache:
         self._clock = clock
         self.cache_path = cache_path  # used by load()/save() when no path is given — tests override this
         self._no_save: set[str] = set()  # paths whose file is of a newer schema: save() leaves them alone
+        # #751: the id of the server's data generation (SMSG_CLIENTCACHE_VERSION), None until it
+        # arrives, and the id the loaded file carried (None: no file, or one without the key).
+        self.server_cache_id: int | None = None
+        self._file_cache_id: int | None = None
+        # Entries that came from the file, so a late discard leaves what this session learned.
+        # Cost: one int per file entry, no second copy of the data.
+        self._file_creatures: set[int] = set()
+        self._file_gameobjects: set[int] = set()
         self.duplicate_queries = 0  # debug counter: a want_*() for something already known or in-flight
         self.expired_queries = 0  # sent queries forgotten after QUERY_TIMEOUT_S with no answer
         self.dropped_queries = 0  # queued queries pushed out by the MAX_PENDING cap
@@ -353,11 +361,43 @@ class NameCache:
                 log.warning("ignoring unreadable name cache %s: %s", path, str(e)[:200])
                 persist.set_aside(path)
                 return
+            cache_id = loaded.data.get("cache_id")
+            self._file_cache_id = cache_id if type(cache_id) is int else None   # absent or odd: no id
             self.creatures.update(creatures)
             self.gameobjects.update(gameobjects)
+            self._file_creatures = set(creatures)
+            self._file_gameobjects = set(gameobjects)
+            self._discard_file_names_if_stale()
             return
         log.warning("ignoring unreadable name cache %s", path)
         persist.set_aside(path)
+
+    def set_server_cache_id(self, cache_id: int | None):
+        """#751: the id from SMSG_CLIENTCACHE_VERSION (world.version.cache_id, or the worldserver
+        ClientCacheVersion override). None (packet missing or malformed) changes nothing. It can
+        arrive before or after load(); the rule runs when the second of the two facts is known.
+        Under WorldState the caller holds its lock (apply_server_cache_id); no disk I/O here."""
+        if cache_id is None:
+            return
+        self.server_cache_id = cache_id
+        self._discard_file_names_if_stale()
+
+    def _discard_file_names_if_stale(self):
+        """Both ids known and different: forget the names that came from the file, once. The file
+        is not touched (it is not corrupt, nothing is set aside); the next save overwrites it with
+        the server's id. A file without an id, or an unknown server id, discards nothing."""
+        if self.server_cache_id is None or self._file_cache_id in (None, self.server_cache_id):
+            return
+        log.info("name cache %s was written under cache id %d, the server sends %d: "
+                 "dropping %d creature and %d gameobject names", self.cache_path, self._file_cache_id,
+                 self.server_cache_id, len(self._file_creatures), len(self._file_gameobjects))
+        for entry in self._file_creatures:
+            self.creatures.pop(entry, None)
+        for entry in self._file_gameobjects:
+            self.gameobjects.pop(entry, None)
+        self._file_creatures = set()
+        self._file_gameobjects = set()
+        self._file_cache_id = None
 
     def save(self, path: str | None = None):
         """A save failure (read-only fs, disk full) must not crash the
@@ -369,4 +409,6 @@ class NameCache:
             return
         with contextlib.suppress(OSError):
             persist.write_versioned(path, CACHE_SCHEMA,
-                                    {"creatures": self.creatures, "gameobjects": self.gameobjects})
+                                    {"cache_id": self.server_cache_id if self.server_cache_id is not None
+                                                 else self._file_cache_id,   # never null over a known id
+                                     "creatures": self.creatures, "gameobjects": self.gameobjects})
