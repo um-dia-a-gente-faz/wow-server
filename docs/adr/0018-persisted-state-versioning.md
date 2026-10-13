@@ -321,9 +321,17 @@ need a deploy step, a dependency or database access that the rules forbid.
    is newer or unreadable, which includes a zone that is not an object and a `dx` or `dy`
    that is not a number; `schema`.
 6. `ActivityStore`: `user_version` and `MIGRATIONS`, step 1 being today's `SCHEMA`.
-7. A fixture file per released version for each SQLite store, migrated in a test (the
-   harness #396 asks for); #325 is born with it.
+7. Done in #739. A fixture file per released version for each SQLite store, migrated in a test
+   (the harness #396 asks for); #325 is born with it.
 8. After #347: delete the copy in `tools/common` and its test.
+
+**Adding a migration N** (the rule slice 7 enforces, for `Memory` and `ActivityStore`): append
+the step to `MIGRATIONS`, which bumps `SCHEMA_VERSION`; add `v<N>.sql` next to the others, a
+database as version N creates it, with rows that exercise what the step added; pin its sha256 in
+the test module (the failure message prints the value). A step should only add. A destructive step
+(`DROP`, `DELETE`) makes the older fixtures' row assertions fail; that is the point, and it
+belongs in its PR as a deliberate decision, not as a quiet edit of the expected rows. Never edit a fixture that has shipped: the test fails, and the fix is to
+restore it from git.
 
 ## Open questions for the owner
 
