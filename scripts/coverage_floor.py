@@ -7,9 +7,11 @@ STALE_MARGIN above it (floor not raised). Same idiom as mypy-legacy-baseline.jso
 
   scripts/check.sh coverage                         # the gate, what CI runs
   python3 scripts/coverage_floor.py --report-only   # table and result, always exit 0
+  python3 scripts/coverage_floor.py --print-modules # "agent_modules" for coverage-floors.json, as JSON
 
 stdlib only: it shells out to `python -m coverage` and never imports it.
 """
+import contextlib
 import importlib.util
 import json
 import os
@@ -26,6 +28,10 @@ FLOORS = ROOT / "coverage-floors.json"
 # Timing-dependent branches in the world-mock tests and the Python version move the total by a
 # fraction of a point; a floor that lags by less than this is not stale.
 STALE_MARGIN = 2.0
+# Per-module floors (#700): files with fewer statements move by whole points per line, which is noise.
+MODULE_MIN_STMTS = 50
+MODULE_ROOM = 2      # a module's floor is int(percent - MODULE_ROOM); better never fails, only worse does
+RANGES_CAP = 100     # characters of missing line ranges in one message
 
 
 def check(measured: float, floor: int) -> list[str]:
@@ -37,7 +43,50 @@ def check(measured: float, floor: int) -> list[str]:
     return []
 
 
-def load_floor(path: Path) -> int:
+def line_ranges(lines: list[int]) -> str:
+    """[12, 13, 14, 40] -> '12-14, 40', cut at RANGES_CAP characters."""
+    parts: list[str] = []
+    nums = sorted(lines)
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        parts.append(str(nums[i]) if i == j else f"{nums[i]}-{nums[j]}")
+        i = j + 1
+    out = ", ".join(parts)
+    if len(out) > RANGES_CAP:
+        out = out[:RANGES_CAP].rsplit(", ", 1)[0] + ", ..."
+    return out
+
+
+def module_floor(percent: float) -> int:
+    return int(percent - MODULE_ROOM)
+
+
+def check_modules(measured: dict[str, tuple[int, float, list[int]]], floors: dict[str, int]) -> list[str]:
+    """measured[path] = (statements, percent, missing lines). Lower bound only: no stale failure."""
+    problems = []
+    for path in sorted(measured):
+        stmts, pct, missing = measured[path]
+        if path in floors:
+            if pct < floors[path]:
+                problems.append(f"{path} coverage {pct:.2f}% is below its floor {floors[path]}%: "
+                                f"missing lines {line_ranges(missing)}; add tests or restore the ones removed")
+        elif stmts >= MODULE_MIN_STMTS:
+            problems.append(f'{path} has {stmts} statements and no floor: add "{path}": {module_floor(pct)} '
+                            f'to "agent_modules" in coverage-floors.json (scripts/coverage_floor.py --print-modules)')
+    for path in sorted(floors):
+        if path not in measured:
+            problems.append(f'{path} is in "agent_modules" but no longer exists: remove that line from coverage-floors.json')
+    return problems
+
+
+def modules_table(measured: dict[str, tuple[int, float, list[int]]]) -> dict[str, int]:
+    return {p: module_floor(m[1]) for p, m in sorted(measured.items()) if m[0] >= MODULE_MIN_STMTS}
+
+
+def load_floors(path: Path) -> tuple[int, dict[str, int]]:
     def bad(why: str) -> None:
         print(f"coverage-floors.json: {why}", file=sys.stderr)
         sys.exit(2)
@@ -49,13 +98,17 @@ def load_floor(path: Path) -> int:
         bad(f"cannot read {path}: {e}")
     except ValueError as e:
         bad(f"not valid JSON: {e}")
-    if not isinstance(data, dict) or "agent" not in data:
-        bad('expected {"agent": <int>}')
+    if not isinstance(data, dict) or "agent" not in data or "agent_modules" not in data:
+        bad('expected {"agent": <int>, "agent_modules": {<path>: <int>}}')
         raise AssertionError  # unreachable: bad() exits
     floor = data["agent"]
     if type(floor) is not int or not 0 <= floor <= 100:
         bad('"agent" must be an integer from 0 to 100')
-    return floor
+    mods = data["agent_modules"]
+    if not isinstance(mods, dict) or any(
+            not isinstance(k, str) or type(v) is not int or not 0 <= v <= 100 for k, v in mods.items()):
+        bad('"agent_modules" must map file paths to integers from 0 to 100')
+    return floor, mods
 
 
 def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline: float | None = None) -> str:
@@ -84,8 +137,8 @@ def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline
     return out or ""
 
 
-def measure() -> float:
-    """Total coverage of agent/ over the same two runs the CI job always made; prints the table."""
+def measure() -> tuple[float, dict[str, tuple[int, float, list[int]]]]:
+    """Total and per-file (statements, percent, missing lines) of agent/ over the one measurement; prints the table."""
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "COVERAGE_FILE": str(Path(tmp) / "data")}
         # Production code only: the test files are most of the statements and run by definition.
@@ -96,19 +149,33 @@ def measure() -> float:
         _run(["run", *src, "agent/tests"], env, deadline=deadline)
         _run(["run", "-a", *src, "tools/world-mock/tests"], env, deadline=deadline)
         print(_run(["report", "--skip-empty", "--sort=cover"], env, capture=True), end="")
-        return float(_run(["report", "--format=total", "--precision=2"], env, capture=True))
+        total = float(_run(["report", "--format=total", "--precision=2"], env, capture=True))
+        report = Path(tmp) / "report.json"
+        _run(["json", "-o", str(report)], env)
+        files = json.loads(report.read_text())["files"]
+        return total, {f: (v["summary"]["num_statements"], v["summary"]["percent_covered"], v["missing_lines"])
+                       for f, v in files.items()}
 
 
 def main(argv: list[str]) -> int:
-    floor = load_floor(FLOORS)
+    floor, mod_floors = load_floors(FLOORS)
     if importlib.util.find_spec("coverage") is None:
         print("coverage is not installed: pip install -r requirements-dev.txt", file=sys.stderr)
         return 2
-    measured = measure()
+    if "--print-modules" in argv:
+        with contextlib.redirect_stdout(sys.stderr):   # stdout is the JSON and nothing else
+            _, files = measure()
+        print(json.dumps(modules_table(files), indent=2))
+        return 0
+    measured, files = measure()
+    # Compact, so the CI log carries the numbers the table is made from.
+    for path, (stmts, pct, _) in sorted(files.items()):
+        if stmts >= MODULE_MIN_STMTS:
+            print(f"module {path} stmts={stmts} cover={pct:.2f} floor={mod_floors.get(path)}")
     print(f"agent coverage {measured:.2f}% (floor {floor}%)")
     if "--report-only" in argv:
         return 0
-    problems = check(measured, floor)
+    problems = check(measured, floor) + check_modules(files, mod_floors)
     for p in problems:
         print(p)
     return 1 if problems else 0

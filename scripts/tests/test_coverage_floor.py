@@ -61,6 +61,55 @@ class CheckTest(unittest.TestCase):
         self.assertIn("to 98", cf.check(99.0, 97)[0])
 
 
+def mod(stmts, pct, missing=()):
+    return (stmts, pct, list(missing))
+
+
+class LineRangesTest(unittest.TestCase):
+    def test_compressed(self):
+        self.assertEqual(cf.line_ranges([12, 13, 14, 15, 16, 17, 18, 40, 77, 78, 79]), "12-18, 40, 77-79")
+        self.assertEqual(cf.line_ranges([9, 3, 4]), "3-4, 9")
+        self.assertEqual(cf.line_ranges([]), "")
+
+    def test_capped(self):
+        out = cf.line_ranges(list(range(1, 2000, 2)))
+        self.assertLessEqual(len(out), cf.RANGES_CAP + 5)
+        self.assertTrue(out.endswith(", ..."))
+        self.assertTrue(out.startswith("1, 3, 5"))
+
+
+class CheckModulesTest(unittest.TestCase):
+    def test_exactly_at_floor_passes_just_below_fails(self):
+        self.assertEqual(cf.check_modules({"agent/a.py": mod(100, 90.0)}, {"agent/a.py": 90}), [])
+        out = cf.check_modules({"agent/a.py": mod(100, 89.99, [5, 6, 9])}, {"agent/a.py": 90})
+        self.assertEqual(len(out), 1)
+        for text in ("agent/a.py", "89.99%", "floor 90%", "5-6, 9"):
+            self.assertIn(text, out[0])
+
+    def test_improvement_never_fails(self):
+        for pct in (90.01, 92.0, 95.0, 100.0):
+            self.assertEqual(cf.check_modules({"agent/a.py": mod(100, pct)}, {"agent/a.py": 90}), [], pct)
+
+    def test_fifty_statements_need_an_entry_forty_nine_do_not(self):
+        self.assertEqual(cf.check_modules({"agent/a.py": mod(49, 80.0)}, {}), [])
+        out = cf.check_modules({"agent/a.py": mod(50, 87.9)}, {})
+        self.assertEqual(len(out), 1)
+        self.assertIn('add "agent/a.py": 85 to "agent_modules"', out[0])
+
+    def test_listed_module_that_is_gone_says_remove(self):
+        out = cf.check_modules({}, {"agent/gone.py": 90})
+        self.assertEqual(len(out), 1)
+        self.assertIn("agent/gone.py", out[0])
+        self.assertIn("remove", out[0])
+
+    def test_small_listed_module_is_still_checked(self):
+        self.assertEqual(len(cf.check_modules({"agent/a.py": mod(10, 50.0)}, {"agent/a.py": 90})), 1)
+
+    def test_table_is_sorted_floored_and_only_50_plus(self):
+        got = cf.modules_table({"agent/b.py": mod(50, 99.99), "agent/a.py": mod(60, 90.0), "agent/c.py": mod(49, 100.0)})
+        self.assertEqual(list(got.items()), [("agent/a.py", 88), ("agent/b.py", 97)])
+
+
 class ConfigTest(unittest.TestCase):
     def run_main(self, content):
         with tempfile.TemporaryDirectory() as d:
@@ -76,8 +125,12 @@ class ConfigTest(unittest.TestCase):
         return cm.exception.code, err.getvalue()
 
     def test_bad_configs_exit_2(self):
-        for content in (None, "not json", "[]", "{}", '{"agent": "60"}', '{"agent": 60.5}',
-                        '{"agent": true}', '{"agent": -1}', '{"agent": 101}'):
+        for content in (None, "not json", "[]", "{}", '{"agent": 60}', '{"agent_modules": {}}',
+                        '{"agent": "60", "agent_modules": {}}', '{"agent": 60.5, "agent_modules": {}}',
+                        '{"agent": true, "agent_modules": {}}', '{"agent": -1, "agent_modules": {}}',
+                        '{"agent": 101, "agent_modules": {}}', '{"agent": 60, "agent_modules": []}',
+                        '{"agent": 60, "agent_modules": {"agent/a.py": "90"}}',
+                        '{"agent": 60, "agent_modules": {"agent/a.py": 101}}'):
             with self.subTest(content=content):
                 code, err = self.run_main(content)
                 self.assertEqual(code, 2)
@@ -85,18 +138,24 @@ class ConfigTest(unittest.TestCase):
 
     def test_committed_file_is_valid(self):
         data = json.loads((ROOT / "coverage-floors.json").read_text())
-        self.assertEqual(list(data), ["agent"])
-        self.assertEqual(cf.load_floor(ROOT / "coverage-floors.json"), data["agent"])
+        self.assertEqual(list(data), ["agent", "agent_modules"])
+        self.assertEqual(cf.load_floors(ROOT / "coverage-floors.json"), (data["agent"], data["agent_modules"]))
+        self.assertEqual(list(data["agent_modules"]), sorted(data["agent_modules"]))
+        for path in data["agent_modules"]:
+            self.assertTrue((ROOT / path).is_file(), path)
 
 
 class MainTest(unittest.TestCase):
     """main() with measure() stubbed: the exit code and text of each outcome."""
 
-    def run_main(self, measured, argv=(), spec=True):
+    FILES = {"agent/a.py": mod(100, 90.0, [3]), "agent/small.py": mod(10, 10.0)}
+
+    def run_main(self, measured, argv=(), spec=True, files=None):
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "floors.json"
-            p.write_text('{"agent": 60}')
-            with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", return_value=measured), \
+            p.write_text('{"agent": 60, "agent_modules": {"agent/a.py": 88}}')
+            result = (measured, self.FILES if files is None else files)
+            with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", return_value=result), \
                     mock.patch.object(cf.importlib.util, "find_spec", return_value=spec), \
                     contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
                 code = cf.main(list(argv))
@@ -122,6 +181,49 @@ class MainTest(unittest.TestCase):
             code, out, _ = self.run_main(m, ["--report-only"])
             self.assertEqual(code, 0)
             self.assertIn(f"agent coverage {m:.2f}%", out)
+
+    def test_module_below_its_floor_exits_1_with_its_lines(self):
+        code, out, _ = self.run_main(61.0, files={"agent/a.py": mod(100, 80.0, [7, 8])})
+        self.assertEqual(code, 1)
+        self.assertIn("agent/a.py coverage 80.00% is below its floor 88%", out)
+        self.assertIn("7-8", out)
+
+    def test_module_better_than_its_floor_exits_0(self):
+        self.assertEqual(self.run_main(61.0, files={"agent/a.py": mod(100, 100.0)})[0], 0)
+
+    def test_total_and_module_failures_add_up(self):
+        code, out, _ = self.run_main(50.0, files={"agent/a.py": mod(100, 80.0), "agent/new.py": mod(60, 90.0)})
+        self.assertEqual(code, 1)
+        self.assertIn("agent coverage 50.00% is below the floor", out)
+        self.assertIn("agent/a.py coverage 80.00% is below its floor", out)
+        self.assertIn("agent/new.py has 60 statements and no floor", out)
+
+    def test_log_carries_the_per_module_numbers(self):
+        _, out, _ = self.run_main(61.0)
+        self.assertIn("module agent/a.py stmts=100 cover=90.00 floor=88", out)
+        self.assertNotIn("small.py", out)
+
+    def test_print_modules_is_only_the_json_on_stdout(self):
+        files = {"agent/b.py": mod(60, 93.5), "agent/a.py": mod(100, 90.0), "agent/small.py": mod(10, 10.0)}
+        code, out, _ = self.run_main(61.0, ["--print-modules"], files=files)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), {"agent/a.py": 88, "agent/b.py": 91})
+        self.assertEqual(list(json.loads(out)), ["agent/a.py", "agent/b.py"])
+
+    def test_print_modules_keeps_the_measure_table_off_stdout(self):
+        def noisy():
+            print("TABLE")
+            return 61.0, {"agent/a.py": mod(100, 90.0)}
+
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "floors.json"
+            p.write_text('{"agent": 60, "agent_modules": {}}')
+            with mock.patch.object(cf, "FLOORS", p), mock.patch.object(cf, "measure", noisy), \
+                    mock.patch.object(cf.importlib.util, "find_spec", return_value=True), \
+                    contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+                cf.main(["--print-modules"])
+        self.assertEqual(json.loads(out.getvalue()), {"agent/a.py": 88})
+        self.assertIn("TABLE", err.getvalue())
 
     def test_not_installed_exits_2(self):
         code, _, err = self.run_main(60.0, spec=None)
@@ -179,6 +281,8 @@ class RunTest(unittest.TestCase):
 
         def fake_run(cmd, env, **kw):
             deadlines.append(kw.get("deadline"))
+            if cmd[0] == "json":
+                pathlib.Path(cmd[cmd.index("-o") + 1]).write_text('{"files": {}}')
             return "1\n"
 
         with mock.patch.dict(cf.os.environ, {"CHECK_STALL_DUMP_S": "100"}), \
@@ -192,10 +296,17 @@ class RunTest(unittest.TestCase):
 
         def fake(cmd, **kw):
             calls.append((cmd, kw["env"]["COVERAGE_FILE"]))
+            if "json" in cmd[:4]:
+                pathlib.Path(cmd[cmd.index("-o") + 1]).write_text(json.dumps({"files": {"agent/x.py": {
+                    "summary": {"num_statements": 60, "percent_covered": 91.5}, "missing_lines": [4, 5]}}}))
             return mock.Mock(returncode=0, **{"communicate.return_value": ("97.5\n", None)})
 
         with mock.patch.object(cf.subprocess, "Popen", fake), contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(cf.measure(), 97.5)
+            total, files = cf.measure()
+        self.assertEqual(total, 97.5)
+        self.assertEqual(files, {"agent/x.py": (60, 91.5, [4, 5])})
+        # the JSON report is written next to the data file, in the temporary directory
+        self.assertTrue(any("json" in c[:4] for c, _ in calls))
         runs = [c for c, _ in calls if "run" in c[:4]]
         self.assertEqual(len(runs), 2)
         for cmd in runs:
