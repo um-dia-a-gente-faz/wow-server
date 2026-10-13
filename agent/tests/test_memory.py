@@ -30,14 +30,16 @@ class MemoryTests(unittest.TestCase):
 
     def _flush(self, m: Memory, stop: threading.Event | None = None, release=lambda: None) -> None:
         """m.flush() bounded by FLUSH_BOUND_S; the bounded method itself must confirm (#691, #708)."""
-        if not self._bounded(release, m.flush, self.FLUSH_BOUND_S):
+        if not self._bounded(release, m.flush, self.FLUSH_BOUND_S, bound=self.FLUSH_BOUND_S + self.JOIN_BOUND_S, stop=stop):
             if stop is not None:
                 stop.set()  # a reader hogging the lock may be what starves the writer
             self.fail(f"flush() not confirmed after {self.FLUSH_BOUND_S:g}s")
 
-    def _bounded(self, release, fn, *args, **kw):
-        """fn(*args) in a daemon thread, joined within JOIN_BOUND_S. When it is still running, call `release`
-        (undo the stall), join again and fail by name: a call that must time out cannot hang the suite (#708)."""
+    def _bounded(self, release, fn, *args, bound=None, stop=None, **kw):
+        """fn(*args) in a daemon thread, joined within `bound` (default JOIN_BOUND_S, never less than the timeout
+        handed to the call). When it is still running, set `stop`, call `release` (undo the stall), join again
+        and fail by name: a call that must time out cannot hang the suite (#708)."""
+        bound = self.JOIN_BOUND_S if bound is None else bound
         out: list = []
 
         def run():
@@ -48,11 +50,13 @@ class MemoryTests(unittest.TestCase):
 
         t = threading.Thread(target=run, name="bounded-call", daemon=True)
         t.start()
-        t.join(self.JOIN_BOUND_S)
+        t.join(bound)
         if t.is_alive():
+            if stop is not None:
+                stop.set()
             release()
             t.join(self.JOIN_BOUND_S)
-            self.fail(f"{getattr(fn, '__name__', fn)}() did not return within {self.JOIN_BOUND_S:g}s")
+            self.fail(f"{getattr(fn, '__name__', fn)}() did not return within {bound:g}s")
         if isinstance(out[0], Exception):
             raise out[0]
         return out[0]
@@ -205,6 +209,31 @@ class MemoryTests(unittest.TestCase):
         m._io.release()
         self._flush(m)
         self.assertEqual(m.recall("known_target", "a"), 1)
+
+    def test_flush_waits_for_a_busy_writer_longer_than_the_join_bound(self):
+        # _flush must wait up to FLUSH_BOUND_S for a writer that is merely slow (CI took up to 19 s), however
+        # short the join bound for stalled calls is.
+        ran = unittest.TestResult()
+
+        class Slow(MemoryTests):
+            JOIN_BOUND_S = 0.2
+            FLUSH_BOUND_S = 2
+
+            def runTest(inner):
+                m = inner._open()
+                m._io.acquire()
+                release = inner._release_io(m)
+                inner.addCleanup(release)
+                m.remember("goal", "x", 1)
+                timer = threading.Timer(0.6, release)   # the writer is busy for 0.6 s, three join bounds
+                timer.start()
+                inner.addCleanup(timer.join)
+                inner._flush(m, release=release)
+                inner.assertEqual(m.recall("goal", "x"), 1)
+
+        Slow().run(ran)
+        self.assertEqual((ran.failures, ran.errors), ([], []))
+        self.assertEqual(ran.testsRun, 1)
 
     def test_a_flush_that_never_returns_fails_the_test_by_name(self):
         m = self._open()
