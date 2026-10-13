@@ -493,11 +493,12 @@ docker compose -f docker-compose.agents.yml --profile raid up -d   # 5. start or
 ```
 
 Rollback, with the same order: set `WOW_AGENT_TAG` back to the previous SHA in `.env`, restart
-`agent-runner`, start the agents, check `GET /agents`. The runner does not rebuild a pinned tag on
+`agent-runner`, then check `GET /agents` shows the image `present: true` before starting any agent (if
+it is `false`, the old image was pruned: stop, check out that commit and run `scripts/build-agent-image.sh`).
+Then start the agents and check `GET /agents` again. The runner does not rebuild a pinned tag on
 its own, so a rollback to a SHA whose image is still on the host starts that image unchanged. If the
-old image was pruned it is missing, and `start` builds the checkout under that old tag, which
-overwrites what the SHA names. So, if pruned: check out that commit and run
-`scripts/build-agent-image.sh` before setting the tag.
+old image was pruned and you start anyway, `start` builds the checkout under that old tag, which
+overwrites what the SHA names.
 
 **Bumping pins.** Look up the new tag's multi-arch digest in the registry
 (Docker Hub `.../tags/<tag>` `digest`, or `gcr.io/v2/<repo>/tags/list`), change

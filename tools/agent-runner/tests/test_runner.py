@@ -514,6 +514,16 @@ class ActionTest(RunnerCase):
         up = [c for c in self.compose_calls() if "up" in c][-1]
         self.assertNotIn("--build", up)
 
+    def test_invalid_tag_adds_no_build_and_compose_reports_it(self):
+        # a tag that is set but outside Docker's grammar names no image: no --build (#730 Decision)
+        self.set_state(containers={}, image_created=None, compose_fail="invalid reference format")
+        with mock.patch.dict(os.environ, {"WOW_AGENT_TAG": "a b"}):
+            status, body = self.req("/agents/Bravo/start", "POST")
+        self.assertEqual(status, 502)
+        self.assertIn("docker compose up failed", body["error"])
+        up = [c for c in self.compose_calls() if "up" in c][-1]
+        self.assertNotIn("--build", up)
+
     def test_missing_pinned_image_is_built_once(self):
         self.set_state(containers={}, image_created=None)
         status, body = self.req("/agents/Bravo/start", "POST")
