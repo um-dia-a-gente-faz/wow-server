@@ -64,6 +64,27 @@ suite() {
   echo "unknown suite: $1" >&2; return 2
 }
 test_all()  { local s; for s in "${SUITES[@]}"; do suite "${s%%|*}"; done; }
+leftovers_in() { ls -A "$1"; }
+# #725: every suite runs with a private TMPDIR under the system temp dir; anything it leaves there fails.
+# Not in all (it runs every suite again): run it after touching a test's temp files.
+tmp_leaks() (
+  local base s n left rc=0
+  base=$(mktemp -d "${TMPDIR:-/tmp}/check-tmp-leaks.XXXXXX")
+  for s in "${SUITES[@]}"; do
+    n=${s%%|*}
+    mkdir "$base/$n"
+    export TMPDIR="$base/$n"
+    if ! suite "$n" > "$base/$n.log" 2>&1; then
+      echo "suite $n failed:" >&2; tail -n 20 "$base/$n.log" >&2; rc=1
+    fi
+    left=$(leftovers_in "$base/$n")
+    if [ -n "$left" ]; then
+      echo "$n left behind in its TMPDIR:" >&2; sed 's/^/  /' <<< "$left" >&2; rc=1
+    fi
+  done
+  rm -rf "$base"
+  return $rc
+)
 # #624: every suite except the stdlib ones, which the agent CI job runs (test-stdlib).
 test_tools() { local s n; for s in "${SUITES[@]}"; do n=${s%%|*}; case " $STDLIB_SUITES " in *" $n "*) ;; *) suite "$n" ;; esac; done; }
 
@@ -80,6 +101,7 @@ for t in "$@"; do
     all) compile; lint; types; types_legacy; generated; test_all ;;
     coverage) python3 scripts/coverage_floor.py ;;   # #384, not in all: needs requirements-dev.txt
     list) for s in "${SUITES[@]}"; do echo "${s%%|*}"; done ;;
-    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|test-tools|coverage|list|all" >&2; exit 2 ;;
+    tmp-leaks) tmp_leaks ;;   # #725, not in all
+    *) echo "usage: $0 compile|lint|types|types-legacy|generated|test|test-<suite>|test-stdlib|test-tools|coverage|list|tmp-leaks|all" >&2; exit 2 ;;
   esac
 done

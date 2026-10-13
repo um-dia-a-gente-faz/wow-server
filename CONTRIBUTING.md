@@ -236,6 +236,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **Legacy error baseline (#378):** `scripts/check.sh types` (what CI runs) includes it, as does `types-legacy` on its own and `all`. It fails when a legacy module has more mypy errors than its count in `mypy-legacy-baseline.json`. The counts do not depend on installed packages: the check runs mypy with `--no-site-packages`, so a `.venv` with Pillow or PyMySQL gives the same numbers as CI.
 - After fixing errors in a legacy module, run `python3 scripts/mypy_legacy_baseline.py --update` and commit the JSON. A lower count is a note, never a failure.
 
+**Tests leave no temp files (#725).** `scripts/check.sh tmp-leaks` runs every suite with a private `TMPDIR` and exits 1 naming whatever it left behind; it is not in `all` (it runs every suite), so run it after touching a test's temp files.
+Use `tempfile.TemporaryDirectory()` with `addCleanup` (or a context manager) in new tests; `mkdtemp` and `NamedTemporaryFile(delete=False)` without removal are what it catches.
+
 ## Size budget
 
 `agent/tests/test_size_budget.py` (part of `scripts/check.sh test-agent`) measures the
