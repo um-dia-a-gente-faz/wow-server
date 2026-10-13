@@ -467,7 +467,11 @@ def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
 @offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
 def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
     targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
-               and not u.get("npc_flags") and u.get("resolved", True) and u.get("rank") not in NO_PULL_RANKS
+               and not u.get("npc_flags")
+               # gh-674: no unprovoked pull on an elite or on a unit of unknown rank. In combat, a unit that
+               # may be our attacker (stunned or fleeing: target 0 or none, gh-555) is defence, never filtered.
+               and ((u.get("resolved", True) and u.get("rank") not in NO_PULL_RANKS)
+                    or (ctx.in_combat and ctx._may_attack_me(u)))
                and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
                # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays),
                # unless we are in combat with no possible attacker in view: a stuck combat flag, so the pull

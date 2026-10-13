@@ -19,8 +19,8 @@ def unit(**kw) -> dict:
     return {"guid": 5, "distance": 8.0, "level": 5, "name": "Hogger", "in_combat": False, **kw}
 
 
-def gen(*units: dict) -> list:
-    snap = {"me": {"level": 5}, "nearby_units": list(units), "nearby_players": [], "spells": []}
+def gen(*units: dict, me_in_combat: bool = False) -> list:
+    snap = {"me": {"level": 5, **({"in_combat": True} if me_in_combat else {})}, "nearby_units": list(units), "nearby_players": [], "spells": []}
     return cand.generate(snap, my_guid=MY_GUID)
 
 
@@ -80,6 +80,53 @@ class PullRules(unittest.TestCase):
     def test_non_combat_candidates_for_an_unresolved_unit_are_kept(self):
         u = unit(resolved=False, lootable=True, distance=2.0)
         self.assertTrue([c for c in gen(u) if c["action"] == "loot"])
+
+
+class DefenceWithoutTarget(unittest.TestCase):
+    """A fighter whose target is 0 or absent (stunned, fleeing: gh-555) may be our attacker."""
+
+    def shapes(self):
+        for kw in ({"rank": "elite"}, {"resolved": False}):
+            for tgt in ({"target_guid": 0}, {}):
+                yield {**kw, **tgt}, unit(in_combat=True, **kw, **tgt)
+
+    def test_in_combat_a_possible_attacker_is_offered(self):
+        for label, u in self.shapes():
+            with self.subTest(shape=label):
+                cands = attacks(gen(u, me_in_combat=True))
+                self.assertEqual(len(cands), 1)
+                if "rank" in u:
+                    self.assertIn("Hogger (elite)", cands[0]["label"])
+
+    def test_out_of_combat_the_same_units_are_not_pulled(self):
+        for label, u in self.shapes():
+            with self.subTest(shape=label):
+                self.assertEqual(attacks(gen(u)), [])
+
+
+class OtherProvidersKeepElitesAndUnresolved(unittest.TestCase):
+    """The new conditions belong to the unprovoked pull only."""
+
+    SHAPES = ({"rank": "elite"}, {"resolved": False})
+
+    def test_spell_threat(self):
+        for kw in self.SHAPES:
+            with self.subTest(kw=kw):
+                snap = {"me": {"level": 5}, "spells": [{"id": 133, "name": "Fireball"}], "nearby_players": [],
+                        "nearby_units": [unit(in_combat=True, target_guid=MY_GUID, **kw)]}
+                self.assertTrue([c for c in cand.generate(snap, my_guid=MY_GUID) if c["action"] == "cast_spell"])
+
+    def test_quest_giver(self):
+        for kw in self.SHAPES:
+            with self.subTest(kw=kw):
+                u = unit(npc_flags=2, quest_giver_status="available", distance=3.0, **kw)
+                self.assertTrue([c for c in gen(u) if c["action"] == "interact"])
+
+    def test_lootable(self):
+        for kw in self.SHAPES:
+            with self.subTest(kw=kw):
+                u = unit(lootable=True, distance=2.0, **kw)
+                self.assertTrue([c for c in gen(u) if c["action"] == "loot"])
 
 
 class SnapshotKeys(unittest.TestCase):
