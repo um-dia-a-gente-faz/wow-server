@@ -22,7 +22,9 @@ TrinityCore/TrinityCore/contents/... ?ref=3.3.5`):
 """
 
 import struct
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, fields, replace
+from typing import Any
 
 from . import packets as pk
 from .opcodes import (
@@ -157,8 +159,74 @@ SPELL_TABLE: dict[int, SpellInfo] = {
 }
 
 
+# ADR 0016 further slice 1: a world-bundle lookup corrects the numbers of SPELL_TABLE entries. The
+# composition root builds the reader and hands over a plain callable (id -> row dict or None), so
+# this module imports nothing new and holds no broad `except`: the root's wrapper never raises.
+# It never widens the set (an id outside the table stays None) and `name` stays the table's (the
+# bundle keeps the rank apart, so spells 133 and 143 would both be "Fireball"). One tuple so a swap
+# of lookup and cache is a single atomic assignment.
+Lookup = Callable[[int], dict | None]
+_world: tuple[Lookup | None, dict[int, SpellInfo]] = (None, {})
+
+
+def set_world_knowledge(lookup: Lookup | None) -> None:
+    """Use `lookup` for get_spell_info (None = the table alone) and drop every cached result."""
+    global _world
+    _world = (lookup, {})
+
+
+def _int(v) -> bool:
+    return type(v) is int   # not bool, not a float SQLite kept in an INTEGER column
+
+
+def _corrected(base: SpellInfo, row) -> SpellInfo:
+    """`base` with the numbers the bundle row gives; no row or a field of the wrong type leaves
+    the table's value."""
+    if not isinstance(row, dict):
+        return base
+    ch: dict = {}
+    for col, field in (("power_type", "power_type"), ("cast_time_ms", "cast_time_ms"),
+                       ("spell_level", "min_level")):
+        v: Any = row.get(col)
+        if _int(v) and not (col == "spell_level" and v <= 0):
+            ch[field] = v
+    rng: Any = row.get("range_max_yd")
+    if type(rng) in (int, float):
+        ch["range_yd"] = float(rng)
+    # a percentage of base mana cannot be computed here
+    if _int(row.get("mana_cost")) and _int(row.get("mana_cost_pct")) and row["mana_cost_pct"] == 0:
+        ch["power_cost"] = row["mana_cost"]
+    return replace(base, **ch)
+
+
 def get_spell_info(spell_id: int) -> SpellInfo | None:
-    return SPELL_TABLE.get(spell_id)
+    base = SPELL_TABLE.get(spell_id)
+    lookup, cache = _world
+    if base is None or lookup is None:
+        return base
+    info = cache.get(spell_id)
+    if info is None:
+        info = cache[spell_id] = _corrected(base, lookup(spell_id))
+    return info
+
+
+def compare_with_table(lookup: Lookup) -> list[str]:
+    """Start-up evidence: how many SPELL_TABLE ids the bundle has, then one line per spell whose
+    numbers or name differ (table value, bundle value; the name line adds the bundle rank). Built
+    from table ids only. The name is reported, never applied."""
+    lines, found = [], 0
+    for base in SPELL_TABLE.values():
+        row = lookup(base.spell_id)
+        found += row is not None
+        new = _corrected(base, row)
+        diff = []
+        if isinstance(row, dict) and isinstance(row.get("name"), str) and row["name"] != base.name:
+            diff.append(f"name table {base.name!r} bundle {row['name']!r} rank {row.get('rank')!r}")
+        diff += [f"{f.name} table {getattr(base, f.name)!r} bundle {getattr(new, f.name)!r}"
+                 for f in fields(SpellInfo) if getattr(base, f.name) != getattr(new, f.name)]
+        if diff:
+            lines.append(f"world bundle differs for spell {base.spell_id}: " + "; ".join(diff))
+    return [f"world bundle has {found} of {len(SPELL_TABLE)} SPELL_TABLE ids"] + lines
 
 
 # ── CMSG_CAST_SPELL ─────────────────────────────────────────────────────────

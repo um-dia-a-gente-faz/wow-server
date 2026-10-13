@@ -105,8 +105,8 @@ LAYERS = {
     "login": {"auth", "channels", "config", "death", "session"},   # auth, world connect, character login (#292); death: imported so its actions register (#321)
     "supervisor": {"auth", "lifecycle", "metrics"},   # the reconnect supervisor (#292)
     "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
-    "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "runloop",
-             "supervisor"},   # the composition root (#292): the one module that wires a whole agent
+    "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "metrics",
+             "runloop", "spells", "supervisor", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
     "__main__": {"auth", "config", "root"},
 }
 
