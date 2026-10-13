@@ -309,8 +309,11 @@ class Fleet:
             raise RunnerError(f"{e['name']} is retired; start is refused", status=409)
         with self._write_lock:
             self.write_compose()
+            # #730 Decision: an automatic build only fills a missing image under a valid tag. A stale
+            # image never triggers one (a rollback would rebuild the checkout under the old tag), and
+            # with no valid tag compose reports the missing variable.
             image = self.image()
-            build = build or not image["present"] or image["stale"] is True
+            build = build or (image_ref() is not None and not image["present"])
             args = ["up", "-d"] + (["--build"] if build else [])
             self._compose(args, e["service"], BUILD_TIMEOUT_S if build else UP_TIMEOUT_S)
         return self.one(name), {"built": build}

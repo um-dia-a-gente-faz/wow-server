@@ -475,13 +475,29 @@ Every `image:` and `FROM` is `name:<version>@sha256:<digest>`; CI fails on
 (and `wow-agent:latest`, a convenience only). The compose file reads the tag
 from `WOW_AGENT_TAG` in `.env`, the one setting.
 
+The agent-runner never rebuilds an existing pinned tag on its own. It builds only a missing
+`wow-agent:<WOW_AGENT_TAG>`, and only when the tag is valid (#730). The stale flag in its status
+(the image is older than the last change to `agent/` or the Dockerfile) is information only: it
+means "build a new image and move the tag".
+
+Rebuild and roll, in this order:
+
 ```bash
-scripts/build-agent-image.sh                       # prints the new SHA
-# set WOW_AGENT_TAG=<new sha> in .env, then recreate:
-docker compose -f docker-compose.agents.yml --profile raid up -d
-# rollback: set WOW_AGENT_TAG back to the previous SHA (the old image is still
-# on the host unless pruned; otherwise check out that commit and rebuild), up -d again.
+git -C /opt/wow-server pull --ff-only             # 1. the checkout at the commit to ship
+scripts/build-agent-image.sh                      # 2. builds wow-agent:<sha>, prints the SHA
+# 3. set WOW_AGENT_TAG=<sha> in /opt/wow-server/.env
+sudo systemctl restart agent-runner               # 4. the runner and the compose it spawns read the tag at start
+docker compose -f docker-compose.agents.yml --profile raid up -d   # 5. start or recreate the agents
+# 6. check GET /agents on the runner: image.name is wow-agent:<sha>, present is true
+#    (tools/agent-runner/README.md has the call)
 ```
+
+Rollback, with the same order: set `WOW_AGENT_TAG` back to the previous SHA in `.env`, restart
+`agent-runner`, start the agents, check `GET /agents`. The runner does not rebuild a pinned tag on
+its own, so a rollback to a SHA whose image is still on the host starts that image unchanged. If the
+old image was pruned it is missing, and `start` builds the checkout under that old tag, which
+overwrites what the SHA names. So, if pruned: check out that commit and run
+`scripts/build-agent-image.sh` before setting the tag.
 
 **Bumping pins.** Look up the new tag's multi-arch digest in the registry
 (Docker Hub `.../tags/<tag>` `digest`, or `gcr.io/v2/<repo>/tags/list`), change

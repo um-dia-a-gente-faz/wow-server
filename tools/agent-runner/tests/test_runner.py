@@ -481,16 +481,54 @@ class ActionTest(RunnerCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["agent"]["container"]["state"], "running")
 
-    def test_start_builds_when_the_image_is_missing_stale_or_asked_for(self):
+    def test_start_builds_only_a_missing_pinned_image_or_when_asked(self):
+        # #730 Decision: a stale image no longer triggers a build; the pinned tag is never rebuilt on its own
         self.set_state(containers={}, image_created=None)
         self.assertTrue(self.req("/agents/Bravo/start", "POST")[1]["built"])
         self.set_state(containers={}, image_created="2024-01-01T00:00:00Z")
-        self.assertTrue(self.req("/agents/Bravo/start", "POST")[1]["built"])
+        self.assertFalse(self.req("/agents/Bravo/start", "POST")[1]["built"])
         self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
         self.assertFalse(self.req("/agents/Bravo/start", "POST")[1]["built"])
         self.assertTrue(self.req("/agents/Bravo/start?build=1", "POST")[1]["built"])
         ups = [c for c in self.compose_calls() if "up" in c]
-        self.assertEqual(["--build" in c for c in ups], [True, True, False, True])
+        self.assertEqual(["--build" in c for c in ups], [True, False, False, True])
+
+    def test_start_does_not_rebuild_a_present_stale_pinned_image(self):
+        # a rollback: the tag names an older SHA, present and older than the checkout's agent/ commit
+        self.set_state(containers={}, image_created="2024-01-01T00:00:00Z")
+        status, body = self.req("/agents/Bravo/start", "POST")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["built"])
+        up = [c for c in self.compose_calls() if "up" in c][-1]
+        self.assertNotIn("--build", up)
+
+    def test_unset_tag_adds_no_build_and_compose_reports_the_missing_variable(self):
+        self.set_state(containers={}, image_created=None,
+                       compose_fail="required variable WOW_AGENT_TAG is missing")
+        with mock.patch.dict(os.environ):
+            os.environ.pop("WOW_AGENT_TAG", None)
+            status, body = self.req("/agents/Bravo/start", "POST")
+        self.assertEqual(status, 502)
+        self.assertIn("docker compose up failed", body["error"])
+        self.assertIn("WOW_AGENT_TAG is missing", body["detail"])
+        up = [c for c in self.compose_calls() if "up" in c][-1]
+        self.assertNotIn("--build", up)
+
+    def test_missing_pinned_image_is_built_once(self):
+        self.set_state(containers={}, image_created=None)
+        status, body = self.req("/agents/Bravo/start", "POST")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["built"])
+        up = [c for c in self.compose_calls() if "up" in c][-1]
+        self.assertIn("--build", up)
+
+    def test_explicit_rebuild_is_honoured_for_a_present_fresh_image(self):
+        self.set_state(containers={}, image_created="2025-01-01T00:00:00Z")
+        status, body = self.req("/agents/Bravo/start?build=1", "POST")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["built"])
+        up = [c for c in self.compose_calls() if "up" in c][-1]
+        self.assertIn("--build", up)
 
     def test_stop_on_an_absent_agent_is_a_no_op_that_reports_absent(self):
         status, body = self.req("/agents/Bravo/stop", "POST")
