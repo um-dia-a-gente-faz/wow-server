@@ -8,22 +8,22 @@ cd "$(dirname "$0")/.."
 
 # name|command  (the command runs from the repo root)
 SUITES=(
-  "agent|python3 -m unittest discover -t . -s agent/tests"
-  "chat-feed|python3 -m unittest discover -s tools/chat-feed/tests"
-  "common|python3 -m unittest discover -s tools/common/tests"
-  "tools-arch|python3 -m unittest discover -s tools/tests"
-  "dbc|python3 -m unittest discover -s tools/dbc/tests"
-  "world-mock|python3 -m unittest discover -s tools/world-mock/tests"
-  "loadtest|python3 -m unittest discover -s tools/loadtest/tests"
-  "jev-mock|python3 -m unittest discover -s tools/jev-mock/tests"
-  "agent-runner|python3 -m unittest discover -s tools/agent-runner/tests"
-  "wow-exporter|python3 -m unittest discover -s exporters/wow-exporter/tests"
-  "wow-agents|python3 -m unittest discover -s scripts/wow-agents/tests"
-  "scripts|python3 -m unittest discover -s scripts/tests"
+  "agent|python3 scripts/early_failures.py discover -t . -s agent/tests"
+  "chat-feed|python3 scripts/early_failures.py discover -s tools/chat-feed/tests"
+  "common|python3 scripts/early_failures.py discover -s tools/common/tests"
+  "tools-arch|python3 scripts/early_failures.py discover -s tools/tests"
+  "dbc|python3 scripts/early_failures.py discover -s tools/dbc/tests"
+  "world-mock|python3 scripts/early_failures.py discover -s tools/world-mock/tests"
+  "loadtest|python3 scripts/early_failures.py discover -s tools/loadtest/tests"
+  "jev-mock|python3 scripts/early_failures.py discover -s tools/jev-mock/tests"
+  "agent-runner|python3 scripts/early_failures.py discover -s tools/agent-runner/tests"
+  "wow-exporter|python3 scripts/early_failures.py discover -s exporters/wow-exporter/tests"
+  "wow-agents|python3 scripts/early_failures.py discover -s scripts/wow-agents/tests"
+  "scripts|python3 scripts/early_failures.py discover -s scripts/tests"
   # needs tools/wowmap/requirements.txt + Pillow (the tools CI job installs them)
-  "wowmap|python3 -m unittest discover -s tools/wowmap/tests"
+  "wowmap|python3 scripts/early_failures.py discover -s tools/wowmap/tests"
   "wowmap-js|node --test tools/wowmap/tests/js/*.test.js"
-  "worldknowledge|python3 -m unittest discover -s tools/worldknowledge/tests"
+  "worldknowledge|python3 scripts/early_failures.py discover -s tools/worldknowledge/tests"
 )
 # Suites that must not need third-party packages (agent/ is stdlib-only).
 STDLIB_SUITES="agent"
@@ -51,13 +51,15 @@ suite() {
   for s in "${SUITES[@]}"; do
     if [ "${s%%|*}" = "$1" ]; then
       echo "== test-$1"
-      # #707: CHECK_STALL_DUMP_S set (CI only) = SIGABRT after that many seconds; with PYTHONFAULTHANDLER=1
-      # python then dumps every thread's stack and dies. `exec` makes the test process timeout's direct child.
+      # #714: every unittest suite runs through scripts/early_failures.py (failures print as they happen).
+      # #707: CHECK_STALL_DUMP_S set (CI only) = after that many seconds it dumps every thread's stack
+      # (SIGUSR1), stops softly (SIGINT, unittest prints its summary), then SIGABRT and kill. A command
+      # that is not early_failures.py (wowmap-js) is not bounded.
+      local cmd="${s#*|}"
       if [ -n "${CHECK_STALL_DUMP_S:-}" ]; then
-        timeout --signal=ABRT -k 10 "$CHECK_STALL_DUMP_S" bash -c "exec ${s#*|}"
-      else
-        bash -c "${s#*|}"
+        cmd="${cmd/early_failures.py/early_failures.py --stall-after $CHECK_STALL_DUMP_S --}"
       fi
+      bash -c "$cmd"
       return
     fi
   done

@@ -16,12 +16,13 @@ import importlib.util
 import json
 import re
 import os
-import signal
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+import early_failures   # scripts/ is sys.path[0] when this runs as a script
 
 ROOT = Path(__file__).resolve().parents[1]
 FLOORS = ROOT / "coverage-floors.json"
@@ -126,14 +127,9 @@ def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline
     try:
         out, _ = p.communicate(timeout=None if deadline is None else max(deadline - time.monotonic(), 1))
     except subprocess.TimeoutExpired:
-        # #707: with PYTHONFAULTHANDLER=1 the SIGABRT makes the test process dump every thread's stack.
-        print(f"\ncoverage {cmd[0]} ran past CHECK_STALL_DUMP_S: sending SIGABRT", file=sys.stderr, flush=True)
-        p.send_signal(signal.SIGABRT)
-        try:
-            p.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.communicate()
+        # #714: dump, soft stop (unittest's summary), SIGABRT, kill: early_failures.stall_stop
+        print(f"\ncoverage {cmd[0]} ran past CHECK_STALL_DUMP_S", file=sys.stderr, flush=True)
+        early_failures.stall_stop(p)
         sys.exit(1)
     except BaseException:
         p.kill()   # what subprocess.run did: Ctrl-C must not leave the test run alive
@@ -150,7 +146,8 @@ def measure() -> tuple[float, dict[str, tuple[int, float, list[int]]]]:
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "COVERAGE_FILE": str(Path(tmp) / "data")}
         # Production code only: the test files are most of the statements and run by definition.
-        src = ["--source=agent", "--omit=agent/tests/*", "-m", "unittest", "discover", "-s"]
+        src = ["--source=agent", "--omit=agent/tests/*",
+               "scripts/early_failures.py", "discover", "-s"]
         # #707: CHECK_STALL_DUMP_S (CI) bounds both test runs together.
         limit = os.environ.get("CHECK_STALL_DUMP_S")
         deadline = time.monotonic() + float(limit) if limit else None

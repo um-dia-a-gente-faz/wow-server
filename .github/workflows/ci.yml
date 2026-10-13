@@ -80,10 +80,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      # #707: a stalled test names itself. After CHECK_STALL_DUMP_S seconds check.sh sends the test
-      # process SIGABRT; PYTHONFAULTHANDLER=1 makes it dump every thread's stack. Keep the figure
-      # at least 30 s under timeout-minutes * 60 (guard: scripts/tests/test_ci_stall_dump.py).
-      # The step takes 120 to 165 s; 420 s of it plus the 10 s kill-after fits the 8-minute limit.
+      # #707, #714: a stalled test names itself. After CHECK_STALL_DUMP_S seconds scripts/early_failures.py
+      # dumps every thread's stack twice (SIGUSR1), stops the run softly (SIGINT: unittest prints its summary),
+      # then SIGABRT (PYTHONFAULTHANDLER=1: fatal dump) and kill. Keep the figure
+      # at least 44 s (SIGABRT comes 14 s after it, the kill 24 s at the latest) under timeout-minutes * 60 (guard: scripts/tests/test_ci_stall_dump.py).
+      # The step takes 120 to 165 s; 420 s of it plus the 24 s to the kill and 5 to 7 s of setup fits the 8-minute limit.
       - run: scripts/check.sh compile test-stdlib
         env:
           PYTHONFAULTHANDLER: "1"
@@ -157,7 +158,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Agent + world-mock tests under coverage, against the floor
         # #707: as in the agent job; here the bound covers both test runs together (they take about
-        # 200 to 300 s), and coverage_floor.py sends the SIGABRT. Keep it 30 s under timeout-minutes * 60.
+        # 200 to 300 s), and coverage_floor.py runs the same sequence. Keep it 44 s (kill 24 s at the latest after it) under timeout-minutes * 60.
         env:
           PYTHONFAULTHANDLER: "1"
           CHECK_STALL_DUMP_S: "540"
