@@ -133,7 +133,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
       # Dev tools live only here; agent/ stays stdlib-only at runtime.
-      - run: pip install -r requirements-dev.txt
+      - run: pip install --require-hashes -r requirements-dev.txt
       # Config + baseline in ruff.toml; fails on any violation not in per-file-ignores.
       - name: ruff check
         run: scripts/check.sh lint
@@ -155,7 +155,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
+      - run: pip install --require-hashes -r requirements-dev.txt
       - name: Agent + world-mock tests under coverage, against the floor
         # #707: as in the agent job; here the bound covers both test runs together (they take about
         # 200 to 300 s), and coverage_floor.py runs the same sequence. Keep it 44 s (kill 24 s at the latest after it) under timeout-minutes * 60.

@@ -190,7 +190,7 @@ CI job `lint + types` runs `ruff` and `mypy`. They are dev tools only (`agent/` 
 stdlib-only at runtime). Locally:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements-dev.txt
 .venv/bin/ruff check .   # rules + baseline in ruff.toml
 .venv/bin/mypy           # typed allowlist in mypy.ini
 ```
@@ -276,7 +276,7 @@ about 98 statements**. Same ratchet as mypy and the size budget:
   The floor is the measured total minus half a point, rounded down (`int(total - 0.5)`);
   the failure message names the number. The margin absorbs run-to-run and Python-version
   differences, so take the number from CI (Python 3.12), not your machine.
-- Reproduce with `pip install -r requirements-dev.txt` and `scripts/check.sh coverage`
+- Reproduce with `pip install --require-hashes -r requirements-dev.txt` and `scripts/check.sh coverage`
   (several minutes; not part of `all`). `python3 scripts/coverage_floor.py --report-only`
   prints the per-module table without gating. The data file is written to a temp dir.
 

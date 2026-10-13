@@ -165,7 +165,7 @@ def measure() -> tuple[float, dict[str, tuple[int, float, list[int]]]]:
 def main(argv: list[str]) -> int:
     floor, mod_floors, py = load_floors(FLOORS)
     if importlib.util.find_spec("coverage") is None:
-        print("coverage is not installed: pip install -r requirements-dev.txt", file=sys.stderr)
+        print("coverage is not installed: pip install --require-hashes -r requirements-dev.txt", file=sys.stderr)
         return 2
     if running_python() != py:
         note = (f"coverage-floors.json: the floors were measured on Python {py}, this is {running_python()}; "

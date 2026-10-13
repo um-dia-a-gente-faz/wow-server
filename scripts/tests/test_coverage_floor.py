@@ -364,7 +364,7 @@ class WiringTest(unittest.TestCase):
         job = job_text("coverage")
         self.assertIn("name: coverage (agent floor)", job)
         self.assertNotIn("continue-on-error", job)
-        self.assertIn("pip install -r requirements-dev.txt", job)
+        self.assertIn("pip install --require-hashes -r requirements-dev.txt", job)
         self.assertIn("scripts/check.sh coverage", job)
         self.assertIn("pipefail", job)
         self.assertRegex(job, r"(?m)^\s*exit \$rc$")   # the script's exit code must reach the step
