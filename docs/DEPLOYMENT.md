@@ -510,6 +510,17 @@ the sha256 of every file listed on PyPI for the new version (`/pypi/<name>/<vers
 including transitive dependencies. Merging a compose change recreates the affected
 containers, so follow the usual deploy rules.
 
+`requirements-dev.txt` (ruff, mypy, coverage; #737) is hash-locked the same way. CI installs it
+with `pip install --require-hashes`. To bump a pin: read the new version's `info.requires_dist`
+from `/pypi/<name>/<version>/json` (extras dropped, markers kept), pin each transitive dependency
+at the newest release that satisfies it, and list every file's `urls[].digests.sha256` for each
+pinned version (sdist and all wheels). Take the hashes from the index, never by hand. Update the
+`RELEASE_FILES` table in `scripts/tests/test_requirements_locked.py` in the same change with the new
+per-pin counts; a mismatch there is a stale table, not a bad hash. The CI lint and coverage jobs
+prove the file: pip refuses an unlisted package or a wrong hash on Python 3.12.
+A developer machine proves it the same way:
+`python3 -m venv .venv && .venv/bin/pip install --require-hashes -r requirements-dev.txt`.
+
 **Changing a service's `image:` text recreates its container, even when the digest names the
 same content.** Compose hashes the `image:` text, so adding or editing `@sha256:...` recreates
 that service whatever the digest is. Comparing `docker image inspect <image> --format
