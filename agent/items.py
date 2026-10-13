@@ -54,7 +54,11 @@ class ItemCache:
     """entry -> agent.loot.parse_item_query_response() dict, or None if the
     server said "not found". Not thread-safe on its own; agent.perception.
     WorldState (which owns an instance) guards every call with its own lock,
-    same as NameCache, and save() is its second exception (#705): the persisted dicts (items) are mutated only by
+    same as NameCache.
+
+    No production code calls save() or load() today (#712): on_item_query_response does
+    not save and nothing reads items.json. The rule below stays for a future caller.
+    save() is the exception to the lock (#705): the persisted dicts (items) are mutated only by
     on_*_query_response on the recv thread and by load() before that thread starts, and
     save() is called on that same thread after the lock is released, so a save never
     overlaps a mutation and saves never overlap each other. A new mutator, or a save() on
@@ -100,11 +104,9 @@ class ItemCache:
             available -= 1
         return out
 
-    def on_item_query_response(self, data: dict, save: bool = True):
+    def on_item_query_response(self, data: dict):
         self._in_flight.discard(data["entry"])
         self.items[data["entry"]] = data if data["found"] else None
-        if save and data["found"]:
-            self.save()
 
     def load(self, path: str | None = None):
         """Best-effort, same rules as NameCache.load (ADR 0018): missing or older is a

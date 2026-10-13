@@ -93,6 +93,9 @@ Pull requests use the template at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR:
 - Is tested on the live VM before merging.
 - Includes the conventional commit type in the template for the squash-merge message.
 
+**A stalled test names itself (#707).** The `agent` job (420 s, limit 8 minutes) and the `coverage` job (540 s for both runs, limit 10 minutes) set `PYTHONFAULTHANDLER=1` and `CHECK_STALL_DUMP_S`; past that many seconds the test process gets SIGABRT, its log shows every thread's stack (test file and line) and the step fails, before `timeout-minutes` cancels it silently.
+Same locally: `PYTHONFAULTHANDLER=1 CHECK_STALL_DUMP_S=240 scripts/check.sh test-agent`.
+
 **Where the `tools` job's time goes (#591, refreshed in #624).** The job `tools (unit tests, generated files)`
 has a 10-minute timeout. It runs `scripts/check.sh generated test-tools`, which is the
 generated-file checks and then every suite in `SUITES` except the stdlib ones, in sequence, then the JevClient
@@ -120,8 +123,9 @@ consecutive suite starts in that job's log, slowest first:
 | wow-exporter | 8 | 0.1 |
 
 `agent` is not in this job any more. The `agent` job runs it (1755 tests, 142.9 s in run 38232669883; the job took 2m30s
-against its 5-minute limit), so that job is the first place to look if the stdlib suite grows. A suite that grows past about a minute is a reason to look at
-it (what it runs, what it waits on), not a reason to raise the timeout again.
+against the 5-minute limit it had then; 8 minutes since #707, see above), so that job is the first place to look if the stdlib suite grows. A suite that grows past about a minute is a reason to look at
+it (what it runs, what it waits on), not a reason to raise the timeout again. #707 raised this limit for room
+to dump the stacks of a stalled test before it, not because the suite got slower.
 
 Milestone and board naming (`M<n> - <subject>`, label and view rules, *blocked by*) is
 in `CLAUDE.md`, *Milestones and board naming*.

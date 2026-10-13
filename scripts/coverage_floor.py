@@ -13,9 +13,11 @@ stdlib only: it shells out to `python -m coverage` and never imports it.
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,14 +58,30 @@ def load_floor(path: Path) -> int:
     return floor
 
 
-def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False) -> str:
+def _run(cmd: list[str], env: dict[str, str], *, capture: bool = False, deadline: float | None = None) -> str:
     # Test output goes to stderr so stdout stays the table and the result (CI tees it).
-    p = subprocess.run([sys.executable, "-m", "coverage", *cmd], cwd=ROOT, env=env, text=True,
-                       stdout=subprocess.PIPE if capture else sys.stderr)
+    p = subprocess.Popen([sys.executable, "-m", "coverage", *cmd], cwd=ROOT, env=env, text=True,
+                         stdout=subprocess.PIPE if capture else sys.stderr)
+    try:
+        out, _ = p.communicate(timeout=None if deadline is None else max(deadline - time.monotonic(), 1))
+    except subprocess.TimeoutExpired:
+        # #707: with PYTHONFAULTHANDLER=1 the SIGABRT makes the test process dump every thread's stack.
+        print(f"\ncoverage {cmd[0]} ran past CHECK_STALL_DUMP_S: sending SIGABRT", file=sys.stderr, flush=True)
+        p.send_signal(signal.SIGABRT)
+        try:
+            p.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
+        sys.exit(1)
+    except BaseException:
+        p.kill()   # what subprocess.run did: Ctrl-C must not leave the test run alive
+        p.wait()
+        raise
     if p.returncode != 0:
         print(f"coverage {cmd[0]} failed (exit {p.returncode})", file=sys.stderr)
         sys.exit(1)
-    return p.stdout or ""
+    return out or ""
 
 
 def measure() -> float:
@@ -72,8 +90,11 @@ def measure() -> float:
         env = {**os.environ, "COVERAGE_FILE": str(Path(tmp) / "data")}
         # Production code only: the test files are most of the statements and run by definition.
         src = ["--source=agent", "--omit=agent/tests/*", "-m", "unittest", "discover", "-s"]
-        _run(["run", *src, "agent/tests"], env)
-        _run(["run", "-a", *src, "tools/world-mock/tests"], env)
+        # #707: CHECK_STALL_DUMP_S (CI) bounds both test runs together.
+        limit = os.environ.get("CHECK_STALL_DUMP_S")
+        deadline = time.monotonic() + float(limit) if limit else None
+        _run(["run", *src, "agent/tests"], env, deadline=deadline)
+        _run(["run", "-a", *src, "tools/world-mock/tests"], env, deadline=deadline)
         print(_run(["report", "--skip-empty", "--sort=cover"], env, capture=True), end="")
         return float(_run(["report", "--format=total", "--precision=2"], env, capture=True))
 

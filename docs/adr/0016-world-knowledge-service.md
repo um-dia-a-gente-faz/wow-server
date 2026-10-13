@@ -32,9 +32,10 @@ fourth. Each claim was checked against `main`; the result is below, with what wa
   `~/.cache/wow-agent/names.json`. The path in #340 is correct.
   `agent/perception/world.py::WorldState.__init__` builds it with the default path, and
   `agent/session.py` calls `self.world_state.names.load()` at login.
-- **The item cache is written and never read.** `agent/items.py::ItemCache` queries item
-  templates the same way and saves them to `~/.cache/wow-agent/items.json`, but
-  `ItemCache.load` has no caller outside the tests: `agent/session.py` loads names only. So
+- **The item cache is neither written nor read by a running agent.** `agent/items.py::ItemCache`
+  queries item templates the same way. It used to save them to `~/.cache/wow-agent/items.json`;
+  since #712 no running agent writes that file (`save` and `load` are kept for a future
+  decision, and an existing file is left alone). `ItemCache.load` has no caller outside the tests: `agent/session.py` loads names only. So
   item templates are re-queried in every process, even one that restarts in the same
   container. #340 does not mention this cache.
 - **The name cache is weaker than #340 says.** `docker-compose.agents.yml` mounts one volume into
