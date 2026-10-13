@@ -2,6 +2,7 @@
 
 Everything that writes does so under a temporary directory.
 """
+import contextlib
 import io
 import os
 import pathlib
@@ -125,12 +126,20 @@ class StallStopTest(unittest.TestCase):
 
 
 class SuperviseTest(unittest.TestCase):
+    def setUp(self):
+        before = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(lambda: self.assertEqual(signal.getsignal(signal.SIGTERM), before))   # runs last
+        patcher = mock.patch.object(ef.signal, "signal")   # supervise would set SIGTERM in the test process
+        self.set_signal = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_an_interrupted_supervisor_kills_its_child_and_propagates(self):
         p = mock.Mock()
         p.wait.side_effect = [KeyboardInterrupt, 0]
         with mock.patch.object(ef.subprocess, "Popen", return_value=p), self.assertRaises(KeyboardInterrupt):
             ef.supervise(5, ["discover"])
         p.kill.assert_called_once_with()
+        self.assertEqual(self.set_signal.call_args.args[0], signal.SIGTERM)   # SIGTERM takes the same path
 
     def test_the_child_runs_with_the_bound_in_its_environment(self):
         p = mock.Mock(**{"wait.return_value": 0})
@@ -236,8 +245,40 @@ class RealProcessTest(unittest.TestCase):
                 pass
             p.send_signal(signal.SIGINT)
             err = p.stderr.read()
+            p.stderr.close()
             out[name] = (p.wait(timeout=30), err)
         return out
+
+    def test_sigterm_to_the_supervisor_kills_the_test_process_and_exits_143(self):
+        d = self.make_dir("""
+            import os, sys, threading, unittest
+            class T(unittest.TestCase):
+                def test_blocks(self):
+                    sys.stderr.write("READY %d\\n" % os.getpid())
+                    sys.stderr.flush()
+                    threading.Event().wait()
+            """)
+        p = subprocess.Popen([sys.executable, str(SCRIPT), "--stall-after", "60", "--", "discover", "-s", d],
+                             cwd=ROOT, stderr=subprocess.PIPE, text=True)
+        child = None
+        try:
+            for line in p.stderr:
+                if line.startswith("READY "):
+                    child = int(line.split()[1])
+                    break
+            self.assertIsNotNone(child)
+            p.send_signal(signal.SIGTERM)
+            p.wait(timeout=30)
+            p.stderr.close()
+            self.assertEqual(p.returncode, 128 + signal.SIGTERM)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child, 0)   # gone, not re-parented to PID 1
+        finally:
+            if p.poll() is None:
+                p.kill()
+            if child is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(child, signal.SIGKILL)
 
     def test_without_a_bound_sigint_ends_the_run_as_python_m_unittest_does(self):
         out = self.sigint_run({})

@@ -84,7 +84,7 @@ jobs:
       # dumps every thread's stack twice (SIGUSR1), stops the run softly (SIGINT: unittest prints its summary),
       # then SIGABRT (PYTHONFAULTHANDLER=1: fatal dump) and kill. Keep the figure
       # at least 44 s (SIGABRT comes 14 s after it, the kill 24 s at the latest) under timeout-minutes * 60 (guard: scripts/tests/test_ci_stall_dump.py).
-      # The step takes 120 to 165 s; 420 s of it plus the 10 s kill-after fits the 8-minute limit.
+      # The step takes 120 to 165 s; 420 s of it plus the 24 s to the kill and 5 to 7 s of setup fits the 8-minute limit.
       - run: scripts/check.sh compile test-stdlib
         env:
           PYTHONFAULTHANDLER: "1"
