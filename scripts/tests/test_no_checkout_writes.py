@@ -13,7 +13,7 @@ What this sees (AST, per module, over every tracked tests/test_*.py):
 Code under `if __name__ == "__main__"` (the golden --write modes) is skipped.
 
 It cannot see: shutil.copy/copytree/rmtree/move, os.remove/rename/replace or Path.touch/mkdir
-onto the checkout; a subprocess that runs a generator or script in write mode; a path built in
+onto the checkout; io.open or os.open for writing; a subprocess that runs a generator or script in write mode; a path built in
 another module or by a helper; an alias bound by a `for` loop target; a mode that is not a string
 literal. It is a tripwire, not a proof.
 """
