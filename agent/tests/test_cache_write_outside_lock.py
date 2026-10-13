@@ -17,6 +17,7 @@ ITEM = {"entry": 3, "found": True, "name": "Sword"}
 
 class CacheWriteOutsideLockTest(unittest.TestCase):
     def run_handler(self, handler, parser, data, cache):
+        """cache None: the handler must write no file at all (#712)."""
         ws = per.WorldState()
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -32,6 +33,9 @@ class CacheWriteOutsideLockTest(unittest.TestCase):
         with mock.patch(parser, return_value=data), \
                 mock.patch("agent.persist.write_versioned", fake_write):
             handler(ctx, b"")
+        if cache is None:
+            self.assertEqual(written, [], "a running agent must not write items.json (#712)")
+            return
         self.assertEqual(written, [getattr(ws, cache).cache_path])
         self.assertEqual(held, [False], "the cache file was written while WorldState._lock was held")
 
@@ -43,9 +47,9 @@ class CacheWriteOutsideLockTest(unittest.TestCase):
         self.run_handler(world_h.handle_gameobject_query_response,
                          "agent.names.parse_gameobject_query_response", GAMEOBJECT, "names")
 
-    def test_item_response(self):
+    def test_item_response_writes_no_file(self):
         self.run_handler(loot_h.handle_item_query_response,
-                         "agent.loot.parse_item_query_response", ITEM, "items")
+                         "agent.loot.parse_item_query_response", ITEM, None)
 
 
 if __name__ == "__main__":
