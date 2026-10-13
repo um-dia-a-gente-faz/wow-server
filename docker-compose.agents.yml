@@ -63,6 +63,9 @@ x-agent: &agent-defaults
     AGENT_PERSONA: ${AGENT_PERSONA:-}
     AGENT_RUN_DURATION_S: ${AGENT_RUN_DURATION_S:-}
     AGENT_CHANNELS: ${AGENT_CHANNELS:-General}
+    # #747 (ADR 0017): the fleet limits file, e.g. /data/fleet/limits.json. Empty = off: no file is
+    # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
+    AGENT_FLEET_LIMITS_FILE: ${AGENT_FLEET_LIMITS_FILE:-}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
     # all interfaces inside the container so the published port works; the
@@ -80,6 +83,9 @@ x-agent: &agent-defaults
   # feeds both the replay viewer and the Prometheus exporter.
   volumes: &audit-volume
     - /opt/wow-server-metrics/audit:/data/audit
+    # #747: the DIRECTORY of the fleet limits file, read-only. Never the file: a single-file bind
+    # mount pins the inode, and the writer replaces the file by rename (ADR 0017, Consequences).
+    - /opt/wow-server-metrics/fleet:/data/fleet:ro
 
 services:
   agent-luaprata:

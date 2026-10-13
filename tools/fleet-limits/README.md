@@ -13,8 +13,9 @@ for `wow-agents`. Every period it:
 5. writes `FLEET_LIMITS_FILE` (`version` 1, the format at the top of `agent/fleetlimits.py`)
    through a temporary file in the same directory, `fsync` and `os.replace`, mode 0644.
 
-Nothing reads the file until the mount of ADR 0017 further slice 1 exists; running this changes
-nothing on the live fleet before then.
+The agents mount the file's directory read-only (#747) but read it only once the owner sets
+`AGENT_FLEET_LIMITS_FILE`; until then running this changes nothing on the live fleet. The order to
+arm it, the owner stop and how to disarm are in `docs/DEPLOYMENT.md`, "Fleet limits file".
 
 Agents fail open, so this process never turns its own trouble into a block. An unreadable audit
 directory or file counts as no usage (one warning per distinct problem, not per cycle) and the
@@ -67,8 +68,9 @@ After=network.target
 
 [Service]
 User=wow-agents
-Environment=FLEET_AUDIT_DIR=/opt/wow-agents/audit
-Environment=FLEET_LIMITS_FILE=/opt/wow-agents/runtime/fleet/limits.json
+# runner-started agents; agents started from the committed compose file use /opt/wow-server-metrics/{audit,fleet}
+Environment=FLEET_AUDIT_DIR=/opt/wow-agent-runtime/audit
+Environment=FLEET_LIMITS_FILE=/opt/wow-agent-runtime/fleet/limits.json
 Environment=FLEET_JEV_TOKENS_PER_HOUR=500000
 ExecStart=/usr/bin/python3 /opt/wow-server/tools/fleet-limits/fleet_limits.py
 Restart=on-failure

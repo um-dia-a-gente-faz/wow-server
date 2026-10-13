@@ -7,6 +7,7 @@ own audit directory. Edit HEADER or SERVICE here, then run scripts/gen_agents_co
 from . import roster
 
 DEFAULT_AUDIT_DIR = "/opt/wow-server-metrics/audit"
+DEFAULT_FLEET_DIR = "/opt/wow-server-metrics/fleet"
 RAID_SIZE = 25  # the size the HEADER text describes; the port range it names ends at FIRST_PORT + 24
 
 # #539: agent i (0-based position in the list given to render) waits (i * START_DELAY_STEP_S) %
@@ -81,6 +82,9 @@ x-agent: &agent-defaults
     AGENT_PERSONA: ${AGENT_PERSONA:-}
     AGENT_RUN_DURATION_S: ${AGENT_RUN_DURATION_S:-}
     AGENT_CHANNELS: ${AGENT_CHANNELS:-General}
+    # #747 (ADR 0017): the fleet limits file, e.g. /data/fleet/limits.json. Empty = off: no file is
+    # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
+    AGENT_FLEET_LIMITS_FILE: ${AGENT_FLEET_LIMITS_FILE:-}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (@API_PORTS@). Bound to
     # all interfaces inside the container so the published port works; the
@@ -98,6 +102,9 @@ x-agent: &agent-defaults
   # feeds both the replay viewer and the Prometheus exporter.
   volumes: &audit-volume
     - /opt/wow-server-metrics/audit:/data/audit
+    # #747: the DIRECTORY of the fleet limits file, read-only. Never the file: a single-file bind
+    # mount pins the inode, and the writer replaces the file by rename (ADR 0017, Consequences).
+    - /opt/wow-server-metrics/fleet:/data/fleet:ro
 
 services:
 """
@@ -160,10 +167,10 @@ def derive(position: int, entry: dict) -> roster.Agent:
                         race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"))
 
 
-def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
+def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: str = DEFAULT_FLEET_DIR) -> str:
     """The compose file text. `audit_dir` is the host path mounted at /data/audit;
     tools/agent-runner passes its own so the checkout's committed file stays the
-    default (#136, ADR 0002 D5)."""
+    default (#136, ADR 0002 D5). `fleet_dir` is the host path mounted read-only at /data/fleet (#747)."""
     seen = set()
     blocks = []
     for i, a in enumerate(agents):
@@ -179,4 +186,5 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
     last_port = roster.FIRST_PORT + RAID_SIZE - 1
     header = HEADER.replace("@API_PORTS@", f"{roster.FIRST_PORT}-{last_port}")
     text = header + "\n".join(blocks + [JEV_MOCK])
-    return text.replace(f"- {DEFAULT_AUDIT_DIR}:/data/audit", f"- {audit_dir}:/data/audit")
+    return (text.replace(f"- {DEFAULT_AUDIT_DIR}:/data/audit", f"- {audit_dir}:/data/audit")
+            .replace(f"- {DEFAULT_FLEET_DIR}:/data/fleet:ro", f"- {fleet_dir}:/data/fleet:ro"))
