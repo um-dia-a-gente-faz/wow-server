@@ -242,7 +242,8 @@ class MemoryTests(unittest.TestCase):
         self.addCleanup(lambda: m._io.locked() and m._io.release())
         m.remember("goal", "x", 1)
         self.FLUSH_BOUND_S = 0.3
-        with self.assertRaisesRegex(self.failureException, r"flush.. not confirmed after 0.3s"):
+        with self.assertLogs("agent.memory", "WARNING"), \
+                self.assertRaisesRegex(self.failureException, r"flush.. not confirmed after 0.3s"):
             self._flush(m, release=self._release_io(m))
 
     def test_close_stops_the_writer_thread_and_public_methods_stay_quiet(self):
@@ -257,7 +258,9 @@ class MemoryTests(unittest.TestCase):
 
     def test_unserialisable_value_is_dropped_not_raised(self):
         m = self._open()
-        m.remember("goal", "bad", object())
+        with self.assertLogs("agent.memory", "WARNING") as logs:
+            m.remember("goal", "bad", object())
+        self.assertIn("is not JSON, dropped", logs.output[0])
         m.remember("goal", "ok", "fine")
         self._flush(m)
         self.assertIsNone(m.recall("goal", "bad"))
@@ -532,6 +535,7 @@ class MemoryTests(unittest.TestCase):
         seen = self._capture_thread_errors()
         with self.assertLogs("agent.memory", "WARNING") as logs:
             m.remember(kind, key, value, 1)
+            m.remember(kind, key, value, 2)   # a second bad write: still one warning in all
             m.remember("goal", "good", "kept")
             self._flush(m)
             self.assertEqual(m.recall("goal", "good"), "kept")
