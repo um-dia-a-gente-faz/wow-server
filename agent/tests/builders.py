@@ -10,7 +10,6 @@ from here instead of adding another copy.
 import os
 import socket
 import struct
-import tempfile
 import uuid
 import zlib
 
@@ -18,6 +17,7 @@ from agent import packets as pk
 from agent import session as se
 from agent import state
 from agent import update_object as uo
+from agent.tests import CACHE_DIR
 
 # update_object.UPDATETYPE_OUT_OF_RANGE_OBJECTS lives in handlers.world.
 UPDATETYPE_OUT_OF_RANGE_OBJECTS = 4
@@ -82,14 +82,18 @@ class FakeSocket:
         pass
 
 
+def names_cache_path() -> str:
+    """A fresh names.json in the test cache dir (#725: removed at exit with it, not left in /tmp)."""
+    return os.path.join(CACHE_DIR, f"names-{uuid.uuid4().hex}.json")
+
+
 def make_session(stream: bytes = b'', **kw) -> se.WoWSession:
     """A WoWSession on a FakeSocket. The name cache is pointed at a temp file:
     a "found" creature/gameobject query response saves it, and a test must
     never touch the real ~/.cache/wow-agent/names.json."""
     sess = se.WoWSession('127.0.0.1', 8085, 'TEST', b'\x00' * 40, 1, **kw)
     sess.sock = FakeSocket(stream)
-    sess.world_state.names.cache_path = os.path.join(
-        tempfile.gettempdir(), f"wow-agent-test-names-{uuid.uuid4().hex}.json")
+    sess.world_state.names.cache_path = names_cache_path()
     return sess
 
 

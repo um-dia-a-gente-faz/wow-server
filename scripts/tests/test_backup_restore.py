@@ -18,7 +18,9 @@ exit 0
 
 class BackupRestore(unittest.TestCase):
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
+        tmp = tempfile.TemporaryDirectory()  # #725: removed after each test, pass or fail
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
         (self.tmp / "bin").mkdir()
         d = self.tmp / "bin" / "docker"
         d.write_text(FAKE)

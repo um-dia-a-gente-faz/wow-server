@@ -5,19 +5,16 @@ fixture-based response parsers, quest log field decoding
 subclasses (agent.actions) — mirrors the fixture patterns in
 agent/tests/test_npc.py and agent/tests/test_perception.py."""
 
-import os
 import pathlib
 import struct
-import tempfile
 import unittest
-import uuid
 
 from agent import actions as ac
 from agent import perception as per
 from agent import quests as qu
 from agent import update_fields as uf
 from agent import update_object as uo
-from agent.tests.builders import FakeSession, make_session, reward_list
+from agent.tests.builders import FakeSession, make_session, names_cache_path, reward_list
 from agent.wire import PacketTruncated
 
 
@@ -454,8 +451,7 @@ class QuestLogSnapshotTest(unittest.TestCase):
 
     def _world_with_quest(self, counters=(0, 0, 0, 0), state=0):
         ws = per.WorldState()
-        ws.names.cache_path = os.path.join(tempfile.gettempdir(),
-                                           f"wow-agent-test-names-{uuid.uuid4().hex}.json")
+        ws.names.cache_path = names_cache_path()
         ws.set_my_guid(1)
         fields = self._log_fields(0, 8325, counters=counters)
         fields[uf.PLAYER_QUEST_LOG_1_1 + 1] = state
