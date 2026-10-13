@@ -68,6 +68,9 @@ class ComposeLibraryTests(unittest.TestCase):
             else:   # inherits x-agent's volumes: no service may replace that list
                 self.assertIn("<<: *agent-defaults", block, name)
                 self.assertNotIn("\n    volumes:", block, name)
+                # the value comes from the host variable through x-agent's environment, never per service
+                self.assertIn("      <<: *env-defaults\n", block, name)
+                self.assertNotIn("AGENT_FLEET_LIMITS_FILE", block, name)
 
     def test_fleet_dir_replaces_only_its_volume_line(self):
         default, other = compose.render(entries()), compose.render(entries(), fleet_dir="/srv/fleet")

@@ -206,7 +206,7 @@ never fires. An agent whose every Jev call fails has errors but no successes, so
 3. For `budget_exhausted` (it does not fire this alert, but explains an agent that stopped calling Jev): the Jev budget setting in `/opt/wow-server/.env` on the wow-server VM. Read
    the key only; never paste its value anywhere.
 4. For `fleet_blocked` (it does not fire this alert, but explains an agent that stopped calling Jev):
-   read the limits file on the agent host, the path in `AGENT_FLEET_LIMITS_FILE`, for the `jev` entry's
+   read the limits file on the agent host (`AGENT_FLEET_LIMITS_FILE` is the path inside the container, `/data/fleet/limits.json`; on the host it is `limits.json` in the fleet directory, `docs/DEPLOYMENT.md` "Fleet limits file"), for the `jev` entry's
    `until_ts` and `reason`, and find out who wrote the block (the writer, or the owner by hand). Remove the
    entry, or the file, to lift it before `until_ts`.
 

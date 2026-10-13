@@ -68,8 +68,9 @@ After=network.target
 
 [Service]
 User=wow-agents
-Environment=FLEET_AUDIT_DIR=/opt/wow-agents/audit
-Environment=FLEET_LIMITS_FILE=/opt/wow-agents/runtime/fleet/limits.json
+# runner-started agents; agents started from the committed compose file use /opt/wow-server-metrics/{audit,fleet}
+Environment=FLEET_AUDIT_DIR=/opt/wow-agent-runtime/audit
+Environment=FLEET_LIMITS_FILE=/opt/wow-agent-runtime/fleet/limits.json
 Environment=FLEET_JEV_TOKENS_PER_HOUR=500000
 ExecStart=/usr/bin/python3 /opt/wow-server/tools/fleet-limits/fleet_limits.py
 Restart=on-failure

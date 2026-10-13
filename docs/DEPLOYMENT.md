@@ -475,17 +475,27 @@ inode. The host path is `/opt/wow-server-metrics/fleet` in the committed compose
 the agents touch no file and behave as before. Recreating the agents with this change alone
 changes nothing; the owner arms it.
 
-Create the directory yourself, as the user that runs the writer, before the first
-`docker compose up`: Docker creates a missing bind-mount source as `root`, which the container
-can read (the state is then `missing`, which blocks nothing) but the writer cannot write.
+**Arm it, in this order** (on `wow-agents`). `<fleet dir>` is `/opt/wow-agent-runtime/fleet` for
+agents started through `tools/agent-runner` (its runtime directory, `AGENT_RUNNER_RUNTIME_DIR`,
+default `/opt/wow-agent-runtime`; its audit directory is `/opt/wow-agent-runtime/audit`) and
+`/opt/wow-server-metrics/fleet` for agents started from the committed compose file (audit
+`/opt/wow-server-metrics/audit`). Give the writer the matching `FLEET_AUDIT_DIR` and
+`FLEET_LIMITS_FILE=<fleet dir>/limits.json`.
 
-**Arm it, in this order** (on `wow-agents`):
-
+0. Create the directory as the writer's user, before the first `docker compose up`:
+   `sudo install -d -o <writer user> <fleet dir>` (the runtime directory is root-owned). Docker
+   creates a missing bind-mount source as `root`: the container can read it (state `missing`,
+   which blocks nothing) but the writer cannot write it. If Docker already created it:
+   `sudo chown <writer user> <fleet dir>`.
 1. Start `tools/fleet-limits` (see its README) with `FLEET_LIMITS_FILE=<fleet dir>/limits.json`.
 2. Check the file appears and is rewritten every 15 s: `ls -l <fleet dir>/limits.json`.
 3. Put `AGENT_FLEET_LIMITS_FILE=/data/fleet/limits.json` in `.env`.
 4. Recreate the agents: `docker compose -f docker-compose.agents.yml up -d` (the same profile or
-   service names you started them with).
+   service names you started them with). Agents recreated through `tools/agent-runner` take the
+   variable from the runner's environment (its unit's `EnvironmentFile=/opt/wow-server/.env`),
+   which overrides `.env` for the `docker compose` it runs, so after ANY change to the line run
+   `systemctl restart agent-runner` first. (Reasoned from Compose's documented precedence, shell
+   environment over `.env`, and from the runner's code; not run.)
 5. `curl -s http://<agent-host>:9601/metrics | grep fleet_limits_state` on one agent: the line with
    `state="ok"` is `1`. `missing` means the agent cannot see the file (wrong path or directory);
    `invalid` means it cannot parse it; `off` means the variable did not reach the container.
@@ -506,8 +516,11 @@ entry under `"blocks"` in `limits.json`
 (`{"version": 1, "written_ts": <now>, "blocks": {"jev": {"until_ts": ..., "reason": "..."}}}`)
 and lift it by deleting `limits.json`.
 
-**Disarm.** Remove the `AGENT_FLEET_LIMITS_FILE` line from `.env` and recreate the agents. The
-state goes back to `off`. Removing only the file leaves the agents running with state `missing`,
+**Disarm.** Remove the `AGENT_FLEET_LIMITS_FILE` line from `.env`, run
+`systemctl restart agent-runner` (always, when disarming: the runner's environment would keep the
+old value; same reasoning as step 4, not run) and recreate the agents. The state goes back to `off`;
+check it with `curl -s http://<agent-host>:9601/metrics | grep fleet_limits_state`, the line with
+`state="off"` is `1`. Removing only the file leaves the agents running with state `missing`,
 which is also no block.
 
 ### Pinned images, agent image tag and rollback (#291)
