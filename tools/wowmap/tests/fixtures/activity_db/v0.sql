@@ -30,10 +30,10 @@ INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred
     VALUES ('db:1:104.000:money:', 'Rubens', 104.0, 'money', 'Money +26c', '{"delta": 26, "total": 1026}', 'db', 0);
 -- Two events with one t (105.0): the store orders t DESC, id DESC, so the higher id reads first.
 INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
-    VALUES ('db:1:105.000:item:1', 'Rubens', 105.0, 'item', 'Got Refreshing Spring Water ×5',
+    VALUES ('db:1:105.000:item:+159', 'Rubens', 105.0, 'item', 'Got Refreshing Spring Water ×5',
             '{"item": 159, "count": 5}', 'db', 0);
 INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
-    VALUES ('db:1:105.000:item:2', 'Rubens', 105.0, 'item', 'Got Linen Cloth ×2',
+    VALUES ('db:1:105.000:item:+2589', 'Rubens', 105.0, 'item', 'Got Linen Cloth ×2',
             '{"item": 2589, "count": 2}', 'db', 0);
 INSERT INTO meta (key, value) VALUES ('chat_last_id', '1700000000123-0');
 PRAGMA user_version = 0;

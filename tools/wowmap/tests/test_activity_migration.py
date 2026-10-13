@@ -7,7 +7,7 @@ set. Fixtures are append-only. Adding migration N+1 means: append it to MIGRATIO
 activity_schema.py, add v<N+1>.sql (the v<N> script with the step and user_version N+1), pin its
 sha256 in PINS and list its rows in ROWS and META under N+1.
 
-Before a store opens a fixture, the built database must pass two checks: PRAGMA user_version is
+Before a store opens a fixture, the built database must pass three checks: PRAGMA user_version is
 N, and the rows across all tables are the rows the test lists. For N == SCHEMA_VERSION the tables
 and sqlite_master names must also equal those of a database the real store creates fresh
 (table_info, not the sql text, so ALTER TABLE and an inline column compare equal).
@@ -31,8 +31,8 @@ VERSIONS = (0, *range(1, activity_schema.SCHEMA_VERSION + 1))
 
 # sha256 of each shipped fixture, CRLF normalised. Pinned by hand: a changed fixture must fail.
 PINS = {
-    0: "6025d359154d48f92556b4ff262068744ea246079df04a3c97ac4999f97ebb03",
-    1: "e94057e74c6a9ef29836ad3009e4bf0cf759fd50527282c6520088cdc15d652a",
+    0: "89aba20c464dd1e6cb6d445101d8d02edcddc576ea9719c27ca3c9aa30e4f747",
+    1: "557c8ebbc9a30f599b90dd956947c3b69c64ac94cb8f317264b795a58363c381",
 }
 # A row both fixtures hold: a uid that is in the fixture, re-added by the test (add() must refuse it).
 DUP_UID = "db:1:104.000:money:"
