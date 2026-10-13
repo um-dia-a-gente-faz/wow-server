@@ -21,10 +21,14 @@ TrinityCore/TrinityCore/contents/... ?ref=3.3.5`):
   src/server/shared/SharedDefines.h (SpellCastResult, MAX_POWERS, MAX_STATS)
 """
 
+import logging
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
+from typing import Any
 
 from . import packets as pk
+from .metrics import swallowed
+from .worldknowledge import WorldKnowledge
 from .opcodes import (
     SMSG_ATTACK_START,
     SMSG_ATTACK_STOP,
@@ -96,6 +100,8 @@ def parse_removed_spell(payload: bytes) -> int:
 # spell_custom` for these characters' starting spells where possible; verify
 # against Spell.dbc directly before trusting anything past ~level 5.
 
+log = logging.getLogger("agent.spells")
+
 POWER_MANA = 0
 POWER_RAGE = 1
 POWER_ENERGY = 3
@@ -157,8 +163,74 @@ SPELL_TABLE: dict[int, SpellInfo] = {
 }
 
 
+# ADR 0016 further slice 1: the world bundle corrects the numbers of SPELL_TABLE entries. It never
+# widens the set (an id outside the table stays None) and never makes an entry worse (any failure
+# gives the table entry). One tuple so a swap of reader and cache is a single atomic assignment.
+_world: tuple[WorldKnowledge | None, dict[int, SpellInfo]] = (None, {})
+
+
+def set_world_knowledge(wk: WorldKnowledge | None) -> None:
+    """Use `wk` for get_spell_info (None = the table alone) and drop every cached lookup."""
+    global _world
+    _world = (wk, {})
+
+
+def _num(v) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool)
+
+
+def _corrected(base: SpellInfo, wk: WorldKnowledge) -> SpellInfo:
+    """`base` with the numbers the bundle row gives; a missing row, a reader that raises or a
+    field of the wrong type leaves the table's value."""
+    try:
+        row = wk.spell(base.spell_id)
+    except Exception:  # noqa: BLE001 - never worse than the table
+        swallowed("spells.world_bundle", log)   # counted and logged, throttled
+        return base
+    if not isinstance(row, dict):
+        return base
+    ch: dict = {}
+    if isinstance(row.get("name"), str) and row["name"]:
+        ch["name"] = row["name"]
+    for col, field in (("power_type", "power_type"), ("cast_time_ms", "cast_time_ms"),
+                       ("spell_level", "min_level"), ("range_max_yd", "range_yd")):
+        v: Any = row.get(col)
+        if _num(v) and not (col == "spell_level" and v <= 0):
+            ch[field] = float(v) if field == "range_yd" else v
+    cost, pct = row.get("mana_cost"), row.get("mana_cost_pct")
+    if _num(cost) and _num(pct) and pct == 0:   # a percentage of base mana cannot be computed here
+        ch["power_cost"] = cost
+    return replace(base, **ch)
+
+
 def get_spell_info(spell_id: int) -> SpellInfo | None:
-    return SPELL_TABLE.get(spell_id)
+    base = SPELL_TABLE.get(spell_id)
+    wk, cache = _world
+    if base is None or wk is None:
+        return base
+    info = cache.get(spell_id)
+    if info is None:
+        info = cache[spell_id] = _corrected(base, wk)
+    return info
+
+
+def compare_with_table(wk: WorldKnowledge) -> list[str]:
+    """Start-up evidence: how many SPELL_TABLE ids the bundle has, then one line per spell whose
+    numbers differ (field: table value, bundle value). Built from table ids only; never raises."""
+    lines, found = [], 0
+    for base in SPELL_TABLE.values():
+        try:
+            has_row = wk.spell(base.spell_id) is not None
+            new = _corrected(base, wk)
+        except Exception:  # noqa: BLE001
+            swallowed("spells.world_bundle", log)
+            continue
+        found += has_row
+        diff = [f"{f.name} table {getattr(base, f.name)!r} bundle {getattr(new, f.name)!r}"
+                for f in fields(SpellInfo) if getattr(base, f.name) != getattr(new, f.name)]
+        if diff:
+            lines.append(f"world bundle differs for spell {base.spell_id}: " + "; ".join(diff))
+    return [f"world bundle has {found} of {len(SPELL_TABLE)} SPELL_TABLE ids"] + lines
 
 
 # ── CMSG_CAST_SPELL ─────────────────────────────────────────────────────────

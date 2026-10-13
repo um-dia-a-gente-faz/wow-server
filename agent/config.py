@@ -74,6 +74,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("AGENT_MAX_TOKENS_PER_HOUR", int, 0, "caps Jev tokens per agent per rolling hour (LLM brain and fallback not metered); 0 = unlimited"),
     _s("AGENT_FLEET_LIMITS_FILE", str, "", "fleet limits file (ADR 0017): a JSON file of time-bounded brain blocks "
        "that Brain reads; empty = off, no file is touched", compose=False),
+    _s("AGENT_WORLD_BUNDLE", str, "", "path of the world bundle (ADR 0016); empty = off, no file is touched",
+       compose=False),
     _s("LOG_LEVEL", str, "INFO", "python logging level"),
     _s("VERBOSE_PACKETS", bool, False, "log every packet"),
     _s("AGENT_DUMP_PACKETS", str, "", "directory for raw SMSG_UPDATE_OBJECT dumps; empty = off"),
@@ -197,6 +199,8 @@ class Config:
     max_tokens_per_hour: int = _f("AGENT_MAX_TOKENS_PER_HOUR")
     # ADR 0017 slice 1: JSON file of "do not call brain X until T" blocks; empty = off.
     fleet_limits_file: str = _f("AGENT_FLEET_LIMITS_FILE")
+    # ADR 0016 further slice 1: world bundle path for get_spell_info; empty = off.
+    world_bundle: str = _f("AGENT_WORLD_BUNDLE")
     jev_enabled: bool = field(default_factory=lambda: bool(
         get("JEV_BASE_URL") or (
             _lower("JEV_PROVIDER") == "openrouter"

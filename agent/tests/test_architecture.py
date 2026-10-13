@@ -58,7 +58,7 @@ LAYERS = {
     "loot": {"opcodes", "packets", "wire"},
     "mail": {"opcodes", "packets", "wire"},
     "trade": {"opcodes", "packets", "wire"},
-    "spells": {"opcodes", "packets", "wire"},
+    "spells": {"metrics", "opcodes", "packets", "wire", "worldknowledge"},
     "channels": {"opcodes", "wire"},
     "names": {"opcodes", "persist", "wire"},
     "group": {"opcodes", "wire"},
@@ -106,7 +106,7 @@ LAYERS = {
     "supervisor": {"auth", "lifecycle", "metrics"},   # the reconnect supervisor (#292)
     "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
     "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "runloop",
-             "supervisor"},   # the composition root (#292): the one module that wires a whole agent
+             "spells", "supervisor", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
     "__main__": {"auth", "config", "root"},
 }
 
