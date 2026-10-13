@@ -8,10 +8,11 @@ CREATE TABLE memory (
         expires_at REAL,
         PRIMARY KEY (kind, key));
 -- kind, key, value (JSON text), expires_at (epoch seconds, NULL = never). Inserted in this order.
+-- Within failed_target the insertion order is not key order: recent() is newest-first by rowid.
 INSERT INTO memory VALUES ('known_target', 'Springpaw Cub', '{"x": 1.5, "guid": 42}', NULL);
 INSERT INTO memory VALUES ('goal', 'quest', '"reach level 10"', NULL);
 INSERT INTO memory VALUES ('action', 'last_cycle', '17', NULL);
-INSERT INTO memory VALUES ('failed_target', 'Razormane Scout', '["move_to", "timeout"]', 4102444800.0);
 INSERT INTO memory VALUES ('failed_target', 'Tauren Guard', 'null', NULL);
+INSERT INTO memory VALUES ('failed_target', 'Razormane Scout', '["move_to", "timeout"]', 4102444800.0);
 INSERT INTO memory VALUES ('failed_target', 'Stale Gnoll', '"old"', 1700000000.0);
 PRAGMA user_version = 1;

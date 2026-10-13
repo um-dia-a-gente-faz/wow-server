@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_character_t ON events (character, t);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- Rows, inserted in this order (id 1..5). 'Rubens' and 'rubens' differ only in case: the column is NOCASE.
+-- Rows, inserted in this order (id 1..7). 'Rubens' and 'rubens' differ only in case: the column is NOCASE.
 INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
     VALUES ('db:1:100.000:level:', 'Rubens', 100.0, 'level', 'Reached level 11', '{"from": 10, "to": 11}', 'db', 0);
 INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
@@ -28,5 +28,12 @@ INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred
             'audit', 0);
 INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
     VALUES ('db:1:104.000:money:', 'Rubens', 104.0, 'money', 'Money +26c', '{"delta": 26, "total": 1026}', 'db', 0);
+-- Two events with one t (105.0): the store orders t DESC, id DESC, so the higher id reads first.
+INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
+    VALUES ('db:1:105.000:item:1', 'Rubens', 105.0, 'item', 'Got Refreshing Spring Water ×5',
+            '{"item": 159, "count": 5}', 'db', 0);
+INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)
+    VALUES ('db:1:105.000:item:2', 'Rubens', 105.0, 'item', 'Got Linen Cloth ×2',
+            '{"item": 2589, "count": 2}', 'db', 0);
 INSERT INTO meta (key, value) VALUES ('chat_last_id', '1700000000123-0');
 PRAGMA user_version = 1;
