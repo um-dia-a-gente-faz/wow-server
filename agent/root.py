@@ -7,14 +7,17 @@ import threading
 import time
 from dataclasses import dataclass
 
+from . import spells
 from .audit import AuditLogger
 from .brain import Brain
 from .chat_relay import ChatRelay
 from .http_api import AgentObserver, ObserverServer, start_server
 from .lifecycle import Lifecycle
 from .login import authenticate_and_login, connect_and_login
+from .metrics import swallowed
 from .runloop import run_loop
 from .supervisor import supervise_connection
+from .worldknowledge import WorldKnowledge
 
 
 @dataclass
@@ -68,6 +71,7 @@ def build_agent(cfg, log, duration: float | None = None, perception_dump: bool =
     """Wire one agent from its config. Starts the chat relay and, when AGENT_HTTP_PORT is
     set, the observability server; does not connect to the game (Agent.run() does)."""
     chat_relay = build_chat_relay(cfg, log)
+    load_world_bundle(cfg, log)
 
     # #161: the one brain AGENT_BRAIN selects (llm by default; Jev is opt-in); its client
     # missing -> no think step, the agent idles.
@@ -91,6 +95,31 @@ def build_agent(cfg, log, duration: float | None = None, perception_dump: bool =
                  observer=observer, http_server=http_server,
                  lifecycle=build_lifecycle(audit_logger, observer),
                  duration=duration, perception_dump=perception_dump, start_delay=cfg.start_delay)
+
+
+def guarded_lookup(wk, log):
+    """spells.get_spell_info's lookup: wk.spell, but a reader that raises is counted, logged
+    (throttled) and answers None, so the table entry stands. spells.py holds no broad except."""
+    def lookup(spell_id: int):
+        try:
+            return wk.spell(spell_id)
+        except Exception:  # noqa: BLE001 - never worse than the table
+            swallowed("root.world_bundle", log)
+            return None
+    return lookup
+
+
+def load_world_bundle(cfg, log) -> None:
+    """ADR 0016 further slice 1: with AGENT_WORLD_BUNDLE set, open the bundle once, hand its
+    lookup to spells.get_spell_info and log how it compares with SPELL_TABLE. Empty = nothing
+    is touched."""
+    path = getattr(cfg, "world_bundle", "")
+    if not path:
+        return
+    lookup = guarded_lookup(WorldKnowledge(path), log)
+    spells.set_world_knowledge(lookup)
+    for line in spells.compare_with_table(lookup):
+        log.info("%s", line)
 
 
 def build_lifecycle(audit_logger, observer) -> Lifecycle:
