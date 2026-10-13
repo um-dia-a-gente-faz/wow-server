@@ -17,3 +17,8 @@ APPROACH_MAX_YD = 40.0
 
 # Candidates do not offer to pull mobs more than this many levels above us.
 ATTACK_LEVEL_MARGIN = 3
+
+# Candidates do not offer an unprovoked pull on these Unit.rank names (names.CREATURE_RANK_NAMES;
+# CreatureEliteType in TrinityCore 3.3.5 SharedDefines.h: 1 ELITE, 2 RAREELITE, 3 WORLDBOSS).
+# "rare" (4) is an ordinary-strength mob and stays pullable. Defence is never filtered.
+NO_PULL_RANKS = ("elite", "rareelite", "worldboss")

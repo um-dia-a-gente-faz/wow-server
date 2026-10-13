@@ -38,6 +38,8 @@ class Unit(TypedDict):
     health_pct: NotRequired[float | None]
     target_guid: NotRequired[Guid]
     quest_giver_status: NotRequired[str | int]  # the status name when known, else the raw value
+    rank: NotRequired[str]                      # "elite", "rareelite", "worldboss", "rare"; absent for a normal unit
+    resolved: NotRequired[bool]                 # only present, as false, for a creature whose template query is unanswered
     lootable: NotRequired[bool]                 # only present when true
     npc_flags: NotRequired[int]                 # only present when non-zero
     in_group: NotRequired[bool]                 # nearby_players only

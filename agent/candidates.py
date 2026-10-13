@@ -83,7 +83,7 @@ from .action_specs import cap_of
 from .candidate_history import finish, history_effects
 from .candidate_history import HISTORY_DEMOTE_REPEATS, HISTORY_DROP_WINDOW  # noqa: F401 (re-exported)
 from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
-from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD
+from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD, NO_PULL_RANKS
 
 MAX_CANDIDATES = 15
 
@@ -163,7 +163,7 @@ def candidate(action: str, params: dict, label: str) -> Candidate:
 def _name(unit: Unit) -> str:
     name = unit.get("name")
     if name:
-        return name
+        return f"{name} ({unit['rank']})" if unit.get("rank") else name
     guid = unit.get("guid")
     # guid may be a handle string ("u3") on an encoded snapshot (UM-89).
     return f"unit {guid:#x}" if isinstance(guid, int) else f"unit {guid or 'unknown'}"
@@ -467,7 +467,8 @@ def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
 @offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
 def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
     targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
-               and not u.get("npc_flags") and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
+               and not u.get("npc_flags") and u.get("resolved", True) and u.get("rank") not in NO_PULL_RANKS
+               and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
                # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays),
                # unless we are in combat with no possible attacker in view: a stuck combat flag, so the pull
                # is offered again (gh-544, narrowed by gh-555)
