@@ -186,6 +186,8 @@ INVENTORY: list[Row] = [
      "dev tooling: a later run reads --record back as --fixture, but a person passes both paths"),
     ("tools/agent_dev/probe.py", "save_report", "probe report", "exempt",
      "ADR 0018 exempts it; REPORT_SCHEMA, exact match"),
+    ("tools/fleet-limits/fleet_limits.py", "Writer.cycle", "fleet limits file", "exempt",
+     "rewritten whole every period; version in the file, checked by agent/fleetlimits.py"),
     ("tools/loadtest/__main__.py", "main", "loadtest --out report", "exempt",
      "dev tooling: a later run reads it back as --compare, but a person passes the path"),
     ("tools/worldknowledge/build.py", "build", "world bundle", "binary-asset",
