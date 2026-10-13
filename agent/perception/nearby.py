@@ -38,6 +38,10 @@ def object_dict(obj: ObjectInfo, distance: float) -> Unit:
     # UM-97: only set when true/non-zero, so existing snapshots (and the
     # pruned LLM prompt) are unchanged for ordinary units. agent/candidates.py
     # reads these to offer loot and to keep service NPCs out of attack options.
+    if obj.rank:
+        d["rank"] = obj.rank
+    if not obj.resolved:
+        d["resolved"] = False
     if obj.is_lootable():
         d["lootable"] = True
     if obj.npc_flags:

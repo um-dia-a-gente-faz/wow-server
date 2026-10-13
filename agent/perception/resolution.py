@@ -31,7 +31,8 @@ class ResolutionMixin:
             else:
                 self.names.want_player(obj.guid)
         elif obj.object_type == "unit" and obj.entry:
-            if obj.entry in self.names.creatures:
+            obj.resolved = self.names.is_creature_resolved(obj.entry)
+            if obj.resolved:
                 data = self.names.creatures[obj.entry]
                 if data is not None:
                     self._apply_creature_name(obj, data)
@@ -129,9 +130,10 @@ class ResolutionMixin:
         NPCs — see agent/tests/fixtures/update_object/README.md)."""
         with self._lock:
             self.names.on_creature_query_response(data, save=False)
-            if data["found"]:
-                for obj in self.objects.values():
-                    if obj.object_type == "unit" and obj.entry == data["entry"]:
+            for obj in self.objects.values():
+                if obj.object_type == "unit" and obj.entry == data["entry"]:
+                    obj.resolved = True  # found or not found: the answer is in the cache
+                    if data["found"]:
                         self._apply_creature_name(obj, data)
         if data["found"]:
             self.names.save()  # outside the lock; the recv thread is the only writer of the cache dicts (ADR 0009), so no second lock

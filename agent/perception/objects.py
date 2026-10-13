@@ -38,6 +38,7 @@ class ObjectInfo:
     subname: str = ""  # creature "title" (e.g. "Guard Captain") — creatures/players only
     rank: str = ""  # CreatureEliteType name ("elite", "rareelite", "worldboss", "rare") — creatures only, "" = normal
     creature_type: str | None = None  # CreatureType name ("beast", "humanoid", ...) — creatures only
+    resolved: bool = True  # creatures: False from first sight until the creature query is answered (found or not); see ResolutionMixin
     gameobject_type: int | None = None  # SMSG_GAMEOBJECT_QUERY_RESPONSE's `type` (GameObjectTypes, SharedDefines.h) — gameobjects only, None until queried
     level: int | None = None
     health: int | None = None

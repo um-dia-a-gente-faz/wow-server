@@ -249,6 +249,11 @@ class NameCache:
         self.expired_queries = 0  # sent queries forgotten after QUERY_TIMEOUT_S with no answer
         self.dropped_queries = 0  # queued queries pushed out by the MAX_PENDING cap
 
+    def is_creature_resolved(self, entry: int) -> bool:
+        """Whether the server has answered for this creature entry, found or not (a "not found"
+        answer is a key with value None): then its rank is as known as it will ever be."""
+        return entry in self.creatures
+
     def want_player(self, guid: int):
         self._want("player", guid, guid)
 

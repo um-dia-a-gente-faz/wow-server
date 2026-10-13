@@ -119,6 +119,7 @@
     "z": 0.0
    },
    "quest_giver_status": "available",
+   "resolved": false,
    "type": "unit"
   },
   {
