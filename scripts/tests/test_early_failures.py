@@ -6,11 +6,13 @@ import contextlib
 import io
 import os
 import pathlib
+import queue
 import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
 from unittest import mock
@@ -20,6 +22,13 @@ SCRIPT = ROOT / "scripts" / "early_failures.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import early_failures as ef  # noqa: E402
+
+
+def _pump(stream, lines):
+    """Copy a pipe's lines to a queue, then None at EOF, so a test can wait on them with a deadline."""
+    for line in stream:
+        lines.put(line)
+    lines.put(None)
 
 
 class ImmediatePrintTest(unittest.TestCase):
@@ -279,6 +288,68 @@ class RealProcessTest(unittest.TestCase):
             if child is not None:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(child, signal.SIGKILL)
+
+    def expect_line(self, lines, marker, timeout=30):
+        """The first stderr line containing marker, within timeout s: a deadline on the queue, not a sleep."""
+        deadline = time.monotonic() + timeout
+        seen = []
+        while True:
+            try:
+                line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
+            except queue.Empty:
+                self.fail(f"no {marker!r} within {timeout} s; stderr so far: {''.join(seen)}")
+            if line is None:
+                self.fail(f"stderr closed before {marker!r}; stderr: {''.join(seen)}")
+            if marker in line:
+                return line
+            seen.append(line)
+
+    def gone(self, pid, timeout=5):
+        """True once pid no longer exists, polled for up to timeout s."""
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+    def test_sigterm_during_the_stall_sequence_kills_the_test_process_and_exits_143(self):
+        d = self.make_dir("""
+            import os, sys, time, unittest
+            class T(unittest.TestCase):
+                def test_blocks(self):
+                    sys.stderr.write("READY %d\\n" % os.getpid())
+                    sys.stderr.flush()
+                    while True:   # survives the soft stop (SIGINT), so the stall sequence is still running
+                        try:
+                            time.sleep(0.2)
+                        except BaseException:
+                            pass
+            """)
+        p = subprocess.Popen([sys.executable, str(SCRIPT), "--stall-after", "2", "--", "discover", "-s", d],
+                             cwd=ROOT, stderr=subprocess.PIPE, text=True)
+        lines = queue.Queue()
+        reader = threading.Thread(target=_pump, args=(p.stderr, lines), daemon=True)
+        reader.start()
+        child = None
+        try:
+            child = int(self.expect_line(lines, "READY ").split()[1])
+            self.expect_line(lines, "stall: still running after 2 s")   # the supervisor is in the stall sequence
+            p.send_signal(signal.SIGTERM)
+            self.assertEqual(p.wait(timeout=30), 128 + signal.SIGTERM)
+            self.assertTrue(self.gone(child), "the test process outlived its supervisor")
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            if child is not None:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(child, signal.SIGKILL)
+            reader.join(timeout=5)
+            p.stderr.close()
 
     def test_without_a_bound_sigint_ends_the_run_as_python_m_unittest_does(self):
         out = self.sigint_run({})
