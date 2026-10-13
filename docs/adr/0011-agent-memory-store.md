@@ -19,7 +19,7 @@ goal. An unattended run that restarts mid-way starts blind (#98).
 
 - `agent/memory.py` is a small `sqlite3` store, one file per agent. The path is given by
   the caller; the intended location is `AGENT_STATE_DIR/<agent>/memory.db`, which is not
-  wired in yet. Stdlib only, and the module imports nothing else from `agent/`.
+  wired in yet. Stdlib only, and the module imports nothing else from `agent/` but `metrics.swallowed` (#741: a failed write or read is counted there).
 - Interface: `Memory(path | None, now=time.time)`, `remember(kind, key, value, ttl=None)`,
   `recall(kind, key)`, `recent(kind, n)` (newest write first), `flush()`, `close()`.
   `value` is stored as JSON. `ttl` is in seconds; `None` never expires.
@@ -73,7 +73,13 @@ kind is a design change, not a drive-by edit.
 ## What a timed-out flush or close means
 
 `flush(timeout=30.0)` and `close(timeout=5.0)` return a bool and never raise. A negative timeout counts
-as 0. Two `close()` calls get the same value: a second caller waits for the first, within its own bound.
+as 0, and so does NaN; `inf` means no deadline of ours (clamped to a large finite wait). A second `close()` waits for the
+first, within its own bound. If that bound ends before the first finished it returns `False` although the first may
+return `True`; never the reverse.
+
+`recall` and `recent` wait at most 5 s (`_READ_TIMEOUT_S`) for the connection lock. When they do not get it they return
+nothing and log `read timed out` (once per store). A write or read the database cannot execute, whatever the exception
+(a lone surrogate in a key, say), is dropped with one warning; the writer thread goes on.
 
 - `flush() == False` (closed store, dead writer, or the timeout passed): the writes are **not
   confirmed**, not necessarily lost. They stay queued and the writer still executes them if it
@@ -83,7 +89,8 @@ as 0. Two `close()` calls get the same value: a second caller waits for the firs
   queued writes **may be lost if the process exits**, because the writer is a daemon thread. close()
   does not close a connection the writer still uses: in-memory it closes nothing and the writer closes
   its connection when it finishes; with a file it closes only the separate reader. The store counts as
-  closed, and a second `close()` returns the first result at once.
+  closed, and a second `close()` after the first finished returns its result at once. A dead writer is logged as
+  "writer is not running", not as a timeout.
 - A consumer on a shutdown path logs a `False` and goes on. It never retries in a loop.
 
 ## Consequences
