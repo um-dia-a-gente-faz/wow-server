@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"
 
 
+MAX_START_DELAY_S = 300.0
+
+
 class ConfigError(ValueError):
     """An environment variable holds a value that cannot be used."""
 
@@ -51,6 +54,8 @@ SETTINGS: tuple[Setting, ...] = (
        "(#318) never follows an agent that is not the party leader; empty = every character counts as human",
        compose=False),
     _s("AGENT_THINK_INTERVAL_S", float, 3.0, "minimum delay between think-loop decisions, seconds"),
+    _s("AGENT_START_DELAY_S", float, 0.0, "seconds to wait once before the first connection attempt, 0 to 300 "
+       "(set per service by compose from the roster position, #539)"),
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),
     _s("AGENT_PERSONA", str, "", "persona text for the LLM"),
     _s("AGENT_CHANNELS", str, "General", 'chat channels to join after login, comma-separated; "none" disables'),
@@ -148,6 +153,7 @@ class Config:
     # ── Agent identity / behaviour ────────────────────────────
     agent_name: str = _f("AGENT_NAME")
     think_interval: float = _f("AGENT_THINK_INTERVAL_S")
+    start_delay: float = _f("AGENT_START_DELAY_S")  # #539: one wait before the first connect
     run_duration: float = _f("AGENT_RUN_DURATION_S")  # 0 = forever
     persona: str = _f("AGENT_PERSONA")
     # UM-93: chat channels to join after login, comma-separated ("General,world");
@@ -238,6 +244,8 @@ class Config:
             problems.append(f"WOW_AUTH_PORT out of range: {self.wow_auth_port}")
         if self.http_port < 0 or self.http_port > 65535:
             problems.append(f"AGENT_HTTP_PORT out of range: {self.http_port}")
+        if not 0 <= self.start_delay <= MAX_START_DELAY_S:
+            problems.append(f"AGENT_START_DELAY_S out of range 0-{MAX_START_DELAY_S:g}: {self.start_delay}")
         if self.agent_brain not in ("llm", "jev"):
             problems.append(f"AGENT_BRAIN must be llm or jev, got {self.agent_brain!r}")
         if self.agent_brain_fallback not in ("none", "llm"):
@@ -254,6 +262,7 @@ class Config:
             "character": self.character or f"guid:{self.char_guid}",
             "agent_name": self.agent_name,
             "think_interval": self.think_interval,
+            "start_delay": self.start_delay,
             "run_duration": self.run_duration or "forever",
             "brain": self.agent_brain,
             "brain_fallback": self.agent_brain_fallback,

@@ -9,6 +9,11 @@ from . import roster
 DEFAULT_AUDIT_DIR = "/opt/wow-server-metrics/audit"
 RAID_SIZE = 25  # the size the HEADER text describes; the port range it names ends at FIRST_PORT + 24
 
+# #539: agent i (0-based position in the list given to render) waits START_DELAY_STEP_S * i before
+# its first connection, capped, so a fleet restart does not hit the auth server at once.
+START_DELAY_STEP_S = 3
+START_DELAY_CAP_S = 60
+
 HEADER = """\
 # Agent containers, one per character: 5 for a party, 25 for a raid (UM-63).
 # GENERATED from agents/roster.json by scripts/gen_agents_compose.py. Do not
@@ -107,6 +112,7 @@ SERVICE = """\
       WOW_CHARACTER: {character}
       AGENT_NAME: {character}
       AGENT_HTTP_PORT: {port}
+      AGENT_START_DELAY_S: "{start_delay}"
     ports:
       - "${{AGENT_HTTP_PUBLISH_IP:-0.0.0.0}}:{port}:{port}"
     labels:
@@ -167,7 +173,8 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR) -> str:
         blocks.append(SERVICE.format(
             service=agent.service, container=agent.container,
             account=agent.account, character=agent.character, port=agent.api_port,
-            profiles=", ".join(agent.profiles)))
+            profiles=", ".join(agent.profiles),
+            start_delay=min(i * START_DELAY_STEP_S, START_DELAY_CAP_S)))
     last_port = roster.FIRST_PORT + RAID_SIZE - 1
     header = HEADER.replace("@API_PORTS@", f"{roster.FIRST_PORT}-{last_port}")
     text = header + "\n".join(blocks + [JEV_MOCK])

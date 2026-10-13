@@ -385,6 +385,18 @@ LAN access to it. Each container has `mem_limit: 128m` and `cpus: 0.25`, so 25
 of them need about 3.2 GB of RAM (limit, not measured use) and 6 CPUs at the
 cap; size the VM from `docker stats` once they run.
 
+**Start stagger (#539).** The generator gives the agent at 0-based roster position `i`
+`AGENT_START_DELAY_S = min(3 * i, 60)` (`agents/compose.py`), so a fleet-wide `up -d`
+reaches the auth server over about a minute instead of all at once. The agent waits that
+long once, before its first connection attempt, and logs it; the wait is not repeated on a
+reconnect (those use the jittered backoff, #402), and a SIGTERM ends it at once. Retired
+entries still count in the position, and agents the runner adds get the delay of their
+roster position. While it waits, `GET /state` answers with the lifecycle state `connecting`
+(no reason yet). Setting it is only for the compose file; the agent default is `0`, bounds
+0 to 300. A closed or silent auth port needs no readiness probe: it is already the
+`connect_failed` reason, retried with backoff and apart from `auth_rejected` (the server
+answered and said no).
+
 > **Do not confuse `wow-agents` with VM 305.** VM 305 is *called* `agents`, but
 > it is the coding-CLI dev host (claude/codex/antigravity/opencode/kimi users,
 > Ubuntu 26.04, no Docker). Nothing from the WoW fleet runs there.

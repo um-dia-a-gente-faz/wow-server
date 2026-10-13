@@ -92,6 +92,7 @@ services:
       WOW_CHARACTER: Luaprata
       AGENT_NAME: Luaprata
       AGENT_HTTP_PORT: 9601
+      AGENT_START_DELAY_S: "0"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9601:9601"
     labels:
@@ -108,6 +109,7 @@ services:
       WOW_CHARACTER: Farstrider
       AGENT_NAME: Farstrider
       AGENT_HTTP_PORT: 9602
+      AGENT_START_DELAY_S: "3"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9602:9602"
     labels:
@@ -124,6 +126,7 @@ services:
       WOW_CHARACTER: Shadowblade
       AGENT_NAME: Shadowblade
       AGENT_HTTP_PORT: 9603
+      AGENT_START_DELAY_S: "6"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9603:9603"
     labels:
@@ -140,6 +143,7 @@ services:
       WOW_CHARACTER: Sunspeaker
       AGENT_NAME: Sunspeaker
       AGENT_HTTP_PORT: 9604
+      AGENT_START_DELAY_S: "9"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9604:9604"
     labels:
@@ -156,6 +160,7 @@ services:
       WOW_CHARACTER: Spellweaver
       AGENT_NAME: Spellweaver
       AGENT_HTTP_PORT: 9605
+      AGENT_START_DELAY_S: "12"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9605:9605"
     labels:
@@ -172,6 +177,7 @@ services:
       WOW_CHARACTER: Zanja
       AGENT_NAME: Zanja
       AGENT_HTTP_PORT: 9606
+      AGENT_START_DELAY_S: "15"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9606:9606"
     labels:
@@ -188,6 +194,7 @@ services:
       WOW_CHARACTER: Jinjin
       AGENT_NAME: Jinjin
       AGENT_HTTP_PORT: 9607
+      AGENT_START_DELAY_S: "18"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9607:9607"
     labels:
@@ -204,6 +211,7 @@ services:
       WOW_CHARACTER: Gargash
       AGENT_NAME: Gargash
       AGENT_HTTP_PORT: 9608
+      AGENT_START_DELAY_S: "21"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9608:9608"
     labels:
@@ -220,6 +228,7 @@ services:
       WOW_CHARACTER: Tatoka
       AGENT_NAME: Tatoka
       AGENT_HTTP_PORT: 9609
+      AGENT_START_DELAY_S: "24"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9609:9609"
     labels:
@@ -236,6 +245,7 @@ services:
       WOW_CHARACTER: Aerdorei
       AGENT_NAME: Aerdorei
       AGENT_HTTP_PORT: 9610
+      AGENT_START_DELAY_S: "27"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9610:9610"
     labels:
@@ -252,6 +262,7 @@ services:
       WOW_CHARACTER: Senkazi
       AGENT_NAME: Senkazi
       AGENT_HTTP_PORT: 9611
+      AGENT_START_DELAY_S: "30"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9611:9611"
     labels:
@@ -268,6 +279,7 @@ services:
       WOW_CHARACTER: Mogthar
       AGENT_NAME: Mogthar
       AGENT_HTTP_PORT: 9612
+      AGENT_START_DELAY_S: "33"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9612:9612"
     labels:
@@ -284,6 +296,7 @@ services:
       WOW_CHARACTER: Urzughak
       AGENT_NAME: Urzughak
       AGENT_HTTP_PORT: 9613
+      AGENT_START_DELAY_S: "36"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9613:9613"
     labels:
@@ -300,6 +313,7 @@ services:
       WOW_CHARACTER: Garmar
       AGENT_NAME: Garmar
       AGENT_HTTP_PORT: 9614
+      AGENT_START_DELAY_S: "39"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9614:9614"
     labels:
@@ -316,6 +330,7 @@ services:
       WOW_CHARACTER: Queldorei
       AGENT_NAME: Queldorei
       AGENT_HTTP_PORT: 9615
+      AGENT_START_DELAY_S: "42"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9615:9615"
     labels:
@@ -332,6 +347,7 @@ services:
       WOW_CHARACTER: Zulrik
       AGENT_NAME: Zulrik
       AGENT_HTTP_PORT: 9616
+      AGENT_START_DELAY_S: "45"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9616:9616"
     labels:
@@ -348,6 +364,7 @@ services:
       WOW_CHARACTER: Pamarana
       AGENT_NAME: Pamarana
       AGENT_HTTP_PORT: 9617
+      AGENT_START_DELAY_S: "48"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9617:9617"
     labels:
@@ -364,6 +381,7 @@ services:
       WOW_CHARACTER: Thalwyn
       AGENT_NAME: Thalwyn
       AGENT_HTTP_PORT: 9618
+      AGENT_START_DELAY_S: "51"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9618:9618"
     labels:
@@ -380,6 +398,7 @@ services:
       WOW_CHARACTER: Thokgor
       AGENT_NAME: Thokgor
       AGENT_HTTP_PORT: 9619
+      AGENT_START_DELAY_S: "54"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9619:9619"
     labels:
@@ -396,6 +415,7 @@ services:
       WOW_CHARACTER: Lorvaris
       AGENT_NAME: Lorvaris
       AGENT_HTTP_PORT: 9620
+      AGENT_START_DELAY_S: "57"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9620:9620"
     labels:
@@ -412,6 +432,7 @@ services:
       WOW_CHARACTER: Moggor
       AGENT_NAME: Moggor
       AGENT_HTTP_PORT: 9621
+      AGENT_START_DELAY_S: "60"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9621:9621"
     labels:
@@ -428,6 +449,7 @@ services:
       WOW_CHARACTER: Velkaelanar
       AGENT_NAME: Velkaelanar
       AGENT_HTTP_PORT: 9622
+      AGENT_START_DELAY_S: "60"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9622:9622"
     labels:
@@ -444,6 +466,7 @@ services:
       WOW_CHARACTER: Thalvis
       AGENT_NAME: Thalvis
       AGENT_HTTP_PORT: 9623
+      AGENT_START_DELAY_S: "60"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9623:9623"
     labels:
@@ -460,6 +483,7 @@ services:
       WOW_CHARACTER: Quelthas
       AGENT_NAME: Quelthas
       AGENT_HTTP_PORT: 9624
+      AGENT_START_DELAY_S: "60"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9624:9624"
     labels:
@@ -476,6 +500,7 @@ services:
       WOW_CHARACTER: Zulari
       AGENT_NAME: Zulari
       AGENT_HTTP_PORT: 9625
+      AGENT_START_DELAY_S: "60"
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9625:9625"
     labels:

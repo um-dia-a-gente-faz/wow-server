@@ -44,7 +44,7 @@ class _OrderLog:
 
 
 def _agent(**overrides):
-    fields = dict(cfg=SimpleNamespace(think_interval=0.01), log=_Log(), chat_relay=mock.Mock(),
+    fields = dict(cfg=SimpleNamespace(think_interval=0.01, start_delay=0.0), log=_Log(), chat_relay=mock.Mock(),
                   brain=None, audit_logger=mock.Mock(), observer=None, http_server=mock.Mock(),
                   lifecycle=Lifecycle(), duration=1.5, perception_dump=True)
     fields.update(overrides)
@@ -66,8 +66,15 @@ class AgentRunTest(unittest.TestCase):
         self.assertIs(seen["log"], agent.log)
         self.assertEqual((seen["sleep"], seen["jitter"]), ("S", "J"))
         self.assertEqual(seen["build_session"], agent.build_session)
+        self.assertEqual(seen["start_delay"], 0.0)
         agent.chat_relay.stop.assert_called_once_with()
         agent.http_server.shutdown.assert_called_once_with()
+
+    def test_run_hands_the_configured_start_delay_to_the_supervisor(self):
+        agent = _agent(cfg=SimpleNamespace(think_interval=0.01, start_delay=42.0))
+        with mock.patch.object(root, "supervise_connection") as sup:
+            agent.run(threading.Event())
+        self.assertEqual(sup.call_args.kwargs["start_delay"], 42.0)
 
     def test_run_closes_and_lets_the_exception_through(self):
         for crash in (AuthRejected("logon proof", 0x03), ValueError("think loop")):

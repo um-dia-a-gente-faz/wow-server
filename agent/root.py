@@ -48,6 +48,7 @@ class Agent:
         or the crash of a session. `supervisor_kwargs` (sleep, jitter, initial_backoff,
         max_backoff) are for tests."""
         stop = stop or threading.Event()
+        supervisor_kwargs.setdefault("start_delay", getattr(self.cfg, "start_delay", 0.0))
         try:
             supervise_connection(build_session=self.build_session,
                                  run_session=lambda sess: self.run_session(sess, stop),
