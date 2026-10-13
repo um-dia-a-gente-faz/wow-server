@@ -5,9 +5,9 @@ fixtures/memory_db/v<N>.sql is the database as version N created it, frozen as t
 CREATE TABLE is a copy, never an import of MIGRATIONS. Fixtures are append-only. Adding
 migration N+1 means: append it to MIGRATIONS in agent/memory.py, add v<N+1>.sql (the v<N> script
 with the step and user_version N+1), pin its sha256 in PINS and list its rows in EXPECTED,
-EXPIRING and EXPIRED.
+ORDERED, EXPIRING and EXPIRED.
 
-Before a store opens a fixture, the built database must pass two checks: PRAGMA user_version is
+Before a store opens a fixture, the built database must pass three checks: PRAGMA user_version is
 N, and the rows across all tables are the rows the test lists. For N == SCHEMA_VERSION the tables
 and sqlite_master names must also equal those of a database the real store creates fresh
 (table_info, not the sql text, so ALTER TABLE and an inline column compare equal).
@@ -40,6 +40,12 @@ EXPECTED = {
         "action": [("last_cycle", 17)],
         "failed_target": [("Razormane Scout", ["move_to", "timeout"]), ("Tauren Guard", None)],
     },
+}
+# failed_target as recent() reads it at ORDER_CLOCK, before any finite expires_at (Stale Gnoll still live):
+# newest write first, which is reverse insertion order (rowid DESC), not key order.
+ORDER_CLOCK = STALE - 1
+ORDERED = {
+    1: [("Stale Gnoll", "old"), ("Razormane Scout", ["move_to", "timeout"]), ("Tauren Guard", None)],
 }
 # Rows with a finite expires_at: (kind, key, expires_at, value). Read one second before and at expiry.
 EXPIRING = {
@@ -128,7 +134,8 @@ class FixtureGuardTests(unittest.TestCase):
                 path = FIXTURES / f"v{n}.sql"
                 pin = f"PINS[{n}] = {_digest(path)!r}" if path.is_file() else "the fixture first"
                 problems.append(f"v{n}.sql has no sha256 pin: add {pin}")
-            for name, table in (("EXPECTED", EXPECTED), ("EXPIRING", EXPIRING), ("EXPIRED", EXPIRED)):
+            for name, table in (("EXPECTED", EXPECTED), ("ORDERED", ORDERED), ("EXPIRING", EXPIRING),
+                                ("EXPIRED", EXPIRED)):
                 if n not in table:
                     problems.append(f"v{n}.sql has no entry in {name}: list its rows")
         self.assertEqual(problems, [])
@@ -183,6 +190,9 @@ class MemoryMigrationTests(unittest.TestCase):
                 for kind, key in EXPIRED[n]:
                     self.assertIsNone(m.recall(kind, key), key)
                     self.assertNotIn(key, [k for k, _ in m.recent(kind, 10)])
+                # Order: read before any finite expiry, so the expired Stale Gnoll is still in the list.
+                clock.t = ORDER_CLOCK
+                self.assertEqual(m.recent("failed_target", 10), ORDERED[n], "failed_target, newest write first")
                 # The TTL rows: read one second before expires_at, gone at expires_at.
                 for kind, key, expires, value in EXPIRING[n]:
                     clock.t = expires - 1
