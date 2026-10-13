@@ -91,6 +91,41 @@ class ComposeLibraryTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AGENT_FLEET_LIMITS_FILE": "/data/fleet/limits.json"}, clear=True):
             self.assertEqual(Config().fleet_limits_file, "/data/fleet/limits.json")
 
+    # ── #749: the world bundle directory (ADR 0016 further slice 2) ──────────
+    def test_every_agent_service_gets_the_world_directory_read_only_and_jev_mock_does_not(self):
+        head, services = self._split(compose.render(entries()))
+        # the directory, never the file (as ADR 0017: the build replaces the file by rename), read-only
+        self.assertIn("    - /opt/wow-server-metrics/world:/data/world:ro\n", head)
+        self.assertEqual(len(re.findall(r"(?m)^    - .*:/data/world", head)), 1)
+        self.assertEqual(len(services) - 1, len(entries()))
+        for name, block in services.items():
+            if name == "jev-mock":
+                self.assertNotIn("world", block)
+            else:   # inherits x-agent's volumes: no service may replace that list
+                self.assertIn("<<: *agent-defaults", block, name)
+                self.assertNotIn("\n    volumes:", block, name)
+                self.assertIn("      <<: *env-defaults\n", block, name)
+                self.assertNotIn("AGENT_WORLD_BUNDLE", block, name)
+
+    def test_world_dir_replaces_only_its_volume_line(self):
+        default, other = compose.render(entries()), compose.render(entries(), world_dir="/srv/world")
+        self.assertIn("    - /srv/world:/data/world:ro\n", other)
+        self.assertEqual(other.replace("- /srv/world:/data/world:ro", "- /opt/wow-server-metrics/world:/data/world:ro"),
+                         default)
+
+    def test_the_world_bundle_setting_is_passed_through_empty_by_default(self):
+        head, _ = self._split(compose.render(entries()))
+        self.assertEqual(re.findall(r"(?m)^    AGENT_WORLD_BUNDLE: (.*)$", head), ["${AGENT_WORLD_BUNDLE:-}"])
+
+    def test_the_rendered_world_default_reaches_config_as_the_empty_string(self):
+        head, _ = self._split(compose.render(entries()))
+        value = re.search(r"(?m)^    AGENT_WORLD_BUNDLE: \$\{AGENT_WORLD_BUNDLE:-(.*)\}$", head).group(1)
+        self.assertEqual(value, "")   # off: no reader is built, get_spell_info is unchanged
+        with mock.patch.dict("os.environ", {"AGENT_WORLD_BUNDLE": value}, clear=True):
+            self.assertEqual(Config().world_bundle, "")
+        with mock.patch.dict("os.environ", {"AGENT_WORLD_BUNDLE": "/data/world/world.sqlite3"}, clear=True):
+            self.assertEqual(Config().world_bundle, "/data/world/world.sqlite3")
+
     def test_derive_reads_only_the_five_keys(self):
         agent = compose.derive(25, {"account": "AGENT26", "character": "Delta", "retired": True, "level": 1})
         self.assertEqual((agent.index, agent.api_port, agent.service, agent.container, agent.profiles),

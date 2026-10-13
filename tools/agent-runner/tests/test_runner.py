@@ -816,6 +816,8 @@ class RuntimeStateTest(RunnerCase):
         self.assertNotIn("/opt/wow-server-metrics/audit", text)
         self.assertIn(f"- {self.runtime / 'fleet'}:/data/fleet:ro", text)   # #747
         self.assertNotIn("/opt/wow-server-metrics/fleet", text)
+        self.assertIn(f"- {self.runtime / 'world'}:/data/world:ro", text)   # #749
+        self.assertNotIn("/opt/wow-server-metrics/world", text)
         status = subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
                                 capture_output=True, text=True).stdout
         self.assertEqual(status, "", "the checkout must stay clean")
@@ -903,7 +905,8 @@ class NoScriptImportTest(RunnerCase):
         self.fleet.write_compose()
         planned = [e["planned"] for e in self.fleet.roster()]
         self.assertEqual((self.runtime / "docker-compose.agents.yml").read_text(),
-                         compose.render(planned, audit_dir=str(self.audit), fleet_dir=str(self.runtime / "fleet")))
+                         compose.render(planned, audit_dir=str(self.audit), fleet_dir=str(self.runtime / "fleet"),
+                                        world_dir=str(self.runtime / "world")))
 
     def test_the_script_loaders_are_gone(self):
         import characters

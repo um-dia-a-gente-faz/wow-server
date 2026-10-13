@@ -230,6 +230,6 @@ class BuildAgentTest(Base):
 
 
 class SettingTest(unittest.TestCase):
-    def test_setting_is_off_by_default_and_not_a_compose_variable(self):
+    def test_setting_is_off_by_default_and_passed_through_by_compose(self):   # #749
         s = next(x for x in SETTINGS if x.name == "AGENT_WORLD_BUNDLE")
-        self.assertEqual((s.default, s.compose), ("", False))
+        self.assertEqual((s.default, s.compose), ("", True))

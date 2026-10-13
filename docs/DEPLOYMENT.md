@@ -523,6 +523,62 @@ check it with `curl -s http://<agent-host>:9601/metrics | grep fleet_limits_stat
 `state="off"` is `1`. Removing only the file leaves the agents running with state `missing`,
 which is also no block.
 
+### World bundle (ADR 0016, #749)
+
+(The Docker and Compose behaviour in this section is reasoned from the compose file and the
+documented bind-mount rules; not run: this change was made on a machine without docker.)
+
+Every agent service mounts one host directory read-only at `/data/world`. The DIRECTORY, never
+the file: `tools/worldknowledge/build.py` writes a temporary file next to `--out` and renames it
+over the bundle, and a single-file bind mount would pin the old inode. The host path is
+`/opt/wow-server-metrics/world` in the committed compose file and `/opt/wow-agent-runtime/world`
+(`<runtime>/world`) in the file `tools/agent-runner` renders. `AGENT_WORLD_BUNDLE` is passed through
+from `.env` and is **empty by default**: empty is off, no reader is built and `get_spell_info`
+answers from `SPELL_TABLE` as before. Recreating the agents with this change alone changes nothing;
+the owner arms it.
+
+The agent opens the bundle once, at its start, and keeps the connection (`agent/worldknowledge.py`).
+A rebuilt bundle is therefore seen by an agent at its NEXT start (`docker restart <container>` or
+recreating it), not while it runs.
+
+**Arm it, in this order** (on `wow-agents`). `<world dir>` is `/opt/wow-agent-runtime/world` for
+agents started through `tools/agent-runner` (its runtime directory, default
+`/opt/wow-agent-runtime`) and `/opt/wow-server-metrics/world` for agents started from the committed
+compose file.
+
+0. Create the directory as the user who runs the build, before the first `docker compose up`:
+   `sudo install -d -o <builder user> <world dir>`. Docker creates a missing bind-mount source as
+   `root`. The agents only read the bundle, so they still read it there, but the build cannot write
+   the temporary file into it. If Docker already created it: `sudo chown <builder user> <world dir>`.
+1. Build the bundle from the client DBCs, in the checkout (`/opt/wow-server`). The build needs
+   `Spell.dbc`, `SpellCastTimes.dbc` and `SpellRange.dbc` of client build 12340 in one directory (on
+   the VM, `/opt/wowmap-data/dbc`); the real command, from `python3 tools/worldknowledge/build.py --help`:
+   `python3 tools/worldknowledge/build.py --dbc-dir /opt/wowmap-data/dbc --out <world dir>/world.sqlite3`.
+   It prints `spell: <n> rows` on success, and `build failed, <out> untouched: <reason>` on failure
+   (the old bundle stays). A build on another machine that has the client data works the same way:
+   copy the file into `<world dir>` (`scp` will do) and check it with `ls -l`. The file is mode 0644.
+2. Put `AGENT_WORLD_BUNDLE=/data/world/world.sqlite3` in `/opt/wow-server/.env` (the path inside the
+   container).
+3. Agents recreated through `tools/agent-runner` take the variable from the runner's environment (its
+   unit's `EnvironmentFile=/opt/wow-server/.env`), which overrides `.env` for the `docker compose` it
+   runs, so after ANY change to the line run `systemctl restart agent-runner` first. (Reasoned from
+   Compose's documented precedence, shell environment over `.env`, and from the runner's code; not run.)
+4. Recreate ONE agent first, `docker compose -f docker-compose.agents.yml up -d agent-luaprata` (or
+   through the runner). Check the mount and the setting in its container:
+   `docker exec wow-agent-luaprata ls -l /data/world` and `docker exec wow-agent-luaprata printenv AGENT_WORLD_BUNDLE`.
+5. Read its log for the lines of #742: `docker logs wow-agent-luaprata 2>&1 | grep "world bundle"`.
+   The first is `world bundle has <n> of 17 SPELL_TABLE ids`. Then one line per spell whose numbers
+   or name differ from the table, `world bundle differs for spell <id>: <field> table <x> bundle <y>`.
+   A name line is only logged, never applied. `world bundle unavailable: <path>: <reason>` means the
+   reader is off (a missing, corrupt or other-version file) and the table answers. Judge the
+   differing lines before you recreate the rest of the fleet.
+
+**Turn it off.** Remove the `AGENT_WORLD_BUNDLE` line from `.env`, run `systemctl restart agent-runner`
+(always, when turning it off: the runner's environment would keep the old value; same reasoning as
+step 3, not run) and recreate the agents. With the variable empty no reader is built. Removing only
+the bundle file leaves the running agents on the bundle they opened; the next start logs
+`world bundle unavailable` and answers from `SPELL_TABLE`, which is the same answer as off.
+
 ### Pinned images, agent image tag and rollback (#291)
 
 Every `image:` and `FROM` is `name:<version>@sha256:<digest>`; CI fails on
