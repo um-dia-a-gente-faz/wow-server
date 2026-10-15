@@ -11,7 +11,7 @@ Interface
 ---------
 
     generate(snapshot, *, my_guid=None, reflex_state=None, history=None,
-             limit=MAX_CANDIDATES, handles=None, notes=None, mission=DEFAULT_MISSION)
+             limit=MAX_CANDIDATES, handles=None, notes=None, mission=DEFAULT_MISSION, mission_step=0)
         -> list[dict]
 
 Each candidate is a plain JSON-serialisable dict:
@@ -70,8 +70,9 @@ dropped/demoted option ({"id", "effect", "reason"}) for the audit log.
 
 Mission fallback (#314): when no provider offered anything while the agent is alive, one
 `move_to` 40 yd from its own position (snapshot["position"]) is offered before `idle`, so an
-idle agent with nothing around still has a choice. Its heading turns 90 degrees per history
-entry. With no known position it is not offered. Ordinary options present: never.
+idle agent with nothing around still has a choice. Its heading turns 90 degrees per `mission_step`
+(the Brain counts the fallbacks it offered). With no known position it is not offered. Ordinary
+options present: never.
 
 Candidates only reference actions that are already registered: the follow
 reflex's `follow`/`assist`/`stop_following` (agent/reflexes/follow.py) and
@@ -220,17 +221,21 @@ def _engage(unit: Unit, why: str) -> Candidate:
                      f"move to attack {desc}")
 
 
-def _mission_candidates(snapshot: Snapshot, mission: str, history) -> list[Candidate]:
+def _mission_candidates(snapshot: Snapshot, mission: str, mission_step: int) -> list[Candidate]:
     """The one fallback option (#314): a short explore hop. Empty when the position is unknown."""
     pos = snapshot.get("position")
     if not isinstance(pos, dict) or not isinstance(pos.get("x"), (int, float)) \
             or not isinstance(pos.get("y"), (int, float)):
         return []
-    # ponytail: the turn is len(history), which ThinkState caps at HISTORY_LEN (8): past that the heading stops turning.
-    turn = len(history) if history else 0
-    name, dx, dy = _MISSION_HEADINGS[turn % len(_MISSION_HEADINGS)]
+    name, dx, dy = _MISSION_HEADINGS[mission_step % len(_MISSION_HEADINGS)]
     return [candidate(A.MOVE_TO, {"x": pos["x"] + dx, "y": pos["y"] + dy},
                       f"{mission}: explore {MISSION_STEP_YD:g} yd {name}")]
+
+
+def is_mission_fallback(c: Candidate) -> bool:
+    """True for the option _mission_candidates builds (any mission, any heading)."""
+    label = str(c.get("label") or "")
+    return any(label.endswith(f": explore {MISSION_STEP_YD:g} yd {name}") for name, _, _ in _MISSION_HEADINGS)
 
 
 def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
@@ -542,13 +547,13 @@ DEAD_PROVIDERS: tuple[Provider, ...] = (_dead_candidates,)
 def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: dict | None = None,
              history: list[ActionRecord] | None = None,
              limit: int = MAX_CANDIDATES, handles=None,
-             notes: list | None = None, mission: str = DEFAULT_MISSION) -> list[Candidate]:
+             notes: list | None = None, mission: str = DEFAULT_MISSION, mission_step: int = 0) -> list[Candidate]:
     """Concrete candidates for this think cycle; see the module docstring.
     `handles` (world.handles) resolves handle-string GUIDs (UM-89) for the
     unit comparisons; without it only raw-int snapshots are understood.
     `history` (ThinkState.for_prompt()) drops/demotes options the agent just
     failed or repeated to no effect; `notes`, if given, collects what was
-    changed and why. `mission` (#314) only shapes the fallback option."""
+    changed and why. `mission` and `mission_step` (#314) only shape the fallback option."""
     limit = max(1, limit)
     idle = candidate(A.IDLE, {}, "do nothing this cycle")
     ctx = _Context(snapshot, my_guid, reflex_state, handles)
@@ -558,7 +563,7 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
     if ctx.dead:  # history is about the living options
         return finish(out, idle, limit)
 
-    fallback = [] if out else _mission_candidates(snapshot, mission, history)
+    fallback = [] if out else _mission_candidates(snapshot, mission, mission_step)
     out += fallback
     drop, demote = history_effects(history, candidate)
     # Params carry the snapshot's own guid values, as do threat_guids. The fallback is never dropped by

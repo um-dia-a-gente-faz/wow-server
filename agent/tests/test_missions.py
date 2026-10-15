@@ -1,6 +1,7 @@
 """#314: the mission model end to end in the brain: the config value reaches the candidate
 generator through Brain, and a fallback brain with nothing around never idles twice in a row."""
 import unittest
+from collections import Counter
 from unittest import mock
 
 from agent import brain as br
@@ -36,6 +37,26 @@ class MissionBrainTest(unittest.TestCase):
             history.append({"action": d.action, "args": d.params, "ok": True, "changed": True})
         self.assertNotIn("idle", chosen)
         self.assertEqual(chosen, ["move_to"] * 10)
+
+    def test_twelve_fallback_cycles_visit_each_heading_three_times(self):
+        jev = RecordingJev()
+        b = br.Brain(jev=jev)
+        for _ in range(12):
+            b.decide(SNAP())
+        labels = [options[0]["label"].rsplit(" ", 1)[1] for options in jev.offered]
+        self.assertEqual(labels[:4], ["N", "E", "S", "W"])
+        self.assertEqual(Counter(labels), {"N": 3, "E": 3, "S": 3, "W": 3})
+
+    def test_the_step_only_advances_when_the_fallback_was_offered(self):
+        jev = RecordingJev()
+        b = br.Brain(jev=jev)
+        with_unit = dict(SNAP(), nearby_units=[{"guid": 10, "entry": 1, "name": "Mob", "type": "unit",
+                                                "distance": 4.0, "level": 1, "health_pct": 1.0,
+                                                "in_combat": False}])
+        b.decide(with_unit)
+        self.assertEqual(b._mission_step, 0)
+        b.decide(SNAP())
+        self.assertEqual(b._mission_step, 1)
 
     def test_the_brain_passes_its_mission_to_the_generator(self):
         jev = RecordingJev()

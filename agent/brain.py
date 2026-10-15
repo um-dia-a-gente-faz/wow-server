@@ -140,6 +140,7 @@ class Brain:
         self.llm = llm
         self.min_confidence = min_confidence
         self.mission = mission   # #314: only the candidate generator's fallback reads it
+        self._mission_step = 0   # counts the fallbacks offered, so the heading turns each time
         self._clock = clock
         self._jev_cooldown_until = 0.0
         self._jev_cooldown_reason: str | None = None
@@ -211,7 +212,9 @@ class Brain:
                     notes: list[dict] = []
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
                                             handles=handles, history=history, notes=notes,
-                                            mission=self.mission)
+                                            mission=self.mission, mission_step=self._mission_step)
+                    if any(cand.is_mission_fallback(c) for c in options):
+                        self._mission_step += 1
                     d.history_notes = notes or None
                     if blocked is not None:
                         options = [c for c in options

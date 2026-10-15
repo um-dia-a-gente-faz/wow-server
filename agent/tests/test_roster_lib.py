@@ -67,13 +67,13 @@ class CommittedRosterTests(unittest.TestCase):
         self.assertEqual(self.agents[-1].index, 25)
         self.assertEqual(self.agents[-1].api_port, 9625)
 
-    def test_to_json_gives_back_the_file_entries_plus_the_default_mission(self):
+    def test_to_json_gives_back_the_file_entries(self):
         file_agents = json.loads(roster.ROSTER_PATH.read_text())["agents"]
-        self.assertEqual([a.to_json() for a in self.agents], [{**e, "mission": "level_to_cap"} for e in file_agents])
+        self.assertEqual([a.to_json() for a in self.agents], file_agents)
 
     def test_to_json_keeps_key_order_and_class_key(self):
         keys = list(self.agents[0].to_json())
-        self.assertEqual(keys, ["account", "character", "race", "class", "gender", "mission"])
+        self.assertEqual(keys, ["account", "character", "race", "class", "gender"])
         self.assertEqual(self.agents[5].to_json()["class"], 5)
 
     def test_missing_file_is_not_handled(self):
@@ -188,11 +188,18 @@ class ValidationTests(unittest.TestCase):
     def test_mission_is_optional_and_defaults_to_level_to_cap(self):
         self.assertEqual(parse_roster(data(entry()))[0].mission, "level_to_cap")
 
+    def test_default_mission_is_left_out_of_to_json(self):
+        self.assertNotIn("mission", parse_roster(data(entry()))[0].to_json())
+
+    def test_non_default_mission_round_trips_through_to_json(self):
+        raw = parse_roster(data(entry(mission="explore")))[0].to_json()
+        self.assertEqual(raw, {**entry(), "mission": "explore"})
+        self.assertEqual(parse_roster(data(raw))[0].to_json(), raw)
+
     def test_mission_accepts_every_mission_in_the_list(self):
         for m in roster.MISSIONS:
             with self.subTest(mission=m):
                 self.assertEqual(parse_roster(data(entry(mission=m)))[0].mission, m)
-        self.assertEqual(parse_roster(data(entry(mission="explore")))[0].to_json()["mission"], "explore")
 
     def test_unknown_mission_is_rejected(self):
         for bad in ("fishing", "Explore", "", 7):

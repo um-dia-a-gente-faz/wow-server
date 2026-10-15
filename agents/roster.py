@@ -58,8 +58,11 @@ class Agent:
         return ("party", "raid") if self.index <= PARTY_SIZE else ("raid",)
 
     def to_json(self) -> dict[str, Any]:
-        return {"account": self.account, "character": self.character, "race": self.race,
-                "class": self.class_id, "gender": self.gender, "mission": self.mission}
+        out: dict[str, Any] = {"account": self.account, "character": self.character, "race": self.race,
+                               "class": self.class_id, "gender": self.gender}
+        if self.mission != DEFAULT_MISSION:   # the default is left out, so the committed roster stays as it is
+            out["mission"] = self.mission
+        return out
 
 
 def account_name(index: int) -> str:

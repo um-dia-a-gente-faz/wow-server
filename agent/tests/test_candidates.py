@@ -679,14 +679,16 @@ class MissionFallbackTest(unittest.TestCase):
         self.assertEqual(cands[0]["params"], {"x": 140.0, "y": 50.0})
         self.assertEqual(cands[0]["label"], "level_to_cap: explore 40 yd N")
 
-    def test_heading_rotates_with_history_length_and_names_the_mission(self):
-        headings = [cand.generate(self.snap(), history=[self.rec(changed=True)] * n, mission="explore")[0]
-                    for n in range(4)]
+    def test_mission_step_picks_the_heading_and_history_length_does_not(self):
+        headings = [cand.generate(self.snap(), mission_step=s, mission="explore")[0] for s in range(4)]
         self.assertEqual([h["params"] for h in headings],
                          [{"x": 140.0, "y": 50.0}, {"x": 100.0, "y": 10.0},
                           {"x": 60.0, "y": 50.0}, {"x": 100.0, "y": 90.0}])
         self.assertEqual([h["label"].rsplit(" ", 1)[1] for h in headings], ["N", "E", "S", "W"])
         self.assertTrue(headings[0]["label"].startswith("explore: "))
+        long_history = [self.rec(changed=True)] * 20
+        self.assertEqual(cand.generate(self.snap(), history=long_history)[0]["params"], {"x": 140.0, "y": 50.0})
+        self.assertEqual(cand.generate(self.snap(), mission_step=4)[0]["params"], {"x": 140.0, "y": 50.0})
 
     def test_no_position_means_idle_only(self):
         self.assertEqual([c["action"] for c in cand.generate(self.snap(position=None))], ["idle"])
