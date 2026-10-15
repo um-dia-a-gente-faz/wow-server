@@ -128,6 +128,8 @@ SERVICE = """\
       AGENT_NAME: {character}
       # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
       AGENT_ROSTER: "{roster}"
+      # #762 (#314): this service's own mission from agents/roster.json (default level_to_cap)
+      AGENT_MISSION: {mission}
       AGENT_HTTP_PORT: {port}
       AGENT_START_DELAY_S: "{start_delay}"
     ports:
@@ -170,10 +172,11 @@ JEV_MOCK = """\
 
 
 def derive(position: int, entry: dict) -> roster.Agent:
-    """The library's Agent for the entry at 0-based `position`. Reads only the five known
-    keys, so the runner's extra keys (`retired`) pass through unvalidated."""
+    """The library's Agent for the entry at 0-based `position`. Reads only the known keys, so the
+    runner's extra keys (`retired`) pass through unvalidated."""
     return roster.Agent(index=position + 1, account=entry.get("account"), character=entry.get("character"),
-                        race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"))
+                        race=entry.get("race"), class_id=entry.get("class"), gender=entry.get("gender"),
+                        mission=entry.get("mission", roster.DEFAULT_MISSION))
 
 
 def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: str = DEFAULT_FLEET_DIR,
@@ -193,6 +196,7 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: st
         blocks.append(SERVICE.format(
             service=agent.service, container=agent.container,
             account=agent.account, character=agent.character, port=agent.api_port, roster=names,
+            mission=agent.mission,
             profiles=", ".join(agent.profiles),
             start_delay=(i * START_DELAY_STEP_S) % START_DELAY_PERIOD_S))
     last_port = roster.FIRST_PORT + RAID_SIZE - 1
