@@ -230,6 +230,30 @@ class FailingAction(RecordingAction):
         return "nope"
 
 
+class GatedAction(RecordingAction):
+    """Refused by check() until `open`, like reclaim_corpse during the reclaim delay."""
+
+    def __init__(self):
+        super().__init__()
+        self.open = False
+        self.executed = 0
+
+    def check(self, session, world, **params):
+        return None if self.open else "gate closed"
+
+    def execute(self, session, world, **params):
+        self.executed += 1
+        return super().execute(session, world, **params)
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+
 def _world_with_self():
     world = per.WorldState()
     world.set_my_guid(1)
@@ -350,10 +374,29 @@ class LoopGuardTest(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("loop guard", result.error)
         self.assertIn("Try something different", result.error)
-        # The block is recorded, so the model sees it next cycle.
-        self.assertIn("loop guard", self.state.for_prompt()[-1]["error"])
+        # The guard's own refusal is not history: the prompt still shows the real failures only.
+        self.assertEqual(len(self.state.for_prompt()), think.LOOP_GUARD_REPEATS)
+        self.assertEqual(self.state.for_prompt()[-1]["error"], "nope")
         # And it stays blocked while the model keeps repeating itself.
         self.assertIn("loop guard", self._cycle(action, {"value": 1}).error)
+        self.assertEqual(len(self.state.for_prompt()), think.LOOP_GUARD_REPEATS)
+
+    def test_time_gated_action_runs_again_after_the_cooldown(self):
+        # Scripted walk in miniature: a gate that opens later, an LLM asking every cycle, fake clock.
+        clock = FakeClock()
+        self.state = think.ThinkState(clock=clock.now)
+        action = GatedAction()
+        for _ in range(think.LOOP_GUARD_REPEATS):
+            self.assertEqual(self._cycle(action, {"value": 1}).error, "gate closed")
+            clock.t += 1.0
+        self.assertIn("loop guard", self._cycle(action, {"value": 1}).error)
+        clock.t += think.LOOP_GUARD_COOLDOWN_S - 1.0
+        self.assertIn("loop guard", self._cycle(action, {"value": 1}).error)  # not yet older than the cooldown
+        action.open = True
+        clock.t += 2.0
+        result = self._cycle(action, {"value": 1})
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(action.executed, 1)
 
     def test_blocks_repeated_successful_call_that_changes_nothing(self):
         # Live A3: accept_quest 8325 eight times, each "ok", nothing changed.

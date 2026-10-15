@@ -3,12 +3,14 @@ the loop guard. No session or world dependency; agent.think re-exports these."""
 
 import hashlib
 import json
+import time
 from collections import deque
 
 from .model import ActionRecord, Snapshot
 
 HISTORY_LEN = 8          # UM-90: recent cycles shown to the model
 LOOP_GUARD_REPEATS = 3   # UM-90: identical failed/no-op calls before the guard blocks the next one
+LOOP_GUARD_COOLDOWN_S = 15.0  # #521: a block lapses once its newest matching entry is this old
 _DETAIL_MAX_CHARS = 160  # keep each history line short; the prompt is token-budgeted
 
 # Snapshot keys whose change means an action did something. Deliberately
@@ -55,8 +57,9 @@ class ThinkState:
     the model could learn from. Kept out of WorldState on purpose: this is
     the agent's own record, not protocol state."""
 
-    def __init__(self, maxlen: int = HISTORY_LEN):
+    def __init__(self, maxlen: int = HISTORY_LEN, clock=time.monotonic):
         self.history: deque = deque(maxlen=maxlen)
+        self.clock = clock  # #521: injectable so the cooldown is testable without sleeping
 
     def observe(self, fingerprint: str) -> None:
         """Called once per cycle with the fresh snapshot's fingerprint:
@@ -68,12 +71,15 @@ class ThinkState:
     def record(self, action: str, args: dict, ok: bool, fingerprint: str,
                error: str | None = None, detail=None) -> None:
         self.history.append({"action": action, "args": dict(args or {}), "ok": ok,
-                             "error": error, "detail": detail,
+                             "error": error, "detail": detail, "at": self.clock(),
                              "fingerprint": fingerprint, "changed": None})
 
     def repeat_blocked(self, action: str, args: dict, n: int = LOOP_GUARD_REPEATS) -> bool:
         """True when each of the last `n` recorded cycles was this exact
-        action with these exact args and either failed or changed nothing.
+        action with these exact args and either failed or changed nothing,
+        and the newest of them is not yet LOOP_GUARD_COOLDOWN_S old (#521: a
+        time-gated action such as reclaim_corpse is retried once its gate may
+        have opened; its refusal re-arms the block).
 
         `idle` is the candidate generator's safe fallback when it has no
         actionable option. Blocking it cannot make the brain choose something
@@ -89,7 +95,7 @@ class ThinkState:
                 return False
             if h["ok"] and h["changed"] is not False:
                 return False
-        return True
+        return self.clock() - self.history[-1]["at"] <= LOOP_GUARD_COOLDOWN_S
 
     def for_prompt(self) -> list[ActionRecord]:
         """Compact oldest-first view for agent.llm.build_messages."""

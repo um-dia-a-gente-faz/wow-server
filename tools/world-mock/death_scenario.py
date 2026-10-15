@@ -23,6 +23,7 @@ make this mock agree with it. The CREATE/VALUES block framing reuses agent/tests
 import pathlib
 import struct
 import sys
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -54,6 +55,16 @@ HEALER_GUID = 0xF130000000007001         # HighGuid::Unit
 HEALER_ENTRY = 6491                      # Spirit Healer
 HEALER_OFFSET_YD = 10.0
 MAX_HEALTH = 100
+STEP_TIMEOUT_S = 10.0                    # #521: a wrong parse fails in seconds, not after a hang
+
+
+def wait_step(step: str, pred, timeout: float = STEP_TIMEOUT_S) -> None:
+    """Poll `pred` until it is true, at most `timeout` (capped at STEP_TIMEOUT_S); otherwise fail naming the step."""
+    end = time.monotonic() + min(timeout, STEP_TIMEOUT_S)
+    while not pred():
+        if time.monotonic() >= end:
+            raise AssertionError(f"death scenario: step {step!r} not reached within {min(timeout, STEP_TIMEOUT_S):.0f}s")
+        time.sleep(0.02)
 
 
 class DeathMock(server.WorldMock):

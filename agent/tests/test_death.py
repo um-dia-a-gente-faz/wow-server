@@ -5,15 +5,20 @@ so no real threads or sleeping are involved. No network."""
 
 import struct
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from agent import actions as ac
+from agent import candidates
 from agent import death as dt
 from agent import movement as mv
 from agent import perception as per
+from agent import think
 from agent import update_fields as uf
 from agent import update_object as uo
+from agent.handlers import death as hd
 from agent.tests.builders import FakeSession
+from agent.tests.test_think import FakeLLMClient
 from agent.tests.restore import join_new_threads
 
 
@@ -307,6 +312,84 @@ class ReclaimCorpseActionTest(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("no spirit healer", result.error)
 
+
+
+class _Clock:
+    """Fake monotonic clock: no real sleeps, shared by the loop guard and check()'s cooldown."""
+    def __init__(self):
+        self.t = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+
+class CorpsePositionOnResurrectTest(unittest.TestCase):
+    def test_corpse_position_is_cleared_once_alive_again(self):
+        sess, world, _ = fast_session()
+        create_self(world, sess.player_guid, 0, 0, 0, health=100)
+        sess.corpse_position = (0, 5.0, 0.0, 0.0)
+        hd.check_death_transition(SimpleNamespace(state=sess), world.get_my_object())
+        self.assertIsNone(sess.corpse_position)
+
+    def test_corpse_position_is_kept_while_still_a_ghost(self):
+        sess, world, _ = fast_session()
+        create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
+        sess.corpse_position = (0, 5.0, 0.0, 0.0)
+        hd.check_death_transition(SimpleNamespace(state=sess), world.get_my_object())
+        self.assertEqual(sess.corpse_position, (0, 5.0, 0.0, 0.0))
+
+
+class GhostRelogTest(unittest.TestCase):
+    """A character that logs in as a ghost (released before the disconnect) is offered and allowed reclaim_corpse."""
+
+    def test_ghost_snapshot_offers_and_allows_reclaim_corpse(self):
+        sess, world, _ = fast_session()
+        create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
+        snap = world.snapshot(my_position=sess.player_position, corpse_position=None)
+        self.assertTrue(snap["is_ghost"])
+        names = [c["action"] for c in candidates.generate(snap, my_guid=world.my_guid)]
+        self.assertIn("reclaim_corpse", names)
+        self.assertNotIn("release_spirit", names)
+        self.assertIsNone(ac.REGISTRY["reclaim_corpse"].check(sess, world))
+
+
+class ReclaimLoopGuardWalkTest(unittest.TestCase):
+    """#521: an LLM that asks for reclaim_corpse every cycle is alive once the reclaim delay (and the loop guard's
+    cooldown) has passed. Real think_and_act, ThinkState, ReclaimCorpseAction.check(), a fake clock and 3 s cycles;
+    only execute() is stubbed, since its confirmation waits on the wire."""
+
+    CYCLE_S = 3.0
+
+    def _walk(self, delay_s):
+        sess, world, _ = fast_session()
+        create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
+        clock = _Clock()
+        state = think.ThinkState(clock=clock.now)
+        llm = FakeLLMClient(action_name="reclaim_corpse", params={})
+        resurrected = []
+
+        def fake_execute(action, session, world, **_):
+            resurrected.append(clock.t)
+            return ac.ActionResult(ok=True, detail={"method": "corpse"})
+
+        fake_time = SimpleNamespace(monotonic=clock.now)
+        with mock.patch.object(dt, "time", fake_time), mock.patch.object(hd, "time", fake_time), \
+             mock.patch.object(dt.ReclaimCorpseAction, "execute", fake_execute):
+            # SMSG_CORPSE_RECLAIM_DELAY, through the real handler, right after the release.
+            hd.handle_corpse_reclaim_delay(SimpleNamespace(state=sess), struct.pack('<I', int(delay_s * 1000)))
+            while not resurrected and clock.t < 20 * 60:
+                think.think_and_act(sess, world, llm, my_position=sess.player_position,
+                                    registry=ac.REGISTRY, state=state)
+                clock.t += self.CYCLE_S
+        return resurrected[0] if resurrected else None
+
+    def test_alive_within_delay_plus_cooldown_plus_one_cycle(self):
+        for delay_s in (30.0, 120.0):
+            with self.subTest(delay_s=delay_s):
+                alive_at = self._walk(delay_s)
+                self.assertIsNotNone(alive_at, "still a ghost after 20 minutes")
+                self.assertLessEqual(alive_at, delay_s + think.LOOP_GUARD_COOLDOWN_S + self.CYCLE_S)
+                self.assertGreaterEqual(alive_at, delay_s)  # never before the server's delay
 
 if __name__ == "__main__":
     unittest.main()

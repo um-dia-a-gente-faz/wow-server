@@ -41,6 +41,8 @@ def check_death_transition(ctx, me):
                                 position=ctx.state.player_position)
     elif me.health > 0:
         ctx.state._was_alive = True
+        if not me.is_ghost():
+            ctx.state.corpse_position = None  # #521: alive again, so the corpse we queried for is gone
 
 
 def infer_killer_guid(ctx):

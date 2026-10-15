@@ -446,6 +446,7 @@
    "args": {
     "value": 7
    },
+   "at": 0.0,
    "changed": false,
    "detail": {
     "ran": true,
@@ -460,6 +461,7 @@
    "args": {
     "x": 1
    },
+   "at": 0.0,
    "changed": false,
    "detail": null,
    "error": "unknown action: 'nope'",
@@ -471,6 +473,7 @@
    "args": {
     "a": 1
    },
+   "at": 0.0,
    "changed": false,
    "detail": null,
    "error": "nope",
@@ -482,6 +485,7 @@
    "args": {
     "a": 1
    },
+   "at": 0.0,
    "changed": false,
    "detail": null,
    "error": "nope",
@@ -493,20 +497,10 @@
    "args": {
     "a": 1
    },
+   "at": 0.0,
    "changed": false,
    "detail": null,
    "error": "nope",
-   "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
-   "ok": false
-  },
-  {
-   "action": "bad",
-   "args": {
-    "a": 1
-   },
-   "changed": null,
-   "detail": null,
-   "error": "loop guard: bad with these exact args already failed or changed nothing 3 times in a row; not executed. Try something different.",
    "fingerprint": "7120cbe488f60601ac4b371e5e6ad9bc5852ddaa",
    "ok": false
   }

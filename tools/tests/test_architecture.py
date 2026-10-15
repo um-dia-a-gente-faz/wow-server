@@ -61,7 +61,7 @@ PACKAGE_EDGES = {
 # none; the dev and test tools are pinned to exactly what they import today.
 AGENT_EDGES = {
     "agent-runner": set(),
-    "agent_dev": {"actions", "audit_schema", "candidates", "config", "jev", "known_targets", "lines",
+    "agent_dev": {"actions", "audit_schema", "candidates", "config", "death", "jev", "known_targets", "lines",
                   "llm", "login", "packets", "reflexes", "rules", "update_fields", "update_object"},
     "chat-feed": set(),
     "common": set(),

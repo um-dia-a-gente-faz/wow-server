@@ -21,8 +21,8 @@ from .brain import Brain, BrainError, Decision
 from .action_specs import specs_by_name
 from .handles import UnknownHandle
 from .actions.base import send
-from .loopguard import (HISTORY_LEN, LOOP_GUARD_REPEATS, ThinkState, _DETAIL_MAX_CHARS,  # noqa: F401 (re-exported)
-                        progress_fingerprint)
+from .loopguard import (HISTORY_LEN, LOOP_GUARD_COOLDOWN_S, LOOP_GUARD_REPEATS, ThinkState,  # noqa: F401 (re-exported)
+                        _DETAIL_MAX_CHARS, progress_fingerprint)
 from .model import KnownSpell, Me, Snapshot
 
 log = logging.getLogger("agent.think")
@@ -195,6 +195,7 @@ def validate(c: Cycle) -> None:
             return c.fail(str(e))
     if c.state is not None and c.state.repeat_blocked(name, params):
         log.warning("loop guard blocked %s %r", name, params)
+        c.remember = False  # #521: the guard's refusal is not a new failure of the action; the audit line keeps it
         return c.fail(f"loop guard: {name} with these exact args already failed or changed "
                       f"nothing {LOOP_GUARD_REPEATS} times in a row; not executed. Try something different.")
 

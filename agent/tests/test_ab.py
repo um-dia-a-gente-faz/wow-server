@@ -1,6 +1,8 @@
 """Offline A/B helper tests; these never contact a provider."""
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -41,6 +43,17 @@ class ActionKeyTest(unittest.TestCase):
         self.addCleanup(os.unlink, path)
         with self.assertRaisesRegex(ValueError, "exceeds --max-calls"):
             run([path], ["llm"], max_calls=0)
+
+
+class RegistryViewTest(unittest.TestCase):
+    def test_every_named_action_is_valid_to_the_ab_helper(self):
+        # #521: checked in a fresh interpreter that imports only tools.agent_dev.ab, so this sees what ab itself loads.
+        code = ("import json, tools.agent_dev.ab; from agent import action_names as an, actions; "
+                "names = {v for k, v in vars(an).items() if k.isupper() and isinstance(v, str)}; "
+                "print(json.dumps(sorted(names - set(actions.REGISTRY))))")
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(out.stdout), [])
 
 
 if __name__ == "__main__":
