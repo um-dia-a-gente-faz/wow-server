@@ -48,7 +48,7 @@ def run_rest_reflex_loop(sess, stop_event: threading.Event,
 
 
 def run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, brain=None,
-              audit_logger=None, observer=None, stop: threading.Event | None = None) -> bool:
+              audit_logger=None, observer=None, stop: threading.Event | None = None, unmet=None) -> bool:
     start = time.monotonic()
 
     reflex_stop = threading.Event()
@@ -60,7 +60,8 @@ def run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, b
         t.start()
     try:
         return run_think_loop(sess, cfg, duration, start, perception_dump=perception_dump,
-                                brain=brain, audit_logger=audit_logger, observer=observer, stop=stop)
+                                brain=brain, audit_logger=audit_logger, observer=observer, stop=stop,
+                                unmet=unmet)
     finally:
         if observer is not None:
             observer.detach()
@@ -94,7 +95,7 @@ def remaining_sleep(cycle_start: float, interval: float, now: float) -> float:
 
 def run_think_loop(sess, cfg, duration: float | None, start: float, perception_dump: bool = False,
                      brain=None, audit_logger=None, observer=None,
-                     stop: threading.Event | None = None) -> bool:
+                     stop: threading.Event | None = None, unmet=None) -> bool:
     """`stop` (#401) ends the loop at once, mid-sleep, as a clean stop (False).
     Returns True if the loop ended because of an unexpected disconnect
     (agent.session.WoWSession.unexpected_disconnect, UM-43 — the reconnect
@@ -142,7 +143,7 @@ def run_think_loop(sess, cfg, duration: float | None, start: float, perception_d
                 result = think_and_act(sess, sess.world_state, brain,
                                         persona=cfg.persona, my_position=sess.player_position,
                                         audit_logger=audit_logger, cycle=cycle,
-                                        reflex_state=reflex_state(sess), state=think_state)
+                                        reflex_state=reflex_state(sess), state=think_state, unmet=unmet)
             if not result.ok:
                 log.info("think cycle: no action taken (%s)", result.error)
 

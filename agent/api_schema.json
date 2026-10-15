@@ -121,6 +121,32 @@
             "cycles": {"type": "integer"}, "since": {"type": "number"}}}}}
       }
     },
+    "/unmet-intents": {
+      "summary": "Newest unmet-intent records (#319), oldest first, at most 50 in memory: an action the brain named that does not exist, or a Jev cycle whose candidates were idle only. The same records are written to <agent>/unmet/<day>.jsonl. intents is [] when nothing was recorded.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "agent", "intents"], "properties": {
+          "api_version": {"type": "integer"},
+          "agent": {"type": "string"},
+          "intents": {"type": "array", "items": {"type": "object", "required": ["schema", "ts", "agent", "mission", "kind", "wanted", "state"], "properties": {
+            "schema": {"type": "integer"},
+            "ts": {"type": "number"},
+            "agent": {"type": "string"},
+            "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]},
+            "kind": {"type": "string", "enum": ["unknown_action", "no_candidates"]},
+            "wanted": {"type": "object", "required": ["action", "params"], "properties": {
+              "action": {"type": ["string", "null"]},
+              "params": {"type": "object"}}},
+            "state": {"type": "object", "required": ["level", "position", "health", "dead", "in_combat", "nearby_units", "quests"], "properties": {
+              "level": {"type": ["integer", "null"]},
+              "position": {"type": ["object", "null"], "properties": {
+                "map": {"type": ["integer", "null"]}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}},
+              "health": {"type": ["string", "null"]},
+              "dead": {"type": "boolean"},
+              "in_combat": {"type": "boolean"},
+              "nearby_units": {"type": "integer"},
+              "quests": {"type": "integer"}}}}}}}}
+      }
+    },
     "/": {
       "summary": "Endpoint index.",
       "responses": {

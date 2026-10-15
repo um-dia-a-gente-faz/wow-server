@@ -162,6 +162,34 @@ Response: ok
 | `tokens.cycles` | integer | yes |
 | `tokens.since` | number | yes |
 
+## `GET /unmet-intents`
+
+Newest unmet-intent records (#319), oldest first, at most 50 in memory: an action the brain named that does not exist, or a Jev cycle whose candidates were idle only. The same records are written to <agent>/unmet/<day>.jsonl. intents is [] when nothing was recorded.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `agent` | string | yes |
+| `intents` | array | yes |
+| `intents[].schema` | integer | yes |
+| `intents[].ts` | number | yes |
+| `intents[].agent` | string | yes |
+| `intents[].mission` | string | yes |
+| `intents[].kind` | string | yes |
+| `intents[].wanted` | object | yes |
+| `intents[].wanted.action` | string/null | yes |
+| `intents[].wanted.params` | object | yes |
+| `intents[].state` | object | yes |
+| `intents[].state.level` | integer/null | yes |
+| `intents[].state.position` | object/null | yes |
+| `intents[].state.health` | string/null | yes |
+| `intents[].state.dead` | boolean | yes |
+| `intents[].state.in_combat` | boolean | yes |
+| `intents[].state.nearby_units` | integer | yes |
+| `intents[].state.quests` | integer | yes |
+
 ## `GET /`
 
 Endpoint index.
