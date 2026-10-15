@@ -126,6 +126,29 @@ class ComposeLibraryTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"AGENT_WORLD_BUNDLE": "/data/world/world.sqlite3"}, clear=True):
             self.assertEqual(Config().world_bundle, "/data/world/world.sqlite3")
 
+    # ── #509: AGENT_ROSTER, the names of the whole roster, on every agent service (agent/roster in config) ──
+    def test_every_agent_service_gets_the_whole_roster_names_in_roster_order(self):
+        _, services = self._split(compose.render(entries()))
+        names = ",".join(a["character"] for a in entries())
+        agent_blocks = {k: v for k, v in services.items() if k != "jev-mock"}
+        self.assertEqual(len(agent_blocks), len(entries()))
+        for name, block in agent_blocks.items():
+            self.assertEqual(re.findall(r'(?m)^      AGENT_ROSTER: "(.*)"$', block), [names], name)
+
+    def test_a_two_agent_roster_names_both_agents_on_both_services(self):
+        two = [{"account": "AGENT01", "character": "Luaprata", "race": None, "class": None, "gender": None},
+               {"account": "AGENT02", "character": "Farstrider", "race": None, "class": None, "gender": None}]
+        _, services = self._split(compose.render(two))
+        self.assertEqual(sorted(services), ["agent-farstrider", "agent-luaprata", "jev-mock"])
+        for name in ("agent-luaprata", "agent-farstrider"):
+            self.assertEqual(re.findall(r'(?m)^      AGENT_ROSTER: "(.*)"$', services[name]), ["Luaprata,Farstrider"], name)
+
+    def test_retired_entries_stay_in_the_roster_names(self):   # the runner renders them too (#509)
+        rows = [{"account": "AGENT01", "character": "Luaprata", "retired": True},
+                {"account": "AGENT02", "character": "Farstrider"}]
+        _, services = self._split(compose.render(rows))
+        self.assertEqual(re.findall(r'(?m)^      AGENT_ROSTER: "(.*)"$', services["agent-farstrider"]), ["Luaprata,Farstrider"])
+
     def test_derive_reads_only_the_five_keys(self):
         agent = compose.derive(25, {"account": "AGENT26", "character": "Delta", "retired": True, "level": 1})
         self.assertEqual((agent.index, agent.api_port, agent.service, agent.container, agent.profiles),
