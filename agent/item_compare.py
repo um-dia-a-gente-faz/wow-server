@@ -23,6 +23,9 @@ shaman wants Agility/Strength, not Intellect; a fire vs. frost mage make
 no difference here. Revisit once the agent tracks talent specs.
 """
 
+from collections.abc import Mapping
+from typing import Any
+
 # ItemModType (ItemTemplate.h) — only the stats v1 scoring cares about.
 ITEM_MOD_STRENGTH = 4
 ITEM_MOD_AGILITY = 3
@@ -69,6 +72,25 @@ PRIMARY_STAT_WEIGHT = 100  # primary stat dominates; item_level only tiebreaks n
 # ItemClass (ItemTemplate.h) — only the ones the usability check below needs.
 ITEM_CLASS_WEAPON = 2
 ITEM_CLASS_ARMOR = 4
+
+# #317 make_gold sales (ItemTemplate.h ItemQualities / ItemClass).
+ITEM_QUALITY_POOR = 0
+ITEM_QUALITY_NORMAL = 1
+MAKE_GOLD_SELL_CLASSES = frozenset({7, 15})  # TRADE_GOODS, MISCELLANEOUS
+NEVER_SOLD_CLASSES = frozenset({0, 12})      # CONSUMABLE, QUEST
+
+
+def sellable(item: Mapping[str, Any], mission: str) -> bool:
+    """#317: may this item be sold to a vendor under this mission. Grey items for every mission; make_gold also
+    sells white trade goods and miscellaneous items whose price is known. A price of 0 is never sold."""
+    tpl = item.get("template") or {}
+    price = tpl.get("sell_price")  # absent from an old cache entry: unknown
+    if tpl.get("class_") in NEVER_SOLD_CLASSES or price == 0:
+        return False
+    if tpl.get("quality") == ITEM_QUALITY_POOR:
+        return True
+    return (mission == "make_gold" and tpl.get("quality") == ITEM_QUALITY_NORMAL and price is not None
+            and tpl.get("class_") in MAKE_GOLD_SELL_CLASSES)
 
 # ItemSubclassArmor (ItemTemplate.h).
 ARMOR_SUBCLASS_CLOTH = 1

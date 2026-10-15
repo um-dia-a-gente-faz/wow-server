@@ -70,8 +70,8 @@ class ModelMatchesProducersTest(unittest.TestCase):
 # Keys of the dicts agent.model still leaves as plain `dict` (the open window, an
 # item template, the reflex state, a pending invite). Shrinks as those get types.
 UNTYPED_KEYS = {
-    "kind", "npc_guid", "quests", "options", "coded", "text", "spell_id", "reward_choice_items",
-    "quality", "inventory_type", "trigger", "follow", "enabled", "leader_name", "assist",
+    "kind", "npc_guid", "vendor_guid", "quests", "options", "coded", "text", "spell_id", "reward_choice_items",
+    "quality", "inventory_type", "class_", "sell_price", "trigger", "follow", "enabled", "leader_name", "assist",
     "inviter_name",
 }
 

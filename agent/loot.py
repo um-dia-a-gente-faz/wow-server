@@ -366,7 +366,7 @@ def parse_item_query_response(payload: bytes) -> dict:
     quality = r.u32()
     r.skip(4 * 2)  # Flags[MAX_ITEM_PROTO_FLAGS=2]
     r.skip(4)  # buy_price (int32)
-    r.skip(4)  # sell_price
+    sell_price = r.u32()
     inventory_type = r.u32()
     allowable_class = r.i32()
     r.skip(4)  # allowable_race
@@ -435,7 +435,7 @@ def parse_item_query_response(payload: bytes) -> dict:
 
     info.update({
         "class_": item_class, "subclass": subclass, "name": name,
-        "display_id": display_info_id, "quality": quality,
+        "display_id": display_info_id, "quality": quality, "sell_price": sell_price,
         "inventory_type": inventory_type, "allowable_class": allowable_class,
         "item_level": item_level, "required_level": required_level,
         "stackable": stackable, "max_durability": max_durability,
