@@ -85,7 +85,9 @@ Paths are relative to the TrinityCore repository root.
   `detailMeshes[i]` (`:685`). A detail triangle index `t[k] < poly->vertCount` is a poly vertex,
   `tile->verts[poly->verts[t[k]]]`. Any other index is detail vertex
   `detailVerts[vertBase + (t[k] - vertCount)]` (`:705-707`). `navmesh.py` `_height_in_poly` does the same.
-- Point in polygon: `dtPointInPolygon`, `DetourCommon.cpp:238-252`, tests Detour x and z.
+- Point in polygon: `dtPointInPolygon`, `DetourCommon.cpp:238-252`, tests Detour x and z. Its half-open
+  rule leaves a point on a border out of both polys, so `navmesh.py` `_on_edge` also counts a point on an
+  edge (within 1e-3). Without it a clamped overlap end has no ground, and `height()` returns `None`.
 - Height in a triangle: `dtClosestHeightPointTriangle`, `DetourCommon.cpp:204-233`. Barycentric
   weights in x and z, height from y. `navmesh.py` uses the same weights. For a point on an edge
   it takes the triangle with the largest margin.
@@ -123,8 +125,13 @@ Paths are relative to the TrinityCore repository root.
 **Path search**
 
 - `find_path` returns the corners of the path, WoW `(x, y, z)`, first point start and last point end.
-  Each corner is a polygon vertex, so its z is that vertex's Detour y, which is the height `height()`
-  returns there. The start and end z come from `height()` at those points.
+  Each point's z is `height(x, y, hint)`, where the hint is the funnel point's Detour y. The hint picks
+  the floor nearest that height. The funnel point's own y is kept only where `height()` returns `None`.
+  A corner on a clamped overlap end is interpolated along our edge, so its y can differ from the
+  neighbour's surface: the z comes from the surface, not from the interpolation.
+- Corners never repeat: `appendVertex` (`DetourNavMeshQuery.cpp:1666-1673`) drops a point equal to the
+  last one, and `_funnel` does the same. Without it a corner that is also the end of the next portal is
+  emitted twice.
 - Search is A* over polygons. A poly is entered through an edge, so the cost is the distance between
   entry-edge midpoints, and the heuristic is the straight distance to end. Both are this module's
   choice, not TrinityCore's: `dtNavMeshQuery::findPath` is the reference.
@@ -132,7 +139,8 @@ Paths are relative to the TrinityCore repository root.
   (`DetourNavMeshQuery.cpp:1766-1980`; the tightening tests are `:1876` and `:1927`).
 - The portal is the **overlap**, not the full edge. `connectExtLinks` clamps the overlap to the
   edge and stores it as `bmin` and `bmax` (`DetourNavMesh.cpp:432-436`, `dtClamp` to `[0, 1]`), and
-  `navmesh.py` takes the same fractions along the edge (`_at_along`).
+  `navmesh.py` takes the same fractions along the neighbour's edge (`_at_along`), so the portal's heights
+  are the neighbour's. The path steps onto that tile at the corner.
 - Left and right of each portal are chosen from the geometry (the travel direction is the centre of
   the next poly minus the centre of this one, and a point is on the left when its cross product is
   positive). Detour takes `left = verts[edge]` and `right = verts[edge+1]` (`getPortalPoints`,

@@ -2,6 +2,7 @@
 the source line for each fact). build_tile writes that layout by hand, with its own format
 strings, so a reader mistake shows up here as a failing test. Stdlib only.
 """
+import math
 import pathlib
 import random
 import struct
@@ -97,6 +98,12 @@ def wow(dx, dz):
 def sloped(x, z):
     """Terrain height at Detour (x, z): a plane, so an interpolation error shows up."""
     return 0.25 * x + 0.5 * z + 3.0
+
+
+def assert_no_repeats(test, path):
+    """No two consecutive corners are the same point (Detour's appendVertex drops those)."""
+    for k, (p, q) in enumerate(zip(path, path[1:], strict=False)):
+        test.assertGreater(math.dist(p, q), 1e-6, f"corners {k} and {k + 1} are the same point: {p}")
 
 
 def crosses_cell(a, b, x0, x1, z0, z1, steps=400):
@@ -314,6 +321,60 @@ class PathTests(unittest.TestCase):
         self.assertIsNone(low.find_path(at(100, 100), at(700, 100)))
         self.assertIsNotNone(high.find_path(at(100, 100), at(700, 100)))
 
+    def test_corner_at_a_cross_tile_portal_end_is_not_repeated(self):
+        # P1 (lower half) links to A's +x edge. P2 (upper half) is walled from A and reached only through
+        # P1, so the path bends at (GRID, GRID/2), which is also the end of the P1-P2 portal.
+        half = GRID / 2
+        a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        p1 = {"verts": square(GRID, 2 * GRID, 0, half), "neis": [0, 0, 2, DT_EXT_LINK | 4]}
+        p2 = {"verts": square(GRID, 2 * GRID, half, GRID), "neis": [1, 0, 0, 0]}
+        mesh = mesh_with(((100, 100), a), ((100, 700), build_tile([p1, p2])))
+        path = mesh.find_path(at(100, 500), at(700, 400))
+        self.assertIsNotNone(path)
+        assert_no_repeats(self, path)
+        self.assertEqual(len(path), 3)
+        self.assertAlmostEqual(path[1][0], half, delta=1e-3)
+        self.assertAlmostEqual(path[1][1], GRID, delta=1e-3)
+
+    def test_mirrored_corner_at_a_cross_tile_portal_end_is_not_repeated(self):
+        # The mirror of the test above: the linked poly is the upper half and the walled one is the lower.
+        # The bend is on the other side of the funnel.
+        half = GRID / 2
+        a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        p1 = {"verts": square(GRID, 2 * GRID, half, GRID), "neis": [2, 0, 0, DT_EXT_LINK | 4]}
+        p2 = {"verts": square(GRID, 2 * GRID, 0, half), "neis": [0, 0, 1, 0]}
+        mesh = mesh_with(((100, 100), a), ((100, 700), build_tile([p1, p2])))
+        path = mesh.find_path(at(100, 100), at(700, 100))
+        self.assertIsNotNone(path)
+        assert_no_repeats(self, path)
+        self.assertEqual(len(path), 3)
+        self.assertAlmostEqual(path[1][0], half, delta=1e-3)
+        self.assertAlmostEqual(path[1][1], GRID, delta=1e-3)
+
+    def test_corner_at_a_clamped_overlap_end_takes_the_height_of_the_neighbour(self):
+        # Tile B is 0.5 above A and its climb (1.0) links them. The bend is at the overlap end
+        # (GRID, GRID/2): A's edge there is at y = 0, B's surface at y = 0.5.
+        half = GRID / 2
+        a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        b = build_tile([{"verts": square(GRID, 2 * GRID, 0, half, y=0.5),
+                         "neis": [0, 0, 0, DT_EXT_LINK | 4]}], climb=1.0)
+        mesh = mesh_with(((100, 100), a), ((100, 700), b))
+        path = mesh.find_path(at(100, 500), at(700, 200))
+        self.assertIsNotNone(path)
+        self.assertEqual(len(path), 3)
+        self.assertAlmostEqual(path[1][2], 0.5, delta=1e-3)
+        for x, y, z in path:
+            self.assertAlmostEqual(z, mesh.height(x, y), delta=1e-3)
+
+    def test_borders_touching_only_at_an_end_do_not_link(self):
+        # A's +x edge is z in [0, GRID/2]; B's -x edge is z in [GRID/2, GRID]. They share one point, and
+        # the 0.01 shrink in overlapSlabs (DetourNavMesh.cpp:38-40) keeps them apart.
+        half = GRID / 2
+        a = build_tile([{"verts": square(0, GRID, 0, half), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        b = build_tile([{"verts": square(GRID, 2 * GRID, half, GRID), "neis": [0, 0, 0, DT_EXT_LINK | 4]}])
+        mesh = mesh_with(((100, 100), a), ((100, 700), b))
+        self.assertIsNone(mesh.find_path(at(100, 100), at(700, 400)))
+
     def test_ext_link_only_reaches_the_tile_on_its_side(self):
         # The same two tiles, but A's edge says side 4 (-x): tile B is on side 0, so nothing links.
         a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 4, 0, 0]}])
@@ -351,6 +412,7 @@ class PathTests(unittest.TestCase):
             if path is None:
                 continue
             found += 1
+            assert_no_repeats(self, path)
             for a, b in zip(path, path[1:], strict=False):
                 for c, r in missing:
                     self.assertFalse(crosses_cell(a, b, c * 10, c * 10 + 10, r * 10, r * 10 + 10),
