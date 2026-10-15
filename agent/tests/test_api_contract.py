@@ -88,6 +88,33 @@ class ProducerTest(_ServerCase):
         self.assertEqual(ac.validate(body, C["errors"]["schema"]), [])
 
 
+class MissionContractTest(_ServerCase):
+    """#314: the mission is in /healthz and both /state responses, and its enum is agent.missions.MISSIONS."""
+
+    def test_schema_enum_is_the_missions_tuple(self):
+        from agent.missions import MISSIONS
+        for endpoint, response in (("/healthz", "ok"), ("/state", "in game"), ("/state", "not in game")):
+            with self.subTest(endpoint=endpoint, response=response):
+                schema = ac.response_schema(endpoint, response)
+                self.assertIn("mission", schema["required"])
+                self.assertEqual(schema["properties"]["mission"], {"type": "string", "enum": list(MISSIONS)})
+
+    def test_responses_carry_the_observers_mission(self):
+        self.observer.mission = "explore"
+        self.observer.record_decision({"cycle": 1, "brain": "jev"})
+        self.assertEqual(json.loads(self.get("/healthz")[1])["mission"], "explore")
+        self.check("/healthz", "/healthz", "ok")
+        self.check("/state", "/state", "in game")
+        self.assertEqual(json.loads(self.get("/state")[1])["mission"], "explore")
+        self.observer.detach()
+        self.check("/state", "/state", "not in game")
+        self.assertEqual(json.loads(self.get("/state")[1])["mission"], "explore")
+
+    def check(self, path, endpoint, response):
+        body = json.loads(self.get(path)[1])
+        self.assertEqual(ac.validate(body, ac.response_schema(endpoint, response)), [], path)
+
+
 class DocTest(unittest.TestCase):
     def test_endpoint_reference_is_current(self):
         self.assertEqual((ROOT / "docs" / "AGENT-API.md").read_text("utf-8"), ac.render_markdown(),

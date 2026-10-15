@@ -15,6 +15,7 @@ from .http_api import AgentObserver, ObserverServer, start_server
 from .lifecycle import Lifecycle
 from .login import authenticate_and_login, connect_and_login
 from .metrics import swallowed
+from .missions import DEFAULT_MISSION
 from .runloop import run_loop
 from .supervisor import supervise_connection
 from .worldknowledge import WorldKnowledge
@@ -182,11 +183,12 @@ def start_observer(cfg, audit_logger, log, brain=None):
     can't be bound is logged and the agent plays on without it."""
     if not cfg.http_port:
         return None, None
+    mission = getattr(cfg, "mission", DEFAULT_MISSION)
     if brain is not None:
         observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=brain.model,
-                                 brain="jev" if brain.jev is not None else "llm")
+                                 brain="jev" if brain.jev is not None else "llm", mission=mission)
     else:
-        observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model)
+        observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model, mission=mission)
     observer.fleet = getattr(brain, "fleet", None)  # #675: /metrics reads its health
     observer.control_token = cfg.control_token  # #178: "" keeps the API read-only
     if audit_logger is not None:

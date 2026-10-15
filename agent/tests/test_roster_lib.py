@@ -15,8 +15,11 @@ COMPOSE = REPO / "docker-compose.agents.yml"
 SERVICE_HEADER = re.compile(r"  ([a-z0-9-]+):$")
 
 
-def entry(account="AGENT01", character="Luaprata", race=None, class_=None, gender=None):
-    return {"account": account, "character": character, "race": race, "class": class_, "gender": gender}
+def entry(account="AGENT01", character="Luaprata", race=None, class_=None, gender=None, mission=None):
+    out = {"account": account, "character": character, "race": race, "class": class_, "gender": gender}
+    if mission is not None:
+        out["mission"] = mission
+    return out
 
 
 def data(*entries):
@@ -64,13 +67,13 @@ class CommittedRosterTests(unittest.TestCase):
         self.assertEqual(self.agents[-1].index, 25)
         self.assertEqual(self.agents[-1].api_port, 9625)
 
-    def test_to_json_gives_back_the_file_entries(self):
+    def test_to_json_gives_back_the_file_entries_plus_the_default_mission(self):
         file_agents = json.loads(roster.ROSTER_PATH.read_text())["agents"]
-        self.assertEqual([a.to_json() for a in self.agents], file_agents)
+        self.assertEqual([a.to_json() for a in self.agents], [{**e, "mission": "level_to_cap"} for e in file_agents])
 
     def test_to_json_keeps_key_order_and_class_key(self):
         keys = list(self.agents[0].to_json())
-        self.assertEqual(keys, ["account", "character", "race", "class", "gender"])
+        self.assertEqual(keys, ["account", "character", "race", "class", "gender", "mission"])
         self.assertEqual(self.agents[5].to_json()["class"], 5)
 
     def test_missing_file_is_not_handled(self):
@@ -181,6 +184,20 @@ class ValidationTests(unittest.TestCase):
 
     def test_rule6_empty_roster_is_valid(self):
         self.assertEqual(parse_roster({"agents": []}), [])
+
+    def test_mission_is_optional_and_defaults_to_level_to_cap(self):
+        self.assertEqual(parse_roster(data(entry()))[0].mission, "level_to_cap")
+
+    def test_mission_accepts_every_mission_in_the_list(self):
+        for m in roster.MISSIONS:
+            with self.subTest(mission=m):
+                self.assertEqual(parse_roster(data(entry(mission=m)))[0].mission, m)
+        self.assertEqual(parse_roster(data(entry(mission="explore")))[0].to_json()["mission"], "explore")
+
+    def test_unknown_mission_is_rejected(self):
+        for bad in ("fishing", "Explore", "", 7):
+            with self.subTest(mission=bad):
+                self.assertRejects(data(entry(mission=bad)), 1, "mission")
 
 
 if __name__ == "__main__":

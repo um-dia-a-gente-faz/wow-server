@@ -15,6 +15,8 @@ variable.
 import os
 from dataclasses import dataclass, field
 
+from .missions import DEFAULT_MISSION, MISSIONS
+
 # Only used when JEV_PROVIDER=openrouter; see Config.jev_base_url.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"
 
@@ -58,6 +60,8 @@ SETTINGS: tuple[Setting, ...] = (
        "(set per service by compose from the roster position, #539)"),
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),
     _s("AGENT_PERSONA", str, "", "persona text for the LLM"),
+    _s("AGENT_MISSION", str, DEFAULT_MISSION, "what the agent is for: level_to_cap | explore | make_gold (#314); "
+       "set per service from the roster by compose (a separate issue)", compose=False),
     _s("AGENT_CHANNELS", str, "General", 'chat channels to join after login, comma-separated; "none" disables'),
     _s("AGENT_BRAIN", str, "llm", "llm | jev (#161)"),
     _s("AGENT_BRAIN_FALLBACK", str, "none", "none | llm: only with AGENT_BRAIN=jev"),
@@ -157,6 +161,8 @@ class Config:
     start_delay: float = _f("AGENT_START_DELAY_S")  # #539: one wait before the first connect
     run_duration: float = _f("AGENT_RUN_DURATION_S")  # 0 = forever
     persona: str = _f("AGENT_PERSONA")
+    # #314: one of agent.missions.MISSIONS; load_config() rejects anything else.
+    mission: str = field(default_factory=lambda: get("AGENT_MISSION") or default("AGENT_MISSION"))
     # UM-93: chat channels to join after login, comma-separated ("General,world");
     # "none" disables. See agent/channels.py::parse_channel_spec.
     channels: str = _f("AGENT_CHANNELS")
@@ -275,6 +281,7 @@ class Config:
             "jev_path": self.jev_path,
             "jev_model": self.jev_model,
             "jev_min_confidence": self.jev_min_confidence,
+            "mission": self.mission,
             "jev_api_key": "***" if self.jev_api_key else "(unset)",
             "log_level": self.log_level,
             "dump_packets": self.dump_packets_dir or "(off)",
@@ -289,4 +296,6 @@ class Config:
 
 def load_config() -> Config:
     cfg = Config()
+    if cfg.mission not in MISSIONS:
+        raise ConfigError(f"AGENT_MISSION must be one of {', '.join(MISSIONS)}, got {cfg.mission!r}")
     return cfg
