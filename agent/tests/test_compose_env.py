@@ -17,6 +17,11 @@ COMPOSE_ONLY = {
     "LLM_PROVIDER": "passed since UM-44, no code reads it any more",
 }
 
+# Set per service by agents/compose.py from the roster file, not passed from .env, so compose=False (#509).
+PER_SERVICE = {
+    "AGENT_ROSTER": "the names of the whole roster, the same on every agent service",
+}
+
 
 def compose_passed():
     text = (REPO / "docker-compose.agents.yml").read_text()
@@ -28,9 +33,11 @@ class ComposeEnvPassthroughTests(unittest.TestCase):
     def test_passed_settings_match_schema(self):
         want = {s.name for s in SETTINGS if s.compose} | set(COMPOSE_ONLY)
         got = compose_passed()
+        per_service = {s.name for s in SETTINGS if not s.compose and s.name in PER_SERVICE}
+        self.assertEqual(sorted(set(PER_SERVICE) - per_service), [], "PER_SERVICE names must be compose=False settings")
         self.assertEqual(sorted(want - got), [], "SETTINGS says compose passes these, the file does not "
                          "(edit scripts/gen_agents_compose.py and regenerate, or set compose=False)")
-        self.assertEqual(sorted(got - want), [], "docker-compose.agents.yml passes these but SETTINGS "
+        self.assertEqual(sorted(got - want - per_service), [], "docker-compose.agents.yml passes these but SETTINGS "
                          "does not declare them (declare in agent/config.py or add to COMPOSE_ONLY)")
 
 

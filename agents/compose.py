@@ -126,6 +126,8 @@ SERVICE = """\
       WOW_ACCOUNT: {account}
       WOW_CHARACTER: {character}
       AGENT_NAME: {character}
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "{roster}"
       AGENT_HTTP_PORT: {port}
       AGENT_START_DELAY_S: "{start_delay}"
     ports:
@@ -182,6 +184,7 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: st
     `world_dir` the one mounted read-only at /data/world (#749)."""
     seen = set()
     blocks = []
+    names = ",".join(derive(i, a).character for i, a in enumerate(agents))
     for i, a in enumerate(agents):
         agent = derive(i, a)
         if agent.slug in seen or not agent.slug.isalnum():
@@ -189,7 +192,7 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: st
         seen.add(agent.slug)
         blocks.append(SERVICE.format(
             service=agent.service, container=agent.container,
-            account=agent.account, character=agent.character, port=agent.api_port,
+            account=agent.account, character=agent.character, port=agent.api_port, roster=names,
             profiles=", ".join(agent.profiles),
             start_delay=(i * START_DELAY_STEP_S) % START_DELAY_PERIOD_S))
     last_port = roster.FIRST_PORT + RAID_SIZE - 1

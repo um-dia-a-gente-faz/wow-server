@@ -103,6 +103,8 @@ services:
       WOW_ACCOUNT: AGENT01
       WOW_CHARACTER: Luaprata
       AGENT_NAME: Luaprata
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9601
       AGENT_START_DELAY_S: "0"
     ports:
@@ -120,6 +122,8 @@ services:
       WOW_ACCOUNT: AGENT02
       WOW_CHARACTER: Farstrider
       AGENT_NAME: Farstrider
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9602
       AGENT_START_DELAY_S: "3"
     ports:
@@ -137,6 +141,8 @@ services:
       WOW_ACCOUNT: AGENT03
       WOW_CHARACTER: Shadowblade
       AGENT_NAME: Shadowblade
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9603
       AGENT_START_DELAY_S: "6"
     ports:
@@ -154,6 +160,8 @@ services:
       WOW_ACCOUNT: AGENT04
       WOW_CHARACTER: Sunspeaker
       AGENT_NAME: Sunspeaker
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9604
       AGENT_START_DELAY_S: "9"
     ports:
@@ -171,6 +179,8 @@ services:
       WOW_ACCOUNT: AGENT05
       WOW_CHARACTER: Spellweaver
       AGENT_NAME: Spellweaver
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9605
       AGENT_START_DELAY_S: "12"
     ports:
@@ -188,6 +198,8 @@ services:
       WOW_ACCOUNT: AGENT06
       WOW_CHARACTER: Zanja
       AGENT_NAME: Zanja
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9606
       AGENT_START_DELAY_S: "15"
     ports:
@@ -205,6 +217,8 @@ services:
       WOW_ACCOUNT: AGENT07
       WOW_CHARACTER: Jinjin
       AGENT_NAME: Jinjin
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9607
       AGENT_START_DELAY_S: "18"
     ports:
@@ -222,6 +236,8 @@ services:
       WOW_ACCOUNT: AGENT08
       WOW_CHARACTER: Gargash
       AGENT_NAME: Gargash
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9608
       AGENT_START_DELAY_S: "21"
     ports:
@@ -239,6 +255,8 @@ services:
       WOW_ACCOUNT: AGENT09
       WOW_CHARACTER: Tatoka
       AGENT_NAME: Tatoka
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9609
       AGENT_START_DELAY_S: "24"
     ports:
@@ -256,6 +274,8 @@ services:
       WOW_ACCOUNT: AGENT10
       WOW_CHARACTER: Aerdorei
       AGENT_NAME: Aerdorei
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9610
       AGENT_START_DELAY_S: "27"
     ports:
@@ -273,6 +293,8 @@ services:
       WOW_ACCOUNT: AGENT11
       WOW_CHARACTER: Senkazi
       AGENT_NAME: Senkazi
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9611
       AGENT_START_DELAY_S: "30"
     ports:
@@ -290,6 +312,8 @@ services:
       WOW_ACCOUNT: AGENT12
       WOW_CHARACTER: Mogthar
       AGENT_NAME: Mogthar
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9612
       AGENT_START_DELAY_S: "33"
     ports:
@@ -307,6 +331,8 @@ services:
       WOW_ACCOUNT: AGENT13
       WOW_CHARACTER: Urzughak
       AGENT_NAME: Urzughak
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9613
       AGENT_START_DELAY_S: "36"
     ports:
@@ -324,6 +350,8 @@ services:
       WOW_ACCOUNT: AGENT14
       WOW_CHARACTER: Garmar
       AGENT_NAME: Garmar
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9614
       AGENT_START_DELAY_S: "39"
     ports:
@@ -341,6 +369,8 @@ services:
       WOW_ACCOUNT: AGENT15
       WOW_CHARACTER: Queldorei
       AGENT_NAME: Queldorei
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9615
       AGENT_START_DELAY_S: "42"
     ports:
@@ -358,6 +388,8 @@ services:
       WOW_ACCOUNT: AGENT16
       WOW_CHARACTER: Zulrik
       AGENT_NAME: Zulrik
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9616
       AGENT_START_DELAY_S: "45"
     ports:
@@ -375,6 +407,8 @@ services:
       WOW_ACCOUNT: AGENT17
       WOW_CHARACTER: Pamarana
       AGENT_NAME: Pamarana
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9617
       AGENT_START_DELAY_S: "48"
     ports:
@@ -392,6 +426,8 @@ services:
       WOW_ACCOUNT: AGENT18
       WOW_CHARACTER: Thalwyn
       AGENT_NAME: Thalwyn
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9618
       AGENT_START_DELAY_S: "51"
     ports:
@@ -409,6 +445,8 @@ services:
       WOW_ACCOUNT: AGENT19
       WOW_CHARACTER: Thokgor
       AGENT_NAME: Thokgor
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9619
       AGENT_START_DELAY_S: "54"
     ports:
@@ -426,6 +464,8 @@ services:
       WOW_ACCOUNT: AGENT20
       WOW_CHARACTER: Lorvaris
       AGENT_NAME: Lorvaris
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9620
       AGENT_START_DELAY_S: "57"
     ports:
@@ -443,6 +483,8 @@ services:
       WOW_ACCOUNT: AGENT21
       WOW_CHARACTER: Moggor
       AGENT_NAME: Moggor
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9621
       AGENT_START_DELAY_S: "0"
     ports:
@@ -460,6 +502,8 @@ services:
       WOW_ACCOUNT: AGENT22
       WOW_CHARACTER: Velkaelanar
       AGENT_NAME: Velkaelanar
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9622
       AGENT_START_DELAY_S: "3"
     ports:
@@ -477,6 +521,8 @@ services:
       WOW_ACCOUNT: AGENT23
       WOW_CHARACTER: Thalvis
       AGENT_NAME: Thalvis
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9623
       AGENT_START_DELAY_S: "6"
     ports:
@@ -494,6 +540,8 @@ services:
       WOW_ACCOUNT: AGENT24
       WOW_CHARACTER: Quelthas
       AGENT_NAME: Quelthas
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9624
       AGENT_START_DELAY_S: "9"
     ports:
@@ -511,6 +559,8 @@ services:
       WOW_ACCOUNT: AGENT25
       WOW_CHARACTER: Zulari
       AGENT_NAME: Zulari
+      # #509: the whole roster's character names, so the follow rule (#318) sees every agent, not only the leader
+      AGENT_ROSTER: "Luaprata,Farstrider,Shadowblade,Sunspeaker,Spellweaver,Zanja,Jinjin,Gargash,Tatoka,Aerdorei,Senkazi,Mogthar,Urzughak,Garmar,Queldorei,Zulrik,Pamarana,Thalwyn,Thokgor,Lorvaris,Moggor,Velkaelanar,Thalvis,Quelthas,Zulari"
       AGENT_HTTP_PORT: 9625
       AGENT_START_DELAY_S: "12"
     ports:
