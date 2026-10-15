@@ -123,10 +123,12 @@ class FindPolyAndHeightTests(unittest.TestCase):
             self.assertAlmostEqual(mesh.height(x, y), 0.5 * x + 0.25 * y + 3, delta=1e-4)
 
     def test_height_uses_detail_vertex_from_vertbase(self):
-        # A raised detail vertex at the centre (index 4 = poly vert count + 0) sets the centre height.
-        corners = square(0, 10, 0, 10)
+        # Poly 0 owns detail vert 0, so poly 1's detail verts start at vertBase 1. Its centre vertex is
+        # index 4 = poly vert count + 0, which is detail_verts[vertBase + 0].
         fan = [(0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)]
-        mesh = mesh_with(((5, 5), build_tile([{"verts": corners, "extra": [(5, 2.0, 5)], "tris": fan}])))
+        mesh = mesh_with(((5, 5), build_tile([
+            {"verts": square(20, 30, 0, 10), "extra": [(25, 7.0, 5)], "tris": fan},
+            {"verts": square(0, 10, 0, 10), "extra": [(5, 2.0, 5)], "tris": fan}])))
         self.assertAlmostEqual(mesh.height(5, 5), 2.0, delta=1e-4)
 
     def test_stacked_floors_pick_the_floor_nearest_z(self):
