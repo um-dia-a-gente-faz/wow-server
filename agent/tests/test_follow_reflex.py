@@ -3,6 +3,7 @@
 pattern as test_actions_movement.py's fast_session) so tick() calls resolve
 instantly, deterministically, and without real threads or sleeping."""
 
+import time
 import unittest
 
 from agent import actions as ac
@@ -142,15 +143,126 @@ class FollowMovementTest(unittest.TestCase):
 
 
 class LeaderLostTest(unittest.TestCase):
-    def test_leader_missing_from_perception_records_leader_lost_and_disables(self):
+    def test_leader_missing_past_grace_records_leader_lost_and_disables(self):
         sess, world = fast_session()
-        reflex = fl.FollowReflex()
+        clock = FakeClock()
+        reflex = fl.FollowReflex(clock=clock.clock)
         reflex.start(leader_guid=5, distance=3.0)
+        clock.t = fl.LEADER_GRACE_S
 
         reflex.tick(sess, world)  # guid 5 was never perceived
 
         self.assertFalse(reflex.enabled)
         self.assertEqual(sess.events[-1]["kind"], "leader_lost")
+
+
+class LeaderGraceTest(unittest.TestCase):
+    """#512: a missing leader is given LEADER_GRACE_S from the follow's start before it is lost.
+    The reflex's clock is injected; nothing sleeps."""
+
+    def started(self):
+        sess, world = fast_session()
+        clock = FakeClock()
+        reflex = fl.FollowReflex(clock=clock.clock)
+        reflex.start(leader_guid=5, distance=3.0)
+        return sess, world, clock, reflex
+
+    def leader_lost_count(self, sess):
+        return sum(1 for e in sess.events if e["kind"] == "leader_lost")
+
+    def test_leader_missing_within_grace_waits_without_event(self):
+        sess, world, clock, reflex = self.started()
+        clock.t = fl.LEADER_GRACE_S - 0.5
+
+        reflex.tick(sess, world)
+
+        self.assertTrue(reflex.enabled)
+        self.assertEqual(sess.events, [])
+        self.assertEqual(sess._sent, [])
+
+    def test_leader_entering_perception_within_grace_is_followed(self):
+        sess, world, clock, reflex = self.started()
+        reflex.tick(sess, world)  # not perceived yet
+        clock.t = 2.0
+        world.update_object(object_at(5, 20.0, 0.0, 0.0, object_type="player"))
+
+        reflex.tick(sess, world)
+
+        opcodes = [op for op, _ in sess._sent]
+        self.assertIn(mv.MSG_MOVE_START_FORWARD, opcodes)
+        self.assertTrue(reflex.enabled)
+        self.assertEqual(self.leader_lost_count(sess), 0)
+
+    def test_leader_missing_past_grace_stops_once_with_leader_lost(self):
+        sess, world, clock, reflex = self.started()
+        clock.t = fl.LEADER_GRACE_S
+
+        for _ in range(3):
+            reflex.tick(sess, world)
+
+        self.assertFalse(reflex.enabled)
+        self.assertEqual(self.leader_lost_count(sess), 1)
+        self.assertEqual(sess.events[-1]["kind"], "leader_lost")
+
+
+GHOST_FLAG = 0x10  # PLAYER_FLAGS_GHOST, TrinityCore Player.h
+
+
+class GhostIsNotAliveForFollowTest(unittest.TestCase):
+    """#512: a released ghost has health back above zero, so session.is_alive is True; the
+    follow rule must still treat it as not alive (it is read from PLAYER_FLAGS)."""
+
+    def ghost_session(self):
+        sess, world = fast_session()
+        world.set_my_guid(sess.player_guid)
+        world.update_object(uo.UpdateBlock(
+            update_type=uo.UPDATETYPE_CREATE_OBJECT, guid=sess.player_guid, object_type=uo.TYPEID_PLAYER,
+            movement={"update_flags": uo.UPDATEFLAG_STATIONARY_POSITION, "x": 0.0, "y": 0.0, "z": 0.0, "o": 0.0},
+            fields={uf.UNIT_FIELD_HEALTH: 1, uf.UNIT_FIELD_MAXHEALTH: 100, uf.PLAYER_FLAGS: GHOST_FLAG}))
+        self.assertTrue(sess.is_alive)
+        return sess, world
+
+    def test_released_ghost_stops_a_running_follow_as_self_died(self):
+        sess, world = self.ghost_session()
+        world.update_object(object_at(5, 20.0, 0.0, 0.0, object_type="player"))
+        reflex = fl.FollowReflex()
+        reflex.start(leader_guid=5, distance=3.0)
+
+        reflex.tick(sess, world)
+
+        self.assertFalse(reflex.enabled)
+        self.assertEqual(sess.events[-1]["reason"], "self_died")
+        self.assertNotIn(mv.MSG_MOVE_START_FORWARD, [op for op, _ in sess._sent])
+
+    def test_released_ghost_cannot_start_a_follow(self):
+        sess, world = self.ghost_session()
+        world.update_object(object_at(5, 20.0, 0.0, 0.0, object_type="player"))
+
+        error = fl.begin_follow(sess, world, 5, "Rubens", reason="llm_requested")
+
+        self.assertIsNotNone(error)
+        self.assertFalse(fl.get_follow_reflex(sess).enabled)
+
+
+class PartyListWhileFollowingTest(unittest.TestCase):
+    """#512 pin: an accepted invite whose party list arrives while already following settles
+    without starting a second follow, so the target is not switched to the party leader."""
+
+    def test_party_list_while_following_does_not_restart_or_switch_target(self):
+        sess, world = fast_session()
+        sess.player_name = "Ana"
+        world.update_object(object_at(5, 20.0, 0.0, 0.0, object_type="player"))
+        fl.begin_follow(sess, world, 5, "Rubens", reason="llm_requested")
+        sess.follow_on_accept = ("Bia", time.monotonic() + 60)
+        sess.group = {"leader_guid": 7, "members": [
+            {"guid": 7, "name": "Bia", "online": True}, {"guid": 5, "name": "Rubens", "online": True}]}
+
+        fl.get_follow_reflex(sess).tick(sess, world)
+
+        kinds = [e["kind"] for e in sess.events]
+        self.assertEqual(kinds.count("follow_started"), 1)
+        self.assertEqual(fl.get_follow_reflex(sess).leader_guid, 5)
+        self.assertIsNone(sess.follow_on_accept)
 
     def test_leader_with_unknown_position_is_treated_as_lost(self):
         sess, world = fast_session()

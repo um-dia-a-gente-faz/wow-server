@@ -46,6 +46,7 @@ log = logging.getLogger("agent.reflexes.follow")
 
 DEFAULT_DISTANCE_YD = 3.0
 RANGE_MARGIN_YD = 1.0  # start walking once farther than distance + this
+LEADER_GRACE_S = 10.0  # a leader missing this long after the follow started is lost (#512)
 UNIT_FLAG_IN_COMBAT = 0x00080000  # UnitDefines.h — same mask agent/perception/nearby.py uses for in_combat
 
 
@@ -56,10 +57,17 @@ def _group_member_name(group: dict | None, guid: int) -> str:
     return ""
 
 
+def _follow_alive(session, world) -> bool:
+    """The follow rule's aliveness (#512). session.is_alive is the death flag, which is set
+    back as soon as a released ghost has health above zero, so a ghost is also not alive here."""
+    me = world.get_my_object()
+    return bool(session.is_alive) and not (me is not None and me.is_ghost())
+
+
 def follow_target_error(session, world, guid: int, name: str = "") -> str | None:
     """Why `guid` may not be followed, or None when it may (#318). Valid: a human, or the
     party leader. Not valid: the agent itself; anything while this agent leads the party;
-    another agent that is not the party leader.
+    another agent that is not the party leader; anything while the agent is dead or a ghost.
 
     The rule as implemented: main cannot tell whether another agent is currently following
     (nothing publishes it), so every agent that is not the party leader is rejected. A leader
@@ -67,6 +75,8 @@ def follow_target_error(session, world, guid: int, name: str = "") -> str | None
     chain or a pair of agents following each other cannot form inside a party. Which characters
     are agents comes from session.agent_names (config AGENT_ROSTER); with no roster configured
     every non-leader is treated as a human."""
+    if not _follow_alive(session, world):
+        return "an agent cannot follow while dead or a ghost"
     name = name or world_player_name(world, guid) or _group_member_name(session.group, guid)
     mine = (session.player_name or "").lower()
     if (guid and guid == session.player_guid) or (name and mine and name.lower() == mine):
@@ -118,8 +128,10 @@ class FollowReflex:
     main loop calls tick(), and LLM actions that touch movement pause it
     first (see pause_for_llm_override)."""
 
-    def __init__(self):
+    def __init__(self, clock=time.monotonic):
         self.enabled = False
+        self._clock = clock
+        self._started_at = 0.0
         self.leader_guid: int | None = None
         self.leader_name: str | None = None
         self.distance: float = DEFAULT_DISTANCE_YD
@@ -131,6 +143,7 @@ class FollowReflex:
     def start(self, leader_guid: int, leader_name: str | None = None,
               distance: float = DEFAULT_DISTANCE_YD, party_bound: bool = False):
         self.enabled = True
+        self._started_at = self._clock()
         self.party_bound = party_bound
         self.leader_guid = leader_guid
         self.leader_name = leader_name
@@ -180,6 +193,8 @@ class FollowReflex:
             return
 
         leader = world.get_object(self.leader_guid)
+        if leader is None and self._clock() - self._started_at < LEADER_GRACE_S:
+            return  # not perceived yet; the grace period may still bring it into range (#512)
         if leader is None or leader.position is None or session.player_position is None:
             self._lost(session, world, "leader out of perception range or on another map")
             return
@@ -235,7 +250,7 @@ class FollowReflex:
 
     def _stop_reason(self, session, world) -> str | None:
         """Why following must end now, from session state alone (#318), or None."""
-        if not session.is_alive:
+        if not _follow_alive(session, world):
             return "self_died"
         if follow_target_error(session, world, self.leader_guid, self.leader_name or "") is not None:
             return "target_invalid"
