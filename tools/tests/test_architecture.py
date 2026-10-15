@@ -51,6 +51,7 @@ PACKAGE_EDGES = {
     "dbc": set(),
     "fleet-limits": set(),
     "jev-mock": set(),
+    "pathfinder": set(),
     "loadtest": {"world-mock"},          # soak.py: `import server` from tools/world-mock (not in the #387 list; pinned, see PR)
     "wowmap": {"common", "dbc"},         # state.py, app.py, character.py
     "worldknowledge": {"dbc"},           # build.py: dbc.wdbc
@@ -68,6 +69,7 @@ AGENT_EDGES = {
     "dbc": set(),
     "fleet-limits": set(),
     "jev-mock": set(),
+    "pathfinder": set(),
     "loadtest": {"handles", "items", "login", "names", "npc", "quests", "runloop", "supervisor"},
     "wowmap": set(),
     "worldknowledge": {"worldknowledge"},   # build.py: SCHEMA_VERSION and SCHEMA, one definition
