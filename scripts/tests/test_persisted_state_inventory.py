@@ -208,6 +208,7 @@ ADR_NAMES = {
     "~/.cache/wow-agent/items.json": "items.json",
     "AGENT_AUDIT_DIR/<agent>/<day>.jsonl[.N]": "audit day file",
     "AGENT_AUDIT_DIR/<agent>/lifecycle/<day>.jsonl": "lifecycle file",
+    "AGENT_AUDIT_DIR/<agent>/unmet/<day>.jsonl": "unmet-intent file",
     "memory.db": "memory.db",
     "agents/roster.json": "roster.json",
     "<runtime>/state.json": "state.json",
