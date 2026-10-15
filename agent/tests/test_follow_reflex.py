@@ -456,6 +456,97 @@ class LlmOverridePausesFollowTest(unittest.TestCase):
         self.assertEqual(sess.events, [])  # no spurious follow_stopped with nothing following
 
 
+def _party(leader_guid, leader_name, member_guids=()):
+    members = [{"guid": leader_guid, "name": leader_name, "online": True}]
+    members += [{"guid": g, "name": f"m{g}", "online": True} for g in member_guids]
+    return {"guid": 1, "counter": 1, "raid": False, "leader_guid": leader_guid,
+            "loot_method": None, "members": members}
+
+
+class PreInviteFollowBecomesPartyBoundTest(unittest.TestCase):
+    """#761: a follow started by the `follow` action before the invite is accepted has no party
+    yet; once the party includes the target it is party-bound, so dissolving it ends the follow."""
+
+    def test_follow_started_before_invite_ends_with_left_party_when_party_dissolves(self):
+        sess, world = fast_session()
+        world.update_object(object_at(5, 2.0, 0.0, 0.0, object_type="player"))
+        fl.begin_follow(sess, world, 5, "Rubens", reason="llm_requested")
+        self.assertFalse(fl.get_follow_reflex(sess).party_bound)
+
+        sess.group = _party(5, "Rubens", member_guids=(7,))
+        fl.get_follow_reflex(sess).tick(sess, world)
+        self.assertTrue(fl.get_follow_reflex(sess).enabled)
+        self.assertTrue(fl.get_follow_reflex(sess).party_bound)
+
+        sess.group = None  # the party dissolves
+        fl.get_follow_reflex(sess).tick(sess, world)
+
+        self.assertFalse(fl.get_follow_reflex(sess).enabled)
+        self.assertEqual(sess.events[-1]["kind"], "follow_stopped")
+        self.assertEqual(sess.events[-1]["reason"], "left_party")
+
+    def test_follow_not_yet_in_party_is_not_stopped_by_an_unrelated_party(self):
+        sess, world = fast_session()
+        world.update_object(object_at(5, 2.0, 0.0, 0.0, object_type="player"))
+        fl.begin_follow(sess, world, 5, "Rubens", reason="llm_requested")
+        sess.group = _party(7, "Bia")  # the target is not in this party
+
+        fl.get_follow_reflex(sess).tick(sess, world)
+
+        self.assertTrue(fl.get_follow_reflex(sess).enabled)
+        self.assertFalse(fl.get_follow_reflex(sess).party_bound)
+
+
+class DeadPartyListTest(unittest.TestCase):
+    """#761: a party list received while dead is remembered; the first alive tick with the party
+    still present starts the follow, exactly once."""
+
+    def dead_accepted_session(self):
+        sess, world = fast_session(guid=ANA_GUID)
+        sess.player_name = "Ana"
+        world.update_object(object_at(HUMAN_GUID, 2.0, 0.0, 0.0, object_type="player"))
+        world.get_object(HUMAN_GUID).name = "Rubens"
+        sess.pending_invite = {"inviter_name": "Rubens"}
+        ac.accept_group(sess)
+        sess._was_alive = False
+        return sess, world
+
+    def starts(self, sess):
+        return [e for e in sess.events if e["kind"] == "follow_started"]
+
+    def test_party_list_while_dead_starts_follow_once_when_alive(self):
+        sess, world = self.dead_accepted_session()
+        sess.group = _party(HUMAN_GUID, "Rubens")
+        reflex = fl.get_follow_reflex(sess)
+
+        reflex.tick(sess, world)  # dead: remembered, not started
+        self.assertFalse(reflex.enabled)
+        self.assertEqual(self.starts(sess), [])
+
+        sess._was_alive = True
+        reflex.tick(sess, world)
+        reflex.tick(sess, world)
+
+        self.assertTrue(reflex.enabled)
+        self.assertEqual(reflex.leader_guid, HUMAN_GUID)
+        self.assertEqual(len(self.starts(sess)), 1)
+
+    def test_party_dissolved_while_dead_does_not_start_follow_when_alive(self):
+        sess, world = self.dead_accepted_session()
+        sess.group = _party(HUMAN_GUID, "Rubens")
+        fl.get_follow_reflex(sess).tick(sess, world)
+
+        sess.group = None
+        sess._was_alive = True
+        fl.get_follow_reflex(sess).tick(sess, world)
+
+        self.assertFalse(fl.get_follow_reflex(sess).enabled)
+        self.assertEqual(self.starts(sess), [])
+
+
+ANA_GUID, HUMAN_GUID = 0x1001, 0x2001
+
+
 class FollowToolActionsTest(unittest.TestCase):
     def test_follow_action_check_fails_when_player_not_perceived(self):
         sess, world = fast_session(position=(530, 0.0, 0.0, 0.0, 0.0))

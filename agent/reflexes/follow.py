@@ -57,6 +57,12 @@ def _group_member_name(group: dict | None, guid: int) -> str:
     return ""
 
 
+def _in_party(group: dict | None, guid: int) -> bool:
+    if not group:
+        return False
+    return guid == group["leader_guid"] or any(m["guid"] == guid for m in group["members"])
+
+
 def _follow_alive(session, world) -> bool:
     """The follow rule's aliveness (#512). session.is_alive is the death flag, which is set
     back as soon as a released ghost has health above zero, so a ghost is also not alive here."""
@@ -107,10 +113,8 @@ def begin_follow(session, world, guid: int, name: str, *, reason: str,
     if error is not None:
         session.record_event("follow_rejected", target_name=name, reason=error)
         return error
-    group = session.group
-    in_party = bool(group) and (guid == group["leader_guid"]
-                                or any(m["guid"] == guid for m in group["members"]))
-    get_follow_reflex(session).start(guid, leader_name=name, distance=distance, party_bound=in_party)
+    get_follow_reflex(session).start(guid, leader_name=name, distance=distance,
+                                     party_bound=_in_party(session.group, guid))
     session.record_event("follow_started", target_name=name, reason=reason)
     return None
 
@@ -138,6 +142,7 @@ class FollowReflex:
         self.assist: bool = False
         self._assist_target_guid: int | None = None
         self.party_bound = False  # started on a party member: leaving the party ends it
+        self._deferred_invite: str | None = None  # inviter of a party list received while dead (#761)
 
     # ── LLM-facing controls (see the registered actions below) ───────────
     def start(self, leader_guid: int, leader_name: str | None = None,
@@ -186,6 +191,8 @@ class FollowReflex:
         self._settle_accepted_invite(session, world)
         if not self.enabled or self.leader_guid is None:
             return
+        if not self.party_bound and _in_party(session.group, self.leader_guid):
+            self.party_bound = True  # the party now includes the target (#761)
 
         reason = self._stop_reason(session, world)
         if reason is not None:
@@ -232,18 +239,21 @@ class FollowReflex:
         exactly once: when the list arrives (a running follow is kept, not restarted) or
         when its window ends, whatever the group state. It never outlives either."""
         pending = session.follow_on_accept
-        if pending is None:
-            return
-        inviter, deadline = pending
+        if pending is not None:
+            inviter, deadline = pending
+            if time.monotonic() > deadline:
+                session.follow_on_accept = None
+            elif session.group is not None:
+                session.follow_on_accept = None
+                self._deferred_invite = inviter  # the list is remembered until the follow can start (#761)
+        if self._deferred_invite is not None and _follow_alive(session, world):
+            inviter, self._deferred_invite = self._deferred_invite, None
+            self._start_party_follow(session, world, inviter)
+
+    def _start_party_follow(self, session, world, inviter: str):
         group = session.group
-        if time.monotonic() > deadline:
-            session.follow_on_accept = None
-            return
-        if group is None:
-            return
-        session.follow_on_accept = None
-        if self.enabled:
-            return
+        if group is None or self.enabled:
+            return  # the party dissolved while dead, or a follow is already running
         leader_guid = group["leader_guid"]
         if _group_member_name(group, leader_guid).lower() == inviter.lower():
             begin_follow(session, world, leader_guid, inviter, reason="party_invite")
