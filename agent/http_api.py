@@ -44,6 +44,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import control
 from . import spells as sp
+from .missions import DEFAULT_MISSION
 from . import update_fields as uf
 from .audit import _redact
 from .metrics import render_fleet, render_reconnects, render_router, render_swallowed, swallowed
@@ -94,8 +95,10 @@ class AgentObserver:
     reconnect); the think loop's audit logger feeds record_decision()."""
 
     def __init__(self, agent_name: str, goal: str | None = None, model: str | None = None,
-                 decisions_maxlen: int = DECISIONS_MAXLEN, brain: str | None = None):
+                 decisions_maxlen: int = DECISIONS_MAXLEN, brain: str | None = None,
+                 mission: str = DEFAULT_MISSION):
         self.agent_name = agent_name
+        self.mission = mission  # #314: what the agent is for; set once by the composition root
         self.goal = goal or None
         self.model = model or None
         self.brain_name = brain or None  # UM-101: "jev"/"llm", until a decision says otherwise
@@ -163,12 +166,13 @@ class AgentObserver:
             "agent": self.agent_name,
             "connected": sess is not None and not getattr(sess, "unexpected_disconnect", False),
             "uptime_s": round(time.time() - self.started_at, 1),
+            "mission": self.mission,
         }
 
     def state(self) -> dict:
         sess = self.session
         if sess is None:
-            return {"agent": self.agent_name, "connected": False, **self._lifecycle()}
+            return {"agent": self.agent_name, "connected": False, "mission": self.mission, **self._lifecycle()}
         world = sess.world_state
         me = world.get_my_object()
         stats = {
@@ -204,6 +208,7 @@ class AgentObserver:
         return _jsonable({
             "agent": self.agent_name,
             "connected": True,
+            "mission": self.mission,
             "self": stats,
             "spellbook": spellbook,
             "quest_log": world.build_quest_log(),

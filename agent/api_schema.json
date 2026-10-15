@@ -6,31 +6,34 @@
     "/healthz": {
       "summary": "Liveness: is the process up, and is a game session attached.",
       "responses": {
-        "ok": {"type": "object", "required": ["api_version", "ok", "agent", "connected", "uptime_s"], "properties": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "agent", "connected", "uptime_s", "mission"], "properties": {
           "api_version": {"type": "integer"},
           "ok": {"type": "boolean"},
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
-          "uptime_s": {"type": "number"}}}
+          "uptime_s": {"type": "number"},
+          "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]}}}
       }
     },
     "/state": {
       "summary": "Own stats, spellbook, quest log, equipment and inventory. Also the connection lifecycle (ADR 0015), when the agent has one.",
       "responses": {
-        "not in game": {"type": "object", "required": ["api_version", "agent", "connected"], "properties": {
+        "not in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
+          "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]},
           "lifecycle": {"type": "object", "required": ["state", "since", "reason", "transitions"], "properties": {
             "state": {"type": "string", "enum": ["connecting", "online", "backoff", "stopping", "stopped", "failed"]},
             "since": {"type": "number"},
             "reason": {"type": "string"},
             "transitions": {"type": "array", "items": {"type": "object", "required": ["from", "to", "reason", "at"], "properties": {
               "from": {"type": "string"}, "to": {"type": "string"}, "reason": {"type": "string"}, "at": {"type": "number"}}}}}}}},
-        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "self", "spellbook", "quest_log", "equipment", "inventory"], "properties": {
+        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission", "self", "spellbook", "quest_log", "equipment", "inventory"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
+          "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]},
           "self": {"type": "object", "required": ["name", "guid", "race", "class", "level", "money"], "properties": {
             "name": {"type": ["string", "null"]},
             "guid": {"type": ["integer", "null"]},

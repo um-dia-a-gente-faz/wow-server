@@ -37,7 +37,8 @@ LAYERS = {
     "crypt": set(),
     "changes": set(),   # the process-wide "perception changed" wake-up for action confirmation (#305)
     "transport": {"packets"},
-    "config": set(),
+    "config": {"missions"},   # AGENT_MISSION is one of missions.MISSIONS (#314)
+    "missions": set(),   # the closed mission set (#314); a leaf
     "handles": set(),
     "lines": set(),
     "known_targets": set(),
@@ -84,7 +85,7 @@ LAYERS = {
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
     "candidate_history": {"metrics", "model"},   # #550: the history drop/demote and the cap, moved out of candidates
-    "candidates": {"action_names", "action_specs", "candidate_history", "handles", "item_compare", "model", "rules"},   # #550: metrics moved with the history code
+    "candidates": {"action_names", "action_specs", "candidate_history", "handles", "item_compare", "missions", "model", "rules"},   # #550: metrics moved with the history code
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
     "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)
@@ -93,7 +94,7 @@ LAYERS = {
     "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "fleetlimits": {"metrics"},   # the ADR 0017 limits file reader; metrics for swallowed()
-    "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
+    "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "missions", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
     "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "update_fields"},  # #411: ports
     # entry and observing; nothing imports __main__
@@ -101,11 +102,11 @@ LAYERS = {
                 "transport", "wire"},   # enum_characters and handle_time_sync read through Reader (#517)
     "audit": {"audit_schema", "config", "metrics", "model"},
     "chat_relay": {"metrics"},
-    "http_api": {"audit", "control", "metrics", "spells", "update_fields"},
+    "http_api": {"audit", "control", "metrics", "missions", "spells", "update_fields"},
     "login": {"auth", "channels", "config", "death", "session"},   # auth, world connect, character login (#292); death: imported so its actions register (#321)
     "supervisor": {"auth", "lifecycle", "metrics"},   # the reconnect supervisor (#292)
     "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
-    "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "metrics",
+    "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "metrics", "missions",
              "runloop", "spells", "supervisor", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
     "__main__": {"auth", "config", "root"},
 }

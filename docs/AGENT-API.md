@@ -16,6 +16,7 @@ Response: ok
 | `agent` | string | yes |
 | `connected` | boolean | yes |
 | `uptime_s` | number | yes |
+| `mission` | string | yes |
 
 ## `GET /state`
 
@@ -28,6 +29,7 @@ Response: not in game
 | `api_version` | integer | yes |
 | `agent` | string | yes |
 | `connected` | boolean | yes |
+| `mission` | string | yes |
 | `lifecycle` | object |  |
 | `lifecycle.state` | string | yes |
 | `lifecycle.since` | number | yes |
@@ -45,6 +47,7 @@ Response: in game
 | `api_version` | integer | yes |
 | `agent` | string | yes |
 | `connected` | boolean | yes |
+| `mission` | string | yes |
 | `self` | object | yes |
 | `self.name` | string/null | yes |
 | `self.guid` | integer/null | yes |

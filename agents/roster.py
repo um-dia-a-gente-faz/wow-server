@@ -15,7 +15,11 @@ REPO = Path(__file__).resolve().parent.parent
 ROSTER_PATH = REPO / "agents" / "roster.json"
 FIRST_PORT = 9601
 PARTY_SIZE = 5
-KNOWN_KEYS = frozenset({"account", "character", "race", "class", "gender"})
+KNOWN_KEYS = frozenset({"account", "character", "race", "class", "gender", "mission"})
+OPTIONAL_KEYS = frozenset({"mission"})  # may be left out: the default mission (#314)
+# A copy of agent/missions.py MISSIONS: agents/ may not import agent/. tools/tests/test_roster_accounts.py pins them equal.
+MISSIONS = ("level_to_cap", "explore", "make_gold")
+DEFAULT_MISSION = "level_to_cap"
 _ACCOUNT = re.compile(r"AGENT(0[1-9]|[1-9][0-9])")
 
 
@@ -31,6 +35,7 @@ class Agent:
     race: int | None
     class_id: int | None     # JSON key "class"
     gender: int | None
+    mission: str = DEFAULT_MISSION
 
     @property
     def slug(self) -> str:
@@ -53,8 +58,11 @@ class Agent:
         return ("party", "raid") if self.index <= PARTY_SIZE else ("raid",)
 
     def to_json(self) -> dict[str, Any]:
-        return {"account": self.account, "character": self.character, "race": self.race,
-                "class": self.class_id, "gender": self.gender}
+        out: dict[str, Any] = {"account": self.account, "character": self.character, "race": self.race,
+                               "class": self.class_id, "gender": self.gender}
+        if self.mission != DEFAULT_MISSION:   # the default is left out, so the committed roster stays as it is
+            out["mission"] = self.mission
+        return out
 
 
 def account_name(index: int) -> str:
@@ -73,13 +81,21 @@ def _optional_int(entry: dict, index: int, field: str) -> int | None:
     raise _fail(index, field, f"must be an integer or null, got {value!r}")
 
 
+def _mission(entry: dict, index: int) -> str:
+    mission = entry.get("mission", DEFAULT_MISSION)
+    if not isinstance(mission, str) or mission not in MISSIONS:
+        raise _fail(index, "mission", f"must be one of {list(MISSIONS)}, got {mission!r}")
+    return mission
+
+
 def _parse_entry(entry: object, index: int, seen_accounts: set[str], seen_names: set[str]) -> Agent:
     if not isinstance(entry, dict):
         raise RosterError(f"roster entry {index}: must be an object, got {type(entry).__name__}")
-    missing, unknown = sorted(KNOWN_KEYS - entry.keys()), sorted(entry.keys() - KNOWN_KEYS)
+    missing = sorted(KNOWN_KEYS - OPTIONAL_KEYS - entry.keys())
+    unknown = sorted(entry.keys() - KNOWN_KEYS)
     if missing or unknown:
-        raise RosterError(f"roster entry {index}: keys must be exactly {sorted(KNOWN_KEYS)}; "
-                          f"missing {missing}, unknown {unknown}")
+        raise RosterError(f"roster entry {index}: keys must be {sorted(KNOWN_KEYS - OPTIONAL_KEYS)} "
+                          f"plus optional {sorted(OPTIONAL_KEYS)}; missing {missing}, unknown {unknown}")
 
     account = entry["account"]
     if not isinstance(account, str) or not _ACCOUNT.fullmatch(account):
@@ -98,7 +114,8 @@ def _parse_entry(entry: object, index: int, seen_accounts: set[str], seen_names:
     return Agent(index=index, account=account, character=character,
                  race=_optional_int(entry, index, "race"),
                  class_id=_optional_int(entry, index, "class"),
-                 gender=_optional_int(entry, index, "gender"))
+                 gender=_optional_int(entry, index, "gender"),
+                 mission=_mission(entry, index))
 
 
 def parse_roster(data: object) -> list[Agent]:

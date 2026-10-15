@@ -662,5 +662,54 @@ class HistoryAwareTest(unittest.TestCase):
         self.assertNotIn("loot:guid=4661", ids(self.gen(h)))
 
 
+class MissionFallbackTest(unittest.TestCase):
+    """#314: with no ordinary option while alive, one mission move_to is offered before idle."""
+    POS = {"map": 1, "x": 100.0, "y": 50.0, "z": 0.0}
+
+    def snap(self, **kw):
+        return {"me": {"level": 3, "health": "90/90"}, "nearby_units": [], "position": self.POS, **kw}
+
+    @staticmethod
+    def rec(action="idle", args=None, ok=True, **kw):
+        return {"action": action, "args": args or {}, "ok": ok, **kw}
+
+    def test_only_option_is_the_mission_move_north_first(self):
+        cands = cand.generate(self.snap())
+        self.assertEqual([c["action"] for c in cands], ["move_to", "idle"])
+        self.assertEqual(cands[0]["params"], {"x": 140.0, "y": 50.0})
+        self.assertEqual(cands[0]["label"], "level_to_cap: explore 40 yd N")
+
+    def test_mission_step_picks_the_heading_and_history_length_does_not(self):
+        headings = [cand.generate(self.snap(), mission_step=s, mission="explore")[0] for s in range(4)]
+        self.assertEqual([h["params"] for h in headings],
+                         [{"x": 140.0, "y": 50.0}, {"x": 100.0, "y": 10.0},
+                          {"x": 60.0, "y": 50.0}, {"x": 100.0, "y": 90.0}])
+        self.assertEqual([h["label"].rsplit(" ", 1)[1] for h in headings], ["N", "E", "S", "W"])
+        self.assertTrue(headings[0]["label"].startswith("explore: "))
+        long_history = [self.rec(changed=True)] * 20
+        self.assertEqual(cand.generate(self.snap(), history=long_history)[0]["params"], {"x": 140.0, "y": 50.0})
+        self.assertEqual(cand.generate(self.snap(), mission_step=4)[0]["params"], {"x": 140.0, "y": 50.0})
+
+    def test_no_position_means_idle_only(self):
+        self.assertEqual([c["action"] for c in cand.generate(self.snap(position=None))], ["idle"])
+
+    def test_ordinary_options_mean_no_mission_candidate(self):
+        unit = {"guid": 10, "entry": 1, "name": "Mob", "type": "unit", "distance": 4.0, "level": 1,
+                "health_pct": 1.0, "in_combat": False}
+        cands = cand.generate(self.snap(nearby_units=[unit]))
+        self.assertEqual(cands[0]["action"], "auto_attack")
+        self.assertFalse(any(c["label"].startswith("level_to_cap:") for c in cands))
+
+    def test_mission_candidate_survives_a_history_drop_and_a_cap_of_two(self):
+        # Four entries: heading N again, and the last try at this exact move was rejected for bad params.
+        failed = self.rec("move_to", {"x": 140.0, "y": 50.0}, ok=False, error="bad params: x")
+        history = [self.rec(changed=True)] * 3 + [failed]
+        self.assertEqual([c["action"] for c in cand.generate(self.snap(), history=history)], ["move_to", "idle"])
+        self.assertEqual([c["action"] for c in cand.generate(self.snap(), limit=2)], ["move_to", "idle"])
+
+    def test_a_dead_snapshot_gets_no_mission_candidate(self):
+        self.assertEqual([c["action"] for c in cand.generate(self.snap(is_dead=True))], ["release_spirit", "idle"])
+
+
 if __name__ == "__main__":
     unittest.main()

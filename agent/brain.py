@@ -47,6 +47,7 @@ from .fleetlimits import FleetLimits
 from .jev import JevClient, JevError
 from .llm import COOLDOWN_JITTER, MAX_COOLDOWN_S, MIN_COOLDOWN_S, LLMClient, LLMError
 from .metrics import count_fleet_blocked
+from .missions import DEFAULT_MISSION
 from .model import ActionRecord, Candidate, Snapshot
 from .tokenbudget import WINDOW_S as JEV_BUDGET_WINDOW_S, TokenBudget
 
@@ -133,10 +134,13 @@ class Brain:
     def __init__(self, jev=None, llm=None, clock=time.monotonic,
                  min_confidence: float = DEFAULT_JEV_MIN_CONFIDENCE,
                  max_tokens_per_hour: int = 0, budget: TokenBudget | None = None,
-                 fleet: FleetLimits | None = None, rng: random.Random | None = None):
+                 fleet: FleetLimits | None = None, rng: random.Random | None = None,
+                 mission: str = DEFAULT_MISSION):
         self.jev = jev
         self.llm = llm
         self.min_confidence = min_confidence
+        self.mission = mission   # #314: only the candidate generator's fallback reads it
+        self._mission_step = 0   # counts the fallbacks offered, so the heading turns each time
         self._clock = clock
         self._jev_cooldown_until = 0.0
         self._jev_cooldown_reason: str | None = None
@@ -168,7 +172,8 @@ class Brain:
         limits_file = getattr(cfg, "fleet_limits_file", "")
         return cls(jev=jev, llm=llm, min_confidence=cfg.jev_min_confidence,
                    max_tokens_per_hour=getattr(cfg, "max_tokens_per_hour", 0),
-                   fleet=FleetLimits(limits_file) if limits_file else None)
+                   fleet=FleetLimits(limits_file) if limits_file else None,
+                   mission=getattr(cfg, "mission", DEFAULT_MISSION))
 
     def describe(self) -> str:
         parts = []
@@ -206,7 +211,10 @@ class Brain:
                 try:
                     notes: list[dict] = []
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
-                                            handles=handles, history=history, notes=notes)
+                                            handles=handles, history=history, notes=notes,
+                                            mission=self.mission, mission_step=self._mission_step)
+                    if any(cand.is_mission_fallback(c) for c in options):
+                        self._mission_step += 1
                     d.history_notes = notes or None
                     if blocked is not None:
                         options = [c for c in options

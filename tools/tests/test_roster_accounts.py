@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
+from agent import missions  # noqa: E402
 from agents import roster  # noqa: E402
 from common.agent_accounts import is_agent_account  # noqa: E402
 
@@ -26,6 +27,10 @@ class RosterAccountTests(unittest.TestCase):
         size = len(roster.load_roster())
         self.assertTrue(is_agent_account(roster.account_name(size)))
         self.assertFalse(is_agent_account(roster.account_name(size + 1)))
+
+    def test_the_two_mission_lists_are_equal(self):
+        # agents/roster.py cannot import agent/ (#314), so it keeps its own copy of MISSIONS.
+        self.assertEqual(roster.MISSIONS, missions.MISSIONS)
 
 
 if __name__ == "__main__":

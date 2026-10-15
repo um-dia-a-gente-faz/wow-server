@@ -152,6 +152,14 @@ class EndpointsTest(_ServerCase):
             observer, _ = main_mod.start_observer(cfg, None, logging.getLogger("t"), brain=brain)
         self.assertIs(observer.fleet, fleet)
 
+    def test_start_observer_gives_the_observer_the_configured_mission(self):
+        # #314 review: the root wiring must pass cfg.mission on both branches (brain or no brain).
+        cfg = Config(agent_name="Luaprata", http_port=1, http_bind="127.0.0.1", mission="explore")
+        for brain in (None, SimpleNamespace(model="m", jev=None, fleet=None)):
+            with self.subTest(brain=brain), mock.patch.object(main_mod, "start_server", return_value=object()):
+                observer, _ = main_mod.start_observer(cfg, None, logging.getLogger("t"), brain=brain)
+            self.assertEqual(observer.mission, "explore")
+
     def test_healthz(self):
         body = json.loads(self.get("/healthz")[1])
         self.assertEqual(body["agent"], "Luaprata")

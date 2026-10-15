@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from agent import config
+from agent import config, missions
 from agent.config import SETTINGS, Config, ConfigError
 
 REPO = Path(__file__).resolve().parents[2]
@@ -92,6 +92,28 @@ class SchemaTests(unittest.TestCase):
         for text in (str(c.redacted()), repr(c)):
             for s in secrets:
                 self.assertNotIn(f"sentinel-{s.name}", text, s.name)
+
+
+class MissionSettingTests(unittest.TestCase):
+    """#314: AGENT_MISSION is one of agent.missions.MISSIONS, default level_to_cap."""
+
+    def test_default_is_level_to_cap(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(config.load_config().mission, "level_to_cap")
+        with mock.patch.dict("os.environ", {"AGENT_MISSION": ""}, clear=True):
+            self.assertEqual(config.load_config().mission, "level_to_cap")
+
+    def test_every_mission_is_accepted(self):
+        for m in missions.MISSIONS:
+            with self.subTest(mission=m), mock.patch.dict("os.environ", {"AGENT_MISSION": m}, clear=True):
+                self.assertEqual(config.load_config().mission, m)
+
+    def test_unknown_mission_raises_config_error_naming_the_setting(self):
+        with mock.patch.dict("os.environ", {"AGENT_MISSION": "fishing"}, clear=True), \
+                self.assertRaises(ConfigError) as cm:
+            config.load_config()
+        self.assertIn("AGENT_MISSION", str(cm.exception))
+        self.assertIn("fishing", str(cm.exception))
 
 
 if __name__ == "__main__":
