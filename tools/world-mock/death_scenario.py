@@ -23,6 +23,8 @@ make this mock agree with it. The CREATE/VALUES block framing reuses agent/tests
 import pathlib
 import struct
 import sys
+import threading
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -54,6 +56,42 @@ HEALER_GUID = 0xF130000000007001         # HighGuid::Unit
 HEALER_ENTRY = 6491                      # Spirit Healer
 HEALER_OFFSET_YD = 10.0
 MAX_HEALTH = 100
+STEP_TIMEOUT_S = 10.0                    # #521: a wrong parse fails in seconds, not after a hang
+
+
+def _not_reached(step: str) -> AssertionError:
+    return AssertionError(f"death scenario: step '{step}' not reached within {STEP_TIMEOUT_S:.0f}s")
+
+
+def wait_step(step: str, pred) -> None:
+    """Poll `pred` until it is true, at most STEP_TIMEOUT_S; otherwise fail naming the step."""
+    end = time.monotonic() + STEP_TIMEOUT_S
+    while not pred():
+        if time.monotonic() >= end:
+            raise _not_reached(step)
+        time.sleep(0.02)
+
+
+def run_step(step: str, fn):
+    """Run a synchronous step (an action's run(), a login) in a worker thread and return its value.
+    A step that does not return within STEP_TIMEOUT_S fails naming the step; its thread is left
+    to finish on its own (daemon), and the scenario's cleanups close the socket underneath it."""
+    box = {}
+
+    def target():
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # noqa: BLE001 (re-raised in the caller's thread below)
+            box["error"] = e
+
+    worker = threading.Thread(target=target, daemon=True)
+    worker.start()
+    worker.join(STEP_TIMEOUT_S)
+    if worker.is_alive():
+        raise _not_reached(step)
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 class DeathMock(server.WorldMock):

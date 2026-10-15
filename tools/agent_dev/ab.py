@@ -11,9 +11,11 @@ import json
 import time
 
 from agent import actions, candidates
+from agent import death  # noqa: F401  (#521: registers release_spirit and reclaim_corpse)
 from agent.config import Config
 from agent.jev import JevClient
 from agent.llm import LLMClient, LLMError
+from agent.reflexes import follow, rest  # noqa: F401  (#521: register assist, follow, stop_following and rest)
 from tools.agent_dev.replay import load_records
 
 

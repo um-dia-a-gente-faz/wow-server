@@ -36,7 +36,7 @@ class RecordingAudit:
 def run_cycles():
     """Seven cycles (ok, unknown action, brain error, rejected x4 so the last is
     loop-guarded) -> audit kwargs, history and results, JSON-normalised."""
-    audit, state = RecordingAudit(), think.ThinkState()
+    audit, state = RecordingAudit(), think.ThinkState(clock=lambda: 0.0)  # fixed clock: history's "at" is stable
     registry = {"test_action": RecordingAction(), "bad": RejectingAction()}
     results = []
     for i, (name, params, err) in enumerate([
