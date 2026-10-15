@@ -103,9 +103,15 @@ Paths are relative to the TrinityCore repository root.
 - Side steps: `getNeighbourTilesAt`, `DetourNavMesh.cpp:1069-1084`. Sides 0..7 step tile x and y by
   `(1,0) (1,1) (0,1) (-1,1) (-1,0) (-1,-1) (0,-1) (1,-1)`.
 - The neighbour's matching edge has the **opposite** side, `dtOppositeTile(side) = (side + 4) & 0x7`
-  (`DetourCommon.h:466`). `findConnectingPolys` (`DetourNavMesh.cpp:300-340`) searches the other
-  tile for `neis == DT_EXT_LINK | opposite` (`:312`, `:324`) on the same slab. `navmesh.py` keeps
-  the side and the vertex match, and drops TrinityCore's slab-overlap test (see *Not done here*).
+  (`DetourCommon.h:466`). `findConnectingPolys` (`DetourNavMesh.cpp:300-351`) searches the other
+  tile for `neis == DT_EXT_LINK | opposite` (`:312`, `:324`) that lies on the same border line
+  (`dtAbs(apos - bpos) > 0.01f`, `:331`) and whose extent overlaps ours (`:335-337`).
+- The border test is `overlapSlabs` (`DetourNavMesh.cpp:31-65`). Extents are shrunk by 0.01 so that
+  edges touching at an end do not link (`:38-40`). Edges that cross always overlap (`:56`). Otherwise
+  the end heights must be within `2 * walkableClimb` (`:60-63`), where `walkableClimb` is the
+  neighbour's (`findConnectingPolys` gets the target tile, `:337`). `calcSlabEndPoints`
+  (`:76-112`) and `getSlabCoord` (`:67-74`) give the slab axis: x for sides 0 and 4, z for 2 and 6.
+  `navmesh.py` `_ext_links` repeats this. One portal per neighbour poly: the `break` at `:347`, after `conarea` is written at `:342-343`.
 - Mapping a side to a file: the mmtile name is `(map, tileY, tileX)` (`MapBuilder.cpp:886`), and the
   reader reads its two numbers as `(gx, gy)` (`MMapManager.cpp:131`). The header x and y count from
   the map's origin, so they run opposite to the file indices: `bmax = (32 - tileX) * GRID_SIZE`
@@ -124,6 +130,9 @@ Paths are relative to the TrinityCore repository root.
   choice, not TrinityCore's: `dtNavMeshQuery::findPath` is the reference.
 - The corners come from the simple stupid funnel, as in `dtNavMeshQuery::findStraightPath`
   (`DetourNavMeshQuery.cpp:1766-1980`; the tightening tests are `:1876` and `:1927`).
+- The portal is the **overlap**, not the full edge. `connectExtLinks` clamps the overlap to the
+  edge and stores it as `bmin` and `bmax` (`DetourNavMesh.cpp:432-436`, `dtClamp` to `[0, 1]`), and
+  `navmesh.py` takes the same fractions along the edge (`_at_along`).
 - Left and right of each portal are chosen from the geometry (the travel direction is the centre of
   the next poly minus the centre of this one, and a point is on the left when its cross product is
   positive). Detour takes `left = verts[edge]` and `right = verts[edge+1]` (`getPortalPoints`,
@@ -143,13 +152,10 @@ Paths are relative to the TrinityCore repository root.
 ## Not done here
 
 - Links are read only to skip them. Off-mesh connections are kept but not traversed.
-- A portal links only when the neighbour's edge has the same two vertices (x and z within 1e-3).
-  TrinityCore links any slab overlap (`findConnectingPolys`), so a border with T-junctions does not
-  link here. Real tiles have not been checked for this yet. The open human step below covers it.
 - Path search expands at most `max_polys` polys with no pruning. Expect this to be enough for tiles,
   not for whole maps. The measured limit is the 50 ms test on a 100-poly grid, not a real tile.
 - Each `.mmtile` of the map is read at load time, as the spec asks. A lazy loader is the upgrade if
   memory matters.
 - The layout is verified against the source, not yet against a real tile. The human steps are still
   open: print the height at Sunstrider Isle start from a map 530 tile on the VM, and find a path
-  across a real tile border (this checks the vertex match above and the side-to-file mapping).
+  across a real tile border (this checks the overlap rule and the side-to-file mapping).

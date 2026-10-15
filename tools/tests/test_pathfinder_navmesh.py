@@ -28,7 +28,7 @@ def pad4(b: bytes) -> bytes:
 
 
 def build_tile(polys, *, off_mesh=(), links=2, mmap_magic=MMAP_MAGIC, mmap_version=MMAP_VERSION,
-               dt_version=DT_VERSION, tile_magic=DT_MAGIC, tile_version=DT_VERSION):
+               dt_version=DT_VERSION, tile_magic=DT_MAGIC, tile_version=DT_VERSION, climb=0.0):
     """One .mmtile file. polys: dicts with 'verts' (Detour points), optional 'neis' (raw neis values
     per edge, DT_EXT_LINK bit kept; default walls), 'tris' (local index triples; default fan),
     'extra' (detail verts, referenced from index len(verts) on) and 'type' (1 = off-mesh).
@@ -48,7 +48,7 @@ def build_tile(polys, *, off_mesh=(), links=2, mmap_magic=MMAP_MAGIC, mmap_versi
         tris += [(*t, 0) for t in local]
     header = struct.pack("<iiiiiI9i3f6ff", tile_magic, tile_version, 0, 0, 0, 0,
                          len(polys), len(verts), links, len(polys), len(detail_verts), len(tris),
-                         0, len(off_mesh), 0, 0.0, 0.0, 0.0, *[0.0] * 6, 0.0)
+                         0, len(off_mesh), 0, 0.0, 0.0, climb, *[0.0] * 6, 0.0)
     body = header + b"".join(pad4(s) for s in (
         b"".join(struct.pack("<3f", *v) for v in verts),
         b"".join(poly_recs),
@@ -264,6 +264,55 @@ class PathTests(unittest.TestCase):
         b = build_tile([{"verts": square(GRID, 2 * GRID, 0, GRID), "neis": [0, 0, 0, DT_EXT_LINK | 4]}])
         mesh = mesh_with(((100, 100), a), ((100, 700), b))
         self.assertEqual(mesh.find_path(at(100, 100), at(700, 100)), [at(100, 100), at(700, 100)])
+
+    def test_split_border_links_both_short_edges_of_the_neighbour(self):
+        # Tile A has one long +x edge, z in [0, GRID]. Tile B has two short -x edges, z in [0, GRID/2]
+        # and [GRID/2, GRID], so the border is split differently on the two sides (T-junction). The
+        # path must cross into B2 at the point where the straight line meets the border.
+        half = GRID / 2
+        a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        b1 = {"verts": square(GRID, 2 * GRID, 0, half), "neis": [0, 0, 2, DT_EXT_LINK | 4]}
+        b2 = {"verts": square(GRID, 2 * GRID, half, GRID), "neis": [1, 0, 0, DT_EXT_LINK | 4]}
+        b = build_tile([b1, b2])
+        mesh = mesh_with(((100, 100), a), ((100, 700), b))
+        start, end = at(100, 100), at(700, 400)     # Detour (100, 100) to (700, 400)
+        path = mesh.find_path(start, end)
+        self.assertEqual(path, [start, end])        # crossing at z = 316.7, inside B2's overlap
+        crossing = 100 + (GRID - 100) * (300 / 600)  # z where x = GRID on the straight line
+        self.assertTrue(half < crossing < GRID)
+
+    def test_portal_is_the_clamped_overlap_not_the_full_edge(self):
+        # One short B poly, z in [0, GRID/2], against the long A edge. The line from (100, 500) to
+        # (700, 200) crosses x = GRID at z = 283, above the overlap, so the path bends at the
+        # overlap's end (GRID, GRID/2). With the full edge as the portal the line would not bend.
+        half = GRID / 2
+        a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        b = build_tile([{"verts": square(GRID, 2 * GRID, 0, half), "neis": [0, 0, 0, DT_EXT_LINK | 4]}])
+        mesh = mesh_with(((100, 100), a), ((100, 700), b))
+        path = mesh.find_path(at(100, 500), at(700, 200))     # Detour (100, 500) to (700, 200)
+        self.assertEqual(len(path), 3)
+        self.assertAlmostEqual(path[1][0], half, delta=1e-3)    # WoW x = Detour z
+        self.assertAlmostEqual(path[1][1], GRID, delta=1e-3)    # WoW y = Detour x
+
+    def test_edges_with_no_overlap_do_not_link(self):
+        # A's border is z in [0, GRID/2]; B's -x edge is z in [300, GRID]. No overlap, so no link.
+        a = build_tile([{"verts": square(0, GRID, 0, GRID / 2), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        b = build_tile([{"verts": square(GRID, 2 * GRID, 300, GRID), "neis": [0, 0, 0, DT_EXT_LINK | 4]}])
+        mesh = mesh_with(((100, 100), a), ((100, 700), b))
+        self.assertIsNone(mesh.find_path(at(100, 100), at(700, 400)))
+
+    def test_overlap_height_tolerance_is_the_neighbours_walkable_climb(self):
+        # Border edges 5 apart in height. Detour links when the endpoint gap is within 2 * walkableClimb
+        # of the neighbour tile (overlapSlabs, DetourNavMesh.cpp:31-58 with py = walkableClimb).
+        a = build_tile([{"verts": square(0, GRID, 0, GRID), "neis": [0, DT_EXT_LINK | 0, 0, 0]}])
+        b_low = build_tile([{"verts": square(GRID, 2 * GRID, 0, GRID, y=5.0),
+                             "neis": [0, 0, 0, DT_EXT_LINK | 4]}], climb=1.0)
+        b_high = build_tile([{"verts": square(GRID, 2 * GRID, 0, GRID, y=5.0),
+                              "neis": [0, 0, 0, DT_EXT_LINK | 4]}], climb=3.0)
+        low = mesh_with(((100, 100), a), ((100, 700), b_low))
+        high = mesh_with(((100, 100), a), ((100, 700), b_high))
+        self.assertIsNone(low.find_path(at(100, 100), at(700, 100)))
+        self.assertIsNotNone(high.find_path(at(100, 100), at(700, 100)))
 
     def test_ext_link_only_reaches_the_tile_on_its_side(self):
         # The same two tiles, but A's edge says side 4 (-x): tile B is on side 0, so nothing links.

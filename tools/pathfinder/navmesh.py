@@ -213,18 +213,55 @@ def _neighbour_key(key: tuple[int, int], side: int) -> tuple[int, int]:
     return key[0] - dy, key[1] - dx
 
 
-def _same_xz(p: tuple, q: tuple) -> bool:
-    """Two vertices of a shared edge, on Detour x and z. Vertices are identical on both sides of a
-    border, so 1e-3 absorbs float noise."""
-    return abs(p[0] - q[0]) <= 1e-3 and abs(p[2] - q[2]) <= 1e-3
+def _slab_axes(side: int) -> tuple[int, int]:
+    """(slab, along): the Detour coordinate fixed on a border and the one it runs along. getSlabCoord
+    (DetourNavMesh.cpp:67-74) reads x for sides 0 and 4 and z for 2 and 6; calcSlabEndPoints
+    (DetourNavMesh.cpp:76-112) runs along the other one."""
+    return (0, 2) if side in (0, 4) else (2, 0)
 
 
-def _ext_target(tile: Tile, a: tuple, b: tuple, side: int) -> int | None:
-    """The ground poly of the neighbour `tile` whose edge points back at us (neis == DT_EXT_LINK | side,
-    the opposite side, dtOppositeTile DetourCommon.h:466) and has the same two vertices as our edge a-b.
-    ponytail: exact vertex match. TrinityCore matches slab overlap (findConnectingPolys,
-    DetourNavMesh.cpp:300-340), so a T-junction on a border would not link here. Add overlap when real tiles need it."""
+def _slab_span(p: tuple, q: tuple, along: int) -> tuple[tuple[float, float], tuple[float, float]]:
+    """(along, y) of both ends of a border edge, lower end first (calcSlabEndPoints)."""
+    lo, hi = (p, q) if p[along] < q[along] else (q, p)
+    return (lo[along], lo[1]), (hi[along], hi[1])
+
+
+def _overlap_slabs(amin, amax, bmin, bmax, climb: float) -> bool:
+    """overlapSlabs (DetourNavMesh.cpp:31-65) with px = 0.01 as findConnectingPolys passes it, and
+    py = walkableClimb of the neighbour tile (the tile that findConnectingPolys is given)."""
+    px, py = 0.01, climb
+    minx = max(amin[0] + px, bmin[0] + px)
+    maxx = min(amax[0] - px, bmax[0] - px)          # shrunk, so edges touching at an end do not link
+    if minx > maxx:
+        return False
+    ad = (amax[1] - amin[1]) / (amax[0] - amin[0])
+    ak = amin[1] - ad * amin[0]
+    bd = (bmax[1] - bmin[1]) / (bmax[0] - bmin[0])
+    bk = bmin[1] - bd * bmin[0]
+    dmin = (bd * minx + bk) - (ad * minx + ak)
+    dmax = (bd * maxx + bk) - (ad * maxx + ak)
+    if dmin * dmax < 0:                              # the two edges cross
+        return True
+    thr = (py * 2) ** 2
+    return dmin * dmin <= thr or dmax * dmax <= thr
+
+
+def _at_along(a: tuple, b: tuple, v: float, along: int) -> tuple:
+    """The point of edge a-b at along-coordinate v, clamped to the edge (DetourNavMesh.cpp:432-436)."""
+    t = min(1.0, max(0.0, (v - a[along]) / (b[along] - a[along])))
+    return tuple(p + t * (q - p) for p, q in zip(a, b, strict=True))
+
+
+def _ext_links(tile: Tile, a: tuple, b: tuple, side: int):
+    """Polys of the neighbour `tile` across our edge a-b (side `side`), as findConnectingPolys does
+    (DetourNavMesh.cpp:300-351). A poly links when its first edge with neis == DT_EXT_LINK | opposite side
+    lies on the same border line and its extent along the line overlaps ours. Yields (poly index, p, q):
+    the portal is the overlap, clamped to our edge (DetourNavMesh.cpp:342-343, :432-436)."""
+    slab, along = _slab_axes(side)
     want = DT_EXT_LINK | ((side + 4) & 7)
+    if a[along] == b[along]:
+        return
+    amin, amax = _slab_span(a, b, along)
     for k, poly in enumerate(tile.polys):
         if poly.type != DT_POLYTYPE_GROUND:
             continue
@@ -233,9 +270,13 @@ def _ext_target(tile: Tile, a: tuple, b: tuple, side: int) -> int | None:
             if nei != want:
                 continue
             c, d = tile.verts[poly.verts[m]], tile.verts[poly.verts[(m + 1) % n]]
-            if (_same_xz(a, c) and _same_xz(b, d)) or (_same_xz(a, d) and _same_xz(b, c)):
-                return k
-    return None
+            if abs(a[slab] - c[slab]) > 0.01 or c[along] == d[along]:
+                continue
+            bmin, bmax = _slab_span(c, d, along)
+            if _overlap_slabs(amin, amax, bmin, bmax, tile.header["walkableClimb"]):
+                lo, hi = max(amin[0], bmin[0]), min(amax[0], bmax[0])
+                yield k, _at_along(a, b, lo, along), _at_along(a, b, hi, along)
+                break                                # one portal per poly, as Detour's break
 
 
 def _area(a: tuple, b: tuple, c: tuple) -> float:
@@ -357,7 +398,8 @@ class NavMesh:
 
     def _portal_neighbours(self, ref: tuple[tuple[int, int], int]):
         """(neighbour ref, a, b) for each edge of `ref` that leads to a ground poly. a and b are the
-        edge's Detour points in the order of the poly. Edges with neis 0 are walls."""
+        portal's Detour points: the whole edge inside the tile, the overlap across a tile border.
+        Edges with neis 0 are walls."""
         key, index = ref
         tile = self.tiles[key]
         poly = tile.polys[index]
@@ -367,12 +409,11 @@ class NavMesh:
                 continue
             a, b = tile.verts[poly.verts[j]], tile.verts[poly.verts[(j + 1) % n]]
             if nei & DT_EXT_LINK:
-                side = nei & 0xFF
-                nkey = _neighbour_key(key, side)
+                nkey = _neighbour_key(key, nei & 0xFF)
                 other = self.tiles.get(nkey)
-                k = None if other is None else _ext_target(other, a, b, side)
-                if k is not None:
-                    yield (nkey, k), a, b
+                if other is not None:
+                    for k, p, q in _ext_links(other, a, b, nei & 0xFF):
+                        yield (nkey, k), p, q
             elif tile.polys[nei - 1].type == DT_POLYTYPE_GROUND:   # neis = poly index + 1, connectIntLinks DetourNavMesh.cpp:543-551
                 yield (key, nei - 1), a, b
 
