@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from agent import think
 from agent.audit import AuditLogger
+from agent.handlers import loot as loot_handlers
 from agent.handlers import quests as quest_handlers
 from agent.handlers import spells as spell_handlers
 from agent.state import ACTIVITY_MAXLEN, GameState
@@ -25,6 +26,19 @@ def _levelup_payload(level):
     return (struct.pack('<II', level, 20)
             + struct.pack('<7I', *range(7))
             + struct.pack('<5I', *range(5)))
+
+
+def _item_push_payload(guid, entry, count):
+    """SMSG_ITEM_PUSH_RESULT (Player::SendNewItem, Player.cpp:13855): player guid, received, created,
+    send_chat, bag, slot, entry, suffix, random property, count, count in inventory."""
+    return (struct.pack('<Q', guid) + struct.pack('<III', 1, 0, 1) + bytes([0])
+            + struct.pack('<I', 23) + struct.pack('<I', entry) + struct.pack('<I', 0)
+            + struct.pack('<i', -1) + struct.pack('<II', count, count))
+
+
+def _loot_money_payload(copper):
+    """SMSG_LOOT_MONEY_NOTIFY (LootHandler.cpp:188-202): uint32 money, uint8 sole looter."""
+    return struct.pack('<I', copper) + bytes([1])
 
 
 def _record(audit, events=None):
@@ -82,13 +96,50 @@ class ActivityOnTests(unittest.TestCase):
         before = time.time()
         quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 30))
         events = self.state.drain_activity()
-        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("quest", {"quest_id": 8325})])
+        # The quest, then its money reward (ADR 0020 slice 4): 30 copper.
+        self.assertEqual([(e["kind"], e["detail"]) for e in events],
+                         [("quest", {"quest_id": 8325}), ("money", {"copper": 30})])
         self.assertLess(abs(events[0]["t"] - before), 60)  # wall clock, as the level event
         self.assertEqual([e["kind"] for e in self.state.events], ["quest_turned_in"])  # the handler's own work
         with tempfile.TemporaryDirectory() as tmp:
             _record(AuditLogger("Jev1", base_dir=tmp), events=events)
             line = _only_line(tmp)
-        self.assertEqual(line["events"], [{"kind": "quest", "t": events[0]["t"], "detail": {"quest_id": 8325}}])
+        self.assertEqual(line["events"], [{"kind": "quest", "t": events[0]["t"], "detail": {"quest_id": 8325}},
+                                          {"kind": "money", "t": events[1]["t"], "detail": {"copper": 30}}])
+
+    def test_turn_in_with_no_money_reward_makes_no_money_event(self):
+        ctx = SimpleNamespace(state=self.state)
+        quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 0))
+        self.assertEqual([e["kind"] for e in self.state.drain_activity()], ["quest"])
+
+    def test_own_item_push_makes_one_item_event(self):
+        self.state.player_guid = 7
+        ctx = SimpleNamespace(state=self.state)
+        loot_handlers.handle_item_push_result(ctx, _item_push_payload(7, 2589, 2))
+        events = self.state.drain_activity()
+        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("item", {"item_entry": 2589, "count": 2})])
+        self.assertEqual([e["kind"] for e in self.state.events], ["item_received"])  # the handler's own work
+
+    def test_item_pushed_to_another_player_makes_no_event(self):
+        # SendNewItem broadcasts to the whole group with the looter's guid (Player.cpp:13875).
+        self.state.player_guid = 7
+        ctx = SimpleNamespace(state=self.state)
+        loot_handlers.handle_item_push_result(ctx, _item_push_payload(8, 2589, 2))
+        self.assertEqual(self.state.drain_activity(), [])
+        self.assertEqual([e["kind"] for e in self.state.events], ["item_received"])
+
+    def test_loot_money_makes_one_money_event(self):
+        ctx = SimpleNamespace(state=self.state)
+        loot_handlers.handle_loot_money_notify(ctx, _loot_money_payload(1234))
+        events = self.state.drain_activity()
+        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("money", {"copper": 1234})])
+        self.assertEqual([e["kind"] for e in self.state.events], ["loot_money"])
+
+    def test_zero_loot_money_makes_no_event(self):
+        # A group split of 1 copper among 3 members is 0 for each (LootHandler.cpp:181).
+        ctx = SimpleNamespace(state=self.state)
+        loot_handlers.handle_loot_money_notify(ctx, _loot_money_payload(0))
+        self.assertEqual(self.state.drain_activity(), [])
 
     def test_think_cycle_writes_the_buffered_event_on_its_line(self):
         sess = FakeSession(player_position=(530, 0.0, 0.0, 0.0, 0.0))

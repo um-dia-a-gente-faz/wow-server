@@ -30,23 +30,12 @@ import urllib.request
 import activity_schema
 # event() is the feed-event shape every source builds; the agent-written events are ADR 0020 (#390).
 from feed_events import (agent_events, agent_fact_stored, audit_event, drop_db_fact, event, fact_key,
-                         fact_text, skipped_agent_events)
+                         fact_text, money_text, skipped_agent_events)
 
 log = logging.getLogger("wowmap.activity")
 
 KEEP_PER_CHARACTER = 500
 PUBLIC_CHAT_KINDS = frozenset({"say", "yell", "channel"})
-
-
-def money_text(copper):
-    """1234567 -> '123g 45s 67c', dropping leading zero units ('5s 2c', '0c')."""
-    c = abs(int(copper))
-    g, s, cp = c // 10000, c // 100 % 100, c % 100
-    parts = [f"{g}g"] if g else []
-    if g or s:
-        parts.append(f"{s}s")
-    parts.append(f"{cp}c")
-    return " ".join(parts)
 
 
 # ---------------------------------------------------------------- store
@@ -326,6 +315,18 @@ class DbPoller:
             log.warning("activity quest name lookup failed: %s", e)
         return self._quests.get(quest, f"Quest {quest}")
 
+    def item_title(self, entry):
+        """A pickup's name for an agent row, looked up before the poll has seen the item (ADR 0020).
+        Cached first: a looted corpse is several pickups, and the names rarely change."""
+        if entry not in self._items:
+            try:
+                with self.connect() as conn:
+                    self._lookup(conn, self._items, ITEM_NAMES_SQL, [entry],
+                                 lambda r: (r[1] or f"Item {r[0]}", int(r[2] or 0)))
+            except Exception as e:  # noqa: BLE001 - names are cosmetic
+                log.warning("activity item name lookup failed: %s", e)
+        return self._items.get(entry, (f"Item {entry}", 0))[0]
+
     def poll_once(self, now=None):
         now = time.time() if now is None else now
         with self.connect() as conn:
@@ -474,6 +475,7 @@ class AuditTailer:
         self.agents = frozenset()
         self.skipped_agent_events = 0  # ADR 0020: `events` elements agent_events() refused, this process
         self.quest_title = lambda q: f"Quest {q}"  # Activity sets the DB names (ADR 0020, #390)
+        self.item_title = lambda e: f"Item {e}"
 
     def agent_names(self):
         try:
@@ -531,7 +533,8 @@ class AuditTailer:
                     if not isinstance(rec, dict) or (rec.get("ts") or 0) <= since:
                         continue
                     e = audit_event(rec, agent)
-                    kept = agent_events(rec, agent, self.quest_title)  # ADR 0020: the agent's own events
+                    # ADR 0020: the agent's own events, named by the DB where it has seen the fact
+                    kept = agent_events(rec, agent, self.quest_title, self.item_title)
                     self.skipped_agent_events += skipped_agent_events(rec, kept)
                     events.extend(kept + ([e] if e else []))
             if events:
@@ -560,6 +563,7 @@ class Activity:
         self.db = DbPoller(store, connect, zone_name) if connect else None
         if self.audit and self.db:
             self.audit.quest_title = self.db.quest_title
+            self.audit.item_title = self.db.item_title
 
     def agent_names(self):
         return self.audit.agents if self.audit else frozenset()

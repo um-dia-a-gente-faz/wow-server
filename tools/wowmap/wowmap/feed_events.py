@@ -26,12 +26,15 @@ ACTION_KINDS = {
 }
 # ADR 0020 (#390): the activity kinds an agent may put in its audit line's `events`, with the detail
 # keys each must carry as ints. Mirrors agent/audit_schema.py ACTIVITY_KINDS; any other kind is skipped.
-AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",)}
+AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",), "item": ("item_entry", "count"),
+                     "money": ("copper",)}
 # ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
 # writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key reads these, and the
-# store writes its value to the fact_key column; the migration backfills the same paths (activity_schema.py,
-# frozen). A kind not listed here has no fact and no de-duplication.
-FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"}}
+# store writes its value to the fact_key column; the migration backfills level and quest (activity_schema.py,
+# frozen). item and money have no backfill: their db rows from before the column keep fact_key NULL.
+# A kind not listed here has no fact and no de-duplication.
+FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"},
+             "item": {"agent": "item_entry", "db": "item"}, "money": {"agent": "copper", "db": "delta"}}
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -89,17 +92,33 @@ def audit_event(rec, agent):
                  f"audit:{agent}:{rec.get('cycle')}:{rec['ts']}", detail)
 
 
-def _agent_text(kind, detail, quest_title):
-    # The same sentence the DB path writes for the fact (activity.py diff_snapshots).
+def money_text(copper):
+    """1234567 -> '123g 45s 67c', dropping leading zero units ('5s 2c', '0c')."""
+    c = abs(int(copper))
+    g, s, cp = c // 10000, c // 100 % 100, c % 100
+    parts = [f"{g}g"] if g else []
+    if g or s:
+        parts.append(f"{s}s")
+    parts.append(f"{cp}c")
+    return " ".join(parts)
+
+
+def _agent_text(kind, detail, quest_title, item_title):
+    # The same sentences the DB path writes for the fact (activity.py diff_snapshots).
     if kind == "level":
         return f"Reached level {detail['to']}"
-    return f"Turned in quest: {quest_title(detail['quest_id'])}"
+    if kind == "quest":
+        return f"Turned in quest: {quest_title(detail['quest_id'])}"
+    if kind == "item":
+        n = detail["count"]
+        return f"Got {item_title(detail['item_entry'])}" + (f" ×{n}" if n > 1 else "")
+    return f"Money +{money_text(detail['copper'])}"
 
 
-def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}"):
+def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}", item_title=lambda e: f"Item {e}"):
     """The feed events of one audit line's `events` (ADR 0020, #390). Never raises: an element that
     is not a known kind with its typed detail keys is skipped (see skipped_agent_events).
-    `quest_title` names a turn-in (the DB names, when there is a DB)."""
+    `quest_title` and `item_title` name a turn-in and a pickup (the DB names, when there is a DB)."""
     raw = rec.get("events")
     if not isinstance(raw, list):
         return []
@@ -113,7 +132,7 @@ def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}"):
         if not _is_number(t) or not all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind]):
             continue
         key = detail[FACT_KEYS[kind]["agent"]]
-        out.append(event(agent, t, kind, _agent_text(kind, detail, quest_title), "agent",
+        out.append(event(agent, t, kind, _agent_text(kind, detail, quest_title, item_title), "agent",
                          f"agent:{agent}:{kind}:{t:.3f}:{key}", detail))
     return out
 
