@@ -113,7 +113,7 @@ consecutive suite starts in that job's log, slowest first:
 | agent-runner | 79 | 5.8 |
 | chat-feed | 51 | 4.4 |
 | scripts | 166 | 3.9 |
-| jev-mock | 17 | 3.7 |
+| jev_mock | 17 | 3.7 |
 | common | 32 | 0.8 |
 | generated checks | - | 0.7 |
 | tools-arch | 28 | 0.4 |
