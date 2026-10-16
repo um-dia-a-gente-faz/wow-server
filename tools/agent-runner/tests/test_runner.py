@@ -21,7 +21,6 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE.parent))
-sys.path.insert(0, str(REPO))
 import runner  # noqa: E402
 from docker_backend import FakeDockerBackend  # noqa: E402
 from agent import api_contract  # noqa: E402  (#264: fixtures come from the shared agent API schema)
