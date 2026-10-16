@@ -19,7 +19,7 @@ PATTERN = re.compile(r"sys\.path(\.insert|\.append|\.pop|\.extend|\[[^]]*\] *=| 
 
 PRODUCTION_EDITS = 24
 # wowmap tests need the wowmap/ insert until slice 8 (ADR 0019); +1 for test_activity_agent_events.py (#390)
-TEST_EDITS = 78
+TEST_EDITS = 74
 # Edits that stay on purpose. Named here, counted in the constants above.
 ALLOWED = {"scripts/early_failures.py"}
 # The root insert removed from each test file (ADR 0019, first slice). Built from parts so this file
@@ -32,6 +32,12 @@ NO_EDITS = {
     "tools/agent-runner/tests/test_runner.py": _SYS_PATH + ".insert(0, str(REPO))",
     "tools/worldknowledge/tests/test_build.py": _SYS_PATH + ".insert(0, str(ROOT))",
     "tools/tests/test_scenario_samples.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    # ADR 0019, slice 2 (#796): proved by the suite run from the root and, for test_external,
+    # by the CI step that runs `python -m unittest` from the root with JEV_MOCK_URL set.
+    "tools/jev-mock/tests/test_external.py": _SYS_PATH + ".insert(0, str(REPO))",
+    "tools/jev-mock/tests/test_server.py": _SYS_PATH + ".insert(0, str(REPO))",
+    "tools/wowmap/tests/test_agent_proxy.py": _SYS_PATH + ".insert(0, str(pathlib.Path(__file__).resolve().parents[3]))",
+    "scripts/tests/test_action_catalog.py": _SYS_PATH + ".insert(0, str(ROOT))",
 }
 
 

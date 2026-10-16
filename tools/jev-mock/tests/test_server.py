@@ -154,7 +154,6 @@ class RequireAuthTest(ServerCase):
 
 
 try:
-    sys.path.insert(0, str(REPO))
     from agent import jev  # noqa: E402
 except ImportError:
     jev = None

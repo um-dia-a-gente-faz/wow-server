@@ -3,12 +3,10 @@ and editing a spec without regenerating makes the drift check fail. The mutation
 specs in memory and compare renderings; they never write the real doc."""
 import dataclasses
 import pathlib
-import sys
 import unittest
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
 
 from agent import action_specs  # noqa: E402
 from agent import api_contract  # noqa: E402
