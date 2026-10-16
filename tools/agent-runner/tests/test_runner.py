@@ -1065,10 +1065,121 @@ class FakeDockerTest(RunnerCase):
         self.assertEqual([a for a in state["agents"] if a["character"] == "Charlie"][0]["retired"], True)
 
 
+class ActionLogTest(RunnerCase):
+    """#458: one JSONL line per mutating request; GETs, the token, headers and bodies never."""
+
+    def setUp(self):
+        super().setUp()
+        self.log = Path(self.tmp.name) / "log" / "actions.jsonl"
+        self.config.action_log = self.log
+
+    def lines(self):
+        return [json.loads(x) for x in self.log.read_text(encoding="utf-8").splitlines()] if self.log.exists() else []
+
+    def post_json(self, path, body, token=TOKEN):
+        r = urllib.request.Request(self.base + path, method="POST", data=json.dumps(body).encode(),
+                                   headers={"Content-Type": "application/json"})
+        if token is not None:
+            r.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code
+
+    def assert_line(self, line, **want):
+        self.assertEqual(set(line), {"ts", "who", "action", "target", "result", "status"})
+        self.assertRegex(line["ts"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertEqual({k: line[k] for k in want}, want)
+
+    def test_start_stop_and_retire_each_write_one_line(self):
+        self.req("/agents/Bravo/start", "POST")
+        self.assertEqual(len(self.lines()), 1)
+        self.assert_line(self.lines()[-1], who="shared", action="start", target="Bravo", result="ok", status=200)
+        self.req("/agents/Bravo/stop", "POST")
+        self.assertEqual(len(self.lines()), 2)
+        self.assert_line(self.lines()[-1], who="shared", action="stop", target="Bravo", result="ok", status=200)
+        self.req("/agents/Bravo/retire", "POST")
+        self.assertEqual(len(self.lines()), 3)
+        self.assert_line(self.lines()[-1], who="shared", action="retire", target="Bravo", result="ok", status=200)
+
+    def test_create_writes_one_line_with_the_requested_name(self):
+        entry = {"name": "Delta", "account": "AGENT04"}
+        with mock.patch.object(self.fleet, "create_agent", return_value=(entry, {})):
+            self.assertEqual(self.post_json("/agents", {"account": "AGENT04", "name": "Delta"}), 201)
+        self.assertEqual(len(self.lines()), 1)
+        self.assert_line(self.lines()[-1], who="shared", action="create", target="Delta", result="ok", status=201)
+
+    def test_a_refused_create_is_an_error_line_with_the_requested_name(self):
+        err = runner.RunnerError("name in use", status=409)
+        with mock.patch.object(self.fleet, "create_agent", side_effect=err):
+            self.assertEqual(self.post_json("/agents", {"account": "AGENT04", "name": "Delta"}), 409)
+        self.assert_line(self.lines()[-1], action="create", target="Delta", result="error", status=409)
+
+    def test_walk_writes_one_line_with_the_agent_name(self):
+        with mock.patch.object(self.fleet, "walk", return_value=(200, {"ok": True, "outcome": "arrived"})):
+            self.assertEqual(self.post_json("/agents/Alpha/walk", {"x": 1.0, "y": 2.0}), 200)
+        self.assertEqual(len(self.lines()), 1)
+        self.assert_line(self.lines()[-1], who="shared", action="walk", target="Alpha", result="ok", status=200)
+        with mock.patch.object(self.fleet, "walk", return_value=(422, {"ok": False, "outcome": "blocked"})):
+            self.assertEqual(self.post_json("/agents/Alpha/walk", {"x": 1.0, "y": 2.0}), 422)
+        self.assert_line(self.lines()[-1], action="walk", target="Alpha", result="error", status=422)
+
+    def test_a_get_writes_nothing(self):
+        self.assertEqual(self.req("/agents")[0], 200)
+        self.assertEqual(self.req("/agents/Alpha")[0], 200)
+        self.assertEqual(self.req("/healthz", token=None)[0], 200)
+        self.assertFalse(self.log.exists())
+
+    def test_a_bad_token_is_an_unauthenticated_error_line(self):
+        self.assertEqual(self.req("/agents/Alpha/stop", "POST", token="wrong")[0], 401)
+        self.assert_line(self.lines()[-1], who="unauthenticated", action="stop", target="Alpha",
+                         result="error", status=401)
+        self.assertEqual(self.post_json("/agents", {"account": "AGENT04"}, token=None), 401)
+        self.assert_line(self.lines()[-1], who="unauthenticated", action="create", target=None,
+                         result="error", status=401)
+        self.assertEqual(len(self.lines()), 2)
+
+    def test_the_token_headers_and_body_never_reach_the_file(self):
+        self.req("/agents/Bravo/start", "POST")
+        self.req("/agents/Alpha/stop", "POST", token="wrong")
+        self.post_json("/agents/Alpha/walk", {"x": 1.0, "y": 2.0, "near_player": "BODY-MARKER-458"}, token=None)
+        text = self.log.read_text(encoding="utf-8")
+        self.assertNotIn(TOKEN, text)
+        self.assertNotIn("wrong", text)
+        self.assertNotIn("Bearer", text)
+        self.assertNotIn("BODY-MARKER-458", text)
+
+    def test_an_unwritable_path_still_answers_and_warns_once(self):
+        blocker = Path(self.tmp.name) / "a-file"
+        blocker.write_text("not a directory")
+        self.config.action_log = blocker / "actions.jsonl"
+        with self.assertLogs("agent-runner", "WARNING") as cm:
+            self.assertEqual(self.req("/agents/Bravo/start", "POST")[0], 200)
+            self.assertEqual(self.req("/agents/Bravo/stop", "POST")[0], 200)
+        self.assertEqual(len(cm.records), 1)
+        self.assertEqual(cm.records[0].levelname, "WARNING")
+
+    def test_an_empty_setting_writes_nothing(self):
+        self.config.action_log = runner.Config({"AGENT_RUNNER_TOKEN": TOKEN,
+                                                "AGENT_RUNNER_ACTION_LOG": ""}).action_log
+        self.assertEqual(self.req("/agents/Bravo/start", "POST")[0], 200)
+        self.assertEqual(self.req("/agents/Bravo/stop", "POST")[0], 200)
+        self.assertEqual(list(Path(self.tmp.name).rglob("actions.jsonl")), [])
+
+
 class ConfigTest(unittest.TestCase):
     def test_defaults_bind_loopback(self):
         c = runner.Config({"AGENT_RUNNER_TOKEN": "x"})
         self.assertEqual((c.bind, c.port), ("127.0.0.1", 9700))
+
+    def test_action_log_defaults_to_the_runtime_dir_and_empty_turns_it_off(self):
+        c = runner.Config({"AGENT_RUNNER_TOKEN": "x", "AGENT_RUNNER_RUNTIME_DIR": "/rt"})
+        self.assertEqual(c.action_log, Path("/rt/actions.jsonl"))
+        self.assertEqual(runner.Config({"AGENT_RUNNER_TOKEN": "x",
+                                        "AGENT_RUNNER_ACTION_LOG": "/x/a.jsonl"}).action_log, Path("/x/a.jsonl"))
+        self.assertIsNone(runner.Config({"AGENT_RUNNER_TOKEN": "x", "AGENT_RUNNER_ACTION_LOG": ""}).action_log)
 
     def test_scrub_masks_environment_secrets(self):
         with mock.patch.dict(os.environ, {"LLM_API_KEY": "aaaabbbbcccc"}):

@@ -10,12 +10,13 @@ import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from core import RunnerError, iso
+from core import RunnerError, iso, scrub
 
 LOG = logging.getLogger("agent-runner")
 
 MAX_BODY_BYTES = 4096
 OPERATOR_RE = re.compile(r"[^0-9A-Za-z.:_\-]")
+ACTION_LOG_WARNED = set()  # #458: each unwritable action-log path is reported once
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -44,6 +45,24 @@ class Handler(BaseHTTPRequestHandler):
         LOG.info(json.dumps({"ts": iso(time.time()), "action": action, "agent": agent,
                              "caller": self.client_address[0],
                              "token": self.config.token_label, "result": result, **extra}))
+
+    def _action_log(self, action, target, who, result, status):
+        """#458: one JSON line per mutating request, appended. Never the token, a header or the body,
+        and a write failure never fails the request."""
+        path = self.config.action_log
+        if path is None:
+            return
+        line = {"ts": iso(time.time()), "who": who, "action": action, "target": target,
+                "result": result, "status": status}
+        text = scrub(json.dumps(line), extra=(self.config.token,)) + "\n"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as err:
+            if str(path) not in ACTION_LOG_WARNED:
+                ACTION_LOG_WARNED.add(str(path))
+                LOG.warning("action log %s is not writable, actions are not recorded: %s", path, err)
 
     def _operator(self):
         """Who asked wowmap, when wowmap says (X-Operator-Address): the audit then shows the
@@ -107,10 +126,14 @@ class Handler(BaseHTTPRequestHandler):
             result = e.body()
             self._audit_write(action, name, f"error: {e}", operator=self._operator(),
                               **self._walk_audit(body, e.status, result))
+            if not dry:
+                self._action_log("walk", name, self.config.token_label, "error", e.status)
             return self._send(e.status, result)
         ok = result.get("outcome") in ("arrived", "dry_run")
         self._audit_write(action, name, "ok" if ok else f"error: {result.get('outcome')}: {result.get('error')}",
                           operator=self._operator(), **self._walk_audit(body, status, result))
+        if not dry:  # a dry run moves nothing, so it is not a mutating request (#458)
+            self._action_log("walk", name, self.config.token_label, "ok" if ok else "error", status)
         return self._send(status, {"action": action, **result})
 
     def do_POST(self):  # noqa: N802
@@ -123,15 +146,18 @@ class Handler(BaseHTTPRequestHandler):
         name, action = (None, "create") if create else (parts[1], parts[2])
         if not self._authorized():
             self._audit_write(action, name, "401")
+            self._action_log(action, name, "unauthenticated", "error", 401)
             return self._send(401, {"error": "token required"})
         if action == "walk":
             return self._walk(name, urlsplit(self.path).query)
+        target = name  # #458: the character asked for; a create has none until its body is read
         try:
             if create:
                 body = self._read_json()
+                target = body.get("name")
                 name = body.get("account")
                 entry, extra = self.fleet.create_agent(body)
-                name = entry["name"]
+                name = target = entry["name"]
             elif action == "start":
                 query = urlsplit(self.path).query
                 entry, extra = self.fleet.start(name, build="build=1" in query.split("&"))
@@ -141,6 +167,9 @@ class Handler(BaseHTTPRequestHandler):
                 entry, extra = self.fleet.stop(name)
         except RunnerError as e:
             self._audit_write(action, name, f"error: {e}")
+            self._action_log(action, target, self.config.token_label, "error", e.status)
             return self._send(e.status, e.body())
         self._audit_write(action, name, "ok")
-        return self._send(201 if create else 200, {"action": action, **extra, "agent": entry})
+        status = 201 if create else 200
+        self._action_log(action, target, self.config.token_label, "ok", status)
+        return self._send(status, {"action": action, **extra, "agent": entry})
