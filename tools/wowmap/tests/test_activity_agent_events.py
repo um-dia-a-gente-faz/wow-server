@@ -101,14 +101,16 @@ class StoreRulesTests(unittest.TestCase):
         self.assertEqual(len(self.rows("Thrall")), 1)
 
     def test_db_first_then_agent_deletes_only_that_level_of_that_character(self):
-        # The db rows that must survive the agent's delete: another level and another kind of the
-        # same character, and the same level of another character.
+        # The db rows that must survive the agent's delete: another level and other kinds (one with
+        # the same `to`) of the same character, and the same level of another character.
         self.store.add([_db_level("Thrall", 10.5, 11), _db_level("Jev1", 10.5, 12),
                         activity.event("Jev1", 10.5, "item", "Got Linen Cloth", "db", "db:1:10.500:item:+1",
-                                       {"item": 2589, "count": 1})])
+                                       {"item": 2589, "count": 1}),
+                        activity.event("Jev1", 10.5, "zone", "Entered Wetlands", "db", "db:1:10.500:zone:11",
+                                       {"from": 1, "to": 11}, inferred=True)])
         self.assertEqual(self.store.add(self.agent_level(11)), 1)
         self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
-                         [("agent", "level"), ("db", "item"), ("db", "level")])
+                         [("agent", "level"), ("db", "item"), ("db", "level"), ("db", "zone")])
         self.assertEqual([(r["source"], r["text"]) for r in self.rows("Thrall")], [("db", "Reached level 11")])
 
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
