@@ -9,6 +9,7 @@ from . import roster
 DEFAULT_AUDIT_DIR = "/opt/wow-server-metrics/audit"
 DEFAULT_FLEET_DIR = "/opt/wow-server-metrics/fleet"
 DEFAULT_WORLD_DIR = "/opt/wow-server-metrics/world"
+DEFAULT_STATE_DIR = "/opt/wow-server-metrics/agent-state"
 RAID_SIZE = 25  # the size the HEADER text describes; the port range it names ends at FIRST_PORT + 24
 
 # #539: agent i (0-based position in the list given to render) waits (i * START_DELAY_STEP_S) %
@@ -112,6 +113,9 @@ x-agent: &agent-defaults
     # #749: the DIRECTORY of the world bundle, read-only. Never the file: tools/worldknowledge/build.py
     # replaces the bundle by rename, and a single-file bind mount would pin the old inode.
     - /opt/wow-server-metrics/world:/data/world:ro
+    # #252 (ADR 0021): the DIRECTORY of the per-agent state, read-write; each agent writes only its own
+    # subdirectory (names.json). A directory, never a file: the caches are replaced by rename.
+    - /opt/wow-server-metrics/agent-state:/data/state
 
 services:
 """
@@ -132,6 +136,8 @@ SERVICE = """\
       AGENT_MISSION: {mission}
       AGENT_HTTP_PORT: {port}
       AGENT_START_DELAY_S: "{start_delay}"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/{slug}
     ports:
       - "${{AGENT_HTTP_PUBLISH_IP:-0.0.0.0}}:{port}:{port}"
     labels:
@@ -180,11 +186,12 @@ def derive(position: int, entry: dict) -> roster.Agent:
 
 
 def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: str = DEFAULT_FLEET_DIR,
-           world_dir: str = DEFAULT_WORLD_DIR) -> str:
+           world_dir: str = DEFAULT_WORLD_DIR, state_dir: str = DEFAULT_STATE_DIR) -> str:
     """The compose file text. `audit_dir` is the host path mounted at /data/audit;
     tools/agent-runner passes its own so the checkout's committed file stays the
     default (#136, ADR 0002 D5). `fleet_dir` is the host path mounted read-only at /data/fleet (#747);
-    `world_dir` the one mounted read-only at /data/world (#749)."""
+    `world_dir` the one mounted read-only at /data/world (#749); `state_dir` the one mounted
+    read-write at /data/state (#252), each agent's cache directory is a subdirectory of it."""
     seen = set()
     blocks = []
     names = ",".join(derive(i, a).character for i, a in enumerate(agents))
@@ -198,10 +205,11 @@ def render(agents: list[dict], audit_dir: str = DEFAULT_AUDIT_DIR, fleet_dir: st
             account=agent.account, character=agent.character, port=agent.api_port, roster=names,
             mission=agent.mission,
             profiles=", ".join(agent.profiles),
-            start_delay=(i * START_DELAY_STEP_S) % START_DELAY_PERIOD_S))
+            start_delay=(i * START_DELAY_STEP_S) % START_DELAY_PERIOD_S, slug=agent.slug))
     last_port = roster.FIRST_PORT + RAID_SIZE - 1
     header = HEADER.replace("@API_PORTS@", f"{roster.FIRST_PORT}-{last_port}")
     text = header + "\n".join(blocks + [JEV_MOCK])
     return (text.replace(f"- {DEFAULT_AUDIT_DIR}:/data/audit", f"- {audit_dir}:/data/audit")
             .replace(f"- {DEFAULT_FLEET_DIR}:/data/fleet:ro", f"- {fleet_dir}:/data/fleet:ro")
-            .replace(f"- {DEFAULT_WORLD_DIR}:/data/world:ro", f"- {world_dir}:/data/world:ro"))
+            .replace(f"- {DEFAULT_WORLD_DIR}:/data/world:ro", f"- {world_dir}:/data/world:ro")
+            .replace(f"- {DEFAULT_STATE_DIR}:/data/state", f"- {state_dir}:/data/state"))

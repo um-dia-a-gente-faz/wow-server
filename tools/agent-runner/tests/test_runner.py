@@ -906,7 +906,7 @@ class NoScriptImportTest(RunnerCase):
         planned = [e["planned"] for e in self.fleet.roster()]
         self.assertEqual((self.runtime / "docker-compose.agents.yml").read_text(),
                          compose.render(planned, audit_dir=str(self.audit), fleet_dir=str(self.runtime / "fleet"),
-                                        world_dir=str(self.runtime / "world")))
+                                        world_dir=str(self.runtime / "world"), state_dir=str(self.runtime / "state")))
 
     def test_the_script_loaders_are_gone(self):
         import characters

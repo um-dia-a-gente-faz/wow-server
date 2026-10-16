@@ -42,7 +42,8 @@ fourth. Each claim was checked against `main`; the result is below, with what wa
   an agent container, the audit directory (`x-agent` → `volumes`). `~/.cache` is in the
   container's writable layer, so the cache is private to one container and is lost whenever
   the container is recreated, which is every new image tag. So "25 agents repeat the same
-  queries" is true, and they also repeat them after each agent deploy.
+  queries" is true, and they also repeat them after each agent deploy. Answered by ADR 0021 (#252): each
+  agent's `names.json` now lives in a persistent per-agent directory that survives a recreate.
 - **The name cache is never invalidated.** The server announces its template cache version at
   login: `WorldSession::InitializeSessionCallback` calls `SendClientCacheVersion`
   (`SMSG_CLIENTCACHE_VERSION`, 0x4AB, one `uint32`), whose value is `world.version.cache_id`

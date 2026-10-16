@@ -92,6 +92,9 @@ x-agent: &agent-defaults
     # #749: the DIRECTORY of the world bundle, read-only. Never the file: tools/worldknowledge/build.py
     # replaces the bundle by rename, and a single-file bind mount would pin the old inode.
     - /opt/wow-server-metrics/world:/data/world:ro
+    # #252 (ADR 0021): the DIRECTORY of the per-agent state, read-write; each agent writes only its own
+    # subdirectory (names.json). A directory, never a file: the caches are replaced by rename.
+    - /opt/wow-server-metrics/agent-state:/data/state
 
 services:
   agent-luaprata:
@@ -109,6 +112,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9601
       AGENT_START_DELAY_S: "0"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/luaprata
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9601:9601"
     labels:
@@ -130,6 +135,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9602
       AGENT_START_DELAY_S: "3"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/farstrider
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9602:9602"
     labels:
@@ -151,6 +158,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9603
       AGENT_START_DELAY_S: "6"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/shadowblade
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9603:9603"
     labels:
@@ -172,6 +181,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9604
       AGENT_START_DELAY_S: "9"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/sunspeaker
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9604:9604"
     labels:
@@ -193,6 +204,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9605
       AGENT_START_DELAY_S: "12"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/spellweaver
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9605:9605"
     labels:
@@ -214,6 +227,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9606
       AGENT_START_DELAY_S: "15"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/zanja
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9606:9606"
     labels:
@@ -235,6 +250,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9607
       AGENT_START_DELAY_S: "18"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/jinjin
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9607:9607"
     labels:
@@ -256,6 +273,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9608
       AGENT_START_DELAY_S: "21"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/gargash
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9608:9608"
     labels:
@@ -277,6 +296,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9609
       AGENT_START_DELAY_S: "24"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/tatoka
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9609:9609"
     labels:
@@ -298,6 +319,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9610
       AGENT_START_DELAY_S: "27"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/aerdorei
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9610:9610"
     labels:
@@ -319,6 +342,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9611
       AGENT_START_DELAY_S: "30"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/senkazi
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9611:9611"
     labels:
@@ -340,6 +365,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9612
       AGENT_START_DELAY_S: "33"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/mogthar
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9612:9612"
     labels:
@@ -361,6 +388,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9613
       AGENT_START_DELAY_S: "36"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/urzughak
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9613:9613"
     labels:
@@ -382,6 +411,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9614
       AGENT_START_DELAY_S: "39"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/garmar
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9614:9614"
     labels:
@@ -403,6 +434,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9615
       AGENT_START_DELAY_S: "42"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/queldorei
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9615:9615"
     labels:
@@ -424,6 +457,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9616
       AGENT_START_DELAY_S: "45"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/zulrik
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9616:9616"
     labels:
@@ -445,6 +480,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9617
       AGENT_START_DELAY_S: "48"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/pamarana
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9617:9617"
     labels:
@@ -466,6 +503,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9618
       AGENT_START_DELAY_S: "51"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/thalwyn
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9618:9618"
     labels:
@@ -487,6 +526,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9619
       AGENT_START_DELAY_S: "54"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/thokgor
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9619:9619"
     labels:
@@ -508,6 +549,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9620
       AGENT_START_DELAY_S: "57"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/lorvaris
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9620:9620"
     labels:
@@ -529,6 +572,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9621
       AGENT_START_DELAY_S: "0"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/moggor
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9621:9621"
     labels:
@@ -550,6 +595,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9622
       AGENT_START_DELAY_S: "3"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/velkaelanar
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9622:9622"
     labels:
@@ -571,6 +618,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9623
       AGENT_START_DELAY_S: "6"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/thalvis
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9623:9623"
     labels:
@@ -592,6 +641,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9624
       AGENT_START_DELAY_S: "9"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/quelthas
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9624:9624"
     labels:
@@ -613,6 +664,8 @@ services:
       AGENT_MISSION: level_to_cap
       AGENT_HTTP_PORT: 9625
       AGENT_START_DELAY_S: "12"
+      # #252: this agent's own cache directory (names.json), under the state volume above
+      AGENT_STATE_DIR: /data/state/zulari
     ports:
       - "${AGENT_HTTP_PUBLISH_IP:-0.0.0.0}:9625:9625"
     labels:

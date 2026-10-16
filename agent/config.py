@@ -80,6 +80,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("AGENT_FLEET_LIMITS_FILE", str, "", "fleet limits file (ADR 0017): a JSON file of time-bounded brain blocks "
        "that Brain reads; empty = off, no file is touched"),
     _s("AGENT_WORLD_BUNDLE", str, "", "path of the world bundle (ADR 0016); empty = off, no file is touched"),
+    _s("AGENT_STATE_DIR", str, "", "directory for this agent's persistent caches (#252); empty = ~/.cache/wow-agent; "
+       "set per service by compose", compose=False),
     _s("LOG_LEVEL", str, "INFO", "python logging level"),
     _s("VERBOSE_PACKETS", bool, False, "log every packet"),
     _s("AGENT_DUMP_PACKETS", str, "", "directory for raw SMSG_UPDATE_OBJECT dumps; empty = off"),
@@ -207,6 +209,8 @@ class Config:
     fleet_limits_file: str = _f("AGENT_FLEET_LIMITS_FILE")
     # ADR 0016 further slice 1: world bundle path for get_spell_info; empty = off.
     world_bundle: str = _f("AGENT_WORLD_BUNDLE")
+    # #252 (ADR 0021): this agent's own cache directory (names.json, items.json); empty = the home cache.
+    state_dir: str = _f("AGENT_STATE_DIR")
     jev_enabled: bool = field(default_factory=lambda: bool(
         get("JEV_BASE_URL") or (
             _lower("JEV_PROVIDER") == "openrouter"
