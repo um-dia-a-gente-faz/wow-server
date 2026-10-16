@@ -18,6 +18,32 @@ V3 = FIXTURES / "v3.jsonl"
 V3_QUEST = FIXTURES / "v3-quest.jsonl"
 
 
+class _NamesDb:
+    """Stands in for the connect() of DbPoller: a name query (the table in its SQL) answers its rows,
+    any other query answers nothing."""
+
+    def __init__(self, names):
+        self.names = names
+
+    def __call__(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def cursor(self):
+        return self
+
+    def execute(self, sql):
+        self.rows = next((rows for table, rows in self.names.items() if table in sql), [])
+
+    def fetchall(self):
+        return self.rows
+
+
 def _v3_record():
     with open(V3, encoding="utf-8") as f:
         return json.loads(f.readline())
@@ -87,6 +113,28 @@ class AgentEventsTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(activity.agent_events({"events": value}, "Jev1"), [])
         self.assertEqual(activity.agent_events({}, "Jev1"), [])
+
+    def test_item_and_money_lines_become_agent_events(self):
+        rec = {"events": [{"kind": "item", "t": 1.0, "detail": {"item_entry": 2589, "count": 2}},
+                          {"kind": "money", "t": 2.0, "detail": {"copper": 1234}}]}
+        item, money = activity.agent_events(rec, "Jev1", item_title=lambda e: "Linen Cloth")
+        self.assertEqual((item["text"], item["source"], item["uid"]),
+                         ("Got Linen Cloth ×2", "agent", "agent:Jev1:item:1.000:2589"))
+        self.assertEqual(activity.agent_events(rec, "Jev1")[0]["text"], "Got Item 2589 ×2")
+        self.assertEqual((money["text"], money["source"], money["uid"]),
+                         ("Money +12s 34c", "agent", "agent:Jev1:money:2.000:1234"))
+        self.assertEqual(activity.fact_key(item), ("jev1", "item", 2589))
+        self.assertIsNone(activity.fact_key(money))  # no fact: a money delta does not say its cause
+        # The DB poller's item row of the same fact: its item detail.
+        self.assertEqual(activity.fact_key(activity.event("Jev1", 1.5, "item", "Got Linen Cloth ×2", "db", "u",
+                                                          {"item": 2589, "count": 2})), ("jev1", "item", 2589))
+
+    def test_bad_item_and_money_elements_are_skipped(self):
+        bad = [{"kind": "item", "t": 1.0, "detail": {"item_entry": 2589}},                # no count
+               {"kind": "item", "t": 1.0, "detail": {"item_entry": "2589", "count": 1}},  # a string
+               {"kind": "money", "t": 1.0, "detail": {"copper": True}},                   # a bool
+               {"kind": "money", "t": 1.0, "detail": {"delta": 5}}]                       # the db key
+        self.assertEqual(activity.agent_events({"events": bad}, "Jev1"), [])
 
     def test_fact_key_is_the_kind_and_its_own_key(self):
         (e,) = activity.agent_events(_v3_record(), "Jev1")
@@ -205,6 +253,64 @@ class StoreRulesTests(unittest.TestCase):
         self.assertEqual(sorted(rows, key=str), [("Jev1", "level", "agent", "11"), ("Jev1", "quest", "db", "8325"),
                                                  ("Jev1", "zone", "db", None), ("Thrall", "level", "db", "11")])
 
+    def agent_item(self, entry, count=1, t=10.0):
+        return activity.agent_events({"events": [{"kind": "item", "t": t,
+                                                  "detail": {"item_entry": entry, "count": count}}]}, "Jev1")
+
+    def agent_money(self, copper, t=10.0):
+        return activity.agent_events({"events": [{"kind": "money", "t": t, "detail": {"copper": copper}}]}, "Jev1")
+
+    def db_item(self, entry, t=10.5, count=1):
+        return activity.event("Jev1", t, "item", f"Got Item {entry}", "db", f"db:1:{t:.3f}:item:+{entry}",
+                              {"item": entry, "count": count})
+
+    def db_money(self, delta, t=10.5):
+        return activity.event("Jev1", t, "money", f"Money +{delta}c", "db", f"db:1:{t:.3f}:money:",
+                              {"delta": delta, "total": 500})
+
+    def test_agent_item_first_then_db_leaves_one_agent_row(self):
+        self.store.add(self.agent_item(2589))
+        self.assertEqual(self.store.add([self.db_item(2589)]), 0)
+        self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "item")])
+
+    def test_db_item_first_then_agent_leaves_one_agent_row(self):
+        self.store.add([self.db_item(2589)])
+        self.assertEqual(self.store.add(self.agent_item(2589)), 1)
+        self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "item")])
+
+    def test_loot_then_a_sale_of_the_same_copper_keeps_the_sale_agent_first(self):
+        # Money has no fact key (ADR 0020, feed_events.FACT_KEYS): the DB delta does not say its cause.
+        self.store.add(self.agent_money(50))
+        self.assertEqual(self.store.add([self.db_money(50)]), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()), [("agent", "money"), ("db", "money")])
+
+    def test_loot_then_a_sale_of_the_same_copper_keeps_the_sale_db_first(self):
+        self.store.add([self.db_money(50)])
+        self.assertEqual(self.store.add(self.agent_money(50)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()), [("agent", "money"), ("db", "money")])
+
+    def test_an_item_and_money_with_the_same_number_do_not_delete_each_other(self):
+        # The item 50 and the 50 copper are different facts: each statement names its kind.
+        self.store.add(self.agent_money(50))
+        self.assertEqual(self.store.add([self.db_item(50)]), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()), [("agent", "money"), ("db", "item")])
+        other = activity.ActivityStore(":memory:")
+        other.add([self.db_money(50)])
+        self.assertEqual(other.add(self.agent_item(50)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in other.recent("Jev1", 50)),
+                         [("agent", "item"), ("db", "money")])
+
+    def test_a_db_item_a_week_away_from_the_agent_pickup_survives(self):
+        self.store.add([self.db_item(2589, t=10.5)])
+        self.assertEqual(self.store.add(self.agent_item(2589, t=10.5 + 7 * 86400)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()), [("agent", "item"), ("db", "item")])
+
+    def test_the_store_writes_the_fact_key_of_item_and_money_rows_as_text(self):
+        self.store.add(self.agent_item(2589, count=3))
+        self.store.add([self.db_money(-50)])
+        rows = self.store._conn.execute("SELECT kind, source, fact_key FROM events").fetchall()
+        self.assertEqual(sorted(rows, key=str), [("item", "agent", "2589"), ("money", "db", None)])
+
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
         self.store.add(self.agent_level(11))
         self.assertEqual(self.store.add([_db_level("jev1", 10.5, 11)]), 0)
@@ -269,40 +375,46 @@ class TailerTests(unittest.TestCase):
         activity.AuditTailer(self.store, self.base).scan_once()
         self.assertEqual(self.store.count("Jev1"), 3)
 
+    def test_an_idle_line_with_item_and_money_events_stores_both_and_no_audit_row(self):
+        idle = {"schema": 3, "ts": 1731000021.0, "agent": "Jev1", "cycle": 31, "valid": True,
+                "tool_call": {"name": "idle", "args": {}}, "result": {"ok": True, "error": None},
+                "events": [{"kind": "item", "t": 1731000020.5, "detail": {"item_entry": 2589, "count": 2}},
+                           {"kind": "money", "t": 1731000020.6, "detail": {"copper": 1234}}]}
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(idle) + "\n")
+        tailer = activity.AuditTailer(self.store, self.base)
+        tailer.scan_once()
+        rows = self.store.recent("Jev1", 50)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in rows),
+                         [("agent", "item"), ("agent", "level"), ("agent", "money"), ("audit", "loot")])
+        self.assertEqual(self.store.count("Jev1"), 4)
+        activity.AuditTailer(self.store, self.base).scan_once()  # a rebuilt tailer reads it again
+        self.assertEqual(self.store.count("Jev1"), 4)
+
     def test_activity_names_a_turn_in_from_the_db_before_the_poll_saw_it(self):
-        # Through Activity, as the app wires it: the fake DB answers the quest-name query only.
-        class Cursor:
-            def execute(self, sql):
-                self.rows = [(8325, "Defias Pillager")] if "quest_template" in sql else []
-
-            def fetchall(self):
-                return self.rows
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-        class Conn:
-            def cursor(self):
-                return Cursor()
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
+        # Through Activity, as the app wires it: the DB answers the quest-name query only.
         with open(V3_QUEST, encoding="utf-8") as f:
             line = f.readline()
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(line)
-        act = activity.Activity(self.store, connect=Conn, audit_dir=self.base)
+        act = activity.Activity(self.store, connect=_NamesDb({"quest_template": [(8325, "Defias Pillager")]}),
+                                audit_dir=self.base)
         act.audit.scan_once()
         quests = [r for r in self.store.recent("Jev1", 50) if r["kind"] == "quest"]
         self.assertEqual([(r["source"], r["text"]) for r in quests],
                          [("agent", "Turned in quest: Defias Pillager")])
+
+    def test_activity_names_an_item_pickup_from_the_db_before_the_poll_saw_it(self):
+        line = {"schema": 3, "ts": 1731000021.0, "agent": "Jev1", "cycle": 32, "valid": True,
+                "tool_call": {"name": "idle", "args": {}}, "result": {"ok": True, "error": None},
+                "events": [{"kind": "item", "t": 1731000020.5, "detail": {"item_entry": 2589, "count": 2}}]}
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+        act = activity.Activity(self.store, connect=_NamesDb({"item_template": [(2589, "Linen Cloth", 5)]}),
+                                audit_dir=self.base)
+        act.audit.scan_once()
+        items = [r for r in self.store.recent("Jev1", 50) if r["kind"] == "item"]
+        self.assertEqual([(r["source"], r["text"]) for r in items], [("agent", "Got Linen Cloth ×2")])
 
     def test_a_malformed_events_field_is_counted_and_the_decision_still_stored(self):
         with open(self.path, "a", encoding="utf-8") as f:

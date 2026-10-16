@@ -28,11 +28,19 @@ def handle_loot_money_notify(ctx, payload: bytes):
     if ctx.state.loot is not None:
         ctx.state.loot["coins"] = 0
     ctx.state.record_event("loot_money", **data)
+    # ADR 0020 (#390). SMSG_LOOT_MONEY_NOTIFY goes to the receiver only: LootHandler.cpp:191 (each near
+    # group member, its own share) and :202 (the looter alone). A share of 0 is no money.
+    if data["money"] > 0:
+        ctx.state.emit_activity("money", copper=data["money"])
 
 
 def handle_item_push_result(ctx, payload: bytes):
     data = lo.parse_item_push_result(payload)
     ctx.state.record_event("item_received", **data)
+    # ADR 0020 (#390). SendNewItem writes the player's guid first (Player.cpp:13862) and, when broadcast,
+    # sends the packet to the whole group (:13875): a push for another player is not the agent's item.
+    if data["player_guid"] == ctx.state.player_guid:
+        ctx.state.emit_activity("item", item_entry=data["entry"], count=data["count"])
 
 
 def handle_inventory_change_failure(ctx, payload: bytes):
