@@ -30,7 +30,7 @@ import urllib.request
 import activity_schema
 # event() is the feed-event shape every source builds; the agent-written events are ADR 0020 (#390).
 from feed_events import (agent_events, agent_fact_stored, audit_event, drop_db_fact, event, fact_key,
-                         skipped_agent_events)
+                         fact_text, skipped_agent_events)
 
 log = logging.getLogger("wowmap.activity")
 
@@ -81,10 +81,10 @@ class ActivityStore:
                     continue
                 cur = self._conn.execute(
                     "INSERT OR IGNORE INTO events (uid, character, t, kind, text, detail_json,"
-                    " source, inferred) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " source, inferred, fact_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (e["uid"], e["character"], e["t"], e["kind"], e["text"],
                      json.dumps(e.get("detail") or {}, default=str), e["source"],
-                     1 if e.get("inferred") else 0))
+                     1 if e.get("inferred") else 0, fact_text(key)))
                 if cur.rowcount:
                     added += 1
                     touched.add(e["character"])

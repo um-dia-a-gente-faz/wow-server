@@ -33,6 +33,7 @@ VERSIONS = (0, *range(1, activity_schema.SCHEMA_VERSION + 1))
 PINS = {
     0: "a5d9db65b9d2eee07a1dd6dc5583a7f40c9f6f0c550e071f68d665eac415d02e",
     1: "e3a3be70b578c367b1618959dd3df29c96cea4c2b3f20b95f3b17ecea53c843a",
+    2: "bae655c2b9eb420f7c707c5775c560beede591d5576241eb32343d76b51d4e1d",
 }
 # A row both fixtures hold: a uid that is in the fixture, re-added by the test (add() must refuse it).
 DUP_UID = "db:1:101.000:money:"
@@ -61,8 +62,28 @@ _ROWS_V1 = {
     ],
 }
 _META_V1 = {"chat_last_id": "2490369:5120"}
-ROWS = {0: _ROWS_V1, 1: _ROWS_V1}
-META = {0: _META_V1, 1: _META_V1}
+# v2 adds the fact_key column (ADR 0020 slice 3, #806) and one agent turn-in, which carries its key.
+_ROWS_V2 = {
+    "Rubens": [*_ROWS_V1["Rubens"][:2],
+               {"t": 104.0, "kind": "quest", "text": "Turned in quest: Quest 8325", "detail": {"quest_id": 8325},
+                "source": "agent", "inferred": False},
+               *_ROWS_V1["Rubens"][2:]],
+    "Thrall": _ROWS_V1["Thrall"],
+}
+ROWS = {0: _ROWS_V1, 1: _ROWS_V1, 2: _ROWS_V2}
+META = {0: _META_V1, 1: _META_V1, 2: _META_V1}
+# fact_key of every event row, by uid: what the column holds after the step-2 backfill (v0, v1) or as
+# the store wrote it (v2). A row with no fact (another kind, or a hand-in) holds NULL.
+_FACT_KEYS_V1 = {
+    "db:1:100.000:level:": "11",
+    "db:1:101.000:sell:-2589": None,
+    "db:1:101.000:money:": None,
+    "chat:2490369:5120": None,
+    "audit:Thrall:4:103.5": None,
+    "db:1:105.000:item:+159": None,
+    "db:1:105.000:item:+2589": None,
+}
+_FACT_KEYS_V2 = {**_FACT_KEYS_V1, "agent:Rubens:quest:104.000:8325": "8325"}
 
 
 def _digest(path: pathlib.Path) -> str:
@@ -97,6 +118,14 @@ def _fixture_problems(path: str, n: int) -> list[str]:
         problems.append(f"v{n}.sql holds {rows} rows, the test lists {_listed(n)}: list every row of the "
                         f"fixture in ROWS / META (and at least one row)")
     return problems
+
+
+def _fact_keys(path: str) -> dict:
+    conn = sqlite3.connect(path)
+    try:
+        return dict(conn.execute("SELECT uid, fact_key FROM events"))
+    finally:
+        conn.close()
 
 
 def _shape(path: str):
@@ -191,3 +220,40 @@ class ActivityMigrationTests(unittest.TestCase):
                 self.assertEqual(store.recent("Rubens", 1)[0]["text"], "new write")
                 store._conn.close()
                 self.assertEqual(_user_version(path), activity_schema.SCHEMA_VERSION)
+
+    def test_fact_key_is_backfilled_from_the_detail_of_old_rows(self):
+        for n, expected in ((0, _FACT_KEYS_V1), (1, _FACT_KEYS_V1), (2, _FACT_KEYS_V2)):
+            with self.subTest(fixture=f"v{n}.sql"):
+                path = self._from_fixture(n)
+                self._open(path)
+                self.assertEqual(_fact_keys(path), expected)
+
+    def test_an_old_agent_row_gets_its_fact_key_when_migrated(self):
+        # A v1 store holding agent rows (written before the column existed): the step backfills `to`
+        # for a level and `quest_id` for a quest.
+        path = self._from_fixture(1)
+        conn = sqlite3.connect(path)
+        conn.execute("INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)"
+                     " VALUES ('agent:Rubens:level:200.000:12', 'Rubens', 200.0, 'level', 'Reached level 12',"
+                     " '{\"to\": 12}', 'agent', 0)")
+        conn.execute("INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)"
+                     " VALUES ('agent:Rubens:quest:201.000:8325', 'Rubens', 201.0, 'quest',"
+                     " 'Turned in quest: Quest 8325', '{\"quest_id\": 8325}', 'agent', 0)")
+        conn.commit()
+        conn.close()
+        self._open(path)
+        keys = _fact_keys(path)
+        self.assertEqual(keys["agent:Rubens:level:200.000:12"], "12")
+        self.assertEqual(keys["agent:Rubens:quest:201.000:8325"], "8325")
+
+    def test_a_backfilled_db_level_row_is_deleted_by_an_agent_level_within_the_window(self):
+        for n in (0, 1):
+            with self.subTest(fixture=f"v{n}.sql"):
+                path = self._from_fixture(n)
+                store = self._open(path)
+                agent = activity.agent_events({"events": [{"kind": "level", "t": 100.5, "detail": {"to": 11}}]},
+                                              "Rubens")
+                self.assertEqual(store.add(agent), 1)
+                self.assertEqual([(r["source"], r["text"]) for r in store.recent("Rubens", 50)
+                                  if r["kind"] == "level"], [("agent", "Reached level 11")])
+                self.assertNotIn("db:1:100.000:level:", _fact_keys(path))

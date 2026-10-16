@@ -21,9 +21,17 @@ CREATE INDEX IF NOT EXISTS events_character_t ON events (character, t);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 # Forward-only: append a step, never edit one that has shipped. A step may only add
-# (CREATE TABLE, ADD COLUMN, CREATE INDEX). Step 1 is the schema every file had before
-# user_version was set, so a version-0 file with those tables migrates by doing nothing.
-MIGRATIONS = (SCHEMA,)
+# (CREATE TABLE, ADD COLUMN, CREATE INDEX) and fill what it added. Step 1 is the schema every file had
+# before user_version was set, so a version-0 file with those tables migrates by doing nothing.
+# Step 2 (ADR 0020 slice 3, #806): fact_key, the fact of a level or quest row as text, backfilled from
+# the detail JSON the rows were written with. The paths are frozen here, not read from feed_events.
+MIGRATIONS = (SCHEMA, """
+ALTER TABLE events ADD COLUMN fact_key TEXT;
+CREATE INDEX IF NOT EXISTS events_fact ON events (character, kind, fact_key);
+UPDATE events SET fact_key = json_extract(detail_json, '$.to') WHERE kind = 'level' AND source IN ('db', 'agent');
+UPDATE events SET fact_key = json_extract(detail_json, '$.quest') WHERE kind = 'quest' AND source = 'db';
+UPDATE events SET fact_key = json_extract(detail_json, '$.quest_id') WHERE kind = 'quest' AND source = 'agent';
+""")
 SCHEMA_VERSION = len(MIGRATIONS)
 
 
