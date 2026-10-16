@@ -152,7 +152,7 @@ def normalize_relay_event(raw, at=None):
 class ChatFeed:
     def __init__(self, capacity, public_kinds, dedupe_window_s=DEDUPE_WINDOW_S,
                  clock=time.monotonic, max_clients=MAX_CLIENTS,
-                 max_clients_per_ip=MAX_CLIENTS_PER_IP):
+                 max_clients_per_ip=MAX_CLIENTS_PER_IP, start_ms=None):
         self.events = collections.deque(maxlen=capacity)
         self.public_kinds = public_kinds
         self.max_clients = max_clients
@@ -171,6 +171,8 @@ class ChatFeed:
         self._clock = clock
         self._recent = collections.OrderedDict()  # dedupe_key -> clock()
         self._sequence = 0
+        # gh-757: relay ids are `relay:<start_ms>:<n>`; the start tells restarts apart.
+        self._start_ms = int(time.time() * 1000) if start_ms is None else int(start_ms)
         self.condition = threading.Condition()
 
     def publish_line(self, line, event_id):
@@ -204,7 +206,7 @@ class ChatFeed:
             if event["kind"] not in self.public_kinds:
                 return "filtered"
             self._sequence += 1
-            event["id"] = f"relay:{self._sequence}"
+            event["id"] = f"relay:{self._start_ms}:{self._sequence}"
             self.ingested += 1
             self._append(event)
             return "published"

@@ -245,6 +245,18 @@ class ChatTests(unittest.TestCase):
         self.assertEqual(chan["text"], '[General] "hi"')
         self.assertIsNone(activity.chat_event({**base, "kind": "say"}, frozenset({"rubens"})))
 
+    def test_relayed_line_after_a_restart_is_stored_even_with_n_zero(self):
+        # gh-757: chat-feed restarted (new start in the id), so n=0 again must not be dropped
+        store = activity.ActivityStore(":memory:")
+        follower = activity.ChatFollower(store, "http://x:9500")
+        follower.handle("relay:1000:0", json.dumps({"id": "relay:1000:0", "kind": "say",
+                                                    "sender": "Rubens", "text": "before"}))
+        follower.handle("relay:2000:0", json.dumps({"id": "relay:2000:0", "kind": "say",
+                                                    "sender": "Rubens", "text": "after"}))
+        self.assertEqual(sorted(e["text"] for e in store.recent("Rubens")),
+                         ['Said "after"', 'Said "before"'])
+        self.assertEqual(store.get_meta(follower.META_KEY), "relay:2000:0")
+
     def test_sse_parsing_and_resume_id(self):
         lines = [": keepalive", "", "id: 9:1", "event: chat",
                  'data: {"id":"9:1","kind":"say","sender":"Rubens","text":"a"}', "",
