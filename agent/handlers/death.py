@@ -37,8 +37,10 @@ def check_death_transition(ctx, me):
     if me.health == 0:
         if ctx.state._was_alive:
             ctx.state._was_alive = False
-            ctx.state.record_event("death", killer_guid=infer_killer_guid(ctx),
-                                position=ctx.state.player_position)
+            killer = infer_killer_guid(ctx)
+            ctx.state.record_event("death", killer_guid=killer, position=ctx.state.player_position)
+            # ADR 0020 (#390, slice 5): the killer is a guess, named as one (infer_killer_guid).
+            ctx.state.emit_activity("death", killer_guess=killer)
     elif me.health > 0:
         ctx.state._was_alive = True
         if not me.is_ghost():

@@ -26,12 +26,18 @@ ACTION_KINDS = {
 }
 # ADR 0020 (#390): the activity kinds an agent may put in its audit line's `events`, with the detail
 # keys each must carry as ints. Mirrors agent/audit_schema.py ACTIVITY_KINDS; any other kind is skipped.
-AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",)}
+AGENT_EVENT_KINDS = {
+    "level": ("to",),
+    "quest": ("quest_id",),
+    "kill": (),   # typed by _detail_ok: victim_entry or victim_guid
+    "death": (),  # typed by _detail_ok: killer_guess, an int or None
+}
 # ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
 # writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key reads these, and the
 # store writes its value to the fact_key column; the migration backfills the same paths (activity_schema.py,
 # frozen). A kind not listed here has no fact and no de-duplication.
-FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"}}
+FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"},
+             "kill": None, "death": None}  # no fact, so no de-duplication (ADR 0020 slice 5), so no de-duplication (ADR 0020 slice 5)
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -89,11 +95,35 @@ def audit_event(rec, agent):
                  f"audit:{agent}:{rec.get('cycle')}:{rec['ts']}", detail)
 
 
+def _detail_ok(kind, detail):
+    """The typed detail of an agent event. A kill names its victim by entry (a creature) or by guid; a
+    death names its killer as a guess, or None when unknown (ADR 0020 slice 5)."""
+    if kind == "kill":
+        return _is_int(detail.get("victim_entry")) or _is_int(detail.get("victim_guid"))
+    if kind == "death":
+        return detail.get("killer_guess") is None or _is_int(detail.get("killer_guess"))
+    return all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind])
+
+
 def _agent_text(kind, detail, quest_title):
     # The same sentence the DB path writes for the fact (activity.py diff_snapshots).
     if kind == "level":
         return f"Reached level {detail['to']}"
+    if kind == "kill":
+        return (f"Killed creature {detail['victim_entry']}" if _is_int(detail.get("victim_entry"))
+                else "Killed an unknown target")
+    if kind == "death":
+        return "Died"
     return f"Turned in quest: {quest_title(detail['quest_id'])}"
+
+
+def _uid_key(kind, detail):
+    """What tells two agent events of one kind and millisecond apart in the uid (ADR 0020 rule 4)."""
+    if kind == "kill":  # _detail_ok has checked that one of the two is an int
+        return detail["victim_entry"] if _is_int(detail.get("victim_entry")) else detail["victim_guid"]
+    if kind == "death":
+        return detail.get("killer_guess")
+    return detail[_fact_name(kind, "agent")]
 
 
 def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}"):
@@ -110,9 +140,9 @@ def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}"):
         kind, detail, t = e.get("kind"), e.get("detail"), e.get("t")
         if not isinstance(kind, str) or kind not in AGENT_EVENT_KINDS or not isinstance(detail, dict):
             continue
-        if not _is_number(t) or not all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind]):
+        if not _is_number(t) or not _detail_ok(kind, detail):
             continue
-        key = detail[FACT_KEYS[kind]["agent"]]
+        key = _uid_key(kind, detail)
         out.append(event(agent, t, kind, _agent_text(kind, detail, quest_title), "agent",
                          f"agent:{agent}:{kind}:{t:.3f}:{key}", detail))
     return out
@@ -128,7 +158,7 @@ def skipped_agent_events(rec, kept):
 
 def _fact_name(kind, source):
     """The detail key holding the fact of `kind` in an event of `source`, or None."""
-    return FACT_KEYS.get(kind, {}).get(source)
+    return (FACT_KEYS.get(kind) or {}).get(source)
 
 
 def fact_key(e):

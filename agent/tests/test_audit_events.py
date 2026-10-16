@@ -1,4 +1,5 @@
-"""ADR 0020 slices 1 and 2 (#390): the level-up and the quest turn-in as activity events on the decision audit line."""
+"""ADR 0020 slices 1, 2 and 5 (#390): the level-up, the quest turn-in, the kill and the death as activity
+events on the decision audit line."""
 import collections
 import glob
 import json
@@ -13,8 +14,10 @@ from types import SimpleNamespace
 
 from agent import think
 from agent.audit import AuditLogger
+from agent.handlers import death as death_handlers
 from agent.handlers import quests as quest_handlers
 from agent.handlers import spells as spell_handlers
+from agent.runloop import run_think_loop
 from agent.state import ACTIVITY_MAXLEN, GameState
 from agent.tests.builders import FakeSession, quest_complete_payload
 from agent.tests.test_think import FakeLLMClient
@@ -25,6 +28,20 @@ def _levelup_payload(level):
     return (struct.pack('<II', level, 20)
             + struct.pack('<7I', *range(7))
             + struct.pack('<5I', *range(5)))
+
+
+ME = 0x42                                      # a player guid: high 16 bits 0x0000
+OTHER_PLAYER = 0x43
+CREATURE = 0xF130 << 48 | 1234 << 24 | 0x99    # a Unit guid, entry 1234 in bits 24..47 (ObjectGuid.h, 92127cd)
+KILLER_GUESS = 0xF130 << 48 | 77 << 24 | 0x5   # a creature, guessed as the killer of a death
+
+
+def _party_kill(killer, victim):
+    return struct.pack('<QQ', killer, victim)
+
+
+def _me(health):
+    return SimpleNamespace(health=health, is_ghost=lambda: False)
 
 
 def _record(audit, events=None):
@@ -50,6 +67,15 @@ class ActivityOffTests(unittest.TestCase):
         ctx = SimpleNamespace(state=GameState())
         quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 30))
         self.assertEqual(ctx.state.drain_activity(), [])
+
+    def test_off_kill_and_death_buffer_nothing(self):
+        state = GameState()
+        state.player_guid = ME
+        ctx = SimpleNamespace(state=state)
+        spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
+        death_handlers.check_death_transition(ctx, _me(100))
+        death_handlers.check_death_transition(ctx, _me(0))
+        self.assertEqual(state.drain_activity(), [])
 
     def test_off_records_no_events_key(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,6 +116,64 @@ class ActivityOnTests(unittest.TestCase):
             line = _only_line(tmp)
         self.assertEqual(line["events"], [{"kind": "quest", "t": events[0]["t"], "detail": {"quest_id": 8325}}])
 
+    def test_own_kill_makes_one_kill_event_with_the_victim_entry(self):
+        self.state.player_guid = ME
+        ctx = SimpleNamespace(state=self.state)
+        before = time.time()
+        spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
+        events = self.state.drain_activity()
+        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("kill", {"victim_entry": 1234})])
+        self.assertLess(abs(events[0]["t"] - before), 60)  # wall clock
+        self.assertEqual([e["kind"] for e in self.state.events], ["party_kill"])  # the handler's own work
+        with tempfile.TemporaryDirectory() as tmp:
+            _record(AuditLogger("Jev1", base_dir=tmp), events=events)
+            line = _only_line(tmp)
+        self.assertEqual(line["events"], [{"kind": "kill", "t": events[0]["t"], "detail": {"victim_entry": 1234}}])
+
+    def test_a_party_members_kill_is_not_this_agents_kill(self):
+        # SMSG_PARTYKILLLOG reaches the whole group (Unit::Kill, Unit.cpp:10968): only the killer's is ours.
+        self.state.player_guid = ME
+        spell_handlers.handle_party_kill_log(SimpleNamespace(state=self.state), _party_kill(OTHER_PLAYER, CREATURE))
+        self.assertEqual(self.state.drain_activity(), [])
+
+    def test_a_kill_of_a_non_creature_carries_the_victim_guid(self):
+        self.state.player_guid = ME
+        spell_handlers.handle_party_kill_log(SimpleNamespace(state=self.state), _party_kill(ME, OTHER_PLAYER))
+        self.assertEqual([(e["kind"], e["detail"]) for e in self.state.drain_activity()],
+                         [("kill", {"victim_guid": OTHER_PLAYER})])
+
+    def test_two_kills_of_the_same_entry_are_both_buffered(self):
+        self.state.player_guid = ME
+        ctx = SimpleNamespace(state=self.state)
+        spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
+        spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
+        self.assertEqual([e["detail"] for e in self.state.drain_activity()], [{"victim_entry": 1234}] * 2)
+
+    def test_death_makes_one_death_event_with_the_guessed_killer(self):
+        self.state.player_guid = ME
+        ctx = SimpleNamespace(state=self.state)
+        death_handlers.check_death_transition(ctx, _me(100))
+        self.state.record_event("attacker_state_update", attacker_guid=KILLER_GUESS, victim_guid=ME)
+        death_handlers.check_death_transition(ctx, _me(0))
+        self.assertEqual([(e["kind"], e["detail"]) for e in self.state.drain_activity()],
+                         [("death", {"killer_guess": KILLER_GUESS})])
+
+    def test_death_with_no_known_killer_guesses_none(self):
+        self.state.player_guid = ME
+        ctx = SimpleNamespace(state=self.state)
+        death_handlers.check_death_transition(ctx, _me(100))
+        death_handlers.check_death_transition(ctx, _me(0))
+        self.assertEqual([e["detail"] for e in self.state.drain_activity()], [{"killer_guess": None}])
+
+    def test_kill_death_and_level_drain_in_order(self):
+        self.state.player_guid = ME
+        ctx = SimpleNamespace(state=self.state)
+        spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
+        death_handlers.check_death_transition(ctx, _me(100))
+        death_handlers.check_death_transition(ctx, _me(0))
+        spell_handlers.handle_levelup_info(ctx, _levelup_payload(5))
+        self.assertEqual([e["kind"] for e in self.state.drain_activity()], ["kill", "death", "level"])
+
     def test_think_cycle_writes_the_buffered_event_on_its_line(self):
         sess = FakeSession(player_position=(530, 0.0, 0.0, 0.0, 0.0))
         sess.activity_events = True
@@ -121,6 +205,22 @@ class ActivityOnTests(unittest.TestCase):
         self.state.emit_activity("level", to=2)
         self.assertEqual(len(self.state.drain_activity()), 1)
         self.assertEqual(self.state.drain_activity(), [])
+
+
+class CleanStopTests(unittest.TestCase):
+    """ADR 0020 slice 5, decided: a clean stop writes no final line for what is still buffered."""
+
+    def test_a_clean_stop_writes_no_line_for_buffered_events(self):
+        sess = FakeSession(player_position=(530, 0.0, 0.0, 0.0, 0.0))
+        sess.activity_events = True
+        sess.emit_activity("death", killer_guess=None)
+        stop = threading.Event()
+        stop.set()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(run_think_loop(sess, None, None, time.monotonic(),
+                                            audit_logger=AuditLogger("Jev1", base_dir=tmp), stop=stop))
+            self.assertEqual(glob.glob(os.path.join(tmp, "Jev1", "*.jsonl")), [])
+        self.assertEqual([e["kind"] for e in sess.drain_activity()], ["death"])  # never written, never drained
 
 
 class ConcurrentDrainTests(unittest.TestCase):

@@ -14,6 +14,7 @@ function sourceLabel(source) {
 window.ActivityFeed = (() => {
   const ICONS = {combat: '⚔', loot: '✚', item: '✚', item_lost: '✖', sell: '$', buy: '$',
     money: '¤', trade: '⇄', chat: '“', whisper: '“', level: '▲', zone: '➜', quest: '!',
+    kill: '✕', death: '☠',
     mail: '✉', move: '→', group: '◆', session: '●', action: '•'};
   function el(tag, cls, text) {
     const e = document.createElement(tag);

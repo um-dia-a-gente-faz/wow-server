@@ -205,7 +205,8 @@ character, and an agent's event replaces the DB event for the same fact.**
    poll) and never an `agent` row:
    - the write raises `OSError` after the drain;
    - the process dies, or stops cleanly: `run_think_loop` (`agent/runloop.py`) returns without a
-     last `record`. **There is no final flush in the first slice**; slice 5 decides again;
+     last `record`. **There is no final flush** (the first slice left it open; slice 5 decided it, see
+     "Slice 5" below);
    - the session reconnects: the buffer is an attribute of the `WoWSession`, and `connect_and_login`
      builds a new one per login;
    - more than 20 events fall between two lines (the period is the larger of
@@ -370,11 +371,46 @@ level in the feed. `SMSG_LEVELUP_INFO` goes to the leveller only: TrinityCore 3.
    `loot_money` and quest rewards; both need slice 3.
 5. `kill` and `death`: new kinds in the feed, no DB equivalent, so no de-duplication. `death` carries
    `killer_guid` only as the agent's guess and names it so. Neither has a `db` row behind it, so
-   the buffer size and a final flush on a clean stop are decided again here.
+   the buffer size and a final flush on a clean stop are decided again here. **Decided, see "Slice 5"
+   below (#808).**
 6. Turn the setting on for the whole fleet, an owner decision (open question 1).
 7. When no `db` row has been superseded for N days for agent characters, stop the DB poller's covered
    kinds for characters in `Activity.agent_names`. Not before.
 8. If the delay of B matters: move the list to its own file (option C), a new ADR 0018 row.
+
+## Slice 5 (#808): `kill`, `death`, the buffer and the flush
+
+Decided in the slice that adds the two kinds. Nothing here changes a wire parse.
+
+- **`kill`** comes from `handle_party_kill_log`. `Unit::Kill` (TrinityCore 92127cd,
+  `src/server/game/Entities/Unit/Unit.cpp:10958`) builds SMSG_PARTYKILLLOG with the killer's guid and
+  the victim's, and sends it to the killer alone when it is not grouped (`:10986`) and to the whole
+  group otherwise (`:10968`). A party member's kill therefore reaches this agent, so the agent emits
+  only when the killer is its own character. SMSG_LOG_XPGAIN is not used: it is the XP line
+  (`Player::SendLogXPGain`, `Player.cpp:2366`), not the credit. Detail: `victim_entry` when the victim
+  is a Unit, whose guid holds its entry in bits 24..47 (`ObjectGuid::GetEntry`, `ObjectGuid.h`,
+  92127cd); otherwise `victim_guid`.
+- **`death`** comes from `check_death_transition`, on the same health > 0 to 0 transition that writes
+  the `death` game event. Detail: `killer_guess`, the guess `infer_killer_guid` makes, or `None`.
+- **Typing in wowmap.** A kill needs an int `victim_entry` or an int `victim_guid`; a death needs an
+  int `killer_guess` or none. Anything else is skipped and counted, as slice 1 does. A kill's text is
+  `Killed creature <entry>` or `Killed an unknown target`; a death's is `Died`.
+- **No de-duplication.** `FACT_KEYS` holds `None` for both kinds, so `fact_key` is `None`, and the store
+  keeps every row. Two kills of one entry within `FACT_WINDOW_S` are two rows. The uid is
+  `agent:<agent>:kill:<t>:<entry or guid>` and `agent:<agent>:death:<t>:<killer_guess>`.
+- **Buffer size: unchanged, 20 (`ACTIVITY_MAXLEN`).** A think cycle is at least
+  `AGENT_THINK_INTERVAL_S` (3.0 s) and includes an LLM call, so more than 20 kills and deaths of one
+  character inside one cycle would need more than one kill a second for the whole cycle. The bound
+  is kept as it is, and a burst past it drops the oldest event with no count, as slice 1 does. Ceiling:
+  a long brain call with a fast grind can overflow it. Upgrade path: count the drops in
+  `Activity.status()` when that shows up in a live feed.
+- **Final flush on a clean stop: none.** `run_think_loop` returns without writing a line when `stop`
+  is set, and the events still buffered are lost. Writing them would need a line with no decision: an
+  audit line is one decision (`tool_call`, `result`, `valid`), and the readers (replay, metrics, the
+  brain's restore) take it as one. A shutdown-only shape is a second contract for a few events. A
+  final line with an `idle` decision would record a decision that was never made. The cost is the
+  one in rule 5: a `kill` or `death` that happens just before a stop is not in the feed. Test:
+  `CleanStopTests` in `agent/tests/test_audit_events.py`.
 
 ## Found outside this ADR's scope
 

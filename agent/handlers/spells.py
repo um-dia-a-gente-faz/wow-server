@@ -64,8 +64,22 @@ def handle_spell_non_melee_damage_log(ctx, payload: bytes):
     ctx.state.record_event("spell_damage", **sp.parse_spell_non_melee_damage_log(payload))
 
 
+UNIT_HIGH_GUID = 0xF130  # HighGuid::Unit (ObjectGuid.h, 92127cd): the guid's top 16 bits
+
+
 def handle_party_kill_log(ctx, payload: bytes):
-    ctx.state.record_event("party_kill", **sp.parse_party_kill_log(payload))
+    kill = sp.parse_party_kill_log(payload)
+    ctx.state.record_event("party_kill", **kill)
+    # ADR 0020 (#390, slice 5). Unit::Kill (Unit.cpp:10958) sends SMSG_PARTYKILLLOG to the killer alone
+    # when ungrouped (:10986) and to the whole group otherwise (:10968), so a party member's kill reaches
+    # this agent too: only a kill whose killer is this character is its kill credit. A creature's guid
+    # holds its entry in bits 24..47 (ObjectGuid::GetEntry, ObjectGuid.h, 92127cd).
+    if kill["killer_guid"] == ctx.state.player_guid:
+        victim = kill["victim_guid"]
+        if victim >> 48 == UNIT_HIGH_GUID:
+            ctx.state.emit_activity("kill", victim_entry=(victim >> 24) & 0xFFFFFF)
+        else:
+            ctx.state.emit_activity("kill", victim_guid=victim)
 
 
 def handle_log_xp_gain(ctx, payload: bytes):
