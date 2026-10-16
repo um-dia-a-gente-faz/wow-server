@@ -1,4 +1,4 @@
-"""Ties server/VERSION (#398) to docker-compose.yml and tdb/README.md.
+"""Ties SERVER_VERSION (#398) to docker-compose.yml and tdb/README.md.
 
 The worldserver image, the TDB release and its filename are recorded in three places. This
 suite fails when they disagree: the `image:` of the trinitycore-wowserver service must equal the
@@ -10,7 +10,7 @@ import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-VERSION = ROOT / "server" / "VERSION"
+VERSION = ROOT / "SERVER_VERSION"
 COMPOSE = ROOT / "docker-compose.yml"
 TDB_README = ROOT / "tdb" / "README.md"
 
@@ -38,7 +38,7 @@ class ServerVersionTest(unittest.TestCase):
         self.values = parse_version(VERSION.read_text(encoding="utf-8"))
 
     def test_only_known_keys(self):
-        self.assertTrue(self.values, "server/VERSION has no keys")
+        self.assertTrue(self.values, "SERVER_VERSION has no keys")
         self.assertLessEqual(set(self.values), KNOWN_KEYS)
 
     def test_image_matches_compose_worldserver(self):

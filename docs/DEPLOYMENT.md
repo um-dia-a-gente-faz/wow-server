@@ -28,7 +28,7 @@ exposed to the internet.
 - **`--cpu host` on the Proxmox VM** — see below, this is not optional
 - WoW 3.3.5a client (build 12340), extrators read `Data/*.MPQ`
 - The TDB full world SQL matching the binary (`tdb/README.md`)
-- The pinned worldserver image, TDB release and TrinityCore revision are recorded in `server/VERSION` (checked against `docker-compose.yml` and `tdb/README.md` by `tools/tests/test_server_version.py`, #398)
+- The pinned worldserver image, TDB release and TrinityCore revision are recorded in `SERVER_VERSION` (checked against `docker-compose.yml` and `tdb/README.md` by `tools/tests/test_server_version.py`, #398)
 
 ## Deploy
 
