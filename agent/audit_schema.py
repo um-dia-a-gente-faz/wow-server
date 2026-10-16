@@ -24,10 +24,12 @@ SCHEMA_VERSION = 3  # 2: prompt_id (#395); 3: events (ADR 0020, #390)
 ACTIVITY_KINDS: dict[str, tuple[str, ...]] = {
     "level": ("to",),
     "quest": ("quest_id",),
+    "item": ("item_entry", "count"),
+    "money": ("copper",),
     # kill: victim_guid (int), and victim_entry (int) too when the victim is a Unit. death: killer_guess,
     # the killer as the agent guesses it (int), or None. Typed in wowmap (feed_events.agent_events).
-    "kill": (),
-    "death": (),
+    "kill": ("victim_guid",),
+    "death": ("killer_guess",),
 }
 
 
