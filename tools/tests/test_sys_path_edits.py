@@ -30,6 +30,7 @@ NO_EDITS = {
     "tools/tests/test_roster_accounts.py": _SYS_PATH + ".insert(0, str(ROOT))",
     "tools/agent-runner/tests/test_runner.py": _SYS_PATH + ".insert(0, str(REPO))",
     "tools/worldknowledge/tests/test_build.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/tests/test_scenario_samples.py": _SYS_PATH + ".insert(0, str(ROOT))",
 }
 
 

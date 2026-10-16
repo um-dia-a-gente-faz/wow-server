@@ -5,15 +5,9 @@ SCENARIOS table is read (never edited) to check the wiring.
 """
 import contextlib
 import io
-import pathlib
-import sys
 import unittest
 from collections import namedtuple
 from unittest import mock
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from agent.brain import Brain  # noqa: E402
 from agent.tests import test_brain_scenarios as tbs  # noqa: E402
