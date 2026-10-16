@@ -19,7 +19,7 @@ from . import packets as pk
 from .router import Context, PacketRouter
 from .metrics import swallowed
 from .state import GameState
-from .transport import Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
+from .transport import StreamDesync, Transport, _ErrorThrottle  # noqa: F401  (_ErrorThrottle re-exported for tests)
 from .wire import PacketTruncated, Reader
 
 from .handlers import build_router
@@ -432,6 +432,12 @@ class WoWSession(Transport, GameState):
                     last_ping = now
                 self.router.tick(self.ctx)
                 continue
+            except StreamDesync as e:
+                # #793: the RC4 header stream is out of step. The session ends like any drop;
+                # the supervisor reads desync_reason to record why (ADR 0015).
+                self.desync_reason = e.reason
+                log.warning("world stream desynced, ending this session: %s", e.reason)
+                return
             except ConnectionError as e:
                 log.warning("world connection lost: %s", e)
                 return

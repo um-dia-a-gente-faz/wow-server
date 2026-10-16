@@ -72,6 +72,7 @@ def connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
     therefore a brand-new WorldState (agent.perception), from scratch."""
     sess, chars = authenticate_and_login(cfg, log)
     sess.chat_relay = chat_relay  # UM-47 — attached before login so nothing is missed
+    sess.activity_events = getattr(cfg, "activity_events", False)  # ADR 0020 (#390), before login
     choice = resolve_character(cfg, chars)
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
     sess.agent_names = frozenset(n.strip().lower() for n in config_get('AGENT_ROSTER').split(',') if n.strip())  # #318

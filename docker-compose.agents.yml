@@ -69,6 +69,9 @@ x-agent: &agent-defaults
     # #749 (ADR 0016): the world bundle file, e.g. /data/world/world.sqlite3. Empty = off: no file is
     # touched. The owner sets it in .env on the agent host; the directory below is always mounted.
     AGENT_WORLD_BUNDLE: ${AGENT_WORLD_BUNDLE:-}
+    # ADR 0020 (#390): 1 = the agent writes its activity events (level-ups) on its audit line; wowmap
+    # then shows them as the agent's own. Empty = off (agent/config.py); the default is off.
+    AGENT_ACTIVITY_EVENTS: ${AGENT_ACTIVITY_EVENTS:-}
     # UM-50 read-only observability API (agent/http_api.py). Each service
     # sets its own AGENT_HTTP_PORT and publishes it (9601-9625). Bound to
     # all interfaces inside the container so the published port works; the

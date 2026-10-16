@@ -172,3 +172,4 @@ enum Opcodes : uint16
     SMSG_GM_MESSAGECHAT                             = 0x3B3,
     CMSG_KEEP_ALIVE                                 = 0x407,
     SMSG_CLIENTCACHE_VERSION                        = 0x4AB,
+    NUM_MSG_TYPES                                   = 0x51F

@@ -28,19 +28,15 @@ import time
 import urllib.request
 
 import activity_schema
+# event() is the feed-event shape every source builds; the agent-written events are ADR 0020 (#390).
+from feed_events import agent_events, agent_fact_stored, drop_db_fact, event, fact_key, skipped_agent_events
 
 log = logging.getLogger("wowmap.activity")
 
 KEEP_PER_CHARACTER = 500
-MAX_TEXT = 300
 PUBLIC_CHAT_KINDS = frozenset({"say", "yell", "channel"})
 # Decisions that mean "do nothing this cycle" -- not worth a feed row.
 SKIPPED_ACTIONS = frozenset({"idle"})
-
-
-def _clip(text, limit=MAX_TEXT):
-    text = str(text if text is not None else "")
-    return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
 def money_text(copper):
@@ -52,11 +48,6 @@ def money_text(copper):
         parts.append(f"{s}s")
     parts.append(f"{cp}c")
     return " ".join(parts)
-
-
-def event(character, t, kind, text, source, uid, detail=None, inferred=False):
-    return {"character": character, "t": float(t), "kind": kind, "text": _clip(text),
-            "detail": detail or {}, "source": source, "inferred": bool(inferred), "uid": uid}
 
 
 # ---------------------------------------------------------------- store
@@ -78,13 +69,17 @@ class ActivityStore:
             raise
 
     def add(self, events):
-        """Insert events (duplicates by `uid` are ignored); returns how many were new."""
+        """Insert events (duplicates by `uid` are ignored); returns how many were new. An agent's fact
+        replaces the database's (ADR 0020, feed_events.agent_fact_stored / drop_db_fact)."""
         if not events:
             return 0
         added = 0
         with self._lock:
             touched = set()
             for e in events:
+                key = fact_key(e)
+                if key is not None and e["source"] == "db" and agent_fact_stored(self._conn, key):
+                    continue
                 cur = self._conn.execute(
                     "INSERT OR IGNORE INTO events (uid, character, t, kind, text, detail_json,"
                     " source, inferred) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -94,6 +89,8 @@ class ActivityStore:
                 if cur.rowcount:
                     added += 1
                     touched.add(e["character"])
+                if key is not None and e["source"] == "agent":
+                    drop_db_fact(self._conn, key)
             for character in touched:
                 self._conn.execute(
                     "DELETE FROM events WHERE character = ? AND id NOT IN ("
@@ -519,6 +516,7 @@ class AuditTailer:
         self._offsets = {}   # (dev, ino) -> byte offset of the next unread line
         self._since = {}     # agent -> newest ts already stored
         self.agents = frozenset()
+        self.skipped_agent_events = 0  # ADR 0020: `events` elements agent_events() refused, this process
 
     def agent_names(self):
         try:
@@ -576,8 +574,9 @@ class AuditTailer:
                     if not isinstance(rec, dict) or (rec.get("ts") or 0) <= since:
                         continue
                     e = audit_event(rec, agent)
-                    if e:
-                        events.append(e)
+                    kept = agent_events(rec, agent)  # ADR 0020: the agent's own events on this line
+                    self.skipped_agent_events += skipped_agent_events(rec, kept)
+                    events.extend(kept + ([e] if e else []))
             if events:
                 self.store.add(events)
                 self._since[agent] = max(since, max(e["t"] for e in events))
@@ -619,6 +618,7 @@ class Activity:
             "chat": None if self.chat is None else {"ok": self.chat.connected,
                                                      "error": self.chat.last_error},
             "audit": None if self.audit is None else {"ok": os.path.isdir(self.audit.base_dir)},
+            "agent": None if self.audit is None else {"skipped": self.audit.skipped_agent_events},
         }
 
     def feed(self, character, limit=50):

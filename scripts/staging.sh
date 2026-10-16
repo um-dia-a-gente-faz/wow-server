@@ -8,7 +8,9 @@
 #   down       stop it; volumes (the database) stay
 #   reset      down -v, then up (and realmport): a fresh database
 #   config     print the resolved compose file; works without .env.staging (uses the example)
-#   realmport  set auth.realmlist port to 8086 (the port clients are told). Idempotent.
+#   realmport  set auth.realmlist port to 8086 (the port clients are told) and read it back. Retries
+#              STAGING_REALMPORT_TRIES (default 30) times, STAGING_REALMPORT_SLEEP (default 10) s
+#              apart; exit 3 if it never reads 8086. Idempotent.
 # Refuses (exit 2) when a container named trinitycore-wowserver exists here, i.e. this is the
 # game VM, and, except for config, when .env.staging is missing. Not called by scripts/deploy.sh;
 # never run in CI.
@@ -43,9 +45,23 @@ dc() { docker compose --project-directory . --env-file "$envfile" -f staging/doc
 
 # The realm list advertises auth.realmlist.port, which defaults to 8085 and which the image's
 # bootstrap does not set. WorldServerPort only moves the worldserver's listen port, so the row is
-# set here. The password is expanded inside the container: it never reaches this script's output.
+# set here, and read back. The row can be missing for a while after `up` (the bootstrap writes it), so
+# each try runs the UPDATE again (a no-op until the row exists) and reads the port back, until it is
+# 8086. The password is expanded inside the container: it never reaches this script's output.
 realmport() {
-  docker exec staging-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "UPDATE auth.realmlist SET port=8086 WHERE id=1"'
+  local tries="${STAGING_REALMPORT_TRIES:-30}" wait_s="${STAGING_REALMPORT_SLEEP:-10}" i port
+  for ((i = 1; i <= tries; i++)); do
+    docker exec staging-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "UPDATE auth.realmlist SET port=8086 WHERE id=1"' >/dev/null 2>&1 || true
+    port=$(docker exec staging-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B -e "SELECT port FROM auth.realmlist WHERE id=1"' 2>/dev/null) || port=""
+    if [ "$port" = 8086 ]; then
+      echo "realmport: auth.realmlist.port is 8086 for realm 1"
+      return 0
+    fi
+    echo "realmport: try $i of $tries: realm 1 is not at 8086 yet (read '${port:-no row}')" >&2
+    if [ "$i" -lt "$tries" ]; then sleep "$wait_s"; fi
+  done
+  echo "error: realm 1 never read port 8086 after $tries tries: is the worldserver bootstrap done? (docker logs staging-worldserver)" >&2
+  return 3
 }
 
 case "$cmd" in

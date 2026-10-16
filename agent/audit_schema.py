@@ -17,7 +17,11 @@ from dataclasses import dataclass, field, fields
 
 from .model import Snapshot
 
-SCHEMA_VERSION = 2  # 2: prompt_id (#395)
+SCHEMA_VERSION = 3  # 2: prompt_id (#395); 3: events (ADR 0020, #390)
+
+# Activity-event kinds an agent may put in `events`, with the detail keys each must carry (ADR 0020).
+# wowmap reads only the kinds it knows (tools/wowmap/wowmap/activity.py, agent_events).
+ACTIVITY_KINDS: dict[str, tuple[str, ...]] = {"level": ("to",)}
 
 
 @dataclass
@@ -53,6 +57,9 @@ class AuditRecord:
                                              # ({"id", "effect", "reason"})
     prompt_id: str | None = None             # agent.prompts ids of the prompt sent, e.g.
                                              # "system@1a2b3c4d+goal.level_up@5e6f7a8b"; None when no LLM request
+    # ADR 0020 (#390): activity events since the last decision, {"kind", "t", "detail"} each (see ACTIVITY_KINDS).
+    # Written only when not empty, so a line with no event has no `events` key.
+    events: list = field(default_factory=list)
     # Full snapshot: on every FULL_SNAPSHOT_EVERY'th cycle or when the cycle was invalid/failed; otherwise
     # omitted (hash + this cycle's record are enough to tell "did perception change").
     snapshot: Snapshot | dict | None = None
@@ -88,6 +95,9 @@ class AuditRecord:
             "history_notes": self.history_notes,
             "prompt_id": self.prompt_id,
         }
+        events = list(self.events)  # a copy: the live-deque probe (#692) reads .events only through list()
+        if events:
+            d["events"] = events
         if self.snapshot is not None:
             d["snapshot"] = self.snapshot
         d.update(self.extra)

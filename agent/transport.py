@@ -8,6 +8,7 @@ import threading
 import time
 
 from . import packets as pk
+from .opcodes import NUM_MSG_TYPES
 
 log = logging.getLogger("agent.session")
 
@@ -18,6 +19,25 @@ MID_PACKET_TIMEOUT_S = 30.0
 ERROR_LOG_INTERVAL_S = 30.0
 # Unwanted packet bodies are read and dropped in chunks of this size (#570).
 DISCARD_CHUNK_B = 0x10000
+# #793: desync bounds, checked on the in-world path (the one that passes keep).
+# MAX_SANE_PACKET: TrinityCore has no cap on a send (WorldSocket.cpp WorldSocket::Update sends a
+# packet larger than _sendBufferSize whole), and ServerPktHeader.h (3.3.5 @ 92127cd) allows up to
+# 0x7FFFFF. UpdateData.cpp BuildPacket compresses every update above 100 B into
+# SMSG_COMPRESSED_UPDATE_OBJECT, so the large packets (achievements, spells, guild roster) are
+# tens to a few hundred KB. 1 MiB is above that, and far under the 8 MiB a desynced RC4 header hits.
+MAX_SANE_PACKET = 0x100000
+# Opcodes.h (3.3.5 @ 92127cd) enum Opcodes ends at NUM_MSG_TYPES = 0x51F, and ServerPktHeader.h writes
+# the opcode unchanged, so a healthy server never sends an opcode >= NUM_MSG_TYPES. A desynced header
+# is uniform 16-bit: out of range 98 % of the time. An in-range opcode, known or not, resets the run.
+DESYNC_OUT_OF_RANGE_LIMIT = 16
+
+
+class StreamDesync(ConnectionError):
+    """The world stream no longer parses as packets (#793). The session ends with `reason`."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class _ErrorThrottle:
@@ -49,6 +69,8 @@ class Transport:
         self.dump_packets_dir = dump_packets_dir
         self._lock = threading.Lock()
         self._error_throttle = _ErrorThrottle(ERROR_LOG_INTERVAL_S)
+        self._out_of_range_run = 0  # consecutive opcodes >= NUM_MSG_TYPES on the in-world path (#793)
+        self.desync_reason = ""   # set when the in-world stream is declared desynced (#793)
 
     def send_packet(self, opcode: int, payload: bytes = b'') -> None:
         """The public name (agent.ports.PacketSink), which actions and reflexes use."""
@@ -82,6 +104,8 @@ class Transport:
                 hdr += extra
             size, opcode = pk.parse_server_header(hdr)
             plen = size - 2
+            if keep is not None:
+                self._check_stream(size, opcode)  # raises before any body read
             if keep is not None and not keep(opcode):
                 self._discard(plen)
                 payload = b''
@@ -93,18 +117,31 @@ class Transport:
             self.sock.settimeout(prev_timeout)
         return opcode, payload
 
+    def _check_stream(self, size: int, opcode: int):
+        """#793: a declared size over MAX_SANE_PACKET, or DESYNC_OUT_OF_RANGE_LIMIT opcodes >=
+        NUM_MSG_TYPES in a row, means the RC4 header stream is out of step. Raises StreamDesync."""
+        if size > MAX_SANE_PACKET:
+            raise StreamDesync(f"declared size {size} B above {MAX_SANE_PACKET} B, opcode {opcode:#06x}")
+        if opcode < NUM_MSG_TYPES:
+            self._out_of_range_run = 0
+            return
+        self._out_of_range_run += 1
+        if self._out_of_range_run >= DESYNC_OUT_OF_RANGE_LIMIT:
+            raise StreamDesync(f"{self._out_of_range_run} opcodes >= {NUM_MSG_TYPES:#x} in a row, "
+                               f"last {opcode:#06x}")
+
     def _discard(self, n: int):
         while n > 0:
             n -= len(self._rr(min(n, DISCARD_CHUNK_B)))
 
     def _rr(self, n: int) -> bytes:
-        buf = b''
+        buf = bytearray()  # += on bytes copies the whole buffer per chunk: quadratic (#793)
         while len(buf) < n:
             c = self.sock.recv(n - len(buf))
             if not c:
                 raise ConnectionError("disconnected")
             buf += c
-        return buf
+        return bytes(buf)
 
     def _dump_packet(self, opcode: int, data: bytes):
         if not self.dump_packets_dir:

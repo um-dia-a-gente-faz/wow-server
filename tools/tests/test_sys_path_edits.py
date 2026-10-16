@@ -18,7 +18,8 @@ WALK = ("agent", "agents", "scripts", "tools", "monitoring", "exporters", "docs"
 PATTERN = re.compile(r"sys\.path(\.insert|\.append|\.pop|\.extend|\[[^]]*\] *=| *\+=| *=[^=])|site\.addsitedir")
 
 PRODUCTION_EDITS = 22
-TEST_EDITS = 67
+# wowmap tests need the wowmap/ insert until slice 8 (ADR 0019); +1 for test_activity_agent_events.py (#390)
+TEST_EDITS = 68
 # Edits that stay on purpose. Named here, counted in the constants above.
 ALLOWED = {"scripts/early_failures.py"}
 # The root insert removed from each test file (ADR 0019, first slice). Built from parts so this file
