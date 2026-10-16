@@ -1089,7 +1089,8 @@ class ActionLogTest(RunnerCase):
                 return e.code
 
     def assert_line(self, line, **want):
-        self.assertEqual(set(line), {"ts", "who", "action", "target", "result", "status"})
+        self.assertEqual(set(line), {"schema", "ts", "who", "action", "target", "result", "status"})
+        self.assertEqual(line["schema"], 1)  # ACTION_LOG_SCHEMA, ADR 0018
         self.assertRegex(line["ts"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertEqual({k: line[k] for k in want}, want)
 

@@ -16,6 +16,7 @@ LOG = logging.getLogger("agent-runner")
 
 MAX_BODY_BYTES = 4096
 OPERATOR_RE = re.compile(r"[^0-9A-Za-z.:_\-]")
+ACTION_LOG_SCHEMA = 1  # #458: the version of each action-log line (ADR 0018 record log)
 ACTION_LOG_WARNED = set()  # #458: each unwritable action-log path is reported once
 
 
@@ -52,8 +53,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.config.action_log
         if path is None:
             return
-        line = {"ts": iso(time.time()), "who": who, "action": action, "target": target,
-                "result": result, "status": status}
+        line = {"schema": ACTION_LOG_SCHEMA, "ts": iso(time.time()), "who": who, "action": action,
+                "target": target, "result": result, "status": status}
         text = scrub(json.dumps(line), extra=(self.config.token,)) + "\n"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
