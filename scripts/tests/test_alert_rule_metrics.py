@@ -173,6 +173,58 @@ class JevBudgetSkipIsNotAnError(unittest.TestCase):
                       rule_exprs()["JevErrorRatioHigh"])
 
 
+def runbook_section(text: str, name: str) -> str:
+    """The body of the `## <name>` section of the runbook, up to the next `## ` heading."""
+    m = re.search(rf"^## {re.escape(name)}\n(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
+    return m.group(1) if m else ""
+
+
+class ReconnectLoopWording(unittest.TestCase):
+    """#548 item 1: one wait in 15 m reads about 1.017 under increase(), so the rule means one or more."""
+
+    RULE = {rule["alert"]: rule for rule in parse_rules(RULES.read_text())}["AgentReconnectLoop"]
+    PHRASE = "one or more reconnect waits in 15 m"
+
+    def test_the_rule_waits_thirty_minutes(self):
+        self.assertEqual(self.RULE["for"], "30m")
+
+    def test_description_says_one_or_more_waits(self):
+        self.assertIn(self.PHRASE, self.RULE["description"])
+        self.assertNotIn("at least 2", self.RULE["description"])
+
+    def test_summary_says_one_or_more_waits(self):
+        self.assertIn(self.PHRASE, self.RULE["summary"])
+
+    def test_runbook_says_one_or_more_waits(self):
+        section = runbook_section(RUNBOOK.read_text(), "AgentReconnectLoop")
+        self.assertIn("one or more reconnect waits in 15 minutes", section)
+        self.assertNotIn("at least 2", section)
+        self.assertNotIn("25 minutes", section)
+
+    def test_rule_file_explains_the_increase_extrapolation(self):
+        self.assertRegex(RULES.read_text(), r"# [^\n]*increase\(\)[^\n]*1\.017")
+
+
+class JevCostBurnGuardIsPerAgent(unittest.TestCase):
+    """#548 item 2: the reset guard is per agent, so one agent's counter drop silences only its share."""
+
+    EXPR = rule_exprs()["JevCostBurnHigh"]
+
+    def test_guard_is_inside_the_sum_per_series(self):
+        self.assertRegex(self.EXPR, re.escape(
+            "sum(increase(wow_agent_jev_cost_usd_total[1h]) and resets(wow_agent_jev_cost_usd_total[1h]) == 0) > 1"))
+        self.assertEqual(self.EXPR.count("resets("), 1)
+
+    def test_fleet_wide_guard_is_gone(self):
+        self.assertNotIn("sum(resets(", self.EXPR)
+
+    def test_runbook_describes_the_per_agent_guard(self):
+        section = runbook_section(RUNBOOK.read_text(), "JevCostBurnHigh")
+        self.assertIn("and resets(", section)
+        self.assertIn("one agent", section)
+        self.assertNotIn("sum(resets(", section)
+
+
 RULE_SHAPE = re.compile(
     r"sum by \(agent\) \(rate\(wow_agent_jev_errors_total(?:\{([^{}]*)\})?\[15m\]\)\) / "
     r"sum by \(agent\) \(rate\(wow_agent_jev_calls_total\[15m\]\)\) (>=?|<=?|==|!=) (\d+(?:\.\d+)?)"
