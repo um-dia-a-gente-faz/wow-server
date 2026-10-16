@@ -156,8 +156,8 @@ class Agent:
         Only the recv thread calls it after login, so a plain int is enough."""
         real = sess._recv_packet
 
-        def counted():
-            r = real()
+        def counted(*args, **kwargs):
+            r = real(*args, **kwargs)
             self.packets += 1
             return r
         sess._recv_packet = counted

@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.staging.example
 
 # WoW client files (user-supplied, ~17 GB, never committed)
 client/

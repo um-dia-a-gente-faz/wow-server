@@ -56,4 +56,4 @@ the compose file sets only the values that differ from the defaults.
 ## Not done yet
 
 - The Console v4 backend (#323) joins when it exists.
-- `smoke` is not a CI job yet; it needs Docker-in-CI and a decision on its cost.
+- `dev-smoke` (`.github/workflows/dev-smoke.yml`) runs `smoke` on every push to `main` (#481).
