@@ -2,7 +2,7 @@
 and error handling. Unit tests mock urlopen (pattern: test_llm.py); the
 FakeDecisionsServer tests run the real urllib path against an in-process
 HTTP server that answers in the documented Decisions API shape (a stand-in
-until tools/jev-mock, UM-96, exists)."""
+until tools/jev_mock, UM-96, exists)."""
 
 import http.server
 import io

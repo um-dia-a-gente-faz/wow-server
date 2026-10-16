@@ -187,7 +187,7 @@ class Config:
     # Direct provider (#164): JEV_BASE_URL, JEV_API_KEY and JEV_MODEL are all
     # explicit; there is no default endpoint and no OPENROUTER_API_KEY fallback.
     # Jev is the think step's brain (UM-101, agent/brain.py) only when
-    # AGENT_BRAIN=jev and JEV_BASE_URL is set (tools/jev-mock needs no key);
+    # AGENT_BRAIN=jev and JEV_BASE_URL is set (tools/jev_mock needs no key);
     # a key without a base URL is off.
     # JEV_PROVIDER=openrouter opts back in to OpenRouter's default base URL and
     # its OPENROUTER_API_KEY. `or`, not a default: compose passes unset vars as "".

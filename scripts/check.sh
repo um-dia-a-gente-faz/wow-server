@@ -15,7 +15,7 @@ SUITES=(
   "dbc|python3 scripts/early_failures.py discover -s tools/dbc/tests"
   "world_mock|python3 scripts/early_failures.py discover -s tools/world_mock/tests"
   "loadtest|python3 scripts/early_failures.py discover -s tools/loadtest/tests"
-  "jev-mock|python3 scripts/early_failures.py discover -s tools/jev-mock/tests"
+  "jev_mock|python3 scripts/early_failures.py discover -s tools/jev_mock/tests"
   "agent-runner|python3 scripts/early_failures.py discover -s tools/agent-runner/tests"
   "fleet-limits|python3 scripts/early_failures.py discover -s tools/fleet-limits/tests"
   "wow-exporter|python3 scripts/early_failures.py discover -s exporters/wow-exporter/tests"

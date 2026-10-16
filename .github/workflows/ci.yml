@@ -113,13 +113,13 @@ jobs:
       # real HTTP. Real Jev (paid, needs a key) never runs in CI.
       - name: JevClient against a running jev-mock
         run: |
-          PORT=8090 python tools/jev-mock/server.py &
+          PORT=8090 python tools/jev_mock/server.py &
           for i in $(seq 1 20); do
             curl -fsS http://127.0.0.1:8090/healthz && break
             sleep 0.5
           done
           JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha \
-            python -m unittest -v tools/jev-mock/tests/test_external.py
+            python -m unittest -v tools/jev_mock/tests/test_external.py
 
   lint-typing:
     name: lint + types (ruff, mypy)

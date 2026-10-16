@@ -19,7 +19,7 @@ PATTERN = re.compile(r"sys\.path(\.insert|\.append|\.pop|\.extend|\[[^]]*\] *=| 
 
 PRODUCTION_EDITS = 22
 # wowmap tests need the wowmap/ insert until slice 8 (ADR 0019); +1 for test_activity_agent_events.py (#390)
-TEST_EDITS = 68
+TEST_EDITS = 67
 # Edits that stay on purpose. Named here, counted in the constants above.
 ALLOWED = {"scripts/early_failures.py"}
 # The root insert removed from each test file (ADR 0019, first slice). Built from parts so this file
@@ -34,8 +34,10 @@ NO_EDITS = {
     "tools/tests/test_scenario_samples.py": _SYS_PATH + ".insert(0, str(ROOT))",
     # ADR 0019, slice 2 (#796): proved by the suite run from the root and, for test_external,
     # by the CI step that runs `python -m unittest` from the root with JEV_MOCK_URL set.
-    "tools/jev-mock/tests/test_external.py": _SYS_PATH + ".insert(0, str(REPO))",
-    "tools/jev-mock/tests/test_server.py": _SYS_PATH + ".insert(0, str(REPO))",
+    "tools/jev_mock/tests/test_external.py": _SYS_PATH + ".insert(0, str(REPO))",
+    # ADR 0019, slice 4 (#798): imports tools.jev_mock.server from the checkout root. A file holds one
+    # key, so the slice-2 REPO insert above is a second fragment of this entry.
+    "tools/jev_mock/tests/test_server.py": (_SYS_PATH + ".insert(0, str(ROOT))", _SYS_PATH + ".insert(0, str(REPO))"),
     "tools/wowmap/tests/test_agent_proxy.py": _SYS_PATH + ".insert(0, str(pathlib.Path(__file__).resolve().parents[3]))",
     "scripts/tests/test_action_catalog.py": _SYS_PATH + ".insert(0, str(ROOT))",
     "tools/world_mock/tests/test_sigterm.py": _SYS_PATH + ".insert(0, str(ROOT))",
@@ -86,10 +88,11 @@ def check_counts(counts):
 
 
 def check_no_edits(root):
-    """A removed root insert must not come back in its file."""
+    """A removed root insert must not come back in its file. A value is one fragment or a tuple of them."""
     root = pathlib.Path(root)
     return [f"{rel}: the removed `{fragment}` is back (ADR 0019)"
-            for rel, fragment in sorted(NO_EDITS.items())
+            for rel, value in sorted(NO_EDITS.items())
+            for fragment in ((value,) if isinstance(value, str) else value)
             if (root / rel).is_file() and fragment in (root / rel).read_text(encoding="utf-8")]
 
 
@@ -149,6 +152,13 @@ class SysPathRatchetTests(unittest.TestCase):
     def test_no_edits_catches_a_returned_insert(self):
         with tempfile.TemporaryDirectory() as tmp:
             _write(tmp, "tools/tests/test_roster_accounts.py", [FIXTURE_EDIT.replace("x", "str(ROOT)")])
+            failures = check_no_edits(tmp)
+        self.assertEqual(len(failures), 1)
+
+    def test_no_edits_catches_a_returned_slice_two_insert(self):
+        # ADR 0019 slice 2 (#796): the REPO insert in jev_mock's test_server.py is guarded too.
+        with tempfile.TemporaryDirectory() as tmp:
+            _write(tmp, "tools/jev_mock/tests/test_server.py", [FIXTURE_EDIT.replace("x", "str(REPO)")])
             failures = check_no_edits(tmp)
         self.assertEqual(len(failures), 1)
 

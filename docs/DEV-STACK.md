@@ -17,7 +17,7 @@ deploy workflow.
 | Service | What | Port (127.0.0.1) |
 |---|---|---|
 | `world-mock` | `tools/world_mock`, fake auth + world server | internal |
-| `jev-mock` | `tools/jev-mock`, random Decisions API | internal |
+| `jev-mock` | `tools/jev_mock`, random Decisions API | internal |
 | `agent` | one real agent (Luaprata) on `AGENT_BRAIN=jev` against the two mocks | 9601 |
 | `chat-feed` | `tools/chat-feed` on an empty log | 9500 |
 | `database` | MySQL seeded from `dev/fixture/*.sql` | internal |

@@ -33,7 +33,7 @@
   "extract_maps": 3,
   "fit_transform": 2,
   "fog": 2,
-  "loadtest.soak": 1,
+  "loadtest.soak": 0,
   "models": 1,
   "overlays": 1,
   "state": 1,

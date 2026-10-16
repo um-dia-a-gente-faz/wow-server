@@ -51,7 +51,7 @@ PACKAGE_EDGES = {
     "common": set(),
     "dbc": set(),
     "fleet-limits": set(),
-    "jev-mock": set(),
+    "jev_mock": set(),
     "pathfinder": set(),
     "loadtest": {"world_mock"},          # soak.py: `from tools.world_mock import server` (not in the #387 list; pinned, see PR)
     "wowmap": {"common", "dbc"},         # state.py, app.py, character.py
@@ -70,7 +70,7 @@ AGENT_EDGES = {
     "common": set(),
     "dbc": set(),
     "fleet-limits": set(),
-    "jev-mock": set(),
+    "jev_mock": set(),
     "pathfinder": set(),
     "loadtest": {"handles", "items", "login", "names", "npc", "quests", "runloop", "supervisor"},
     "wowmap": set(),

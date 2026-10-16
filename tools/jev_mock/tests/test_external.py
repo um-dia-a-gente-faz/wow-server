@@ -1,4 +1,4 @@
-"""UM-100: drive the real agent.jev.JevClient against a jev-mock running as its
+"""UM-100: drive the real agent.jev.JevClient against a jev_mock running as its
 own process (CI starts one; so does `docker compose --profile jev-mock`).
 Unlike test_server.py, nothing here is in-process with the mock. Skipped unless
 JEV_MOCK_URL names it, e.g. JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha."""
@@ -14,7 +14,7 @@ CANDIDATES = [{"action": "attack", "params": {"guid": 0x1234}},
               {"action": "rest", "params": {}}]
 
 
-@unittest.skipUnless(URL, "JEV_MOCK_URL not set; start tools/jev-mock/server.py and point it there")
+@unittest.skipUnless(URL, "JEV_MOCK_URL not set; start tools/jev_mock/server.py and point it there")
 class ExternalMockTest(unittest.TestCase):
     def test_jev_client_round_trip(self):
         client = jev.JevClient(URL, "typesafe/jev-1.13")
