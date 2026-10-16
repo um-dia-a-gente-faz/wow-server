@@ -18,13 +18,14 @@ groups:
           summary: "No agent /metrics target is up"
           description: "Job wow_agent_http has no healthy target for 15m: wrong host or port in prometheus-agents-scrape.yml, or the whole fleet is stopped."
           runbook: "docs/RUNBOOK-ALERTS.md#agentmetricsscrapedown"
+      # increase() extrapolates to the window edges: one wait in 15m reads about 1.017 at a 15s scrape, so "> 1" means one or more.
       - alert: AgentReconnectLoop
         expr: sum by (agent) (increase(wow_agent_reconnect_attempts_total[15m])) > 1
-        for: 25m
+        for: 30m
         labels: {severity: warning}
         annotations:
-          summary: "{{ $labels.agent }} keeps reconnecting"
-          description: "At least 2 reconnect waits in 15m, for 25m: the agent has not held a session for 25m. Query wow_agent_reconnect_attempts_total by reason to see why."
+          summary: "{{ $labels.agent }} keeps reconnecting: one or more reconnect waits in 15 m"
+          description: "The agent logged one or more reconnect waits in 15 m, for 30 m: the agent has not held a session for 30 m. Query wow_agent_reconnect_attempts_total by reason to see why."
           runbook: "docs/RUNBOOK-ALERTS.md#agentreconnectloop"
       - alert: AgentReconnectStorm
         expr: sum(increase(wow_agent_reconnect_attempts_total[10m])) > 50
@@ -67,12 +68,12 @@ groups:
           description: "Failed Jev Decisions calls are over 20% of successful ones for 15m. Query wow_agent_jev_errors_total by status for the class (http_4xx, http_5xx, error); budget_exhausted is a skip, not an error, and is not counted here. A fleet_blocked cycle (the fleet limits file, ADR 0017) is not counted as an error or a call and does not feed this alert."
           runbook: "docs/RUNBOOK-ALERTS.md#jeverrorratiohigh"
       - alert: JevCostBurnHigh
-        expr: sum(increase(wow_agent_jev_cost_usd_total[1h])) > 1 and sum(resets(wow_agent_jev_cost_usd_total[1h])) == 0
+        expr: sum(increase(wow_agent_jev_cost_usd_total[1h]) and resets(wow_agent_jev_cost_usd_total[1h]) == 0) > 1
         for: 15m
         labels: {severity: warning}
         annotations:
           summary: "Jev spend is above 1 USD in the last hour"
-          description: "The fleet's reported Jev cost rose by more than 1 USD in 1h, for 15m, with no counter reset in that hour. The rule is silent for up to 1h after an audit retention drop. The cost is the provider's report in retained audit rows, not a bill."
+          description: "The fleet's reported Jev cost rose by more than 1 USD in 1h, for 15m, counting only agents with no counter reset in that hour. An agent whose audit retention drop falls in the last 1h is left out for that hour; the others still count. The cost is the provider's report in retained audit rows, not a bill."
           runbook: "docs/RUNBOOK-ALERTS.md#jevcostburnhigh"
   - name: wow-backup
     rules:

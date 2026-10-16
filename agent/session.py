@@ -416,7 +416,7 @@ class WoWSession(Transport, GameState):
         while self._running:
             self.sock.settimeout(0.5)
             try:
-                opcode, payload = self._recv_packet()
+                opcode, payload = self._recv_packet(self.router.handles)
             except TimeoutError:
                 now = time.monotonic()
                 if now - last_rx > DEAD_SOCKET_TIMEOUT_S:

@@ -97,3 +97,17 @@ Reading it:
 - **Threads**: no leak in any run (1 before, 1 after; 78 at peak = 3 per agent plus the mock).
 - **Tracebacks** (runs 2 and 4): one `ConnectionResetError` on `sendall` during login. The supervisor
   retried; four reconnects per run, recovery p50 ~0.3 s. Every agent came back.
+
+## Stream soak run 2 after #570
+
+Run 2 of the table above repeated on the PR branch `bugfix/gh-570-soak-rss-growth`, 2026-10-16,
+same host and Python, no `tracemalloc`. Only change: the recv loop no longer buffers the body of a
+packet nobody handles (see #570). "End" is the last sample with the agents still connected (t ~ 590 s).
+
+| run | stream_pool | faults | container_items (min / max) | RSS kB 60 s / end (peak) | threads before -> end | reconnects | login errors |
+|---|---|---|---|---|---|---|---|
+| 2 before #570 | 50 | README spec | 3234 / 3234 | 44268 / 117940 (121988) | 1 -> 1 | 4 | 1 |
+| 2 after #570 | 50 | README spec | 1285 / 3725 (flat at ~3213) | 45880 / 48084 (48096) | 1 -> 1 | 4 | 4 `connect failed` (the reset) |
+
+The end is 4.8 % above the 60 s value (limit 20 %). Ticks p50 100.1 ms, p99 103.0 ms; recv 50 packets/s per agent.
+The `before` row is from the table above, not rerun.

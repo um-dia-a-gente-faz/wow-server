@@ -35,6 +35,8 @@ Environment:
     AGENT_RUNNER_RUNTIME_DIR  runtime state, outside the checkout
                               (default /opt/wow-agent-runtime)
     AGENT_RUNNER_AUDIT_DIR    agents' audit dir (default <runtime>/audit)
+    AGENT_RUNNER_ACTION_LOG   append-only JSONL of every mutating request, one line each
+                              (default <runtime>/actions.jsonl; empty string = off, #458)
     AGENT_RUNNER_PROJECT      compose project name (default wow-agents)
     AGENT_RUNNER_CHARACTER_URL  wowmap, for level/zone/playtime
                               (default http://192.168.1.64:9400)
@@ -91,6 +93,8 @@ class Config:
         self.repo = Path(env.get("AGENT_RUNNER_REPO", REPO_DEFAULT))
         self.runtime_dir = Path(env.get("AGENT_RUNNER_RUNTIME_DIR", DEFAULT_RUNTIME_DIR))
         self.audit_dir = Path(env.get("AGENT_RUNNER_AUDIT_DIR", str(self.runtime_dir / "audit")))
+        action_log = env.get("AGENT_RUNNER_ACTION_LOG", str(self.runtime_dir / "actions.jsonl"))
+        self.action_log = Path(action_log) if action_log else None  # #458: "" turns it off
         self.project = env.get("AGENT_RUNNER_PROJECT", DEFAULT_PROJECT)
         self.character_url = env.get("AGENT_RUNNER_CHARACTER_URL", DEFAULT_CHARACTER_URL).rstrip("/")
         self.agent_host = env.get("AGENT_RUNNER_AGENT_HOST", "127.0.0.1")
