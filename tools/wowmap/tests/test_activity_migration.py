@@ -246,6 +246,23 @@ class ActivityMigrationTests(unittest.TestCase):
         self.assertEqual(keys["agent:Rubens:level:200.000:12"], "12")
         self.assertEqual(keys["agent:Rubens:quest:201.000:8325"], "8325")
 
+    def test_an_old_db_quest_row_gets_its_fact_key_and_an_agent_turn_in_replaces_it(self):
+        # A v1 store holding a db quest row (written before the column existed): the step backfills
+        # `quest` from the db detail. An agent turn-in of the same quest within the window replaces it.
+        path = self._from_fixture(1)
+        conn = sqlite3.connect(path)
+        conn.execute("INSERT INTO events (uid, character, t, kind, text, detail_json, source, inferred)"
+                     " VALUES ('db:1:200.000:quest:8325', 'Rubens', 200.0, 'quest',"
+                     " 'Turned in quest: Defias Pillager', '{\"quest\": 8325}', 'db', 0)")
+        conn.commit()
+        conn.close()
+        store = self._open(path)
+        self.assertEqual(_fact_keys(path)["db:1:200.000:quest:8325"], "8325")
+        agent = activity.agent_events({"events": [{"kind": "quest", "t": 201.0, "detail": {"quest_id": 8325}}]},
+                                      "Rubens")
+        self.assertEqual(store.add(agent), 1)
+        self.assertNotIn("db:1:200.000:quest:8325", _fact_keys(path))
+
     def test_a_backfilled_db_level_row_is_deleted_by_an_agent_level_within_the_window(self):
         for n in (0, 1):
             with self.subTest(fixture=f"v{n}.sql"):
