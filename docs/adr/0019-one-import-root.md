@@ -395,7 +395,7 @@ stacks), `tools/dbc/tests` and `exporters/` (monitoring), `scripts/tests` (owner
    `tools/tests/test_pathfinder_navmesh.py:15` (#766), minus the four removed; the guarded
    two-line insert is one matching line). The test fails when a count is above its constant, with the message "a new sys.path
    edit; import from the checkout root instead (ADR 0019). A legitimate edit (a `-I` subprocess,
-   rule 3): raise the constant in the same PR with the reason in a comment, or name the file in
+   rule 3): raise the constant in the same PR with the reason in a comment, and name the file in
    `ALLOWED`", and fails when it is below, with "lower the constant" (a ratchet that cannot be
    forgotten).
 3. `NO_EDITS` maps each of the four files above to the removed root insert; the test fails if
@@ -412,7 +412,7 @@ stacks), `tools/dbc/tests` and `exporters/` (monitoring), `scripts/tests` (owner
 
 | Item | Test or command |
 |---|---|
-| The four files have no `sys.path` edit, their suites pass from the root, and ruff finds no unused `import sys` (F401) | `scripts/check.sh test-tools-arch test-agent-runner test-worldknowledge lint` |
+| The four files no longer insert the checkout root, their suites pass from the root, and ruff finds no unused `import sys` (F401) | `scripts/check.sh test-tools-arch test-agent-runner test-worldknowledge lint` |
 | A new edit anywhere fails the new test | `test_sys_path_edits`: a temporary copy of the tree walk with one added line (the test exposes `count_edits(root)`), expects the over-count failure |
 | The count is a ratchet in both directions | same module: a count one below the constant fails |
 | The four files are checked | same module, `NO_EDITS` |
