@@ -61,7 +61,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),
     _s("AGENT_PERSONA", str, "", "persona text for the LLM"),
     _s("AGENT_MISSION", str, DEFAULT_MISSION, "what the agent is for: level_to_cap | explore | make_gold (#314); "
-       "set per service from the roster by compose (a separate issue)", compose=False),
+       "set per service by compose from that agent's roster entry (#762; a .env value never reaches the containers)",
+       compose=False),
     _s("AGENT_CHANNELS", str, "General", 'chat channels to join after login, comma-separated; "none" disables'),
     _s("AGENT_BRAIN", str, "llm", "llm | jev (#161)"),
     _s("AGENT_BRAIN_FALLBACK", str, "none", "none | llm: only with AGENT_BRAIN=jev"),

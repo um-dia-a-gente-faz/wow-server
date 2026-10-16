@@ -149,7 +149,23 @@ class ComposeLibraryTests(unittest.TestCase):
         _, services = self._split(compose.render(rows))
         self.assertEqual(re.findall(r'(?m)^      AGENT_ROSTER: "(.*)"$', services["agent-farstrider"]), ["Luaprata,Farstrider"])
 
-    def test_derive_reads_only_the_five_keys(self):
+    # ── #314 / #762: AGENT_MISSION, each service's own roster mission (agent/config compose=False) ──
+    def test_every_agent_service_gets_its_own_roster_mission(self):
+        _, services = self._split(compose.render(entries()))
+        agent_blocks = {k: v for k, v in services.items() if k != "jev-mock"}
+        self.assertEqual(len(agent_blocks), len(entries()))
+        for name, block in agent_blocks.items():   # the committed roster has no mission: all level_to_cap
+            self.assertEqual(re.findall(r'(?m)^      AGENT_MISSION: (.*)$', block), ["level_to_cap"], name)
+
+    def test_a_two_agent_roster_gives_each_service_its_own_mission(self):
+        two = [{"account": "AGENT01", "character": "Luaprata", "mission": "explore"},
+               {"account": "AGENT02", "character": "Farstrider"}]
+        _, services = self._split(compose.render(two))
+        self.assertEqual(re.findall(r'(?m)^      AGENT_MISSION: (.*)$', services["agent-luaprata"]), ["explore"])
+        self.assertEqual(re.findall(r'(?m)^      AGENT_MISSION: (.*)$', services["agent-farstrider"]), ["level_to_cap"])
+        self.assertNotIn("AGENT_MISSION", services["jev-mock"])
+
+    def test_derive_reads_only_the_known_keys(self):
         agent = compose.derive(25, {"account": "AGENT26", "character": "Delta", "retired": True, "level": 1})
         self.assertEqual((agent.index, agent.api_port, agent.service, agent.container, agent.profiles),
                          (26, roster.FIRST_PORT + 25, "agent-delta", "wow-agent-delta", ("raid",)))

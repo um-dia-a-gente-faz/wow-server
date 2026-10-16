@@ -20,6 +20,7 @@ COMPOSE_ONLY = {
 # Set per service by agents/compose.py from the roster file, not passed from .env, so compose=False (#509).
 PER_SERVICE = {
     "AGENT_ROSTER": "the names of the whole roster, the same on every agent service",
+    "AGENT_MISSION": "this service's own roster mission (#314, #762)",
 }
 
 
