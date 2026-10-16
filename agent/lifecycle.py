@@ -34,7 +34,7 @@ TERMINAL = frozenset({State.STOPPED, State.FAILED})
 # The reasons the supervisor passes to to(). The machine accepts any text; this is the list
 # the supervisor, the audit log and ADR 0015 agree on (a test compares it with the ADR).
 REASONS = frozenset({"connected", "connect_failed", "auth_rejected", "auth_rejected_permanent",
-                     "disconnected", "backoff_elapsed", "stop", "run_ended", "crashed"})
+                     "disconnected", "stream_desync", "backoff_elapsed", "stop", "run_ended", "crashed"})
 
 
 class InvalidTransition(RuntimeError):

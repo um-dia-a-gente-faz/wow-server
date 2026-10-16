@@ -47,8 +47,9 @@ class World:
     exception instance is raised, STOP sets the stop event and returns the value after it."""
 
     def __init__(self, builds, runs=(), stop_on_sleep=None, sleep_raises=None, stop_on_logout=False,
-                 lifecycle=None, start_delay=0.0):
+                 lifecycle=None, start_delay=0.0, desync=False):
         self.builds, self.runs = list(builds), list(runs)
+        self.desync = desync  # the sessions built report a desynced stream (#793)
         self.stop = threading.Event()
         self.stop_on_sleep, self.sleep_raises, self.stop_on_logout = stop_on_sleep, sleep_raises, stop_on_logout
         self.sleeps, self.states_at_logout, self.start_delay = [], [], start_delay
@@ -58,7 +59,9 @@ class World:
         step = self.builds.pop(0)
         if isinstance(step, BaseException):
             raise step
-        return Session(self)
+        session = Session(self)
+        session.desync_reason = "declared size 8388607 B above 1048576 B" if self.desync else ""
+        return session
 
     def run_session(self, session):
         step = self.runs.pop(0)
@@ -105,6 +108,8 @@ SCENARIOS = [
      [("connecting", "failed", "auth_rejected_permanent")], []),
     ("drop then clean run", dict(builds=[OK, OK], runs=[DROP, END]), None,
      [CONNECTED, ("online", "backoff", "disconnected"), RETRY, CONNECTED, *ENDED], [5.0]),
+    ("stream desync drop then clean run", dict(builds=[OK, OK], runs=[DROP, END], desync=True), None,
+     [CONNECTED, ("online", "backoff", "stream_desync"), RETRY, CONNECTED, *ENDED], [5.0]),
     ("stop mid session", dict(builds=[OK], runs=["stop+drop"]), None, [CONNECTED, *STOPPED_ONLINE], []),
     ("stop during the connect retry wait", dict(builds=[RuntimeError("refused")], stop_on_sleep=1), None,
      [("connecting", "backoff", "connect_failed"), *STOPPED_WAITING], [5.0]),
@@ -390,6 +395,26 @@ class MainLifecycleWiringTest(unittest.TestCase):
         self.assertEqual(world.sleeps, [5.0])
         self.assertEqual(world.walk()[-1], ("stopping", "stopped", "run_ended"))
         self.assertEqual(metrics.SWALLOWED["supervisor.lifecycle"], 6)
+
+
+class StreamDesyncLifecycleTest(unittest.TestCase):
+    """#793: a desynced world stream drops the session through the normal reconnect path,
+    and the lifecycle records the reason stream_desync (not disconnected)."""
+
+    def test_a_desynced_session_is_recorded_as_stream_desync_then_reconnects(self):
+        from agent.tests.builders import make_session, tc_server_header
+        garbage = tc_server_header(0x7FFFFF, 0x0FFE) + b'\x00' * 8   # a declared 8 MB body that never comes
+        desynced = make_session(garbage)
+        desynced._running = True
+        lc = Lifecycle(clock=lambda: 0.0)
+        stop = threading.Event()
+        supervise_connection(lambda: desynced,
+                             lambda s: (s._recv_loop(), s.unexpected_disconnect)[1],
+                             log=_RecordingLog(), sleep=lambda d: stop.set(), stop=stop,
+                             jitter=lambda b: b, lifecycle=lc)
+        walk = [(t.source.value, t.target.value, t.reason) for t in lc.history()]
+        self.assertIn(("online", "backoff", "stream_desync"), walk)
+        self.assertEqual(walk[-1], ("stopping", "stopped", "stop"))
 
 
 class LogoutRaisesTest(unittest.TestCase):

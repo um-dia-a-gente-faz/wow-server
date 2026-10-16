@@ -137,7 +137,8 @@ def _reconnect_loop(build_session, run_session, log, sleep, stop: threading.Even
         delay = jitter(backoff)
         count_reconnect("disconnected")
         log.warning("connection lost unexpectedly — reconnecting in %.0fs", delay)
-        move(State.BACKOFF, "disconnected")
+        # #793: a desynced world stream drops the session the same way; only the recorded reason differs.
+        move(State.BACKOFF, "stream_desync" if getattr(session, "desync_reason", "") else "disconnected")
         sleep(delay)
         if stop.is_set():
             return "stop"

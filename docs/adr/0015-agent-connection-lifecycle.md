@@ -60,6 +60,7 @@ Any other pair is invalid and changes nothing.
 | `auth_rejected` | CONNECTING > BACKOFF | `AuthRejected` with a transient code |
 | `auth_rejected_permanent` | CONNECTING > FAILED | `AuthRejected` with a permanent code |
 | `disconnected` | ONLINE > BACKOFF | `run_session()` returned true and no stop was requested |
+| `stream_desync` | ONLINE > BACKOFF | as `disconnected`, and the world stream was declared desynced (#793: a declared size above 1 MiB, or 16 opcodes >= `NUM_MSG_TYPES` (0x51F) in a row; an in-range opcode resets the run); the session's `desync_reason` says which |
 | `backoff_elapsed` | BACKOFF > CONNECTING | the wait ended and no stop was requested |
 | `stop` | CONNECTING > STOPPING, ONLINE > STOPPING, BACKOFF > STOPPING, STOPPING > STOPPED | the stop event is set (SIGTERM, SIGINT) |
 | `run_ended` | ONLINE > STOPPING, STOPPING > STOPPED | `run_session()` returned false and no stop was requested (the duration elapsed) |
