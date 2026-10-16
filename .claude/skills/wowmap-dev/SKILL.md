@@ -22,6 +22,15 @@ export DBC_DIR=/path/to/dbc MAPS_DIR=/path/to/maps LISTEN_PORT=9401
 python3 app.py                                  # then open http://localhost:9401
 ```
 
+### Against a working agent, no live realm (dev stack, #481)
+
+`dev/dev.sh up` starts wowmap on http://127.0.0.1:9400 with one mock agent (Luaprata),
+chat-feed on 9500 and the agent API on 9601, all on a fixture DB, with no credentials.
+Use it to check an API, agent-mind or activity change end to end before the live VM.
+`dev/dev.sh smoke` boots it and waits for a decision in wowmap's API; `dev/dev.sh down`
+removes it. Details: `docs/DEV-STACK.md`. The stack has no client DBCs or map art, so
+judge map layout and the position transform on the live site, not here.
+
 Reading the live database is fine; never write to it. On the VM the service runs from
 `monitoring/docker-compose.yml` with `/opt/wowmap-data/{dbc,maps,calibration.json}`
 mounted, and the site is served at http://192.168.1.64:9400.
