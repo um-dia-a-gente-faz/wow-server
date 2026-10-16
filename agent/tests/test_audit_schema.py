@@ -79,6 +79,17 @@ class GoldenUpgradeTests(unittest.TestCase):
                          [{"kind": "quest", "t": 1731000011.75, "detail": {"quest_id": 8325}}])
         self.assertEqual(AuditRecord.from_json(line).to_json(), line)
 
+    def test_v3_kill_and_death_lines_round_trip_exactly_with_their_events(self):
+        (kill,) = _lines("v3-kill.jsonl")
+        self.assertEqual(AuditRecord.from_json(kill).events,
+                         [{"kind": "kill", "t": 1731000013.25,
+                           "detail": {"victim_guid": 17379390982725828761, "victim_entry": 1234}}])
+        self.assertEqual(AuditRecord.from_json(kill).to_json(), kill)
+        (death,) = _lines("v3-death.jsonl")
+        self.assertEqual(AuditRecord.from_json(death).events,
+                         [{"kind": "death", "t": 1731000015.5, "detail": {"killer_guess": 17379390963314589701}}])
+        self.assertEqual(AuditRecord.from_json(death).to_json(), death)
+
     def test_to_json_puts_schema_first(self):
         out = AuditRecord(ts=1.0, agent="a", cycle=1, snapshot_hash="h").to_json()
         self.assertEqual(next(iter(out)), "schema")

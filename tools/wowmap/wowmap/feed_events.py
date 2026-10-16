@@ -26,8 +26,14 @@ ACTION_KINDS = {
 }
 # ADR 0020 (#390): the activity kinds an agent may put in its audit line's `events`, with the detail
 # keys each must carry as ints. Mirrors agent/audit_schema.py ACTIVITY_KINDS; any other kind is skipped.
-AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",), "item": ("item_entry", "count"),
-                     "money": ("copper",)}
+AGENT_EVENT_KINDS = {
+    "level": ("to",),
+    "quest": ("quest_id",),
+    "item": ("item_entry", "count"),
+    "money": ("copper",),
+    "kill": ("victim_guid",),  # typed by _detail_ok; victim_entry too for a creature (not required)
+    "death": ("killer_guess",),  # typed by _detail_ok: an int or None
+}
 # ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
 # writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key reads these, and the
 # store writes its value to the fact_key column; the migration backfills level and quest (activity_schema.py,
@@ -37,8 +43,9 @@ AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",), "item": ("item_en
 # agent row and the DB delta row), and a sale of the same copper is kept. Ceiling, accepted (ADR 0020 slice 4).
 # item ceiling, accepted: an item gained without SMSG_ITEM_PUSH_RESULT (mail take, MailHandler.cpp:499; trade,
 # TradeHandler.cpp:158-198) within FACT_WINDOW_S of a push of the same entry loses its DB row.
+# kill and death have no fact: no de-duplication (ADR 0020 slice 5).
 FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"},
-             "item": {"agent": "item_entry", "db": "item"}}
+             "item": {"agent": "item_entry", "db": "item"}, "kill": None, "death": None}
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -96,6 +103,14 @@ def audit_event(rec, agent):
                  f"audit:{agent}:{rec.get('cycle')}:{rec['ts']}", detail)
 
 
+def _detail_ok(kind, detail):
+    """The typed detail of an agent event: every required key an int, except a death's killer_guess,
+    which may be None (the killer is unknown). A kill's victim_entry is optional (ADR 0020 slice 5)."""
+    if kind == "death":
+        return detail.get("killer_guess") is None or _is_int(detail.get("killer_guess"))
+    return all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind])
+
+
 def money_text(copper):
     """1234567 -> '123g 45s 67c', dropping leading zero units ('5s 2c', '0c')."""
     c = abs(int(copper))
@@ -116,6 +131,11 @@ def _agent_text(kind, detail, quest_title, item_title):
     if kind == "item":
         n = detail["count"]
         return f"Got {item_title(detail['item_entry'])}" + (f" ×{n}" if n > 1 else "")
+    if kind == "kill":
+        return (f"Killed creature {detail['victim_entry']}" if _is_int(detail.get("victim_entry"))
+                else "Killed an unknown target")  # a non-creature victim has a guid and no entry
+    if kind == "death":
+        return "Died"
     return f"Money +{money_text(detail['copper'])}"
 
 
@@ -133,9 +153,11 @@ def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}", item_title=lamb
         kind, detail, t = e.get("kind"), e.get("detail"), e.get("t")
         if not isinstance(kind, str) or kind not in AGENT_EVENT_KINDS or not isinstance(detail, dict):
             continue
-        if not _is_number(t) or not all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind]):
+        if not _is_number(t) or not _detail_ok(kind, detail):
             continue
-        key = detail[AGENT_EVENT_KINDS[kind][0]]  # the uid's natural key: the first required detail key
+        # The uid's natural key: the first required detail key (a kill's victim_guid, so two kills in one
+        # millisecond keep their own uids; a death's killer_guess, None when unknown).
+        key = detail.get(AGENT_EVENT_KINDS[kind][0])
         out.append(event(agent, t, kind, _agent_text(kind, detail, quest_title, item_title), "agent",
                          f"agent:{agent}:{kind}:{t:.3f}:{key}", detail))
     return out
@@ -151,7 +173,7 @@ def skipped_agent_events(rec, kept):
 
 def _fact_name(kind, source):
     """The detail key holding the fact of `kind` in an event of `source`, or None."""
-    return FACT_KEYS.get(kind, {}).get(source)
+    return (FACT_KEYS.get(kind) or {}).get(source)
 
 
 def fact_key(e):

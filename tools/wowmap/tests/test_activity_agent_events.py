@@ -16,6 +16,8 @@ import activity  # noqa: E402
 FIXTURES = pathlib.Path(__file__).resolve().parents[3] / "agent" / "tests" / "fixtures" / "audit"
 V3 = FIXTURES / "v3.jsonl"
 V3_QUEST = FIXTURES / "v3-quest.jsonl"
+V3_KILL = FIXTURES / "v3-kill.jsonl"
+V3_DEATH = FIXTURES / "v3-death.jsonl"
 
 
 class _NamesDb:
@@ -89,6 +91,45 @@ class AgentEventsTests(unittest.TestCase):
         self.assertEqual(e["detail"], {"quest_id": 8325})
         (titled,) = activity.agent_events(rec, "Jev1", lambda q: "Defias Pillager" if q == 8325 else "?")
         self.assertEqual(titled["text"], "Turned in quest: Defias Pillager")
+
+    def test_v3_kill_line_becomes_one_agent_kill_event_with_no_fact(self):
+        with open(V3_KILL, encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+        (e,) = activity.agent_events(rec, "Jev1")
+        self.assertEqual((e["kind"], e["source"], e["inferred"]), ("kill", "agent", False))
+        self.assertEqual(e["text"], "Killed creature 1234")
+        self.assertEqual(e["uid"], "agent:Jev1:kill:1731000013.250:17379390982725828761")
+        self.assertEqual(e["detail"], {"victim_guid": 17379390982725828761, "victim_entry": 1234})
+        self.assertIsNone(activity.fact_key(e))  # no de-duplication (ADR 0020 slice 5)
+
+    def test_v3_death_line_becomes_one_agent_death_event_with_no_fact(self):
+        with open(V3_DEATH, encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+        (e,) = activity.agent_events(rec, "Jev1")
+        self.assertEqual((e["kind"], e["source"], e["inferred"]), ("death", "agent", False))
+        self.assertEqual(e["text"], "Died")
+        self.assertEqual(e["uid"], "agent:Jev1:death:1731000015.500:17379390963314589701")
+        self.assertEqual(e["detail"], {"killer_guess": 17379390963314589701})
+        self.assertIsNone(activity.fact_key(e))
+
+    def test_kill_by_guid_and_death_without_a_killer_guess(self):
+        rec = {"events": [{"kind": "kill", "t": 1.0, "detail": {"victim_guid": 9}},
+                          {"kind": "death", "t": 2.0, "detail": {"killer_guess": None}}]}
+        out = activity.agent_events(rec, "Jev1")
+        self.assertEqual([(e["text"], e["uid"]) for e in out],
+                         [("Killed an unknown target", "agent:Jev1:kill:1.000:9"),
+                          ("Died", "agent:Jev1:death:2.000:None")])
+
+    def test_bad_kill_and_death_details_are_skipped(self):
+        bad = [
+            {"kind": "kill", "t": 1.0, "detail": {}},                             # no victim
+            {"kind": "kill", "t": 1.0, "detail": {"victim_entry": 1234}},         # no guid: no uid
+            {"kind": "kill", "t": 1.0, "detail": {"victim_guid": "9"}},           # string guid
+            {"kind": "kill", "t": 1.0, "detail": {"victim_entry": True}},         # bool
+            {"kind": "death", "t": 1.0, "detail": {"killer_guess": "17"}},        # string
+            {"kind": "death", "t": 1.0, "detail": {"killer_guess": 1.5}},         # float
+        ]
+        self.assertEqual(activity.agent_events({"events": bad}, "Jev1"), [])
 
     def test_bad_elements_are_skipped_and_the_rest_kept(self):
         bad = [
@@ -252,6 +293,32 @@ class StoreRulesTests(unittest.TestCase):
         rows = self.store._conn.execute("SELECT character, kind, source, fact_key FROM events").fetchall()
         self.assertEqual(sorted(rows, key=str), [("Jev1", "level", "agent", "11"), ("Jev1", "quest", "db", "8325"),
                                                  ("Jev1", "zone", "db", None), ("Thrall", "level", "db", "11")])
+
+    def test_two_kills_of_the_same_entry_within_the_window_are_both_stored(self):
+        # No de-duplication for kill (ADR 0020 slice 5): each kill is a fact of its own.
+        kill = {"victim_entry": 1234, "victim_guid": 9}
+        kills = activity.agent_events({"events": [{"kind": "kill", "t": 10.0, "detail": kill},
+                                                  {"kind": "kill", "t": 10.5, "detail": {**kill, "victim_guid": 10}}]},
+                                      "Jev1")
+        self.assertEqual(self.store.add(kills), 2)
+        self.assertEqual([(r["source"], r["text"]) for r in self.rows()],
+                         [("agent", "Killed creature 1234")] * 2)
+
+    def test_two_kills_of_the_same_entry_in_the_same_millisecond_are_both_stored(self):
+        # Two kills at one t: the uid tells them apart by victim_guid, so INSERT OR IGNORE keeps both.
+        kills = activity.agent_events({"events": [
+            {"kind": "kill", "t": 10.0, "detail": {"victim_entry": 1234, "victim_guid": 9}},
+            {"kind": "kill", "t": 10.0, "detail": {"victim_entry": 1234, "victim_guid": 10}}]}, "Jev1")
+        self.assertEqual(len({e["uid"] for e in kills}), 2)
+        self.assertEqual(self.store.add(kills), 2)
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_a_kill_and_a_death_are_stored_beside_a_db_level(self):
+        self.store.add([_db_level("Jev1", 10.5, 11)])
+        death = activity.agent_events({"events": [{"kind": "death", "t": 10.5, "detail": {"killer_guess": None}}]},
+                                      "Jev1")
+        self.assertEqual(self.store.add(death), 1)
+        self.assertEqual(sorted(r["kind"] for r in self.rows()), ["death", "level"])
 
     def agent_item(self, entry, count=1, t=10.0):
         return activity.agent_events({"events": [{"kind": "item", "t": t,
