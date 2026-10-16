@@ -16,6 +16,8 @@ log = logging.getLogger("agent.session")
 MID_PACKET_TIMEOUT_S = 30.0
 # Handler errors are logged at most once per opcode per this many seconds.
 ERROR_LOG_INTERVAL_S = 30.0
+# Unwanted packet bodies are read and dropped in chunks of this size (#570).
+DISCARD_CHUNK_B = 0x10000
 
 
 class _ErrorThrottle:
@@ -60,7 +62,10 @@ class Transport:
                 hdr = self.crypt.encrypt_send(hdr)
             self.sock.sendall(hdr + payload)
 
-    def _recv_packet(self) -> tuple[int, bytes]:
+    def _recv_packet(self, keep=None) -> tuple[int, bytes]:
+        """keep(opcode) False: the body is read through and dropped, not returned (b'').
+        A desynced stream declares multi-MB sizes; buffering those for packets nobody
+        handles is what grew the soak's RSS (#570)."""
         # Only this first read may time out: nothing has been consumed yet.
         first = self._rr(1)
         prev_timeout = self.sock.gettimeout()
@@ -77,12 +82,20 @@ class Transport:
                 hdr += extra
             size, opcode = pk.parse_server_header(hdr)
             plen = size - 2
-            payload = self._rr(plen) if plen > 0 else b''
+            if keep is not None and not keep(opcode):
+                self._discard(plen)
+                payload = b''
+            else:
+                payload = self._rr(plen) if plen > 0 else b''
         except (socket.timeout, TimeoutError) as e:
             raise ConnectionError("timed out mid-packet, stream out of sync") from e
         finally:
             self.sock.settimeout(prev_timeout)
         return opcode, payload
+
+    def _discard(self, n: int):
+        while n > 0:
+            n -= len(self._rr(min(n, DISCARD_CHUNK_B)))
 
     def _rr(self, n: int) -> bytes:
         buf = b''

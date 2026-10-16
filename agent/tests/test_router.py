@@ -232,7 +232,7 @@ class SessionDispatchTest(unittest.TestCase):
         sess._running = True
         packets = [(0x10, b''), (se.SMSG_TIME_SYNC_REQ, struct.pack('<I', 7)), ConnectionError("gone")]
 
-        def next_packet():
+        def next_packet(keep=None):
             item = packets.pop(0)
             if isinstance(item, Exception):
                 raise item

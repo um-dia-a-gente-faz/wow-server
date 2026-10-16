@@ -38,6 +38,9 @@ class PacketRouter:
         self._handlers: dict[int, Callable] = {}
         self._ticks: list[Callable] = []
 
+    def handles(self, opcode: int) -> bool:
+        return opcode in self._handlers
+
     def register(self, opcode: int, handler: Callable):
         if opcode in self._handlers:
             raise ValueError(f"opcode {opcode:#05x} already registered")
