@@ -1,0 +1,17 @@
+# What the realm runs (#398): the pinned worldserver image, TDB release and TrinityCore revision.
+# docker-compose.yml (image:) and tdb/README.md (TDB version and filename) must agree with this
+# file; tools/tests/test_server_version.py fails when they do not. The realm stays on stock TDB
+# with no custom world SQL (#398 Decision).
+#
+# image:              copied from the trinitycore-wowserver service in docker-compose.yml.
+# tdb / tdb_file:     the TDB release and SQL filename the image's worldserver expects (tdb/README.md).
+# trinitycore_commit: the TrinityCore revision the live worldserver reports (docs/spikes/HP_POWER_SPIKE.md,
+#                     docs/LIVE-MAP.md). To read it from a running image, run
+#                     `docker logs trinitycore-wowserver 2>&1 | grep "TrinityCore rev"`, or `server info` in the
+#                     worldserver console. Protocol notes cite branch 3.3.5 at 48128f325ac5 as the source they were
+#                     checked against (docs/PROTOCOL-NOTES.md); that is not recorded as the image's revision.
+
+image=danielsilvestre37/trinitycore-docker:3.3.5@sha256:21ebf9c57184f3076569268b8b128f2ed6e8bea525597fe99eb24a5ff7f51374
+tdb=TDB335.25101
+tdb_file=TDB_full_world_335.25101_2025_10_21.sql
+trinitycore_commit=2ac2d9055061
