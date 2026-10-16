@@ -3,6 +3,8 @@
 connect_and_login() is the reconnect supervisor's build_session(): each call builds a new
 WoWSession, and with it a new WorldState."""
 
+import os
+
 from .auth import auth_logon
 from .channels import parse_channel_spec
 from .config import get as config_get
@@ -50,6 +52,17 @@ def resolve_character(cfg, chars: list) -> dict:
     return choice
 
 
+def apply_state_dir(cfg, world_state) -> None:
+    """#252 (ADR 0021): with AGENT_STATE_DIR set, this agent's names.json and items.json live there,
+    so a container recreate keeps them. Empty = the home-cache defaults. Called before
+    login_character(), which loads names.json. Lives here, not in root.py: root imports this module."""
+    state_dir = getattr(cfg, "state_dir", "")
+    if not state_dir:
+        return
+    world_state.names.cache_path = os.path.join(state_dir, "names.json")
+    world_state.items.cache_path = os.path.join(state_dir, "items.json")
+
+
 def connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
     """Full auth -> connect -> character login sequence, returning a
     WoWSession already logged in as the configured (or first available)
@@ -62,6 +75,7 @@ def connect_and_login(cfg, log, chat_relay=None) -> WoWSession:
     choice = resolve_character(cfg, chars)
     log.info("logging in: %s (guid %d)", choice['name'], choice['guid'])
     sess.agent_names = frozenset(n.strip().lower() for n in config_get('AGENT_ROSTER').split(',') if n.strip())  # #318
+    apply_state_dir(cfg, sess.world_state)  # #252: before login_character() loads names.json
     sess.race = choice['race']
     sess.class_ = choice['class_']
     sess.login_character(choice['guid'])

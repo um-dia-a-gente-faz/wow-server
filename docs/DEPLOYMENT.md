@@ -523,6 +523,20 @@ check it with `curl -s http://<agent-host>:9601/metrics | grep fleet_limits_stat
 `state="off"` is `1`. Removing only the file leaves the agents running with state `missing`,
 which is also no block.
 
+### Agent state directory (ADR 0021, #252)
+
+Every agent service mounts one host directory read-write at `/data/state`:
+`/opt/wow-server-metrics/agent-state` in the committed compose file, `<runtime>/state` (the
+`agent-runner` runtime directory, `/opt/wow-agent-runtime/state` by default) in the file it renders.
+Each agent writes only its own subdirectory, `/data/state/<slug>`, named by `AGENT_STATE_DIR`, which
+compose sets per service. It holds that agent's `names.json` (about 1 MB), so a container recreate or
+image deploy keeps the name cache warm. The directory is created by Docker when first mounted, as root,
+and the agent runs as root, so there is no ownership step. Nothing to arm: `AGENT_STATE_DIR` in `.env`
+does not reach the containers.
+
+To check on `wow-agents`: recreate one agent, then `ls -l /opt/wow-server-metrics/agent-state/<slug>/names.json`
+must exist and keep its mtime across a second recreate.
+
 ### World bundle (ADR 0016, #749)
 
 (The Docker and Compose behaviour in this section is reasoned from the compose file and the

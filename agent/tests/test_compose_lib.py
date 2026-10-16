@@ -25,6 +25,13 @@ class ComposeLibraryTests(unittest.TestCase):
     def test_render_is_the_committed_file(self):
         self.assertEqual(compose.render(entries()), (REPO / "docker-compose.agents.yml").read_text())
 
+    def test_state_dir_is_the_mounted_directory_and_each_agent_gets_its_slug(self):
+        text = compose.render(entries(), state_dir="/r/state")
+        self.assertIn("- /r/state:/data/state\n", text)
+        self.assertNotIn("/opt/wow-server-metrics/agent-state", text)
+        self.assertIn("AGENT_STATE_DIR: /data/state/luaprata\n", text)
+        self.assertEqual(len(re.findall(r"AGENT_STATE_DIR: /data/state/", text)), 25)
+
     def test_start_delay_is_three_seconds_per_roster_position_modulo_sixty(self):
         text = compose.render([{"account": f"A{i}", "character": f"Name{'abcdefghijklmnopqrstuvwxyz'[i]}",
                                 "retired": i == 2} for i in range(26)])

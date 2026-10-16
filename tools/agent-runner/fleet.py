@@ -139,7 +139,8 @@ class Fleet:
         """Render the runner's own compose file under the runtime dir."""
         text = compose.render([e["planned"] for e in self.roster()], audit_dir=str(self.cfg.audit_dir),
                               fleet_dir=str(self.cfg.runtime_dir / "fleet"),
-                              world_dir=str(self.cfg.runtime_dir / "world"))
+                              world_dir=str(self.cfg.runtime_dir / "world"),
+                              state_dir=str(self.cfg.runtime_dir / "state"))
         self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
         _write_atomic(self.cfg.compose_path, text)
 
