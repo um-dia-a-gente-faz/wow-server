@@ -45,8 +45,8 @@ jobs:
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
             echo "agent=$(hit "$all|^agent/|^tools/world-mock/|^coverage-floors\.json$" && echo true || echo false)"
-            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^docs/AGENT-API\.md" && echo true || echo false)"
-            echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^\.env\.example" && echo true || echo false)"
+            echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^staging/|^docs/AGENT-API\.md" && echo true || echo false)"
+            echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^staging/|^\.env\.example|^\.env\.staging\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
             echo "wowmap=$(hit "$all|^tools/(wowmap|dbc|common|chat-feed)/" && echo true || echo false)"
           } | tee -a "$GITHUB_OUTPUT"
@@ -181,7 +181,9 @@ jobs:
       # Compose reads .env from the project directory; seed it from the
       # example (dummy values) once one exists so interpolation resolves.
       - name: Dummy env file
-        run: if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+        run: |
+          if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+          if [ -f .env.staging.example ] && [ ! -f .env.staging ]; then cp .env.staging.example .env.staging; fi
       - name: No :latest images (#291)
         run: |
           # every image:/FROM line needs a digest (or the agent tag variable); this also rejects :latest, quoted or not
@@ -193,9 +195,11 @@ jobs:
         # at the repo root even for compose files in subdirectories;
         # otherwise monitoring/docker-compose.yml misses the root .env.
         run: |
-          for f in docker-compose.yml monitoring/docker-compose.yml docker-compose.agents.yml; do
+          for f in docker-compose.yml monitoring/docker-compose.yml docker-compose.agents.yml staging/docker-compose.yml; do
             echo "::group::$f"
-            docker compose --project-directory . -f "$f" config -q
+            # staging reads its own env file (scripts/staging.sh), never the game stack's .env
+            extra=(); case $f in staging/*) extra=(--env-file .env.staging) ;; esac
+            docker compose --project-directory . "${extra[@]}" -f "$f" config -q
             echo "::endgroup::"
           done
 

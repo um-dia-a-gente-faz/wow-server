@@ -735,3 +735,35 @@ Set in `docker-compose.yml`, and they must fit the VM's **total** RAM:
 |---|---|---|
 | wowserver | 5 GB / 4 CPU | 3 GB / 2 CPU |
 | MySQL | 1 GB | — |
+
+## Staging realm
+
+A second worldserver and database for protocol, deploy-script and schema changes (#400).
+It runs on `wow-agents` on demand, never on the game VM (`192.168.1.64`): `scripts/staging.sh`
+refuses to start where a container named `trinitycore-wowserver` exists. The stack is
+`staging/docker-compose.yml` (project `wow-staging`, containers `staging-worldserver` and
+`staging-db`). It shares no container name, host port, volume or network with the game stack, and
+the same pinned images (`SERVER_VERSION`). `scripts/deploy.sh` never touches it.
+
+Ports: auth **3725**, world **8086**, MySQL **127.0.0.1:3307** (loopback only). No chat-feed, no
+web UI, no RA port published. An agent points at it with `WOW_HOST=<wow-agents IP>` and
+`WOW_AUTH_PORT=3725`. The WoW client cannot reach it: its auth port is fixed at 3724.
+
+First bring-up on `wow-agents`, from a clone of this repo outside `/opt/wow-server`:
+
+```bash
+cp .env.staging.example .env.staging   # gitignored; fill every value (dummy values in the example)
+# STAGING_CLIENT_DIR: a copy of the WoW 3.3.5a client (17 GB, Data/*.MPQ), as in step 2 above
+# STAGING_TDB_FILE: the TDB the binary expects, TDB_full_world_335.25101_2025_10_21.sql (tdb/README.md)
+scripts/staging.sh config              # resolves the compose file; fails on a missing variable
+scripts/staging.sh up                  # first boot bootstraps the database; follow it:
+docker logs -f staging-worldserver
+```
+
+Then `scripts/staging.sh down` stops it (volumes stay), `scripts/staging.sh reset` wipes the database
+and starts it again (`down -v`, then `up`), and `scripts/staging.sh config` only prints the file.
+Restarting it is allowed: no player is on it. Check the realm list after the first `up`: the auth
+server must advertise port 8086 (`TC_WORLD__WorldServerPort=8086` in the compose file).
+
+Not yet covered (#400, follow-up): the smoke suite against the realm, an account seeding script,
+the `live-agent-test` variant and the resource measurement.

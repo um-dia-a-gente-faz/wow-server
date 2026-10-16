@@ -347,6 +347,14 @@ Only `agent/` has floors so far; `tools/` floors and diff coverage are not built
 `dev/dev.sh up` runs the mocks, one agent, chat-feed and wowmap on a fixture DB with no
 credentials; see `docs/DEV-STACK.md`. Prefer it to the live VM for anything a mock covers.
 
+## Staging realm
+
+Prefer the staging realm (`staging/`, #400, *Staging realm* in `docs/DEPLOYMENT.md`) over the
+live VM for a change to the wire protocol (`agent/` packets, `docs/PROTOCOL-NOTES.md`), to
+`scripts/deploy.sh`, or to a schema or TDB step. Staging is a second worldserver and database on
+`wow-agents`. Restarting it or wiping it (`scripts/staging.sh reset`) is allowed, because no
+player is on it. Live players are on the game VM; a staging run never touches it.
+
 ## Testing on the live VM
 
 Most changes affect the running services on `wow-server` (192.168.1.64) or `docker-stack` (192.168.1.60).

@@ -1,0 +1,84 @@
+# Staging realm (#400): a second worldserver and database, standalone (not an override of
+# docker-compose.yml), for protocol, deploy-script and schema changes. Runs on demand on
+# wow-agents, never on the game VM. Drive it with scripts/staging.sh. Config comes from
+# .env.staging (gitignored; template .env.staging.example). It shares no container name,
+# host port, volume or network with the game stack: scripts/tests/test_staging_compose.py checks it.
+name: wow-staging
+
+services:
+  trinitycore-wowserver:
+    image: danielsilvestre37/trinitycore-docker:3.3.5@sha256:21ebf9c57184f3076569268b8b128f2ed6e8bea525597fe99eb24a5ff7f51374
+    container_name: staging-worldserver
+    restart: unless-stopped
+    networks: [staging]
+    environment:
+      # The IP clients reach this host on. Written into auth.realmlist at bootstrap.
+      - PUBLIC_IP_ADDRESS=${STAGING_PUBLIC_IP:?set STAGING_PUBLIC_IP in .env.staging}
+      - REALM_NAME=Staging
+      # Web UI credentials. Its port is not published here (no web UI on staging).
+      - ACCESS_USERNAME=admin
+      - ACCESS_PASSWORD=${STAGING_ACCESS_PASSWORD:?set STAGING_ACCESS_PASSWORD in .env.staging}
+      - TC_WORLD__PlayerSaveInterval=5000
+      # The realm list hands clients this port, so it must match the published world port
+      # (8086). The game stack keeps the stock 8085.
+      - TC_WORLD__WorldServerPort=8086
+      # Telnet remote-admin console, not published: reachable only inside the staging network.
+      - TC_WORLD__Ra.Enable=1
+    volumes:
+      - staging_server_data:/app/server/data
+      - staging_server_logs:/app/server/logs
+      # Host paths from .env.staging, never the game stack's ./client or ./tdb.
+      - ${STAGING_CLIENT_DIR:?set STAGING_CLIENT_DIR in .env.staging}:/app/client
+      # Same reason as the game stack: the bundled binary expects this exact TDB filename.
+      - ${STAGING_TDB_FILE:?set STAGING_TDB_FILE in .env.staging}:/app/server/bin/TDB_full_world_335.25101_2025_10_21.sql
+      - type: tmpfs
+        target: /app/tmp
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "3725:3724"   # auth (logon); the game stack publishes 3724
+      - "8086:8086"   # world; the game stack publishes 8085
+    deploy:
+      resources:
+        # Mirrors the game stack. Check it fits wow-agents' RAM before the first up.
+        limits:
+          cpus: "4.0"
+          memory: "5g"
+        reservations:
+          cpus: "2.0"
+          memory: "3g"
+
+  database:
+    image: mysql:8.4.4@sha256:23818b7d7de427096ab1427b2e3d9d5e14a5b933f9a4431a482d6414bc879091
+    container_name: staging-db
+    restart: unless-stopped
+    networks: [staging]
+    environment:
+      # Only applied when staging_db_data is first initialised (same as the game stack).
+      MYSQL_ROOT_PASSWORD: ${STAGING_MYSQL_ROOT_PASSWORD:?set STAGING_MYSQL_ROOT_PASSWORD in .env.staging}
+    volumes:
+      - staging_db_data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:3307:3306"   # loopback only: ad-hoc queries on the staging host
+    deploy:
+      resources:
+        limits:
+          memory: "1g"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${STAGING_MYSQL_ROOT_PASSWORD:?set STAGING_MYSQL_ROOT_PASSWORD in .env.staging}"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+
+volumes:
+  staging_db_data:
+    name: wow-staging_db_data
+  staging_server_data:
+    name: wow-staging_server_data
+  staging_server_logs:
+    name: wow-staging_server_logs
+
+networks:
+  staging:
+    name: wow-staging
