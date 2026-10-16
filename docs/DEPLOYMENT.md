@@ -788,10 +788,20 @@ Then check: `docker exec staging-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"
 Unverified on `wow-agents`: the staging compose sets no `stdin_open`/`tty`, so `docker attach` may show no
 prompt. If it does not, this step is blocked and needs a change to `staging/docker-compose.yml`.
 
-**Characters: no documented path yet.** Creating one character per `STAGINGnn` account has no documented
-way: the WoW client cannot reach staging (auth port 3725, the client's is fixed at 3724), and the console
-creates accounts only. It is a follow-up, #803. Until it lands, the smoke below fails at login on an account
-with no character.
+**Characters (one per account):** the WoW client cannot reach staging (auth port 3725, the client's is fixed
+at 3724), and the console creates accounts only, so the characters come from the agent's own protocol. Run
+this from a clone on `wow-agents`, with the same `.env.staging` as the smoke below:
+
+```bash
+set -a; . ./.env.staging; set +a
+WOW_HOST="$STAGING_PUBLIC_IP" WOW_AUTH_PORT=3725 \
+  python3 -m tools.agent_dev.staging_characters            # STAGING01..STAGING05; --accounts to narrow
+```
+
+It logs in to each account and lists its characters. An account with none gets one (`created Stagingone`,
+an Orc Warrior); an account that has one is left alone (`kept <name>`). A `FAIL` line names the account and
+the reason; the exit code is 1 when one fails. It refuses the live realm and never prints the password. The
+smoke below needs this step done first.
 
 ### Smoke (login, enter world, logout, reconnect)
 
@@ -806,8 +816,8 @@ WOW_HOST="$STAGING_PUBLIC_IP" WOW_AUTH_PORT=3725 WOW_ACCOUNT=STAGING01 \
 ```
 
 Exit 0 when all six steps pass. Each account needs one character already (the smoke does not create one;
-with none it fails at login), and no documented path creates it yet (#803). It is a manual check: not in `scripts/check.sh all`, not a CI job. Its
+`tools.agent_dev.staging_characters` does, above). It is a manual check: not in `scripts/check.sh all`, not a CI job. Its
 unit tests (`tools/tests/test_staging_smoke.py`) run against a stub login.
 
-Not yet done (#400, follow-up): the chat-echo step, a scripted seed, and the resource measurement
+Not yet done (#400, follow-up): the chat-echo step and the resource measurement
 (needs a live run on `wow-agents`).

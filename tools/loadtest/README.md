@@ -1,14 +1,14 @@
 # loadtest
 
 Soak harness (#299). Runs N real agent sessions (auth, `WoWSession`, recv thread, think
-loop, reconnect supervisor) against an in-process `tools/world-mock` and records
+loop, reconnect supervisor) against an in-process `tools/world_mock` and records
 RSS, threads, CPU, tick period, reconnects and recovery time into one JSON report.
 Stdlib only; Linux (reads `/proc`).
 
 ```bash
 python3 -m tools.loadtest --agents 25 --duration 300                  # the manual soak
 python3 -m tools.loadtest --agents 25 --duration 60 --out run.json --compare docs/loadtest-baseline.json   # same shape as the baseline
-# with faults (MOCK_FAULTS syntax, repeated for the whole run, see tools/world-mock/README.md)
+# with faults (MOCK_FAULTS syntax, repeated for the whole run, see tools/world_mock/README.md)
 python3 -m tools.loadtest --agents 25 --duration 600 \
   --faults ';;;drop_after=8,reset;;stall=20,stall_at=6;bad_crypt_from=6'
 python3 -m tools.loadtest --agents 25 --duration 60 --stream-hz 20      # with per-client traffic (#421)

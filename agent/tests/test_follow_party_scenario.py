@@ -2,7 +2,7 @@
 
 Both agents are real sessions (real handlers, real accept/invite actions, real follow
 reflex). A tiny in-process realm stands in for the server and routes their packets: the
-world-mock (tools/world-mock) serves one scripted character per connection and has no
+world_mock (tools/world_mock) serves one scripted character per connection and has no
 routing between connections, so two agents cannot share a party there.
 
 Each cycle the worst-case brain is played: both agents try to follow the other, then both

@@ -1,4 +1,4 @@
-"""End-to-end: the agent's real auth + world client code against tools/world-mock.
+"""End-to-end: the agent's real auth + world client code against tools/world_mock.
 
 Covers the #253 acceptance: login, update objects, a quest turn-in action and
 the server's confirmation, all over real localhost sockets."""
@@ -9,16 +9,12 @@ import logging
 import os
 import struct
 import zlib
-import pathlib
-import sys
 import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock as umock
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import server  # noqa: E402
+from tools.world_mock import server  # noqa: E402
 
 from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402

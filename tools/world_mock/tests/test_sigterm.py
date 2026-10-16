@@ -1,5 +1,5 @@
 """#401 end to end: SIGTERM to a real `python -m agent` subprocess makes it send
-CMSG_LOGOUT_REQUEST to the world-mock and exit cleanly (what `docker stop` does)."""
+CMSG_LOGOUT_REQUEST to the world_mock and exit cleanly (what `docker stop` does)."""
 
 import glob
 import json
@@ -13,8 +13,7 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import server  # noqa: E402
+from tools.world_mock import server  # noqa: E402
 
 from agent import opcodes as op  # noqa: E402
 

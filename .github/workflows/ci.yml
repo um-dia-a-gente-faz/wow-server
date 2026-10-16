@@ -44,7 +44,7 @@ jobs:
           hit() { [ "$EVENT" != "pull_request" ] || grep -Eq "$1" <<<"$files"; }
           all='^(\.github/workflows/ci\.yml|scripts/|Dockerfile|\.dockerignore|requirements|ruff\.toml|mypy\.ini)'
           {
-            echo "agent=$(hit "$all|^agent/|^tools/world-mock/|^coverage-floors\.json$" && echo true || echo false)"
+            echo "agent=$(hit "$all|^agent/|^tools/world_mock/|^coverage-floors\.json$" && echo true || echo false)"
             echo "tools=$(hit "$all|^(agent|agents|tools|monitoring)/|^exporters/wow-exporter/requirements\.txt|^docker-compose[^/]*\.yml|^staging/|^docs/AGENT-API\.md" && echo true || echo false)"
             echo "compose=$(hit "$all|(^|/)Dockerfile$|(^|/)docker-compose[^/]*\.yml$|^monitoring/|^staging/|^\.env\.example|^\.env\.staging\.example" && echo true || echo false)"
             echo "backup=$(hit "$all|^docker-compose[^/]*\.yml" && echo true || echo false)"
@@ -156,7 +156,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install --require-hashes -r requirements-dev.txt
-      - name: Agent + world-mock tests under coverage, against the floor
+      - name: Agent + world_mock tests under coverage, against the floor
         # #707: as in the agent job; here the bound covers both test runs together (they take about
         # 200 to 300 s), and coverage_floor.py runs the same sequence. Keep it 44 s (kill 24 s at the latest after it) under timeout-minutes * 60.
         env:

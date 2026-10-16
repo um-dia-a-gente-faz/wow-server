@@ -348,7 +348,7 @@ class RunTest(unittest.TestCase):
             self.assertIn("--source=agent", cmd)
             self.assertIn("scripts/early_failures.py", cmd)   # #714: failures print as they happen, stall stop
             self.assertNotIn("unittest", cmd)
-        self.assertIn("tools/world-mock/tests", runs[1])
+        self.assertIn("tools/world_mock/tests", runs[1])
         self.assertIn("-a", runs[1])
         for _, data in calls:
             self.assertNotIn(str(ROOT), data)
@@ -372,7 +372,7 @@ class WiringTest(unittest.TestCase):
 
     def test_path_filter_runs_the_job_for_its_inputs(self):
         line = next(l for l in CI.splitlines() if 'echo "agent=' in l)
-        for path in (r"^agent/", r"^tools/world-mock/", r"^coverage-floors\.json$"):
+        for path in (r"^agent/", r"^tools/world_mock/", r"^coverage-floors\.json$"):
             self.assertIn(path, line)
 
     def test_ci_ok_needs_coverage(self):

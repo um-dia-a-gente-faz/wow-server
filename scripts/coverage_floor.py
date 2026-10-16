@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ratcheting coverage gate for agent/ (#384).
 
-Runs the agent and world-mock suites under `coverage`, compares the total with the floor in
+Runs the agent and world_mock suites under `coverage`, compares the total with the floor in
 coverage-floors.json and fails when the total is below it (tests lost) or at least
 STALE_MARGIN above it (floor not raised). Same idiom as mypy-legacy-baseline.json.
 
@@ -27,7 +27,7 @@ import early_failures   # scripts/ is sys.path[0] when this runs as a script
 ROOT = Path(__file__).resolve().parents[1]
 FLOORS = ROOT / "coverage-floors.json"
 # The floor is int(total - 0.5): at least half a point of room below the measured total.
-# Timing-dependent branches in the world-mock tests and the Python version move the total by a
+# Timing-dependent branches in the world_mock tests and the Python version move the total by a
 # fraction of a point; a floor that lags by less than this is not stale.
 STALE_MARGIN = 2.0
 # Per-module floors (#700): files with fewer statements move by whole points per line, which is noise.
@@ -152,7 +152,7 @@ def measure() -> tuple[float, dict[str, tuple[int, float, list[int]]]]:
         limit = os.environ.get("CHECK_STALL_DUMP_S")
         deadline = time.monotonic() + float(limit) if limit else None
         _run(["run", *src, "agent/tests"], env, deadline=deadline)
-        _run(["run", "-a", *src, "tools/world-mock/tests"], env, deadline=deadline)
+        _run(["run", "-a", *src, "tools/world_mock/tests"], env, deadline=deadline)
         print(_run(["report", "--skip-empty", "--sort=cover"], env, capture=True), end="")
         total = float(_run(["report", "--format=total", "--precision=2"], env, capture=True))
         report = Path(tmp) / "report.json"

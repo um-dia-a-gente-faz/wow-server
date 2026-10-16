@@ -17,9 +17,9 @@ WALK = ("agent", "agents", "scripts", "tools", "monitoring", "exporters", "docs"
 # ADR 0019, Inventory, pattern P. The source of this file holds no line that P matches.
 PATTERN = re.compile(r"sys\.path(\.insert|\.append|\.pop|\.extend|\[[^]]*\] *=| *\+=| *=[^=])|site\.addsitedir")
 
-PRODUCTION_EDITS = 24
+PRODUCTION_EDITS = 22
 # wowmap tests need the wowmap/ insert until slice 8 (ADR 0019); +1 for test_activity_agent_events.py (#390)
-TEST_EDITS = 74
+TEST_EDITS = 68
 # Edits that stay on purpose. Named here, counted in the constants above.
 ALLOWED = {"scripts/early_failures.py"}
 # The root insert removed from each test file (ADR 0019, first slice). Built from parts so this file
@@ -38,6 +38,14 @@ NO_EDITS = {
     "tools/jev-mock/tests/test_server.py": _SYS_PATH + ".insert(0, str(REPO))",
     "tools/wowmap/tests/test_agent_proxy.py": _SYS_PATH + ".insert(0, str(pathlib.Path(__file__).resolve().parents[3]))",
     "scripts/tests/test_action_catalog.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_sigterm.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_faults.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_death_scenario.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_lifecycle_scenarios.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_stream_logout.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_world_mock.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/server.py": _SYS_PATH + ".insert(0, str(REPO))",
+    "tools/world_mock/death_scenario.py": _SYS_PATH + ".insert(0, str(HERE))",
 }
 
 
