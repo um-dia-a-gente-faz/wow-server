@@ -41,7 +41,9 @@ def handle_questgiver_quest_complete(ctx, payload: bytes):
     # Player::RewardQuest (Entities/Player/Player.cpp:14860) calls SendQuestReward (:14993), which
     # writes the packet and sends it with SendDirectMessage (:16546-16553).
     ctx.state.emit_activity("quest", quest_id=data["quest_id"])
-    if data["money_reward"] > 0:  # the reward money is the agent's own (ADR 0020 slice 4)
+    # SendQuestReward writes GetRewOrReqMoney as a uint32 (Player.cpp:16549); a quest that takes money gives a
+    # negative value, read here as int32. Only a positive amount is a reward (ADR 0020 slice 4).
+    if 0 < data["money_reward"] < 0x80000000:
         ctx.state.emit_activity("money", copper=data["money_reward"])
 
 

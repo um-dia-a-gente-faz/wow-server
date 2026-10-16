@@ -112,6 +112,13 @@ class ActivityOnTests(unittest.TestCase):
         quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 0))
         self.assertEqual([e["kind"] for e in self.state.drain_activity()], ["quest"])
 
+    def test_a_quest_that_costs_money_makes_no_money_event(self):
+        # SendQuestReward writes GetRewOrReqMoney as a uint32 (Player.cpp:16549), and that value is
+        # negative for a quest that takes money: -100 arrives as 0xFFFFFF9C. It is a charge, not a reward.
+        ctx = SimpleNamespace(state=self.state)
+        quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 0xFFFFFF9C))
+        self.assertEqual([e["kind"] for e in self.state.drain_activity()], ["quest"])
+
     def test_own_item_push_makes_one_item_event(self):
         self.state.player_guid = 7
         ctx = SimpleNamespace(state=self.state)

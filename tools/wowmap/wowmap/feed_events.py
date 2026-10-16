@@ -31,10 +31,14 @@ AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",), "item": ("item_en
 # ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
 # writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key reads these, and the
 # store writes its value to the fact_key column; the migration backfills level and quest (activity_schema.py,
-# frozen). item and money have no backfill: their db rows from before the column keep fact_key NULL.
+# frozen). item has no backfill: its db rows from before the column keep fact_key NULL.
 # A kind not listed here has no fact and no de-duplication.
+# money has no fact: the DB money delta does not say its cause, so a loot or quest amount may show twice (the
+# agent row and the DB delta row), and a sale of the same copper is kept. Ceiling, accepted (ADR 0020 slice 4).
+# item ceiling, accepted: an item gained without SMSG_ITEM_PUSH_RESULT (mail take, MailHandler.cpp:499; trade,
+# TradeHandler.cpp:158-198) within FACT_WINDOW_S of a push of the same entry loses its DB row.
 FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"},
-             "item": {"agent": "item_entry", "db": "item"}, "money": {"agent": "copper", "db": "delta"}}
+             "item": {"agent": "item_entry", "db": "item"}}
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -131,7 +135,7 @@ def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}", item_title=lamb
             continue
         if not _is_number(t) or not all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind]):
             continue
-        key = detail[FACT_KEYS[kind]["agent"]]
+        key = detail[AGENT_EVENT_KINDS[kind][0]]  # the uid's natural key: the first required detail key
         out.append(event(agent, t, kind, _agent_text(kind, detail, quest_title, item_title), "agent",
                          f"agent:{agent}:{kind}:{t:.3f}:{key}", detail))
     return out

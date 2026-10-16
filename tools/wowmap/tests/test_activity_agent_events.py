@@ -124,12 +124,10 @@ class AgentEventsTests(unittest.TestCase):
         self.assertEqual((money["text"], money["source"], money["uid"]),
                          ("Money +12s 34c", "agent", "agent:Jev1:money:2.000:1234"))
         self.assertEqual(activity.fact_key(item), ("jev1", "item", 2589))
-        self.assertEqual(activity.fact_key(money), ("jev1", "money", 1234))
-        # The DB poller's rows of the same facts: its item detail and its money delta.
+        self.assertIsNone(activity.fact_key(money))  # no fact: a money delta does not say its cause
+        # The DB poller's item row of the same fact: its item detail.
         self.assertEqual(activity.fact_key(activity.event("Jev1", 1.5, "item", "Got Linen Cloth ×2", "db", "u",
                                                           {"item": 2589, "count": 2})), ("jev1", "item", 2589))
-        self.assertEqual(activity.fact_key(activity.event("Jev1", 1.5, "money", "Money +12s 34c", "db", "u",
-                                                          {"delta": 1234, "total": 9})), ("jev1", "money", 1234))
 
     def test_bad_item_and_money_elements_are_skipped(self):
         bad = [{"kind": "item", "t": 1.0, "detail": {"item_entry": 2589}},                # no count
@@ -280,15 +278,16 @@ class StoreRulesTests(unittest.TestCase):
         self.assertEqual(self.store.add(self.agent_item(2589)), 1)
         self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "item")])
 
-    def test_agent_money_first_then_db_leaves_one_agent_row(self):
+    def test_loot_then_a_sale_of_the_same_copper_keeps_the_sale_agent_first(self):
+        # Money has no fact key (ADR 0020, feed_events.FACT_KEYS): the DB delta does not say its cause.
         self.store.add(self.agent_money(50))
-        self.assertEqual(self.store.add([self.db_money(50)]), 0)
-        self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "money")])
+        self.assertEqual(self.store.add([self.db_money(50)]), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()), [("agent", "money"), ("db", "money")])
 
-    def test_db_money_first_then_agent_leaves_one_agent_row(self):
+    def test_loot_then_a_sale_of_the_same_copper_keeps_the_sale_db_first(self):
         self.store.add([self.db_money(50)])
         self.assertEqual(self.store.add(self.agent_money(50)), 1)
-        self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "money")])
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()), [("agent", "money"), ("db", "money")])
 
     def test_an_item_and_money_with_the_same_number_do_not_delete_each_other(self):
         # The item 50 and the 50 copper are different facts: each statement names its kind.
@@ -310,7 +309,7 @@ class StoreRulesTests(unittest.TestCase):
         self.store.add(self.agent_item(2589, count=3))
         self.store.add([self.db_money(-50)])
         rows = self.store._conn.execute("SELECT kind, source, fact_key FROM events").fetchall()
-        self.assertEqual(sorted(rows), [("item", "agent", "2589"), ("money", "db", "-50")])
+        self.assertEqual(sorted(rows, key=str), [("item", "agent", "2589"), ("money", "db", None)])
 
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
         self.store.add(self.agent_level(11))
