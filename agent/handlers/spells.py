@@ -73,7 +73,11 @@ def handle_log_xp_gain(ctx, payload: bytes):
 
 
 def handle_levelup_info(ctx, payload: bytes):
-    ctx.state.record_event("levelup", **sp.parse_levelup_info(payload))
+    info = sp.parse_levelup_info(payload)
+    ctx.state.record_event("levelup", **info)
+    # ADR 0020 (#390). SMSG_LEVELUP_INFO goes to the leveller only: TrinityCore 92127cd,
+    # Player::GiveLevel, src/server/game/Entities/Player/Player.cpp:2437 (SendDirectMessage at :2468).
+    ctx.state.emit_activity("level", to=info["level"])
 
 
 def register(router):

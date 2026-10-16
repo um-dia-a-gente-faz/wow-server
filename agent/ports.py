@@ -34,6 +34,11 @@ class EventLog(Protocol):
 
     def record_event(self, kind: str, **fields: Any) -> None: ...
 
+    # ADR 0020 (#390): activity events for the next decision line; think drains them.
+    def emit_activity(self, kind: str, **detail: Any) -> None: ...
+
+    def drain_activity(self) -> list[dict[str, Any]]: ...
+
 
 @runtime_checkable
 class PlayerView(Protocol):

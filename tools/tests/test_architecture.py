@@ -84,7 +84,7 @@ AGENT_TESTS_IMPORTERS = {
 
 # Rule 3, inside wowmap: each module of wowmap/wowmap/ (repo/ is one unit) -> the units it may import.
 WOWMAP_LAYERS = {
-    "activity": {"activity_schema"},
+    "activity": {"activity_schema", "feed_events"},
     "activity_schema": set(),
     "agents": {"fleet", "state", "walk", "webio"},
     "app": {"activity", "routes", "state", "webio"},
@@ -92,6 +92,7 @@ WOWMAP_LAYERS = {
     "assets": {"fogview", "state", "webio"},
     "calibration": {"state"},
     "character": {"agents", "inventory", "players", "repo", "state"},
+    "feed_events": set(),
     "fleet": set(),
     "fog": set(),
     "fogview": {"fog", "repo", "state"},

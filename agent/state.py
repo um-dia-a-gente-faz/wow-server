@@ -13,6 +13,10 @@ CHAT_INBOX_MAXLEN = 50
 # the LLM loop (UM-44) only ever needs the last N events per think cycle.
 EVENTS_MAXLEN = 100
 
+# ADR 0020 (#390): activity events waiting for the next decision line. Bounded, so a burst between two
+# decisions drops the oldest instead of growing; the cost is stated in ADR 0020 (Consequences).
+ACTIVITY_MAXLEN = 20
+
 
 class GameState:
     """Everything the agent knows about its character and the world."""
@@ -63,6 +67,9 @@ class GameState:
         self.spell_cooldowns: dict[int, dict] = {}  # spell_id -> agent.spells.parse_initial_spells' cooldown entry shape
         self.events = collections.deque(maxlen=EVENTS_MAXLEN)  # combat/XP events, shaped like {"kind": str, ...}
         self.loot: dict | None = None  # current open loot session (agent.loot.parse_loot_response()'s dict), or None
+        # ADR 0020 (#390): set by agent/login.py from AGENT_ACTIVITY_EVENTS. Off: emit_activity buffers nothing.
+        self.activity_events = False
+        self._activity: collections.deque[dict] = collections.deque(maxlen=ACTIVITY_MAXLEN)
 
         # Death/resurrection (UM-43)
         self.corpse_position: tuple | None = None  # (map_id, x, y, z) from MSG_CORPSE_QUERY's response, or None
@@ -82,6 +89,24 @@ class GameState:
         make plain index-based slicing wrong)."""
         self.events.append({"kind": kind, "t": time.monotonic(), **fields})
         changes.notify()
+
+    def emit_activity(self, kind: str, **detail) -> None:
+        """Buffer one activity event for the next decision line (ADR 0020). Called from the recv thread."""
+        if not self.activity_events:
+            return
+        self._activity.append({"kind": kind, "t": time.time(), "detail": detail})
+
+    def drain_activity(self) -> list[dict]:
+        """Take every buffered activity event, oldest first. Called on the think thread.
+
+        Pops until IndexError, never copies and then clears: an event appended between a copy and a
+        clear would be lost. deque.popleft and append are atomic, so the two threads need no lock."""
+        out = []
+        while True:
+            try:
+                out.append(self._activity.popleft())
+            except IndexError:
+                return out
 
     def events_snapshot(self) -> list[dict]:
         """A copy of `events`, oldest first. Readers on any thread but the recv thread

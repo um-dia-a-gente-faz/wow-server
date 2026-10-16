@@ -6,11 +6,15 @@
 // over the fetched window, match highlighted), and the footer says how far back the
 // window goes. Event text comes from chat and the database, so it is rendered with
 // textContent only (the highlight is built from text nodes and <mark>).
+// Feed events' source as the reader sees it. `agent` is an event the agent wrote on its audit line (ADR 0020).
+function sourceLabel(source) {
+  return {db: 'database', chat: 'public chat', audit: 'agent log', agent: 'agent event'}[source] || source;
+}
+
 window.ActivityFeed = (() => {
   const ICONS = {combat: '⚔', loot: '✚', item: '✚', item_lost: '✖', sell: '$', buy: '$',
     money: '¤', trade: '⇄', chat: '“', whisper: '“', level: '▲', zone: '➜', quest: '!',
     mail: '✉', move: '→', group: '◆', session: '●', action: '•'};
-  const SOURCES = {db: 'database', chat: 'public chat', audit: 'agent log'};
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -30,7 +34,7 @@ window.ActivityFeed = (() => {
   const clock = (t) => new Date(t * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
   // What the search box matches: only what a row shows (text names the partner,
   // channel and zone), so every match can be highlighted.
-  const hay = (e) => [e.text, e.kind, SOURCES[e.source] || e.source].join(' ').toLowerCase();
+  const hay = (e) => [e.text, e.kind, sourceLabel(e.source)].join(' ').toLowerCase();
   // Append `text` to `parent` with every occurrence of `q` wrapped in <mark>.
   function hl(parent, text, q) {
     const s = String(text ?? '');
@@ -74,7 +78,7 @@ window.ActivityFeed = (() => {
         const meta = el('div', 'meta', `${clock(e.t)} · ${ago(e.t)} · `);
         hl(meta, e.kind, q);
         meta.append(' · ');
-        hl(meta, SOURCES[e.source] || e.source, q);
+        hl(meta, sourceLabel(e.source), q);
         meta.title = new Date(e.t * 1000).toLocaleString();
         tx.append(meta);
         r.append(tx);

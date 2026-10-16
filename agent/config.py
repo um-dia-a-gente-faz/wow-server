@@ -91,6 +91,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("AGENT_AUDIT_DIR", str, "/data/audit", "decision audit log directory (matches the compose volume)",
        compose=False),
     _s("AGENT_AUDIT_RETENTION_DAYS", int, 14, "days of audit logs kept", compose=False),
+    _s("AGENT_ACTIVITY_EVENTS", bool, False, "1 = the agent writes its activity events (level-ups, ADR 0020, "
+       "#390) on its decision audit line; off by default"),
     _s("AGENT_HTTP_PORT", int, 0, "read-only observability API port; 0 = off (set per service by compose)"),
     _s("AGENT_HTTP_BIND", str, "127.0.0.1", "observability API bind address"),
     _s("AGENT_CONTROL_TOKEN", str, "", "bearer token for POST /control/walk; empty = read-only "
@@ -234,6 +236,8 @@ class Config:
     # ── Audit log (UM-51) ─────────────────────────────────────
     audit_dir: str = _f("AGENT_AUDIT_DIR")
     audit_retention_days: int = _f("AGENT_AUDIT_RETENTION_DAYS")
+    # ADR 0020 (#390): agent/state.py buffers activity events only when this is set.
+    activity_events: bool = _f("AGENT_ACTIVITY_EVENTS")
 
     # ── Observability API (UM-50) ─────────────────────────────
     # Read-only HTTP view of this agent (agent/http_api.py). 0 = off (default).
