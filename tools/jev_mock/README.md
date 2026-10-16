@@ -12,7 +12,7 @@ exercises the HTTP contract; the answers mean nothing.
 ## Run
 
 ```bash
-python3 tools/jev-mock/server.py            # http://127.0.0.1:8090
+python3 tools/jev_mock/server.py            # http://127.0.0.1:8090
 JEV_BASE_URL=http://127.0.0.1:8090/api/alpha  # point the agent at it
 ```
 
@@ -63,7 +63,7 @@ mock does not implement), 404 for other paths, 413 over 1 MiB.
 ## Test
 
 ```bash
-python3 -m unittest discover -s tools/jev-mock/tests -v
+python3 -m unittest discover -s tools/jev_mock/tests -v
 ```
 
 The `JevClient*` tests drive the real `agent.jev.JevClient` against the mock
@@ -71,6 +71,6 @@ in-process. `tests/test_external.py` does the same against a mock running as
 its own process, and is skipped unless `JEV_MOCK_URL` is set (CI sets it):
 
 ```bash
-python3 tools/jev-mock/server.py &
-JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha python3 -m unittest -v tools/jev-mock/tests/test_external.py
+python3 tools/jev_mock/server.py &
+JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha python3 -m unittest -v tools/jev_mock/tests/test_external.py
 ```

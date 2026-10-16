@@ -24,7 +24,7 @@ services:
 
   jev-mock:
     <<: *py
-    command: python3 tools/jev-mock/server.py
+    command: python3 tools/jev_mock/server.py
     environment:
       <<: *py-env
       HOST: 0.0.0.0

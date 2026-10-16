@@ -103,7 +103,7 @@ Tests, 80 lines in 62 files, by directory (`git grep -cE ... -- '*/tests/*'`, co
 file): `tools/wowmap/tests` 21, `scripts/tests` 9, tools/world-mock/tests 6, `agent/tests` 5,
 `tools/agent-runner/tests` 3, `tools/chat-feed/tests` 3, `tools/common/tests` 3,
 `tools/dbc/tests` 3, `tools/tests` 3, `exporters/wow-exporter/tests` 2,
-`tools/jev-mock/tests` 2, `tools/fleet-limits/tests` 1, `tools/worldknowledge/tests` 1.
+tools/jev-mock/tests 2, `tools/fleet-limits/tests` 1, `tools/worldknowledge/tests` 1.
 Three kinds of edit, from the inserted expression:
 
 1. **The tool's own directory, for flat imports** (`.../ "wowmap"` appears 20 times;
@@ -125,7 +125,7 @@ file's own suite still passed for `tools/tests/test_audit_reader_keys.py` (the t
 guarded insert), `tools/tests/test_roster_accounts.py` (line 13), `tools/agent-runner/tests/test_runner.py`
 (line 24) and `tools/worldknowledge/tests/test_build.py` (line 22), each run as
 `python3 scripts/early_failures.py discover -s <its tests dir> -p <file>`; the files were
-restored afterwards. `tools/jev-mock/tests/test_external.py` also passed but skipped its
+restored afterwards. tools/jev-mock/tests/test_external.py also passed but skipped its
 tests (no `JEV_MOCK_URL`), so that run proves nothing and it stays out of the first slice.
 A subprocess started with `python -I` (`agent/tests/test_death_registration.py`) needs its
 own insert: `-I` drops the working directory. That one is legitimate.
@@ -429,7 +429,7 @@ One issue each, in dependency order. A slice marked "owner's go-ahead" touches a
 `CLAUDE.md` gates. "Stack" is what `stacks_for` says a merge recreates.
 
 2. **The remaining root-only test edits that need a proof outside the suites.**
-   `tools/jev-mock/tests/test_external.py` (proved by the CI step that sets `JEV_MOCK_URL`),
+   tools/jev-mock/tests/test_external.py (proved by the CI step that sets `JEV_MOCK_URL`),
    `tools/jev-mock/tests/test_server.py:157`, `tools/wowmap/tests/test_agent_proxy.py:15`,
    `scripts/tests/test_action_catalog.py:11`. Stack: monitoring for the wowmap file; the rest none. Owner's
    go-ahead for the `scripts/tests` file. No host step.
@@ -439,7 +439,7 @@ One issue each, in dependency order. A slice marked "owner's go-ahead" touches a
    tools/world-mock/tests edits and the two production lines. Stack: none. Owner's go-ahead
    (`scripts/`, `.github/workflows/`). Host step: none; developers rerun `dev/` compose.
 4. **Rename `jev-mock` to `jev_mock`.** `ci.yml` lines 116 and 122, `dev/docker-compose.yml`,
-   `scripts/check.sh`, `ruff.toml` (line 62 names `tools/jev-mock/server.py`), docs. Stack:
+   `scripts/check.sh`, `ruff.toml` (line 62 names tools/jev-mock/server.py), docs. Stack:
    none. Owner's go-ahead. Host step: none.
 5. **Rename `fleet-limits` to `fleet_limits`.** README unit text, `scripts/check.sh`,
    docs. Stack: none. Host step on `wow-agents`: if the unit was installed, edit

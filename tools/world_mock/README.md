@@ -4,7 +4,7 @@ Scripted, stdlib-only fake WoW 3.3.5a auth + world server (#253). It lets CI run
 the agent's **real** client code over localhost sockets: SRP6 login, realm list,
 world auth with RC4 header crypt, character enum, login burst of update
 objects, a quest turn-in action and the server's confirmation. No LAN, no
-TrinityCore. Sibling of `tools/jev-mock`.
+TrinityCore. Sibling of `tools/jev_mock`.
 
 ```bash
 python3 -m tools.world_mock.server        # auth :13724, world :18085

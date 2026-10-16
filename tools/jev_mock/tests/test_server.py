@@ -1,23 +1,17 @@
-"""Tests for tools/jev-mock. The HTTP tests run the real server on an
+"""Tests for tools/jev_mock. The HTTP tests run the real server on an
 ephemeral 127.0.0.1 port and call it the way agent.jev.JevClient does:
 urllib POST to {JEV_BASE_URL}/decisions with a JSON body and bearer auth.
 JevClientContractTest additionally drives the real JevClient when agent/jev.py
 exists (UM-99, PR #105); until that lands it is skipped."""
 
 import json
-import pathlib
 import random
-import sys
 import threading
 import unittest
 import urllib.error
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import server  # noqa: E402
-
-REPO = ROOT.parents[1]
+from tools.jev_mock import server
 
 CRITERIA = {"attack(guid=4660)": "attack the boar",
             "loot(guid=22136)": "loot the corpse",

@@ -28,7 +28,7 @@ or the TypeSafe SDK pointed at `POST https://openrouter.ai/api/v1/systemone`.
 **Provider (GH-195):** native TypeSafe is the intended production provider
 (`POST https://api.typesafe.ai/v1/systemone`, model `jev-latest`, a TypeSafe
 key); the OpenRouter proxy remains supported and is the code default so
-existing setups and `tools/jev-mock` keep working. The endpoint path is
+existing setups and tools/jev-mock keep working. The endpoint path is
 `JEV_PATH` and the model id `JEV_MODEL`, so switching is `.env`-only (see
 `.env.example`). `answers.{name}` has the same shape on both.
 Because the output is constrained to the options handed to it, it cannot
@@ -64,7 +64,7 @@ records the verified native TypeSafe price and replaces the unsupported spend
 estimate.
 
 Development against real Jev is blocked on provisioning `OPENROUTER_API_KEY`
-into the agent containers. A local mock (`tools/jev-mock/`, UM-96) stands in
+into the agent containers. A local mock (tools/jev-mock/, UM-96) stands in
 until then: a stdlib-only HTTP server implementing the same Decisions API
 request/response shape, with a deliberately unsophisticated policy (pick a
 uniformly random candidate) — precision doesn't matter for it, only

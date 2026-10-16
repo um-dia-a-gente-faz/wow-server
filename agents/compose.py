@@ -149,12 +149,12 @@ SERVICE = """\
 """
 
 
-# UM-100: tools/jev-mock next to the agents, for dev runs without an OpenRouter
+# UM-100: tools/jev_mock next to the agents, for dev runs without an OpenRouter
 # key. Opt-in on both sides (its own profile, and JEV_BASE_URL stays empty by
 # default): the mock answers at random, so it must never become a brain by
 # accident on the live realm.
 JEV_MOCK = """\
-  # Random-answer stand-in for Jev's Decisions API (tools/jev-mock). Dev only:
+  # Random-answer stand-in for Jev's Decisions API (tools/jev_mock). Dev only:
   #   JEV_BASE_URL=http://jev-mock:8090/api/alpha \\
   #     docker compose -f docker-compose.agents.yml --profile jev-mock up -d jev-mock agent-luaprata
   jev-mock:
@@ -170,7 +170,7 @@ JEV_MOCK = """\
       PYTHONUNBUFFERED: "1"
       JEV_MOCK_SEED: ${JEV_MOCK_SEED:-}
     volumes:
-      - ./tools/jev-mock/server.py:/app/server.py:ro
+      - ./tools/jev_mock/server.py:/app/server.py:ro
     command: ["python3", "/app/server.py"]
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
