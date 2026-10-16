@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed (#753, the ADR part of #347). The owner accepts it later. This ADR changes no code:
-it records the inventory, the rule and the first slice. #347 stays open for the slices.
+Accepted (owner's delegate, 2026-10-16, on #347). History: Proposed (#753, the ADR part of #347).
+This ADR changes no code: it records the inventory, the rule and the first slice. #347 stays open
+for the slices.
 
 ## Amends on acceptance
 
@@ -389,14 +390,17 @@ stacks), `tools/dbc/tests` and `exporters/` (monitoring), `scripts/tests` (owner
    `pop`, `extend`, `[...] =`, `+=`, `=`, and `site.addsitedir`) in `.py` files under `agent`,
    `agents`, `scripts`, `tools`, `monitoring`, `exporters`, `docs`, splitting a file into "test"
    when a path component is `tests`. It walks the tree (no git needed) and skips `__pycache__`.
-2. One number per class, the raw count: `PRODUCTION_EDITS = 24` and `TEST_EDITS = 76` (the 80
-   of the Inventory minus the four removed; the guarded two-line insert is one matching
-   line). The test fails when a count is above its constant, with the message "a new sys.path
+2. One number per class, the raw count: `PRODUCTION_EDITS = 24` and `TEST_EDITS = 77` (measured on
+   `origin/main` when the slice was cut: 81 matching test lines, the Inventory's 80 plus
+   `tools/tests/test_pathfinder_navmesh.py:15` (#766), minus the four removed; the guarded
+   two-line insert is one matching line). The test fails when a count is above its constant, with the message "a new sys.path
    edit; import from the checkout root instead (ADR 0019). A legitimate edit (a `-I` subprocess,
-   rule 3): raise the constant in the same PR with the reason in a comment, or name the file in
+   rule 3): raise the constant in the same PR with the reason in a comment, and name the file in
    `ALLOWED`", and fails when it is below, with "lower the constant" (a ratchet that cannot be
    forgotten).
-3. `NO_EDITS` is a set of the four files above; the test fails if any has a matching line.
+3. `NO_EDITS` maps each of the four files above to the removed root insert; the test fails if
+   that text is back. The files keep their other edits (the `tools/` insert, `HERE.parent`, the
+   subprocess script text), so "any matching line" would be wrong for them.
 4. `ALLOWED` names the deliberate edits, today only `scripts/early_failures.py`. It is not
    subtracted from any count (the constants stay raw). It is checked for staleness only: every
    path in it must still exist and still hold a matching line.
@@ -408,7 +412,7 @@ stacks), `tools/dbc/tests` and `exporters/` (monitoring), `scripts/tests` (owner
 
 | Item | Test or command |
 |---|---|
-| The four files have no `sys.path` edit, their suites pass from the root, and ruff finds no unused `import sys` (F401) | `scripts/check.sh test-tools-arch test-agent-runner test-worldknowledge lint` |
+| The four files no longer insert the checkout root, their suites pass from the root, and ruff finds no unused `import sys` (F401) | `scripts/check.sh test-tools-arch test-agent-runner test-worldknowledge lint` |
 | A new edit anywhere fails the new test | `test_sys_path_edits`: a temporary copy of the tree walk with one added line (the test exposes `count_edits(root)`), expects the over-count failure |
 | The count is a ratchet in both directions | same module: a count one below the constant fails |
 | The four files are checked | same module, `NO_EDITS` |
