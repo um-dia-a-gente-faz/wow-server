@@ -60,6 +60,21 @@ class RecvPacketTest(unittest.TestCase):
         self.assertEqual(sess._recv_packet(), (hworld.SMSG_COMPRESSED_UPDATE_OBJECT, big))
         self.assertEqual(sess._recv_packet(), (se.SMSG_PONG, b'\x05\x00\x00\x00'))
 
+    def test_unwanted_large_packet_is_skipped_in_bounded_reads(self):
+        # #570: a desynced stream declares multi-MB sizes; a packet nobody handles must be
+        # read through to keep the RC4 stream in step, but never buffered whole.
+        unknown = 0x0FFE
+        stream = (server_packet(unknown, b'\xAB' * 300_000)
+                  + server_packet(se.SMSG_PONG, b'\x05\x00\x00\x00'))
+        sess = make_session(stream)
+        reads = []
+        real_rr = sess._rr
+        sess._rr = lambda n: (reads.append(n), real_rr(n))[1]
+        keep = lambda op: op == se.SMSG_PONG
+        self.assertEqual(sess._recv_packet(keep), (unknown, b''))
+        self.assertEqual(sess._recv_packet(keep), (se.SMSG_PONG, b'\x05\x00\x00\x00'))
+        self.assertLessEqual(max(reads), 0x10000)
+
     def test_timeout_before_packet_is_plain_timeout(self):
         sess = make_session(b'')
         sess.sock.timeout_at = 0
@@ -758,6 +773,20 @@ class RecvLoopSafetyNetTest(unittest.TestCase):
         self.assertEqual(len(dropped), 2)  # second 0x0a9 error is rate-limited
         self.assertTrue(any('connection lost' in m for m in logs.output))
         self.assertTrue(any('still running' in m for m in logs.output))
+
+    def test_loop_skips_unhandled_large_packets_without_buffering_them(self):
+        # #570: the faulted soak's desynced agents buffered up to 8 MB of unhandled garbage each.
+        good = update_object(object_block(uo.UPDATETYPE_CREATE_OBJECT2, CREATURE))
+        stream = (server_packet(0x0FFE, b'\xAB' * 300_000)
+                  + server_packet(hworld.SMSG_UPDATE_OBJECT, good))
+        sess = make_session(stream)
+        sess._running = True
+        reads = []
+        real_rr = sess._rr
+        sess._rr = lambda n: (reads.append(n), real_rr(n))[1]
+        sess._recv_loop()
+        self.assertLessEqual(max(reads), 0x10000)
+        self.assertIn(CREATURE, sess.world_state.get_objects())
 
     def test_logout_complete_stops_loop_quietly(self):
         sess = make_session(server_packet(se.SMSG_LOGOUT_COMPLETE, b''))

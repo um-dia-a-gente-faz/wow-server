@@ -301,8 +301,8 @@ class FaultInjectionTest(unittest.TestCase):
         self.assertTrue(wait_for(lambda: burst_applied(sess)))
         real_recv, seen = session_mod.WoWSession._recv_packet, []
 
-        def recording_recv(self):
-            seen.append(real_recv(self))
+        def recording_recv(self, keep=None):
+            seen.append(real_recv(self, keep))
             return seen[-1]
 
         with mock.patch.object(session_mod.WoWSession, "_recv_packet", recording_recv):

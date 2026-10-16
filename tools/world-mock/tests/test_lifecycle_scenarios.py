@@ -133,8 +133,8 @@ class LifecycleScenarioTest(unittest.TestCase):
         t0 = time.monotonic()
         real_recv = session_mod.WoWSession._recv_packet
 
-        def recording_recv(sess):
-            opcode, payload = real_recv(sess)
+        def recording_recv(sess, keep=None):
+            opcode, payload = real_recv(sess, keep)
             # The patch is on the class, so a receive still in flight from a timed-out run can call
             # the recorder of a later run. Its session keeps the run that first read from it.
             owner = self.read_owner.setdefault(sess, reads)
