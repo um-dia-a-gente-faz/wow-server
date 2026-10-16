@@ -1,7 +1,8 @@
 """#589: scripts/auto-deploy.sh poll paths, run in a throwaway clone with a stub scripts/deploy.sh.
 
 The lock file comes from AUTO_DEPLOY_LOCK (a temp file here), so nothing touches /tmp/wow-auto-deploy.lock
-or a real stack. The stub deploy.sh exits with STUB_RC and appends a line to STUB_RAN when it runs.
+or a real stack. The stub deploy.sh appends a line to STUB_RAN, moves HEAD to origin/main as the real
+one does, and records refs/deployed/game only on success (STUB_RC 0), as the real one does when not deferred.
 """
 import fcntl
 import os
@@ -15,6 +16,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 AUTO_DEPLOY = ROOT / "scripts" / "auto-deploy.sh"
 STUB_DEPLOY = """#!/usr/bin/env bash
 echo ran >> "$STUB_RAN"
+git reset -q --hard origin/main
+[ "$STUB_RC" = 0 ] && git update-ref refs/deployed/game origin/main
 exit "$STUB_RC"
 """
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
@@ -43,6 +46,8 @@ class AutoDeployTest(unittest.TestCase):
         git(clone, "add", "-A")
         git(clone, "commit", "-qm", "base")
         git(clone, "push", "-q", "origin", "HEAD:main")
+        # the game stack has never deployed: its ref sits on the base commit
+        git(clone, "update-ref", "refs/deployed/game", git(clone, "rev-parse", "HEAD"))
         self.clone = clone
         self.pusher = pusher
         self.origin = origin
@@ -73,6 +78,9 @@ class AutoDeployTest(unittest.TestCase):
     def deploy_ran(self):
         return self.ran.exists()
 
+    def deploy_runs(self):
+        return len(self.ran.read_text().splitlines()) if self.ran.exists() else 0
+
     def test_up_to_date_exits_zero_and_does_not_deploy(self):
         r = self.run_auto_deploy()
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -99,6 +107,23 @@ class AutoDeployTest(unittest.TestCase):
         r = self.run_auto_deploy(rc=3)
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertTrue(self.deploy_ran())
+
+    def test_poll_after_deferral_calls_deploy_again(self):
+        self.move_origin()
+        first = self.run_auto_deploy(rc=75)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.run_auto_deploy(rc=75)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(self.deploy_runs(), 2)
+        self.assertIn("deferred", second.stdout)
+
+    def test_poll_after_successful_deploy_is_up_to_date(self):
+        self.move_origin()
+        self.assertEqual(self.run_auto_deploy(rc=0).returncode, 0)
+        r = self.run_auto_deploy(rc=0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("up to date", r.stdout)
+        self.assertEqual(self.deploy_runs(), 1)
 
     def test_held_lock_skips_the_run(self):
         self.move_origin()
