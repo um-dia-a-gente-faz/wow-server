@@ -90,7 +90,7 @@ from .candidate_history import finish, history_effects
 from .candidate_history import HISTORY_DEMOTE_REPEATS, HISTORY_DROP_WINDOW  # noqa: F401 (re-exported)
 from .missions import DEFAULT_MISSION
 from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
-from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD, NO_PULL_RANKS
+from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD, NO_PULL_RANKS, SELL_TRIP_MIN_ITEMS
 
 MAX_CANDIDATES = 15
 MISSION_STEP_YD = 40.0
@@ -113,6 +113,7 @@ MAX_TRAIN = cap_of(A.TRAIN_SPELL)
 MAX_EQUIP = cap_of(A.EQUIP_ITEM)
 MAX_USE_ITEMS = cap_of(A.USE_ITEM)
 MAX_SELL = cap_of(A.SELL_ITEM)
+UNIT_NPC_FLAG_VENDOR = 0x00000080  # UnitDefines.h (agent.perception's copy; no perception import here)
 
 # ItemTemplate.InventoryType -> Player equipment slot(s), following
 # EQUIPMENT_SLOT_* in TrinityCore. Paired slots are deliberately both checked.
@@ -128,6 +129,10 @@ _BACKPACK_FIRST, _BACKPACK_LAST = 23, 38
 
 def _backpack(item: Item) -> bool:
     return isinstance(item.get("slot"), int) and _BACKPACK_FIRST <= item["slot"] <= _BACKPACK_LAST
+
+
+def _sellable(item: Item, mission: str) -> bool:
+    return _backpack(item) and item_compare.sellable(item, mission)
 
 
 def _resource_pct(me: Me | None, resource: Literal["health", "mana"]) -> float | None:
@@ -238,12 +243,13 @@ def is_mission_fallback(c: Candidate) -> bool:
     return any(label.endswith(f": explore {MISSION_STEP_YD:g} yd {name}") for name, _, _ in _MISSION_HEADINGS)
 
 
-def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
+def _window_candidates(snapshot: Snapshot, mission: str = DEFAULT_MISSION) -> list[Candidate]:
     window = snapshot.get("window")
     if not isinstance(window, dict):
         return []
     kind = window.get("kind")
-    npc_guid = window.get("npc_guid")
+    # A vendor window names its NPC vendor_guid (npc.parse_list_inventory via apply_list_inventory), not npc_guid.
+    npc_guid = window.get("npc_guid", window.get("vendor_guid"))
     in_log = {q.get("quest_id") for q in snapshot.get("quest_log") or []}
     out = []
 
@@ -256,10 +262,10 @@ def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
     if kind == "vendor" and npc_guid is not None:
         inventory = snapshot.get("inventory") or []
         for item in inventory:
-            if item.get("template", {}).get("quality") == 0 and _backpack(item):
-                out.append(candidate(A.SELL_ITEM, {"vendor_guid": npc_guid, "bag": 255,
-                                                     "slot": item["slot"]},
-                                     f"sell grey item {item.get('name') or item.get('entry')}"))
+            if _sellable(item, mission):
+                grey = (item.get("template") or {}).get("quality") == item_compare.ITEM_QUALITY_POOR
+                out.append(candidate(A.SELL_ITEM, {"vendor_guid": npc_guid, "bag": 255, "slot": item["slot"]},
+                                     f"sell {'grey' if grey else 'gold'} item {item.get('name') or item.get('entry')}"))
                 if sum(c["action"] == A.SELL_ITEM for c in out) >= MAX_SELL:
                     break
 
@@ -300,11 +306,13 @@ def _window_candidates(snapshot: Snapshot) -> list[Candidate]:
 class _Context:
     """What every provider reads, derived once per call and never mutated; a dead snapshot gets only plain fields."""
 
-    def __init__(self, snapshot: Snapshot, my_guid: int | None, reflex_state: dict | None, handles) -> None:
+    def __init__(self, snapshot: Snapshot, my_guid: int | None, reflex_state: dict | None, handles,
+                 mission: str = DEFAULT_MISSION) -> None:
         self.snapshot = snapshot
         self.my_guid = my_guid
         self.reflex_state = reflex_state
         self.handles = handles
+        self.mission = mission
         self.dead = bool(snapshot.get("is_dead") or snapshot.get("is_ghost"))
         if self.dead:
             return
@@ -364,7 +372,7 @@ def _dead_candidates(ctx: _Context, out: list[Candidate]) -> None:
 @offers(A.TRAIN_SPELL, A.SELL_ITEM, A.ACCEPT_QUEST, A.COMPLETE_QUEST, A.GOSSIP_SELECT, A.TURN_IN_QUEST,
         A.CLOSE_WINDOW)
 def _window_provider(ctx: _Context, out: list[Candidate]) -> None:
-    out.extend(_window_candidates(ctx.snapshot))
+    out.extend(_window_candidates(ctx.snapshot, ctx.mission))
 
 
 # Damaging spells only (highest known rank per family); buffs and utility spells are not offered.
@@ -516,6 +524,24 @@ def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
         out.append(_engage(u, ""))
 
 
+@offers(A.INTERACT, A.MOVE_TOWARDS)
+def _sell_trip_provider(ctx: _Context, out: list[Candidate]) -> None:
+    """#317 make_gold: walk to a vendor once enough is sellable. Not in a fight, no window open."""
+    if ctx.mission != "make_gold" or ctx.in_combat or ctx.snapshot.get("window"):
+        return
+    sellable = sum(_sellable(item, ctx.mission) for item in ctx.snapshot.get("inventory") or [])
+    vendors = [u for u in ctx.units if isinstance(u.get("npc_flags"), int)
+               and u["npc_flags"] & UNIT_NPC_FLAG_VENDOR and _dist(u) <= APPROACH_MAX_YD]
+    if sellable < SELL_TRIP_MIN_ITEMS or not vendors:
+        return
+    vendor = min(vendors, key=_dist)
+    why = f"make_gold: sell {sellable} items at {_name(vendor)}"
+    if _dist(vendor) <= INTERACT_RANGE_YD:
+        out.append(candidate(A.INTERACT, {"guid": vendor["guid"]}, why))
+    else:
+        out.append(candidate(A.MOVE_TOWARDS, {"guid": vendor["guid"], "stop_distance": 3.0}, f"{why} (walk there)"))
+
+
 # follow/assist/stop_following are driven by the follow reflex's state, not by the snapshot; they
 # stay together behind this one provider until their specs carry it (gh-515).
 @offers(A.FOLLOW, A.ASSIST, A.STOP_FOLLOWING)
@@ -539,7 +565,7 @@ def _follow_reflex_provider(ctx: _Context, out: list[Candidate]) -> None:
 ALIVE_PROVIDERS: tuple[Provider, ...] = (
     _window_provider, _offensive_spell_provider, _heal_provider, _consumable_provider, _equip_provider,
     _group_invite_provider, _threat_provider, _loot_provider, _quest_giver_provider,
-    _abandon_quest_provider, _attack_provider, _follow_reflex_provider,
+    _abandon_quest_provider, _attack_provider, _sell_trip_provider, _follow_reflex_provider,
 )
 DEAD_PROVIDERS: tuple[Provider, ...] = (_dead_candidates,)
 
@@ -556,7 +582,7 @@ def generate(snapshot: Snapshot, *, my_guid: int | None = None, reflex_state: di
     changed and why. `mission` and `mission_step` (#314) only shape the fallback option."""
     limit = max(1, limit)
     idle = candidate(A.IDLE, {}, "do nothing this cycle")
-    ctx = _Context(snapshot, my_guid, reflex_state, handles)
+    ctx = _Context(snapshot, my_guid, reflex_state, handles, mission)
     out: list[Candidate] = []
     for provider in DEAD_PROVIDERS if ctx.dead else ALIVE_PROVIDERS:
         provider(ctx, out)

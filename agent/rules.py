@@ -15,6 +15,9 @@ SPIRIT_HEALER_SEARCH_RANGE_YD = 200.0
 # move_towards is straight-line only (no navmesh): candidates offer short hops only.
 APPROACH_MAX_YD = 40.0
 
+# make_gold (#317): a trip to a vendor once this many backpack items are sellable.
+SELL_TRIP_MIN_ITEMS = 4
+
 # Candidates do not offer to pull mobs more than this many levels above us.
 ATTACK_LEVEL_MARGIN = 3
 

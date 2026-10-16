@@ -34,7 +34,7 @@ def build_equipment_and_inventory(me, objects, items) -> tuple[dict[int, Item], 
                 # into every Jev prompt; keep this projection bounded.
                 d["template"] = {key: template[key] for key in (
                     "quality", "inventory_type", "class_", "subclass",
-                    "allowable_class", "item_level", "stats", "spells",
+                    "allowable_class", "item_level", "stats", "spells", "sell_price",
                 ) if key in template}
             count = item_obj.raw_fields and uf.decode_item_fields(item_obj.raw_fields).get("count")
             if count is not None:

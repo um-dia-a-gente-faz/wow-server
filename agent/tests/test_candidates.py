@@ -711,5 +711,130 @@ class MissionFallbackTest(unittest.TestCase):
         self.assertEqual([c["action"] for c in cand.generate(self.snap(is_dead=True))], ["release_spirit", "idle"])
 
 
+def _item(slot, quality, *, class_=7, sell_price=100, name=None):
+    """A backpack item as the snapshot projects it (#317: sell_price is absent when the cache has none)."""
+    template = {"quality": quality, "class_": class_, "inventory_type": 0, "stats": [], "spells": []}
+    if sell_price is not None:
+        template["sell_price"] = sell_price
+    return {"slot": slot, "name": name or f"item {slot}", "template": template}
+
+
+VENDOR = {"guid": 5, "entry": 2, "name": "Vendor Joe", "type": "unit", "distance": 3.0, "level": 1,
+          "health_pct": 1.0, "in_combat": False, "npc_flags": 0x80}  # UNIT_NPC_FLAG_VENDOR
+
+
+class MakeGoldSellingTest(unittest.TestCase):
+    """#317: what make_gold sells, the sell trip, and no buying. Every other mission keeps grey-only selling."""
+    POS = {"map": 1, "x": 100.0, "y": 50.0, "z": 0.0}
+
+    def snap(self, items=(), vendor=VENDOR, **kw):
+        units = [vendor] if vendor else []
+        return {"me": {"level": 10, "health": "90/90"}, "nearby_units": units, "inventory": list(items),
+                "equipment": {}, "window": None, "position": self.POS, **kw}
+
+    @staticmethod
+    def sold(cands):
+        return sorted(c["params"]["slot"] for c in cands if c["action"] == "sell_item")
+
+    def test_grey_is_sellable_under_every_mission(self):
+        for mission in ("level_to_cap", "explore", "make_gold"):
+            self.assertTrue(cand._sellable(_item(23, 0, class_=4), mission), mission)
+
+    def test_white_trade_goods_and_misc_are_sellable_only_under_make_gold(self):
+        for class_ in (7, 15):
+            self.assertTrue(cand._sellable(_item(23, 1, class_=class_), "make_gold"), class_)
+            self.assertFalse(cand._sellable(_item(23, 1, class_=class_), "level_to_cap"), class_)
+            self.assertFalse(cand._sellable(_item(23, 1, class_=class_), "explore"), class_)
+        self.assertFalse(cand._sellable(_item(23, 1, class_=4), "make_gold"))  # white armour is not gold
+
+    def test_zero_sell_price_is_never_sold_and_unknown_price_only_for_grey(self):
+        self.assertFalse(cand._sellable(_item(23, 1, class_=7, sell_price=0), "make_gold"))
+        self.assertFalse(cand._sellable(_item(23, 1, class_=7, sell_price=None), "make_gold"))
+        self.assertFalse(cand._sellable(_item(23, 0, sell_price=0), "make_gold"))
+        self.assertTrue(cand._sellable(_item(23, 0, sell_price=None), "make_gold"))
+
+    def test_equipped_quest_and_consumable_items_are_never_sold(self):
+        for mission in ("level_to_cap", "make_gold"):
+            self.assertFalse(cand._sellable(_item(0, 0, class_=4), mission), mission)   # equipped
+            self.assertFalse(cand._sellable(_item(23, 1, class_=12), mission), mission)  # quest
+            self.assertFalse(cand._sellable(_item(23, 1, class_=0), mission), mission)   # consumable
+        self.assertFalse(cand._sellable(_item(23, 0, class_=0), "level_to_cap"))
+
+    def test_vendor_window_under_make_gold_sells_white_gold_next_to_grey(self):
+        window = {"kind": "vendor", "npc_guid": 9, "items": []}
+        items = [_item(23, 0, class_=4, name="grey"), _item(24, 1, class_=7, name="white trade")]
+        self.assertEqual(self.sold(cand.generate(self.snap(items, window=window), mission="make_gold")), [23, 24])
+        self.assertEqual(self.sold(cand.generate(self.snap(items, window=window))), [23])
+
+    def test_a_vendor_window_as_the_wire_builds_it_offers_the_sales(self):
+        # apply_list_inventory stores the NPC as vendor_guid (no npc_guid), the shape the snapshot really carries.
+        window = {"kind": "vendor", "vendor_guid": 9, "items": [], "reason": None}
+        items = [_item(23, 0, class_=4)]
+        cands = cand.generate(self.snap(items, window=window))
+        self.assertEqual([c["params"] for c in cands if c["action"] == "sell_item"],
+                         [{"vendor_guid": 9, "bag": 255, "slot": 23}])
+
+    def test_non_make_gold_missions_keep_grey_only_selling(self):
+        window = {"kind": "vendor", "npc_guid": 9, "items": []}
+        items = [_item(23, 0, class_=4), _item(24, 1, class_=7), _item(25, 1, class_=15)]
+        for mission in ("level_to_cap", "explore"):
+            cands = cand.generate(self.snap(items, window=window), mission=mission)
+            self.assertEqual(self.sold(cands), [23], mission)
+            self.assertFalse(any(c["label"].startswith(f"{mission}: sell") for c in cands), mission)
+
+    def test_cached_template_without_sell_price_does_not_crash(self):
+        window = {"kind": "vendor", "npc_guid": 9, "items": []}
+        items = [_item(23, 0, class_=4, sell_price=None), _item(24, 1, class_=7, sell_price=None)]
+        cands = cand.generate(self.snap(items, window=window), mission="make_gold")
+        self.assertEqual(self.sold(cands), [23])
+
+    def test_sell_trip_interacts_with_the_nearby_vendor_under_make_gold(self):
+        items = [_item(23 + i, 1, class_=7, name=f"trade {i}") for i in range(4)]
+        cands = cand.generate(self.snap(items), mission="make_gold")
+        self.assertEqual(cands[0]["action"], "interact")
+        self.assertEqual(cands[0]["params"], {"guid": 5})
+        self.assertEqual(cands[0]["label"], "make_gold: sell 4 items at Vendor Joe")
+
+    def test_sell_trip_walks_to_a_vendor_out_of_interact_range(self):
+        items = [_item(23 + i, 1, class_=7) for i in range(4)]
+        far = dict(VENDOR, distance=12.0)
+        cands = cand.generate(self.snap(items, vendor=far), mission="make_gold")
+        self.assertEqual((cands[0]["action"], cands[0]["params"]), ("move_towards", {"guid": 5, "stop_distance": 3.0}))
+
+    def test_sell_trip_is_not_offered_to_other_missions(self):
+        items = [_item(23 + i, 1, class_=7) for i in range(4)]
+        for mission in ("level_to_cap", "explore"):
+            actions = [c["action"] for c in cand.generate(self.snap(items), mission=mission)]
+            self.assertNotIn("interact", actions, mission)
+            self.assertNotIn("move_towards", actions, mission)
+
+    def test_sell_trip_needs_four_sellable_items(self):
+        items = [_item(23 + i, 1, class_=7) for i in range(3)] + [_item(26, 1, class_=4)]
+        self.assertNotIn("interact", [c["action"] for c in cand.generate(self.snap(items), mission="make_gold")])
+
+    def test_sell_trip_guard_not_in_combat(self):
+        items = [_item(23 + i, 1, class_=7) for i in range(4)]
+        fighting = self.snap(items, me={"level": 10, "health": "90/90", "in_combat": True})
+        self.assertNotIn("interact", [c["action"] for c in cand.generate(fighting, mission="make_gold")])
+
+    def test_sell_trip_guard_no_window_open(self):
+        items = [_item(23 + i, 1, class_=7) for i in range(4)]
+        trainer = self.snap(items, window={"kind": "trainer", "npc_guid": 9, "spells": []})
+        self.assertNotIn("interact", [c["action"] for c in cand.generate(trainer, mission="make_gold")])
+
+    def test_sell_trip_guard_needs_a_vendor_within_reach(self):
+        items = [_item(23 + i, 1, class_=7) for i in range(4)]
+        for vendor in (None, dict(VENDOR, distance=45.0), dict(VENDOR, npc_flags=0x2)):  # none, too far, questgiver
+            actions = [c["action"] for c in cand.generate(self.snap(items, vendor=vendor), mission="make_gold")]
+            self.assertNotIn("interact", actions, vendor)
+            self.assertNotIn("move_towards", actions, vendor)
+
+    def test_make_gold_never_offers_buy_item_even_with_a_vendor_window_open(self):
+        window = {"kind": "vendor", "npc_guid": 9, "items": [{"slot": 1, "entry": 159, "price": 5}]}
+        items = [_item(23 + i, 1, class_=7) for i in range(4)]
+        actions = [c["action"] for c in cand.generate(self.snap(items, window=window), mission="make_gold")]
+        self.assertNotIn("buy_item", actions)
+
+
 if __name__ == "__main__":
     unittest.main()

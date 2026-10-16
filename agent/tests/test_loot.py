@@ -141,14 +141,14 @@ class ParseInventoryChangeFailureTest(unittest.TestCase):
 class ParseItemQueryResponseTest(unittest.TestCase):
     def _build(self, entry=159, name="Tough Jerky", stackable=20, max_durability=0,
                item_level=1, allowable_class=-1, item_class=0, subclass=5,
-               stats=(), armor=0, damage=(),
+               stats=(), armor=0, damage=(), quality=1, sell_price=500,
                spells=((3222, lo.ITEM_SPELLTRIGGER_ON_USE),)) -> bytes:
         p = struct.pack('<I', entry)
         p += struct.pack('<III', item_class, subclass, 0)  # class, subclass, sound_override
         p += cstr(name) + bytes([0, 0, 0])
-        p += struct.pack('<II', 100, 1)  # display_info_id, quality
+        p += struct.pack('<II', 100, quality)  # display_info_id, quality
         p += struct.pack('<II', 0, 0)  # Flags[2]
-        p += struct.pack('<iI', 500, 500)  # buy_price(i32), sell_price
+        p += struct.pack('<iI', 500, sell_price)  # buy_price(i32), sell_price
         p += struct.pack('<I', 0)  # inventory_type
         p += struct.pack('<iI', allowable_class, 0)  # allowable_class(i32), allowable_race
         p += struct.pack('<I', item_level)  # item_level
@@ -210,6 +210,13 @@ class ParseItemQueryResponseTest(unittest.TestCase):
         self.assertEqual(info["armor"], 0)
         self.assertEqual(info["damage"], [])
         self.assertEqual(info["spells"], [{"spell_id": 3222, "trigger": lo.ITEM_SPELLTRIGGER_ON_USE}])
+
+    def test_sell_price_is_the_u32_after_buy_price(self):
+        # ItemQuerySingleResponse::Write: BuyPrice (int32) then SellPrice (uint32), QueryPackets.cpp (3.3.5).
+        info = lo.parse_item_query_response(self._build(quality=0, sell_price=1234))
+        self.assertEqual(info["sell_price"], 1234)
+        self.assertEqual(info["quality"], 0)
+        self.assertEqual(info["name"], "Tough Jerky")
 
     def test_stats_armor_and_damage(self):
         payload = self._build(
