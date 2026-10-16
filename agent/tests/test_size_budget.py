@@ -24,7 +24,6 @@ MODULE_MAX = 600
 BASELINE = {
     # modules
     "tools/agent_dev/probe.py": 769,
-    "tools/wowmap/wowmap/activity.py": 628,
     # functions
     "agent/handlers/chat.py::handle_messagechat": 84,
     "agent/loot.py::parse_item_query_response": 128,

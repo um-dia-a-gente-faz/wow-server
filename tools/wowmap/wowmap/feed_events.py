@@ -1,13 +1,36 @@
 """The feed event shape (UM-76) and the events an agent writes itself (ADR 0020, #390).
 
 Every source of activity.py builds its events with `event()`. `agent_events` turns the `events`
-of one audit line into events of that shape. Kept apart from activity.py, which is at its size
-budget (agent/tests/test_size_budget.py).
+of one audit line into events of that shape, and `audit_event` the decision of the line itself.
+Kept apart from activity.py, which is at its size budget (agent/tests/test_size_budget.py).
 """
+import json
+
 MAX_TEXT = 300
+# Decisions that mean "do nothing this cycle" -- not worth a feed row.
+SKIPPED_ACTIONS = frozenset({"idle"})
+ACTION_KINDS = {
+    "auto_attack": "combat", "stop_attack": "combat", "cast_spell": "combat",
+    "set_target": "combat", "assist": "combat",
+    "loot": "loot", "sell_item": "sell", "buy_item": "buy",
+    "open_trade": "trade", "accept_trade_request": "trade", "offer_item": "trade",
+    "offer_gold": "trade", "accept_trade": "trade", "cancel_trade": "trade",
+    "say": "chat", "yell": "chat", "channel_say": "chat", "emote": "chat", "whisper": "whisper",
+    "accept_quest": "quest", "complete_quest": "quest", "turn_in_quest": "quest",
+    "abandon_quest": "quest",
+    "use_item": "item", "destroy_item": "item_lost", "equip_item": "item", "compare_items": "item",
+    "open_mailbox": "mail", "send_mail": "mail", "take_mail": "mail", "delete_mail": "mail",
+    "move_to": "move", "move_towards": "move", "follow": "move", "stop_following": "move",
+    "stop_movement": "move", "face": "move",
+    "invite_to_group": "group", "accept_group": "group",
+}
 # ADR 0020 (#390): the activity kinds an agent may put in its audit line's `events`, with the detail
 # keys each must carry as ints. Mirrors agent/audit_schema.py ACTIVITY_KINDS; any other kind is skipped.
-AGENT_EVENT_KINDS = {"level": ("to",)}
+AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",)}
+# ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
+# writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key and the store's
+# de-duplication read these; a kind not listed here has no fact and no de-duplication.
+FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"}}
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -28,9 +51,54 @@ def _is_number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def agent_events(rec, agent):
+def _args_text(args):
+    parts = [f"{k}={json.dumps(v, ensure_ascii=False) if isinstance(v, str) else v}"
+             for k, v in (args or {}).items()]
+    return " ".join(parts)
+
+
+def audit_event(rec, agent):
+    """UM-51 audit record -> feed event, or None for no-op cycles."""
+    tc = rec.get("tool_call") or {}
+    name = tc.get("name")
+    if not name or name in SKIPPED_ACTIONS or rec.get("ts") is None:
+        return None
+    args = dict(tc.get("args") or {})
+    msg = args.get("message", args.get("text"))
+    if name == "say":
+        text = f'Said "{msg}"'
+    elif name == "yell":
+        text = f'Yelled "{msg}"'
+    elif name == "whisper":
+        text = f'Whispered to {args.get("target_name")}: "{msg}"'
+    elif name == "channel_say":
+        text = f'[{args.get("channel")}] "{msg}"'
+    elif name == "emote":
+        text = f"Emote: {msg}"
+    else:
+        label = name.replace("_", " ").capitalize()
+        text = f"{label} {_args_text(args)}".strip()
+    result = rec.get("result") or {}
+    ok = bool(result.get("ok")) and bool(rec.get("valid", True))
+    if not ok:
+        text += f" — failed: {result.get('error') or 'no result'}"
+    detail = {"action": name, "args": args, "ok": ok, "error": result.get("error"),
+              "cycle": rec.get("cycle")}
+    return event(agent, rec["ts"], ACTION_KINDS.get(name, "action"), text, "audit",
+                 f"audit:{agent}:{rec.get('cycle')}:{rec['ts']}", detail)
+
+
+def _agent_text(kind, detail, quest_title):
+    # The same sentence the DB path writes for the fact (activity.py diff_snapshots).
+    if kind == "level":
+        return f"Reached level {detail['to']}"
+    return f"Turned in quest: {quest_title(detail['quest_id'])}"
+
+
+def agent_events(rec, agent, quest_title=lambda q: f"Quest {q}"):
     """The feed events of one audit line's `events` (ADR 0020, #390). Never raises: an element that
-    is not a known kind with its typed detail keys is skipped (see skipped_agent_events)."""
+    is not a known kind with its typed detail keys is skipped (see skipped_agent_events).
+    `quest_title` names a turn-in (the DB names, when there is a DB)."""
     raw = rec.get("events")
     if not isinstance(raw, list):
         return []
@@ -43,9 +111,9 @@ def agent_events(rec, agent):
             continue
         if not _is_number(t) or not all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind]):
             continue
-        # The only kind so far is `level`; its text is the one wowmap writes for a level-up.
-        out.append(event(agent, t, kind, f"Reached level {detail['to']}", "agent",
-                         f"agent:{agent}:{kind}:{t:.3f}:{detail['to']}", detail))
+        key = detail[FACT_KEYS[kind]["agent"]]
+        out.append(event(agent, t, kind, _agent_text(kind, detail, quest_title), "agent",
+                         f"agent:{agent}:{kind}:{t:.3f}:{key}", detail))
     return out
 
 
@@ -57,24 +125,36 @@ def skipped_agent_events(rec, kept):
     return 1 if not isinstance(raw, list) else len(raw) - len(kept)
 
 
+def _fact_name(kind, source):
+    """The detail key holding the fact of `kind` in an event of `source`, or None."""
+    return FACT_KEYS.get(kind, {}).get(source)
+
+
 def fact_key(e):
-    """What a feed event states as a fact, for de-duplication (ADR 0020). `level` only, for now:
-    (character, kind, to). None for every other event."""
-    if e.get("kind") != "level":
+    """What a feed event states as a fact, for de-duplication (ADR 0020): (character, kind, its key
+    value). None for an event with no fact (another kind, or a detail without the key)."""
+    name = _fact_name(e.get("kind"), e.get("source"))
+    value = (e.get("detail") or {}).get(name) if name else None
+    if value is None:
         return None
-    return (e["character"].lower(), "level", (e.get("detail") or {}).get("to"))
+    return (e["character"].lower(), e["kind"], value)
 
 
-# The store's two rules (ADR 0020), on its connection; level only, as fact_key is.
+# The store's two rules (ADR 0020), on its connection. Every statement names the kind: a row of
+# another kind with the same number is another fact, and is never matched or deleted.
 def agent_fact_stored(conn, key):
     """True when an agent row already holds the fact `key`: a db event of it is then not stored."""
+    character, kind, value = key
     return conn.execute(
-        "SELECT 1 FROM events WHERE source = 'agent' AND kind = 'level' AND character = ?"
-        " AND json_extract(detail_json, '$.to') = ? LIMIT 1", (key[0], key[2])).fetchone() is not None
+        "SELECT 1 FROM events WHERE source = 'agent' AND kind = ? AND character = ?"
+        " AND json_extract(detail_json, ?) = ? LIMIT 1",
+        (kind, character, f"$.{FACT_KEYS[kind]['agent']}", value)).fetchone() is not None
 
 
 def drop_db_fact(conn, key):
     """Delete the db rows of the fact `key`: an agent row for it has just been stored."""
+    character, kind, value = key
     conn.execute(
-        "DELETE FROM events WHERE source = 'db' AND kind = 'level' AND character = ?"
-        " AND json_extract(detail_json, '$.to') = ?", (key[0], key[2]))
+        "DELETE FROM events WHERE source = 'db' AND kind = ? AND character = ?"
+        " AND json_extract(detail_json, ?) = ?",
+        (kind, character, f"$.{FACT_KEYS[kind]['db']}", value))

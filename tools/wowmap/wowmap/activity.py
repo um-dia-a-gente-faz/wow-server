@@ -29,14 +29,13 @@ import urllib.request
 
 import activity_schema
 # event() is the feed-event shape every source builds; the agent-written events are ADR 0020 (#390).
-from feed_events import agent_events, agent_fact_stored, drop_db_fact, event, fact_key, skipped_agent_events
+from feed_events import (agent_events, agent_fact_stored, audit_event, drop_db_fact, event, fact_key,
+                         skipped_agent_events)
 
 log = logging.getLogger("wowmap.activity")
 
 KEEP_PER_CHARACTER = 500
 PUBLIC_CHAT_KINDS = frozenset({"say", "yell", "channel"})
-# Decisions that mean "do nothing this cycle" -- not worth a feed row.
-SKIPPED_ACTIONS = frozenset({"idle"})
 
 
 def money_text(copper):
@@ -318,6 +317,15 @@ class DbPoller:
                 log.warning("activity name lookup failed: %s", e)
         return cache
 
+    def quest_title(self, quest):
+        """A turn-in's name for an agent row, looked up before the poll has seen the quest (ADR 0020)."""
+        try:
+            with self.connect() as conn:
+                self._lookup(conn, self._quests, QUEST_NAMES_SQL, [quest], lambda r: r[1] or f"Quest {r[0]}")
+        except Exception as e:  # noqa: BLE001 - names are cosmetic
+            log.warning("activity quest name lookup failed: %s", e)
+        return self._quests.get(quest, f"Quest {quest}")
+
     def poll_once(self, now=None):
         now = time.time() if now is None else now
         with self.connect() as conn:
@@ -451,59 +459,7 @@ class ChatFollower:
 
 
 # ---------------------------------------------------------------- agent audit log
-ACTION_KINDS = {
-    "auto_attack": "combat", "stop_attack": "combat", "cast_spell": "combat",
-    "set_target": "combat", "assist": "combat",
-    "loot": "loot", "sell_item": "sell", "buy_item": "buy",
-    "open_trade": "trade", "accept_trade_request": "trade", "offer_item": "trade",
-    "offer_gold": "trade", "accept_trade": "trade", "cancel_trade": "trade",
-    "say": "chat", "yell": "chat", "channel_say": "chat", "emote": "chat", "whisper": "whisper",
-    "accept_quest": "quest", "complete_quest": "quest", "turn_in_quest": "quest",
-    "abandon_quest": "quest",
-    "use_item": "item", "destroy_item": "item_lost", "equip_item": "item", "compare_items": "item",
-    "open_mailbox": "mail", "send_mail": "mail", "take_mail": "mail", "delete_mail": "mail",
-    "move_to": "move", "move_towards": "move", "follow": "move", "stop_following": "move",
-    "stop_movement": "move", "face": "move",
-    "invite_to_group": "group", "accept_group": "group",
-}
 _DAY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl(\.\d+)?$")
-
-
-def _args_text(args):
-    parts = [f"{k}={json.dumps(v, ensure_ascii=False) if isinstance(v, str) else v}"
-             for k, v in (args or {}).items()]
-    return " ".join(parts)
-
-
-def audit_event(rec, agent):
-    """UM-51 audit record -> feed event, or None for no-op cycles."""
-    tc = rec.get("tool_call") or {}
-    name = tc.get("name")
-    if not name or name in SKIPPED_ACTIONS or rec.get("ts") is None:
-        return None
-    args = dict(tc.get("args") or {})
-    msg = args.get("message", args.get("text"))
-    if name == "say":
-        text = f'Said "{msg}"'
-    elif name == "yell":
-        text = f'Yelled "{msg}"'
-    elif name == "whisper":
-        text = f'Whispered to {args.get("target_name")}: "{msg}"'
-    elif name == "channel_say":
-        text = f'[{args.get("channel")}] "{msg}"'
-    elif name == "emote":
-        text = f"Emote: {msg}"
-    else:
-        label = name.replace("_", " ").capitalize()
-        text = f"{label} {_args_text(args)}".strip()
-    result = rec.get("result") or {}
-    ok = bool(result.get("ok")) and bool(rec.get("valid", True))
-    if not ok:
-        text += f" — failed: {result.get('error') or 'no result'}"
-    detail = {"action": name, "args": args, "ok": ok, "error": result.get("error"),
-              "cycle": rec.get("cycle")}
-    return event(agent, rec["ts"], ACTION_KINDS.get(name, "action"), text, "audit",
-                 f"audit:{agent}:{rec.get('cycle')}:{rec['ts']}", detail)
 
 
 class AuditTailer:
@@ -517,6 +473,7 @@ class AuditTailer:
         self._since = {}     # agent -> newest ts already stored
         self.agents = frozenset()
         self.skipped_agent_events = 0  # ADR 0020: `events` elements agent_events() refused, this process
+        self.quest_title = lambda q: f"Quest {q}"  # Activity sets the DB names (ADR 0020, #390)
 
     def agent_names(self):
         try:
@@ -574,7 +531,7 @@ class AuditTailer:
                     if not isinstance(rec, dict) or (rec.get("ts") or 0) <= since:
                         continue
                     e = audit_event(rec, agent)
-                    kept = agent_events(rec, agent)  # ADR 0020: the agent's own events on this line
+                    kept = agent_events(rec, agent, self.quest_title)  # ADR 0020: the agent's own events
                     self.skipped_agent_events += skipped_agent_events(rec, kept)
                     events.extend(kept + ([e] if e else []))
             if events:
@@ -601,6 +558,8 @@ class Activity:
         self.audit = AuditTailer(store, audit_dir) if audit_dir else None
         self.chat = ChatFollower(store, chat_url, self.agent_names) if chat_url else None
         self.db = DbPoller(store, connect, zone_name) if connect else None
+        if self.audit and self.db:
+            self.audit.quest_title = self.db.quest_title
 
     def agent_names(self):
         return self.audit.agents if self.audit else frozenset()
