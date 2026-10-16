@@ -73,6 +73,12 @@ class GoldenUpgradeTests(unittest.TestCase):
                          [{"kind": "level", "t": 1731000009.5, "detail": {"to": 11}}])
         self.assertEqual(AuditRecord.from_json(line).to_json(), line)
 
+    def test_v3_quest_line_round_trips_exactly_with_its_event(self):
+        (line,) = _lines("v3-quest.jsonl")
+        self.assertEqual(AuditRecord.from_json(line).events,
+                         [{"kind": "quest", "t": 1731000011.75, "detail": {"quest_id": 8325}}])
+        self.assertEqual(AuditRecord.from_json(line).to_json(), line)
+
     def test_to_json_puts_schema_first(self):
         out = AuditRecord(ts=1.0, agent="a", cycle=1, snapshot_hash="h").to_json()
         self.assertEqual(next(iter(out)), "schema")

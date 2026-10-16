@@ -37,6 +37,10 @@ def handle_questgiver_quest_complete(ctx, payload: bytes):
     data = qu.parse_questgiver_quest_complete(payload)
     ctx.state.world_state.close_window()
     ctx.state.record_event("quest_turned_in", **data)
+    # ADR 0020 (#390). SMSG_QUESTGIVER_QUEST_COMPLETE goes to the turner-in only: TrinityCore 92127cd,
+    # Player::RewardQuest (Entities/Player/Player.cpp:14860) calls SendQuestReward (:14993), which
+    # writes the packet and sends it with SendDirectMessage (:16546-16553).
+    ctx.state.emit_activity("quest", quest_id=data["quest_id"])
 
 
 def handle_questgiver_quest_failed(ctx, payload: bytes):

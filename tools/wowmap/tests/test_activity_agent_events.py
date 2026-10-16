@@ -1,5 +1,5 @@
-"""ADR 0020 slice 1 (#390): wowmap ingests the agent's `level` activity event from the audit line,
-and an agent row replaces the database row for the same level-up."""
+"""ADR 0020 slices 1 and 2 (#390): wowmap ingests the agent's `level` and `quest` activity events from
+the audit line, and an agent row replaces the database row for the same fact."""
 import json
 import os
 import pathlib
@@ -13,7 +13,9 @@ import _calibration_env  # noqa: F401
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "wowmap"))
 import activity  # noqa: E402
 
-V3 = pathlib.Path(__file__).resolve().parents[3] / "agent" / "tests" / "fixtures" / "audit" / "v3.jsonl"
+FIXTURES = pathlib.Path(__file__).resolve().parents[3] / "agent" / "tests" / "fixtures" / "audit"
+V3 = FIXTURES / "v3.jsonl"
+V3_QUEST = FIXTURES / "v3-quest.jsonl"
 
 
 def _v3_record():
@@ -25,9 +27,18 @@ def _level_event(character, t, to):
     return {"kind": "level", "t": t, "detail": {"to": to}}
 
 
+def _quest_event(character, t, quest_id):
+    return {"kind": "quest", "t": t, "detail": {"quest_id": quest_id}}
+
+
 def _db_level(character, t, to):
     return activity.event(character, t, "level", f"Reached level {to}", "db",
                           f"db:{character}:{t:.3f}:level:{to}", {"from": to - 1, "to": to})
+
+
+def _db_quest(character, t, quest):
+    return activity.event(character, t, "quest", f"Turned in quest: Quest {quest}", "db",
+                          f"db:{character}:{t:.3f}:quest:{quest}", {"quest": quest})
 
 
 class AgentEventsTests(unittest.TestCase):
@@ -42,6 +53,17 @@ class AgentEventsTests(unittest.TestCase):
         self.assertEqual(e["uid"], "agent:Jev1:level:1731000009.500:11")
         self.assertEqual(e["detail"], {"to": 11})
 
+    def test_quest_line_becomes_one_agent_quest_event(self):
+        with open(V3_QUEST, encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+        (e,) = activity.agent_events(rec, "Jev1", lambda q: f"Quest {q}")
+        self.assertEqual((e["kind"], e["source"], e["inferred"]), ("quest", "agent", False))
+        self.assertEqual(e["text"], "Turned in quest: Quest 8325")
+        self.assertEqual(e["uid"], "agent:Jev1:quest:1731000011.750:8325")
+        self.assertEqual(e["detail"], {"quest_id": 8325})
+        (titled,) = activity.agent_events(rec, "Jev1", lambda q: "Defias Pillager" if q == 8325 else "?")
+        self.assertEqual(titled["text"], "Turned in quest: Defias Pillager")
+
     def test_bad_elements_are_skipped_and_the_rest_kept(self):
         bad = [
             {"kind": "loot_from_the_future", "t": 1.0, "detail": {"to": 3}},  # unknown kind
@@ -50,11 +72,15 @@ class AgentEventsTests(unittest.TestCase):
             {"kind": "level", "t": 1.0},                                      # no detail
             {"kind": ["level"], "t": 1.0, "detail": {"to": 3}},               # unhashable kind
             {"kind": "level", "t": "now", "detail": {"to": 3}},               # no timestamp
+            {"kind": "quest", "t": 1.0, "detail": {"quest_id": "8325"}},      # string
+            {"kind": "quest", "t": 1.0, "detail": {"quest_id": False}},       # bool is not an int
+            {"kind": "quest", "t": 1.0, "detail": {"to": 8325}},              # the level key
             "level",                                                          # not a dict
         ]
-        rec = {"events": bad + [_level_event("Jev1", 2.0, 4)]}
+        rec = {"events": bad + [_level_event("Jev1", 2.0, 4), _quest_event("Jev1", 3.0, 8325)]}
         out = activity.agent_events(rec, "Jev1")
-        self.assertEqual([e["detail"]["to"] for e in out], [4])
+        self.assertEqual([(e["kind"], e["text"]) for e in out],
+                         [("level", "Reached level 4"), ("quest", "Turned in quest: Quest 8325")])
 
     def test_events_that_are_not_a_list_give_nothing(self):
         for value in ("level", {"kind": "level"}, 7, None):
@@ -62,11 +88,19 @@ class AgentEventsTests(unittest.TestCase):
                 self.assertEqual(activity.agent_events({"events": value}, "Jev1"), [])
         self.assertEqual(activity.agent_events({}, "Jev1"), [])
 
-    def test_fact_key_is_the_level_only(self):
+    def test_fact_key_is_the_kind_and_its_own_key(self):
         (e,) = activity.agent_events(_v3_record(), "Jev1")
         self.assertEqual(activity.fact_key(e), ("jev1", "level", 11))
         self.assertEqual(activity.fact_key(_db_level("Jev1", 1.0, 11)), ("jev1", "level", 11))
+        # The DB poller names a turn-in's key `quest`, the agent names it `quest_id` (feed_events.FACT_KEYS).
+        (q,) = activity.agent_events({"events": [_quest_event("Jev1", 1.0, 8325)]}, "Jev1")
+        self.assertEqual(activity.fact_key(q), ("jev1", "quest", 8325))
+        self.assertEqual(activity.fact_key(_db_quest("Jev1", 1.0, 8325)), ("jev1", "quest", 8325))
         self.assertIsNone(activity.fact_key(activity.event("Jev1", 1.0, "money", "x", "db", "u")))
+        # A hand-in is a `quest` row with no quest key: no fact.
+        hand_in = activity.event("Jev1", 1.0, "quest", "Handed in Linen Cloth", "db", "u",
+                                 {"item": 2589, "count": 1}, inferred=True)
+        self.assertIsNone(activity.fact_key(hand_in))
 
 
 class StoreRulesTests(unittest.TestCase):
@@ -112,6 +146,54 @@ class StoreRulesTests(unittest.TestCase):
         self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
                          [("agent", "level"), ("db", "item"), ("db", "level"), ("db", "zone")])
         self.assertEqual([(r["source"], r["text"]) for r in self.rows("Thrall")], [("db", "Reached level 11")])
+
+    def agent_quest(self, quest, t=10.0):
+        return activity.agent_events({"events": [_quest_event("Jev1", t, quest)]}, "Jev1")
+
+    def test_agent_quest_first_then_db_leaves_one_agent_row(self):
+        self.store.add(self.agent_quest(8325))
+        self.assertEqual(self.store.add([_db_quest("Jev1", 10.5, 8325)]), 0)
+        self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "quest")])
+
+    def test_db_quest_first_then_agent_leaves_one_agent_row(self):
+        self.store.add([_db_quest("Jev1", 10.5, 8325)])
+        self.assertEqual(self.store.add(self.agent_quest(8325)), 1)
+        self.assertEqual([(r["source"], r["kind"]) for r in self.rows()], [("agent", "quest")])
+
+    def test_a_level_and_a_quest_with_the_same_number_do_not_delete_each_other(self):
+        # Agent first: the DB quest 11 is not a level 11, so it is stored; the agent level 11 keeps it.
+        self.store.add(self.agent_level(11))
+        self.assertEqual(self.store.add([_db_quest("Jev1", 10.5, 11)]), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "level"), ("db", "quest")])
+        # DB first: the DB level 11 survives the agent quest 11, and the other way round.
+        other = activity.ActivityStore(":memory:")
+        other.add([_db_level("Jev1", 10.5, 11)])
+        self.assertEqual(other.add(self.agent_quest(11)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in other.recent("Jev1", 50)),
+                         [("agent", "quest"), ("db", "level")])
+
+    def test_agent_quest_deletes_only_that_quest_of_that_character(self):
+        self.store.add([_db_quest("Thrall", 10.5, 8325), _db_quest("Jev1", 10.5, 8326),
+                        activity.event("Jev1", 10.5, "item", "Got Linen Cloth", "db", "db:1:10.500:item:+1",
+                                       {"item": 2589, "count": 1})])
+        self.assertEqual(self.store.add(self.agent_quest(8325)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "quest"), ("db", "item"), ("db", "quest")])
+        self.assertEqual([(r["source"], r["kind"]) for r in self.rows("Thrall")], [("db", "quest")])
+
+    def test_a_db_quest_a_week_before_the_agent_turn_in_survives(self):
+        # The same quest id turned in again a week later: a different fact, so the db row stays.
+        self.store.add([_db_quest("Jev1", 10.5, 8325)])
+        self.assertEqual(self.store.add(self.agent_quest(8325, t=10.5 + 7 * 86400)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "quest"), ("db", "quest")])
+
+    def test_a_db_quest_a_week_after_the_agent_turn_in_is_stored(self):
+        self.store.add(self.agent_quest(8325, t=10.5))
+        self.assertEqual(self.store.add([_db_quest("Jev1", 10.5 + 7 * 86400, 8325)]), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "quest"), ("db", "quest")])
 
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
         self.store.add(self.agent_level(11))
@@ -161,6 +243,56 @@ class TailerTests(unittest.TestCase):
         # A rebuilt tailer reads the idle line again (no audit row moves _since past it): nothing new.
         activity.AuditTailer(self.store, self.base).scan_once()
         self.assertEqual(self.store.count("Jev1"), 3)
+
+    def test_a_quest_line_is_read_once_and_titled_by_the_db_names(self):
+        with open(V3_QUEST, encoding="utf-8") as f:
+            line = f.readline()
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(line)
+        tailer = activity.AuditTailer(self.store, self.base)
+        tailer.quest_title = lambda q: "Defias Pillager" if q == 8325 else f"Quest {q}"
+        tailer.scan_once()
+        quests = [r for r in self.store.recent("Jev1", 50) if r["kind"] == "quest"]
+        self.assertEqual([(r["source"], r["text"]) for r in quests], [("agent", "Turned in quest: Defias Pillager")])
+        self.assertEqual(tailer.scan_once(), [])
+        # A rebuilt tailer reads the idle quest line again and adds nothing.
+        activity.AuditTailer(self.store, self.base).scan_once()
+        self.assertEqual(self.store.count("Jev1"), 3)
+
+    def test_activity_names_a_turn_in_from_the_db_before_the_poll_saw_it(self):
+        # Through Activity, as the app wires it: the fake DB answers the quest-name query only.
+        class Cursor:
+            def execute(self, sql):
+                self.rows = [(8325, "Defias Pillager")] if "quest_template" in sql else []
+
+            def fetchall(self):
+                return self.rows
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class Conn:
+            def cursor(self):
+                return Cursor()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with open(V3_QUEST, encoding="utf-8") as f:
+            line = f.readline()
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(line)
+        act = activity.Activity(self.store, connect=Conn, audit_dir=self.base)
+        act.audit.scan_once()
+        quests = [r for r in self.store.recent("Jev1", 50) if r["kind"] == "quest"]
+        self.assertEqual([(r["source"], r["text"]) for r in quests],
+                         [("agent", "Turned in quest: Defias Pillager")])
 
     def test_a_malformed_events_field_is_counted_and_the_decision_still_stored(self):
         with open(self.path, "a", encoding="utf-8") as f:

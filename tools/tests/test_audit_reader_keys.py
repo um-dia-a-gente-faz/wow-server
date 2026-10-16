@@ -1,6 +1,7 @@
 """Pins the audit keys of the two raw readers to the AuditRecord fields (#635, ADR 0018).
 
-`audit_event` (tools/wowmap/wowmap/activity.py) and `Fleet.audit` (tools/agent-runner/fleet.py)
+`audit_event` (tools/wowmap/wowmap/feed_events.py, moved from activity.py in #805) and `Fleet.audit`
+(tools/agent-runner/fleet.py)
 read audit lines as plain dicts, not through AuditRecord. The log changes by addition only, so a
 key these readers use must stay a field of AuditRecord: a key that is not one is either a typo or
 a field that was renamed or removed without the readers following. The modules are parsed with
@@ -17,7 +18,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 from agent.audit_schema import AuditRecord  # noqa: E402
 
 FIELD_NAMES = {f.name for f in dataclasses.fields(AuditRecord)} - {"extra"}
-ACTIVITY = ROOT / "tools" / "wowmap" / "wowmap" / "activity.py"
+ACTIVITY = ROOT / "tools" / "wowmap" / "wowmap" / "feed_events.py"
 FLEET = ROOT / "tools" / "agent-runner" / "fleet.py"
 
 
@@ -72,7 +73,7 @@ def _unknown(keys):
 class ReaderKeysTest(unittest.TestCase):
     def setUp(self):
         self.audit_event_keys = _reader_keys(
-            ACTIVITY.read_text(encoding="utf-8"), "audit_event", "rec", where="activity.py")
+            ACTIVITY.read_text(encoding="utf-8"), "audit_event", "rec", where="feed_events.py")
         self.fleet_audit_keys = _reader_keys(
             FLEET.read_text(encoding="utf-8"), "audit", "record", cls="Fleet", where="fleet.py")
 

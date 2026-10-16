@@ -1,4 +1,4 @@
-"""ADR 0020 slice 1 (#390): the level-up as an activity event on the decision audit line."""
+"""ADR 0020 slices 1 and 2 (#390): the level-up and the quest turn-in as activity events on the decision audit line."""
 import collections
 import glob
 import json
@@ -13,9 +13,10 @@ from types import SimpleNamespace
 
 from agent import think
 from agent.audit import AuditLogger
+from agent.handlers import quests as quest_handlers
 from agent.handlers import spells as spell_handlers
 from agent.state import ACTIVITY_MAXLEN, GameState
-from agent.tests.builders import FakeSession
+from agent.tests.builders import FakeSession, quest_complete_payload
 from agent.tests.test_think import FakeLLMClient
 from agent.perception import WorldState
 
@@ -45,6 +46,11 @@ class ActivityOffTests(unittest.TestCase):
         state.emit_activity("level", to=5)
         self.assertEqual(state.drain_activity(), [])
 
+    def test_off_quest_turn_in_buffers_nothing(self):
+        ctx = SimpleNamespace(state=GameState())
+        quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 30))
+        self.assertEqual(ctx.state.drain_activity(), [])
+
     def test_off_records_no_events_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = AuditLogger("Jev1", base_dir=tmp)
@@ -71,6 +77,19 @@ class ActivityOnTests(unittest.TestCase):
             line = _only_line(tmp)
         self.assertEqual(line["events"], [{"kind": "level", "t": events[0]["t"], "detail": {"to": 5}}])
 
+    def test_turn_in_makes_one_quest_event_on_the_next_line(self):
+        ctx = SimpleNamespace(state=self.state)
+        before = time.time()
+        quest_handlers.handle_questgiver_quest_complete(ctx, quest_complete_payload(8325, 45, 30))
+        events = self.state.drain_activity()
+        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("quest", {"quest_id": 8325})])
+        self.assertLess(abs(events[0]["t"] - before), 60)  # wall clock, as the level event
+        self.assertEqual([e["kind"] for e in self.state.events], ["quest_turned_in"])  # the handler's own work
+        with tempfile.TemporaryDirectory() as tmp:
+            _record(AuditLogger("Jev1", base_dir=tmp), events=events)
+            line = _only_line(tmp)
+        self.assertEqual(line["events"], [{"kind": "quest", "t": events[0]["t"], "detail": {"quest_id": 8325}}])
+
     def test_think_cycle_writes_the_buffered_event_on_its_line(self):
         sess = FakeSession(player_position=(530, 0.0, 0.0, 0.0, 0.0))
         sess.activity_events = True
@@ -88,6 +107,16 @@ class ActivityOnTests(unittest.TestCase):
             self.state.emit_activity("level", to=to)
         self.assertEqual([e["detail"]["to"] for e in self.state.drain_activity()], list(range(2, 22)))
 
+    def test_the_21st_event_drops_the_oldest_across_kinds(self):
+        for n in range(1, 22):
+            if n % 2:
+                self.state.emit_activity("level", to=n)
+            else:
+                self.state.emit_activity("quest", quest_id=n)
+        drained = self.state.drain_activity()
+        self.assertEqual([(e["kind"], list(e["detail"].values())[0]) for e in drained],
+                         [("quest" if n % 2 == 0 else "level", n) for n in range(2, 22)])
+
     def test_drain_leaves_the_buffer_empty(self):
         self.state.emit_activity("level", to=2)
         self.assertEqual(len(self.state.drain_activity()), 1)
@@ -97,19 +126,18 @@ class ActivityOnTests(unittest.TestCase):
 class ConcurrentDrainTests(unittest.TestCase):
     """The receive thread appends while the think thread drains. Nothing may be lost or duplicated."""
 
-    def test_union_of_drains_is_every_event_in_order(self):
+    def _union_of_drains(self, emit, total=5000):
         state = GameState()
         state.activity_events = True
         state._activity = collections.deque()  # unbounded: this test is about the drain, not the bound
         # Switch threads often, so a drain that copies and then clears is interrupted by an append.
         self.addCleanup(sys.setswitchinterval, sys.getswitchinterval())
         sys.setswitchinterval(1e-6)
-        total = 5000
         drained, done = [], threading.Event()
 
         def appender():
             for n in range(1, total + 1):
-                state.emit_activity("level", to=n)
+                emit(state, n)
             done.set()
 
         def drainer():
@@ -124,7 +152,15 @@ class ConcurrentDrainTests(unittest.TestCase):
             t.start()
         for t in threads:
             t.join(timeout=60)
-        self.assertEqual([e["detail"]["to"] for e in drained], list(range(1, total + 1)))
+        return drained
+
+    def test_union_of_drains_is_every_event_in_order(self):
+        drained = self._union_of_drains(lambda state, n: state.emit_activity("level", to=n))
+        self.assertEqual([e["detail"]["to"] for e in drained], list(range(1, 5001)))
+
+    def test_union_of_quest_drains_is_every_event_in_order(self):
+        drained = self._union_of_drains(lambda state, n: state.emit_activity("quest", quest_id=n))
+        self.assertEqual([e["detail"]["quest_id"] for e in drained], list(range(1, 5001)))
 
 
 if __name__ == "__main__":
