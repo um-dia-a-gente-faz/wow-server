@@ -10,12 +10,9 @@ import. A reader that is renamed or moved fails the test instead of passing with
 import ast
 import dataclasses
 import pathlib
-import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from agent.audit_schema import AuditRecord  # noqa: E402
 
