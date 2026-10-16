@@ -23,8 +23,8 @@ python3 app.py                                  # then open http://localhost:940
 ```
 
 Reading the live database is fine; never write to it. On the VM the service runs from
-`monitoring/docker-compose.yml` with `/opt/wowmap-data/{dbc,maps,calibration.json}`
-mounted, and the site is served at http://192.168.1.64:9400.
+`monitoring/docker-compose.yml` with `/opt/wowmap-data/{dbc,maps,icons,models}` and the
+directory `/opt/wowmap-data` mounted at `/app/data`, and the site is served at http://192.168.1.64:9400.
 
 ## Data sources
 
