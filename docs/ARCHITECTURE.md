@@ -105,7 +105,7 @@ the game stack:
   `exporters/README.md`.
 - **wowmap** (:9400): `tools/wowmap`, live map page, JSON API (including
   character inspect) and calibration UI. It reads DBCs, map art and
-  `calibration.json` from `/opt/wowmap-data` on the VM. See
+  `calibration.json` from the `/opt/wowmap-data` directory on the VM, mounted at `/app/data`. See
   `tools/wowmap/README.md` and `docs/LIVE-MAP.md`.
 - **node-exporter** (:9100, host network) and **cadvisor** (:8080) export host and
   per-container metrics.
@@ -246,7 +246,7 @@ registers its pause in `actions.base.MOVE_OVERRIDE_HOOKS`, so `actions` never im
 | `./client` | WoW 3.3.5a client (bind mount, read for extraction) | User-supplied, ~17 GB |
 | `./tdb/*.sql` | TDB world dump (bind mount) | User-supplied, ~280 MB |
 | `/app/tmp` | tmpfs for extraction temp files | Ephemeral |
-| `/opt/wowmap-data/{dbc,maps,calibration.json}` | wowmap DBCs, map art, calibration (host bind mounts) | Yes, on the VM |
+| `/opt/wowmap-data` (directory, mounted at `/app/data`; holds `calibration.json`) | wowmap DBCs, map art, calibration (host bind mounts) | Yes, on the VM |
 
 `/app/server/bin` is **not** a volume — anything placed there is lost when the
 container is recreated. That is why the TDB file is bind-mounted rather than copied.

@@ -19,7 +19,6 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 TOOLS = ROOT / "tools"
 BUILD_PY = TOOLS / "worldknowledge" / "build.py"
-sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools" / "worldknowledge"))
 import build  # noqa: E402
 from agent.worldknowledge import WorldKnowledge  # noqa: E402

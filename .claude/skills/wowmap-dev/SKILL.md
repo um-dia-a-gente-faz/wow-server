@@ -32,8 +32,8 @@ removes it. Details: `docs/DEV-STACK.md`. The stack has no client DBCs or map ar
 judge map layout and the position transform on the live site, not here.
 
 Reading the live database is fine; never write to it. On the VM the service runs from
-`monitoring/docker-compose.yml` with `/opt/wowmap-data/{dbc,maps,calibration.json}`
-mounted, and the site is served at http://192.168.1.64:9400.
+`monitoring/docker-compose.yml` with `/opt/wowmap-data/{dbc,maps,icons,models}` and the
+directory `/opt/wowmap-data` mounted at `/app/data`, and the site is served at http://192.168.1.64:9400.
 
 ## Data sources
 
