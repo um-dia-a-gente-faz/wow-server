@@ -5,7 +5,7 @@ baseline that #252 (agent pool, shared caches) and #251 (event bus) are measured
 
 **Where and what.** A local dev host (Linux, Python 3.14.4), **not the VM**, 2026-10-08.
 Healthy runs, no faults, `think_interval` 100 ms, one duration (60 s) for every row,
-agents and `tools/world-mock` in one process. The mock sends nothing after login, so
+agents and `tools/world_mock` in one process. The mock sends nothing after login, so
 these are the floor of a *connected idle* agent. The "~50 MB each" in
 `docs/AGENT-DIRECTION.md` is a whole agent container; this is only the Python session
 and perception state.

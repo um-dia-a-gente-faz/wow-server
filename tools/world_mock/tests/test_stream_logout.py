@@ -2,17 +2,13 @@
 WoWSession.logout(), and WorldMock.close() must stop handlers that are still streaming."""
 
 import logging
-import pathlib
-import sys
 import threading
 import time
 import unittest
 from types import SimpleNamespace
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import server  # noqa: E402
-from server import FaultPlan  # noqa: E402
+from tools.world_mock import server  # noqa: E402
+from tools.world_mock.server import FaultPlan  # noqa: E402
 
 from agent import session as session_mod  # noqa: E402
 from agent.login import connect_and_login  # noqa: E402

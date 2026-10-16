@@ -108,7 +108,7 @@ consecutive suite starts in that job's log, slowest first:
 | Suite | Tests | Wall time (s) |
 |---|---|---|
 | wowmap | 262 | 39.4 |
-| world-mock | 34 | 38.6 |
+| world_mock | 34 | 38.6 |
 | loadtest | 14 | 19.2 |
 | agent-runner | 79 | 5.8 |
 | chat-feed | 51 | 4.4 |
@@ -262,7 +262,7 @@ gate landed, each with its size then. Same ratchet as ruff and mypy:
 ## Coverage floor
 
 The CI job `coverage (agent floor)` (#384, part of `ci-ok`) runs the `agent/` and
-`tools/world-mock` suites under `coverage` and compares the total with `"agent"` in
+`tools/world_mock` suites under `coverage` and compares the total with `"agent"` in
 `coverage-floors.json`. It measures **production code under `agent/` only**:
 `agent/tests/` is omitted (`--omit=agent/tests/*`), because the test files are most of the
 statements and run by definition. CI (Python 3.12) measures 9,847 statements (about 9,700 on 3.14), so **one point is
@@ -327,7 +327,7 @@ shrinks under 50 stays listed and checked, with no demand to remove it.
 What the per-module gate catches (measured locally, Python 3.14, against floors of
 `int(local percent - 2)`, not the committed table; from one run with a coverage context
 per test file: the statements only that file covers, taken off the module): deleting a test file alone
-fails the gate for 52 of the 110 files in `agent/tests/` (and 1 of 6 in `tools/world-mock/tests/`),
+fails the gate for 52 of the 110 files in `agent/tests/` (and 1 of 6 in `tools/world_mock/tests/`),
 against 3 for the total alone. The smallest loss that goes red is 2 statements, in a 51 to 60-statement module
 (`test_item_compare.py`, `test_packets.py` and `test_supervisor_lifecycle.py` each lose only that);
 in the largest modules (270 to 360 statements) it is 10 to 11. Still not caught: the 34 files under 50 statements (890 statements in all),

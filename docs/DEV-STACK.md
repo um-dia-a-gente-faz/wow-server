@@ -16,7 +16,7 @@ deploy workflow.
 
 | Service | What | Port (127.0.0.1) |
 |---|---|---|
-| `world-mock` | `tools/world-mock`, fake auth + world server | internal |
+| `world_mock` | `tools/world_mock`, fake auth + world server | internal |
 | `jev-mock` | `tools/jev-mock`, random Decisions API | internal |
 | `agent` | one real agent (Luaprata) on `AGENT_BRAIN=jev` against the two mocks | 9601 |
 | `chat-feed` | `tools/chat-feed` on an empty log | 9500 |
@@ -31,7 +31,7 @@ The jev-mock answers are random: never point live agents at it.
 wowmap runs without the client DBC files and map art (they are proprietary and not in
 the repo), so the map page loads but has no tiles and the position transform is
 uncalibrated. The API, the agent mind tab and the activity feed work. The mocks play
-one scripted scenario (see `tools/world-mock/README.md`), so the agent mostly idles.
+one scripted scenario (see `tools/world_mock/README.md`), so the agent mostly idles.
 
 ## Refreshing the fixture
 

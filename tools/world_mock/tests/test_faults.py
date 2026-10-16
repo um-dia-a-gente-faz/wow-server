@@ -1,20 +1,16 @@
 """End-to-end fault injection (#339): the agent's real client code (auth, WoWSession,
-the recv thread, the think loop and the reconnect supervisor) against a world-mock
+the recv thread, the think loop and the reconnect supervisor) against a world_mock
 that misbehaves, over real localhost sockets. One test per FaultPlan fault."""
 
 import logging
-import pathlib
-import sys
 import threading
 import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import server  # noqa: E402
-from server import FaultPlan  # noqa: E402
+from tools.world_mock import server  # noqa: E402
+from tools.world_mock.server import FaultPlan  # noqa: E402
 
 from agent import actions as ac  # noqa: E402
 from agent import opcodes as op  # noqa: E402
@@ -79,7 +75,7 @@ class FaultInjectionTest(unittest.TestCase):
     def check_no_leaks(self):
         out = "\n".join(self.logs.output)
         self.assertNotIn(server.DEFAULT_PASSWORD, out)
-        self.assertNotIn("world-mock handler crashed", out)
+        self.assertNotIn("world_mock handler crashed", out)
         self.assertTrue(wait_for(lambda: threading.active_count() <= self.threads_before),
                         f"thread leak: {threading.enumerate()}")
 

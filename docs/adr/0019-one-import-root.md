@@ -35,7 +35,7 @@ importer sets them". That table is the current import model:
 | `agent-runner` | `tools/agent-runner`, `tools`, `.` | `characters.py` (`tools/` first, the checkout root appended), `fleet.py` (the root appended) |
 | `chat-feed` | `tools/chat-feed`, `tools` | `app.py` appends `tools/` |
 | `common`, `dbc` | the package dir, `tools` | the importer, by `tools/` |
-| `loadtest` | `tools/loadtest`, `tools/world-mock` | `soak.py` |
+| `loadtest` | `tools/loadtest`, tools/world-mock | `soak.py` |
 | `wowmap` | `tools/wowmap/wowmap`, `tools` | `state.py` appends `tools/`; every module imports its siblings flat (`import state`) |
 | `wowmap/pipeline` | `tools/wowmap/pipeline`, `tools/wowmap/wowmap` | each `extract_*.py` inserts `../wowmap` |
 | `worldknowledge` | `tools/worldknowledge`, `tools` | `build.py` appends `tools/` and the checkout root |
@@ -93,14 +93,14 @@ Production, 24 lines in 21 files:
 | `tools/agent-runner/characters.py` (2), `fleet.py` | 3 | `tools/` for `common`, the root for `agents` |
 | `tools/chat-feed/app.py` | 1 | `tools/` for `common` |
 | `tools/loadtest/soak.py` | 1 | the root and `world-mock/` (a hyphenated directory, imported as `server`) |
-| `tools/world-mock/server.py`, `death_scenario.py` | 2 | the root for `agent` |
+| tools/world-mock/server.py, `death_scenario.py` | 2 | the root for `agent` |
 | `tools/worldknowledge/build.py` | 1 | `tools/` and the root, for `dbc` and `agent.worldknowledge` |
 | `tools/wowmap/wowmap/state.py` | 1 | `tools/`, for `common` and `dbc` |
 | `tools/wowmap/pipeline/extract_icons.py`, `extract_maps.py`, `extract_models.py`, `overlay_debug.py`, `scatter_debug.py` | 5 | `../wowmap`, the runtime modules |
 | `docs/spikes/map-engine-spike/build_art.py` | 1 | `wowmap/` and `pipeline/` (a spike, not run by CI) |
 
 Tests, 80 lines in 62 files, by directory (`git grep -cE ... -- '*/tests/*'`, counted per
-file): `tools/wowmap/tests` 21, `scripts/tests` 9, `tools/world-mock/tests` 6, `agent/tests` 5,
+file): `tools/wowmap/tests` 21, `scripts/tests` 9, tools/world-mock/tests 6, `agent/tests` 5,
 `tools/agent-runner/tests` 3, `tools/chat-feed/tests` 3, `tools/common/tests` 3,
 `tools/dbc/tests` 3, `tools/tests` 3, `exporters/wow-exporter/tests` 2,
 `tools/jev-mock/tests` 2, `tools/fleet-limits/tests` 1, `tools/worldknowledge/tests` 1.
@@ -115,8 +115,8 @@ Three kinds of edit, from the inserted expression:
    (`tools/dbc/tests/test_item_tables.py`, `test_reputation_panel.py`, `test_wdbc.py`,
    `tools/wowmap/tests/test_item_tooltip.py`) insert `tools/`, not the root, and are counted
    with kind 1. Some of these
-   `ROOT` names are the tool's own directory, not the root: `tools/world-mock/tests/test_faults.py`
-   has `ROOT = parents[1]`, which is `tools/world-mock`, and imports `server` flat. Only those
+   `ROOT` names are the tool's own directory, not the root: tools/world-mock/tests/test_faults.py
+   has `ROOT = parents[1]`, which is tools/world-mock, and imports `server` flat. Only those
    whose `ROOT` is the checkout are kind 3.
 
 A kind 3 edit is redundant whenever the test is started from the root, because the root is
@@ -436,7 +436,7 @@ One issue each, in dependency order. A slice marked "owner's go-ahead" touches a
 3. **Rename `world-mock` to `world_mock`.** Edits: `tools/loadtest/soak.py`,
    `dev/docker-compose.yml`, `.github/workflows/ci.yml` (filter on line 47), `scripts/check.sh`
    (SUITES), `ruff.toml`, `tools/tests/test_architecture.py`, docs. Removes the six
-   `tools/world-mock/tests` edits and the two production lines. Stack: none. Owner's go-ahead
+   tools/world-mock/tests edits and the two production lines. Stack: none. Owner's go-ahead
    (`scripts/`, `.github/workflows/`). Host step: none; developers rerun `dev/` compose.
 4. **Rename `jev-mock` to `jev_mock`.** `ci.yml` lines 116 and 122, `dev/docker-compose.yml`,
    `scripts/check.sh`, `ruff.toml` (line 62 names `tools/jev-mock/server.py`), docs. Stack:

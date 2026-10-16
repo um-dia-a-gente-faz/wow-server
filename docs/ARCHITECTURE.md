@@ -203,7 +203,7 @@ and `mpyq`.
 | `tools/agent-runner` | fleet control plane, :9700: status, start/stop, character creation; owns the Docker socket (ADR 0002) | `wow-agents` VM |
 | `tools/fleet-limits` | writer of the fleet limits file (ADR 0017): sums the last hour of the audit logs, blocks a brain over its fleet cap, merges the owner's stop; a host process, no port, not yet installed or read by any agent | `wow-agents` VM |
 | `tools/jev-mock` | local stand-in for the Jev Decisions API | dev / tests |
-| `tools/world-mock` | scripted fake auth + world server for end-to-end tests of the agent client (#253) | CI / tests |
+| `tools/world_mock` | scripted fake auth + world server for end-to-end tests of the agent client (#253) | CI / tests |
 | `tools/worldknowledge` | hand-run exporter of the world bundle (`build.py`: Spell, SpellCastTimes and SpellRange DBCs to one SQLite file, ADR 0016); not a service, in no compose file | wow-server VM, by hand |
 | `tools/dbc` | WDBC reader and name/spell-text helpers shared by wowmap | library |
 | `tools/agent_dev` | developer CLIs that import agent as a library: probe (manual live capability probe), replay, ab, cache_probe, dump_update; run as `python3 -m tools.agent_dev.<name>` from the repo root | dev machine / VM shell |

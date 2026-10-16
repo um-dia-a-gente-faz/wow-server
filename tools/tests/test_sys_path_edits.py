@@ -17,8 +17,8 @@ WALK = ("agent", "agents", "scripts", "tools", "monitoring", "exporters", "docs"
 # ADR 0019, Inventory, pattern P. The source of this file holds no line that P matches.
 PATTERN = re.compile(r"sys\.path(\.insert|\.append|\.pop|\.extend|\[[^]]*\] *=| *\+=| *=[^=])|site\.addsitedir")
 
-PRODUCTION_EDITS = 24
-TEST_EDITS = 77
+PRODUCTION_EDITS = 22
+TEST_EDITS = 71
 # Edits that stay on purpose. Named here, counted in the constants above.
 ALLOWED = {"scripts/early_failures.py"}
 # The root insert removed from each test file (ADR 0019, first slice). Built from parts so this file
@@ -31,6 +31,14 @@ NO_EDITS = {
     "tools/agent-runner/tests/test_runner.py": _SYS_PATH + ".insert(0, str(REPO))",
     "tools/worldknowledge/tests/test_build.py": _SYS_PATH + ".insert(0, str(ROOT))",
     "tools/tests/test_scenario_samples.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_sigterm.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_faults.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_death_scenario.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_lifecycle_scenarios.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_stream_logout.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/tests/test_world_mock.py": _SYS_PATH + ".insert(0, str(ROOT))",
+    "tools/world_mock/server.py": _SYS_PATH + ".insert(0, str(REPO))",
+    "tools/world_mock/death_scenario.py": _SYS_PATH + ".insert(0, str(HERE))",
 }
 
 
