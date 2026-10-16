@@ -226,6 +226,8 @@ def record(c: Cycle) -> ThinkResult:
         c.unmet.record("no_candidates", None, None, c.snapshot)
     if c.audit_logger is not None:
         try:
+            drain = getattr(c.session, "drain_activity", None)  # ADR 0020; a test double may lack it
+            events = drain() if drain else []  # the activity events since the last decision
             c.audit_logger.record(
                 cycle=c.cycle, snapshot=c.snapshot,
                 tool_call={"name": c.action_name, "args": c.params or {}},
@@ -236,7 +238,8 @@ def record(c: Cycle) -> ThinkResult:
                 confidence=d.confidence, fallback=d.fallback, substituted=d.substituted,
                 candidates=d.candidates, confidence_threshold=d.confidence_threshold,
                 confidence_rule=d.confidence_rule, overridden=d.overridden, usage=d.usage,
-                jev_status=d.jev_status, history_notes=d.history_notes, prompt_id=d.prompt_id)
+                jev_status=d.jev_status, history_notes=d.history_notes, prompt_id=d.prompt_id,
+                events=events)
         except OSError as e:  # never let audit I/O crash a think cycle
             log.warning("audit log write failed: %s", e)
     if c.state is not None and c.remember:

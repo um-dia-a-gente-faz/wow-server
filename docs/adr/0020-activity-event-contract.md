@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed (#754, the ADR part of #390). The owner accepts it later. This ADR changes no
-code: it records the inventory, the decision and the first slice. #390 stays open for the
-code. Every statement about code below was read on `origin/main` at commit `ffccd083fc52`
+Accepted (owner's delegate, 2026-10-16, on #390).
+
+History: Proposed (#754, the ADR part of #390). The coordinator's decision of 2026-10-16
+accepted it with its defaults, and the first slice (`level`) is built in the PR that carries
+this status. #390 stays open for the further slices. Every statement about code below was read on `origin/main` at commit `ffccd083fc52`
 (`git rev-parse origin/main` when this was written). There is no docker and no route to the
 realm where it was written, so nothing here is a claim about live data: counts and shapes
 come from the code and from the frozen fixtures, each count from the command quoted next to it.
