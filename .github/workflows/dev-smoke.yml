@@ -1,0 +1,27 @@
+# #481: boots the local dev stack (dev/dev.sh smoke: mocks, one agent, wowmap on a fixture DB) and
+# waits for an agent decision to reach wowmap's API. CI only: it deploys nothing and touches no
+# live server. Runs on pushes to main, never on pull requests (a cost decision, #481).
+name: dev-smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: dev stack smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      # Docker and the compose plugin are preinstalled on ubuntu-latest. dev.sh tears the stack down itself.
+      - name: dev/dev.sh smoke
+        run: dev/dev.sh smoke

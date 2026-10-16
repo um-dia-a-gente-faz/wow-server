@@ -62,8 +62,8 @@ PACKAGE_EDGES = {
 # none; the dev and test tools are pinned to exactly what they import today.
 AGENT_EDGES = {
     "agent-runner": set(),
-    "agent_dev": {"actions", "audit_schema", "candidates", "config", "death", "jev", "known_targets", "lines",
-                  "llm", "login", "packets", "reflexes", "rules", "update_fields", "update_object"},
+    "agent_dev": {"actions", "audit_schema", "brain", "candidates", "config", "death", "jev", "known_targets", "lines",
+                  "llm", "login", "packets", "reflexes", "rules", "update_fields", "update_object"},  # brain: #541 scenario_samples
     "chat-feed": set(),
     "common": set(),
     "dbc": set(),
@@ -78,6 +78,7 @@ AGENT_EDGES = {
 
 # Rule 2: files that import agent.tests from outside a tests/ directory. #349 removes this.
 AGENT_TESTS_IMPORTERS = {
+    "tools/agent_dev/scenario_samples.py",   # #541: SCENARIOS and _Handles, the table the N-sample run reads
     "tools/world-mock/death_scenario.py",
     "tools/world-mock/server.py",
 }

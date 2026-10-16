@@ -11,7 +11,7 @@ A scenario asserts two things:
 Add one after a live incident: copy the snapshot, state what must never
 happen. `known_gap=True` marks a scenario the code does not yet satisfy; the
 test then asserts it still fails, so fixing the code forces the flag off.
-The model tier (N samples per scenario against Jev/LLM) is #541.
+The model tier (N samples per scenario against Jev) is tools/agent_dev/scenario_samples.py (#541).
 """
 
 import json
