@@ -99,7 +99,7 @@ says otherwise.
 - Host: `wow-agents` (`STAGING_PUBLIC_IP` in its `.env.staging`). Auth **3725**, world **8086**. The
   WoW client cannot use it: the client's auth port is fixed at 3724.
 - Accounts: `STAGING01`..`STAGING05`, throwaway, password `STAGING_ACCOUNT_PASSWORD`, created by hand
-  (`docs/DEPLOYMENT.md`, Staging accounts). The smoke needs a character on the account already.
+  (`docs/DEPLOYMENT.md`, Staging accounts). The smoke needs a character on the account already. Creating one has no documented path yet: the client cannot reach staging, and the follow-up is #803.
 - Restarting staging is allowed (`scripts/staging.sh down|up|reset`): no player is on it.
 - **Never the live realm** (192.168.1.64, auth 3724, world 8085). The smoke refuses it; the rest of
   this skill's rules still apply to any command you type.

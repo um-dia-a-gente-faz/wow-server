@@ -51,7 +51,9 @@ class StubLogin:
 def run_smoke(login, env=STAGING_ENV):
     """Runs main() with the given stub login. Returns (exit code, stdout, stderr)."""
     out, err = io.StringIO(), io.StringIO()
-    cfg = SimpleNamespace(wow_host=env.get("WOW_HOST"), wow_auth_port=env.get("WOW_AUTH_PORT"))
+    # the password rides on the cfg the smoke hands to login, as in a real run: a print of cfg.password shows here
+    cfg = SimpleNamespace(wow_host=env.get("WOW_HOST"), wow_auth_port=env.get("WOW_AUTH_PORT"),
+                          account=env.get("WOW_ACCOUNT"), password=SENTINEL)
     with redirect_stdout(out), mock.patch("sys.stderr", err):
         code = smoke.main(env=env, load=lambda: cfg, login=login)
     return code, out.getvalue(), err.getvalue()
