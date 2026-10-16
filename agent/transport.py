@@ -7,6 +7,7 @@ import struct
 import threading
 import time
 
+from . import opcodes as op
 from . import packets as pk
 
 log = logging.getLogger("agent.session")
@@ -18,6 +19,25 @@ MID_PACKET_TIMEOUT_S = 30.0
 ERROR_LOG_INTERVAL_S = 30.0
 # Unwanted packet bodies are read and dropped in chunks of this size (#570).
 DISCARD_CHUNK_B = 0x10000
+# #793: desync bounds, checked on the in-world path (the one that passes keep). The bound is an
+# estimate, not measured: the largest legitimate server packet is an update object covering the
+# objects in view (docs/PROTOCOL-NOTES.md: compressed above 100 B), which should stay well under
+# 1 MiB; the header can declare up to 0x7FFFFF (8 MiB), which a desynced RC4 stream hits at random.
+# Raise it if a live capture ever shows a legitimate packet above it.
+MAX_SANE_PACKET = 0x100000
+# Consecutive packets whose opcode is not in agent/opcodes.py (unknown to the table, not just
+# unhandled) before the stream is called desynced. A known opcode resets the run.
+DESYNC_UNKNOWN_LIMIT = 16
+KNOWN_OPCODES = frozenset(v for k, v in vars(op).items()
+                          if k.startswith(("SMSG_", "CMSG_", "MSG_")) and isinstance(v, int))
+
+
+class StreamDesync(ConnectionError):
+    """The world stream no longer parses as packets (#793). The session ends with `reason`."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class _ErrorThrottle:
@@ -49,6 +69,8 @@ class Transport:
         self.dump_packets_dir = dump_packets_dir
         self._lock = threading.Lock()
         self._error_throttle = _ErrorThrottle(ERROR_LOG_INTERVAL_S)
+        self._unknown_run = 0     # consecutive unknown opcodes on the in-world path (#793)
+        self.desync_reason = ""   # set when the in-world stream is declared desynced (#793)
 
     def send_packet(self, opcode: int, payload: bytes = b'') -> None:
         """The public name (agent.ports.PacketSink), which actions and reflexes use."""
@@ -82,6 +104,8 @@ class Transport:
                 hdr += extra
             size, opcode = pk.parse_server_header(hdr)
             plen = size - 2
+            if keep is not None:
+                self._check_stream(size, opcode)  # raises before any body read
             if keep is not None and not keep(opcode):
                 self._discard(plen)
                 payload = b''
@@ -93,18 +117,30 @@ class Transport:
             self.sock.settimeout(prev_timeout)
         return opcode, payload
 
+    def _check_stream(self, size: int, opcode: int):
+        """#793: a declared size over MAX_SANE_PACKET, or DESYNC_UNKNOWN_LIMIT unknown opcodes
+        in a row, means the RC4 header stream is out of step. Raises StreamDesync."""
+        if size > MAX_SANE_PACKET:
+            raise StreamDesync(f"declared size {size} B above {MAX_SANE_PACKET} B, opcode {opcode:#06x}")
+        if opcode in KNOWN_OPCODES:
+            self._unknown_run = 0
+            return
+        self._unknown_run += 1
+        if self._unknown_run >= DESYNC_UNKNOWN_LIMIT:
+            raise StreamDesync(f"{self._unknown_run} unknown opcodes in a row, last {opcode:#06x}")
+
     def _discard(self, n: int):
         while n > 0:
             n -= len(self._rr(min(n, DISCARD_CHUNK_B)))
 
     def _rr(self, n: int) -> bytes:
-        buf = b''
+        buf = bytearray()  # += on bytes copies the whole buffer per chunk: quadratic (#793)
         while len(buf) < n:
             c = self.sock.recv(n - len(buf))
             if not c:
                 raise ConnectionError("disconnected")
             buf += c
-        return buf
+        return bytes(buf)
 
     def _dump_packet(self, opcode: int, data: bytes):
         if not self.dump_packets_dir:

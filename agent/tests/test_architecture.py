@@ -36,7 +36,7 @@ LAYERS = {
     "opcodes": set(),
     "crypt": set(),
     "changes": set(),   # the process-wide "perception changed" wake-up for action confirmation (#305)
-    "transport": {"packets"},
+    "transport": {"packets", "opcodes"},   # #793: the in-world desync check counts opcodes unknown to the table (KNOWN_OPCODES)
     "config": {"missions"},   # AGENT_MISSION is one of missions.MISSIONS (#314)
     "missions": set(),   # the closed mission set (#314); a leaf
     "handles": set(),

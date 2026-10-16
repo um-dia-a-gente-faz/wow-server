@@ -19,6 +19,7 @@ from agent import loot as lo
 from agent import packets as pk
 from agent import perception as per
 from agent import session as se
+from agent.transport import StreamDesync
 from agent.handlers import npc as hnpc
 from agent.handlers import chat as hchat
 from agent.handlers import death as hdeath
@@ -794,6 +795,68 @@ class RecvLoopSafetyNetTest(unittest.TestCase):
         with self.assertNoLogs('agent.session', level='WARNING'):
             sess._recv_loop()
         self.assertFalse(sess._running)
+
+
+class StreamDesyncTest(unittest.TestCase):
+    """#793: a desynced world stream ends the session with a named reason, before any big body read."""
+
+    def test_declared_size_over_the_bound_raises_before_the_body_is_read(self):
+        sess = make_session(tc_server_header(0x7FFFFF, 0x0FFE) + b'\x00' * 64)
+        reads = []
+        real_rr = sess._rr
+        sess._rr = lambda n: (reads.append(n), real_rr(n))[1]
+        with self.assertRaises(StreamDesync) as cm:
+            sess._recv_packet(lambda op: True)
+        self.assertIn("declared size", str(cm.exception))
+        self.assertLess(max(reads), 16)  # only the header was read: no multi-MB request
+
+    def test_sixteen_unknown_opcodes_in_a_row_raise(self):
+        sess = make_session(server_packet(0x0FFE, b'\x00' * 4) * 16)
+        keep = lambda op: False
+        for _ in range(15):
+            sess._recv_packet(keep)
+        with self.assertRaises(StreamDesync) as cm:
+            sess._recv_packet(keep)
+        self.assertIn("unknown opcodes", str(cm.exception))
+
+    def test_fifteen_unknown_then_a_known_opcode_does_not_trip(self):
+        known = se.SMSG_PONG
+        stream = (server_packet(0x0FFE, b'\x00' * 4) * 15
+                  + server_packet(known, b'\x05\x00\x00\x00')
+                  + server_packet(0x0FFE, b'\x00' * 4) * 15
+                  + server_packet(known, b'\x06\x00\x00\x00'))
+        sess = make_session(stream)
+        keep = lambda op: op == known
+        for _ in range(15):
+            self.assertEqual(sess._recv_packet(keep), (0x0FFE, b''))
+        self.assertEqual(sess._recv_packet(keep), (known, b'\x05\x00\x00\x00'))
+        for _ in range(15):
+            self.assertEqual(sess._recv_packet(keep), (0x0FFE, b''))
+        self.assertEqual(sess._recv_packet(keep), (known, b'\x06\x00\x00\x00'))
+
+    def test_valid_large_packet_with_a_five_byte_header_still_parses(self):
+        big = bytes(range(256)) * 1200  # 307200 B: size > 0x7FFF, so the header has five bytes
+        sess = make_session(server_packet(hworld.SMSG_COMPRESSED_UPDATE_OBJECT, big))
+        self.assertEqual(sess._recv_packet(lambda op: True), (hworld.SMSG_COMPRESSED_UPDATE_OBJECT, big))
+
+    def test_rr_reads_a_multi_megabyte_body_in_linear_time(self):
+        body = bytes(range(256)) * 16384  # 4 MiB
+        sess = make_session(body)
+        sess.sock.chunk = 256  # 16384 recv calls: the old bytes += took ~4 s at 1 KiB chunks, far more here
+        t0 = time.monotonic()
+        out = sess._rr(len(body))
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertIsInstance(out, bytes)
+        self.assertEqual(out, body)
+
+    def test_loop_ends_the_session_and_keeps_the_reason(self):
+        sess = make_session(tc_server_header(0x7FFFFF, 0x0FFE) + b'\x00' * 8)
+        sess._running = True
+        with self.assertLogs('agent.session', level='WARNING') as logs:
+            sess._recv_loop()
+        self.assertTrue(sess.unexpected_disconnect)
+        self.assertIn("declared size", sess.desync_reason)
+        self.assertTrue(any("desynced" in m for m in logs.output))
 
 
 class ErrorThrottleTest(unittest.TestCase):
