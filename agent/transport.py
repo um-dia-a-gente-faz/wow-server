@@ -7,8 +7,8 @@ import struct
 import threading
 import time
 
-from . import opcodes as op
 from . import packets as pk
+from .opcodes import NUM_MSG_TYPES
 
 log = logging.getLogger("agent.session")
 
@@ -19,17 +19,17 @@ MID_PACKET_TIMEOUT_S = 30.0
 ERROR_LOG_INTERVAL_S = 30.0
 # Unwanted packet bodies are read and dropped in chunks of this size (#570).
 DISCARD_CHUNK_B = 0x10000
-# #793: desync bounds, checked on the in-world path (the one that passes keep). The bound is an
-# estimate, not measured: the largest legitimate server packet is an update object covering the
-# objects in view (docs/PROTOCOL-NOTES.md: compressed above 100 B), which should stay well under
-# 1 MiB; the header can declare up to 0x7FFFFF (8 MiB), which a desynced RC4 stream hits at random.
-# Raise it if a live capture ever shows a legitimate packet above it.
+# #793: desync bounds, checked on the in-world path (the one that passes keep).
+# MAX_SANE_PACKET: TrinityCore has no cap on a send (WorldSocket.cpp WorldSocket::Update sends a
+# packet larger than _sendBufferSize whole), and ServerPktHeader.h (3.3.5 @ 92127cd) allows up to
+# 0x7FFFFF. UpdateData.cpp BuildPacket compresses every update above 100 B into
+# SMSG_COMPRESSED_UPDATE_OBJECT, so the large packets (achievements, spells, guild roster) are
+# tens to a few hundred KB. 1 MiB is above that, and far under the 8 MiB a desynced RC4 header hits.
 MAX_SANE_PACKET = 0x100000
-# Consecutive packets whose opcode is not in agent/opcodes.py (unknown to the table, not just
-# unhandled) before the stream is called desynced. A known opcode resets the run.
-DESYNC_UNKNOWN_LIMIT = 16
-KNOWN_OPCODES = frozenset(v for k, v in vars(op).items()
-                          if k.startswith(("SMSG_", "CMSG_", "MSG_")) and isinstance(v, int))
+# Opcodes.h (3.3.5 @ 92127cd) enum Opcodes ends at NUM_MSG_TYPES = 0x51F, and ServerPktHeader.h writes
+# the opcode unchanged, so a healthy server never sends an opcode >= NUM_MSG_TYPES. A desynced header
+# is uniform 16-bit: out of range 98 % of the time. An in-range opcode, known or not, resets the run.
+DESYNC_OUT_OF_RANGE_LIMIT = 16
 
 
 class StreamDesync(ConnectionError):
@@ -69,7 +69,7 @@ class Transport:
         self.dump_packets_dir = dump_packets_dir
         self._lock = threading.Lock()
         self._error_throttle = _ErrorThrottle(ERROR_LOG_INTERVAL_S)
-        self._unknown_run = 0     # consecutive unknown opcodes on the in-world path (#793)
+        self._out_of_range_run = 0  # consecutive opcodes >= NUM_MSG_TYPES on the in-world path (#793)
         self.desync_reason = ""   # set when the in-world stream is declared desynced (#793)
 
     def send_packet(self, opcode: int, payload: bytes = b'') -> None:
@@ -118,16 +118,17 @@ class Transport:
         return opcode, payload
 
     def _check_stream(self, size: int, opcode: int):
-        """#793: a declared size over MAX_SANE_PACKET, or DESYNC_UNKNOWN_LIMIT unknown opcodes
-        in a row, means the RC4 header stream is out of step. Raises StreamDesync."""
+        """#793: a declared size over MAX_SANE_PACKET, or DESYNC_OUT_OF_RANGE_LIMIT opcodes >=
+        NUM_MSG_TYPES in a row, means the RC4 header stream is out of step. Raises StreamDesync."""
         if size > MAX_SANE_PACKET:
             raise StreamDesync(f"declared size {size} B above {MAX_SANE_PACKET} B, opcode {opcode:#06x}")
-        if opcode in KNOWN_OPCODES:
-            self._unknown_run = 0
+        if opcode < NUM_MSG_TYPES:
+            self._out_of_range_run = 0
             return
-        self._unknown_run += 1
-        if self._unknown_run >= DESYNC_UNKNOWN_LIMIT:
-            raise StreamDesync(f"{self._unknown_run} unknown opcodes in a row, last {opcode:#06x}")
+        self._out_of_range_run += 1
+        if self._out_of_range_run >= DESYNC_OUT_OF_RANGE_LIMIT:
+            raise StreamDesync(f"{self._out_of_range_run} opcodes >= {NUM_MSG_TYPES:#x} in a row, "
+                               f"last {opcode:#06x}")
 
     def _discard(self, n: int):
         while n > 0:
