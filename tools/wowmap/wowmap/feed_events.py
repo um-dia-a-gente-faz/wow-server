@@ -28,8 +28,9 @@ ACTION_KINDS = {
 # keys each must carry as ints. Mirrors agent/audit_schema.py ACTIVITY_KINDS; any other kind is skipped.
 AGENT_EVENT_KINDS = {"level": ("to",), "quest": ("quest_id",)}
 # ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
-# writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key and the store's
-# de-duplication read these; a kind not listed here has no fact and no de-duplication.
+# writes it, `db` as the DB poller writes it (activity.py diff_snapshots). fact_key reads these, and the
+# store writes its value to the fact_key column; the migration backfills the same paths (activity_schema.py,
+# frozen). A kind not listed here has no fact and no de-duplication.
 FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"}}
 
 
@@ -148,21 +149,26 @@ def fact_key(e):
 FACT_WINDOW_S = 300
 
 
+def fact_text(key):
+    """The fact_key column of a row: the key's value as text (ADR 0020 slice 3), or None for no fact."""
+    return None if key is None else str(key[2])
+
+
 def agent_fact_stored(conn, key, t):
     """True when an agent row already holds the fact `key` within FACT_WINDOW_S of `t`: a db event of
     it at `t` is then not stored."""
-    character, kind, value = key
+    character, kind, _ = key
     return conn.execute(
         "SELECT 1 FROM events WHERE source = 'agent' AND kind = ? AND character = ?"
-        " AND json_extract(detail_json, ?) = ? AND ABS(t - ?) <= ? LIMIT 1",
-        (kind, character, f"$.{FACT_KEYS[kind]['agent']}", value, t, FACT_WINDOW_S)).fetchone() is not None
+        " AND fact_key = ? AND ABS(t - ?) <= ? LIMIT 1",
+        (kind, character, fact_text(key), t, FACT_WINDOW_S)).fetchone() is not None
 
 
 def drop_db_fact(conn, key, t):
     """Delete the db rows of the fact `key` within FACT_WINDOW_S of `t`: an agent row for it at `t`
     has just been stored."""
-    character, kind, value = key
+    character, kind, _ = key
     conn.execute(
         "DELETE FROM events WHERE source = 'db' AND kind = ? AND character = ?"
-        " AND json_extract(detail_json, ?) = ? AND ABS(t - ?) <= ?",
-        (kind, character, f"$.{FACT_KEYS[kind]['db']}", value, t, FACT_WINDOW_S))
+        " AND fact_key = ? AND ABS(t - ?) <= ?",
+        (kind, character, fact_text(key), t, FACT_WINDOW_S))

@@ -142,11 +142,11 @@ class MigrationTests(unittest.TestCase):
         conn.commit()
         conn.close()
 
-    def test_new_file_is_version_1(self):
+    def test_new_file_is_version_2(self):
         activity.ActivityStore(self.path)
-        self.assertEqual(user_version(self.path), 1)
+        self.assertEqual(user_version(self.path), 2)
         self.assertEqual(activity.ActivityStore(":memory:")._conn.execute(
-            "PRAGMA user_version").fetchone()[0], 1)
+            "PRAGMA user_version").fetchone()[0], 2)
 
     def test_version_0_file_with_today_schema_keeps_rows(self):
         self.write_file(activity_schema.SCHEMA, 0)
@@ -159,10 +159,10 @@ class MigrationTests(unittest.TestCase):
         conn.close()
         store = activity.ActivityStore(self.path)
         self.assertEqual([e["text"] for e in store.recent("Rubens")], ["m2", "m1", "m0"])
-        self.assertEqual(user_version(self.path), 1)
+        self.assertEqual(user_version(self.path), 2)
 
     def test_newer_file_is_refused_untouched(self):
-        self.write_file("CREATE TABLE other (x INTEGER);", 2)
+        self.write_file("CREATE TABLE other (x INTEGER);", activity_schema.SCHEMA_VERSION + 1)
         before = pathlib.Path(self.path).read_bytes()
         with self.assertRaises(sqlite3.DatabaseError) as cm:
             activity.ActivityStore(self.path)
@@ -171,7 +171,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self._dir.name)), ["activity.sqlite3"])
 
     def test_start_activity_disables_feed_on_newer_file(self):
-        self.write_file(activity_schema.SCHEMA, 2)
+        self.write_file(activity_schema.SCHEMA, activity_schema.SCHEMA_VERSION + 1)
         with mock.patch.object(wowmap_state, "ACTIVITY_DB", self.path), \
                 self.assertLogs("wowmap", level="ERROR") as logs:
             self.assertIsNone(app.start_activity())
@@ -194,7 +194,7 @@ class MigrationTests(unittest.TestCase):
         del store
         activity.ActivityStore(self.path)
         reopened = activity.ActivityStore(self.path)
-        self.assertEqual(user_version(self.path), 1)
+        self.assertEqual(user_version(self.path), 2)
         self.assertEqual(reopened.count("Rubens"), 1)
 
     def test_failing_step_rolls_back_and_keeps_earlier_steps(self):
@@ -210,7 +210,7 @@ class MigrationTests(unittest.TestCase):
         self.assertNotIn("step_two", tables)
 
     def test_refused_store_closes_its_connection(self):
-        self.write_file("CREATE TABLE other (x INTEGER);", 2)
+        self.write_file("CREATE TABLE other (x INTEGER);", activity_schema.SCHEMA_VERSION + 1)
         made, real = [], sqlite3.connect
 
         def spy(*a, **k):

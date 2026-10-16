@@ -195,6 +195,16 @@ class StoreRulesTests(unittest.TestCase):
         self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
                          [("agent", "quest"), ("db", "quest")])
 
+    def test_the_store_writes_the_fact_key_of_every_row(self):
+        # The column (ADR 0020 slice 3): the key value as text for a fact, NULL for a row with none.
+        self.store.add(self.agent_level(11))
+        self.store.add([_db_level("Thrall", 10.5, 11), _db_quest("Jev1", 10.5, 8325),
+                        activity.event("Jev1", 10.5, "zone", "Entered Wetlands", "db", "db:1:10.500:zone:11",
+                                       {"from": 1, "to": 11}, inferred=True)])
+        rows = self.store._conn.execute("SELECT character, kind, source, fact_key FROM events").fetchall()
+        self.assertEqual(sorted(rows, key=str), [("Jev1", "level", "agent", "11"), ("Jev1", "quest", "db", "8325"),
+                                                 ("Jev1", "zone", "db", None), ("Thrall", "level", "db", "11")])
+
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
         self.store.add(self.agent_level(11))
         self.assertEqual(self.store.add([_db_level("jev1", 10.5, 11)]), 0)
