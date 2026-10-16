@@ -1,5 +1,5 @@
 """Stdlib reader for TrinityCore 3.3.5a movement maps (mmaps): which ground polygon is under a
-point, and the terrain height there. Path search is the next issue (#760).
+point, the terrain height there, and a polygon path with funnel straightening between two points.
 
 Every layout fact is taken from TrinityCore branch 3.3.5; tools/pathfinder/README.md gives the
 source file and line for each one. The public API takes and returns WoW coordinates (x, y, z).
@@ -8,6 +8,8 @@ PathGenerator does (src/server/game/Movement/PathGenerator.cpp:164).
 """
 from __future__ import annotations
 
+import heapq
+import math
 import re
 import struct
 from dataclasses import dataclass, field
@@ -26,6 +28,10 @@ DT_NAVMESH_MAGIC = 0x444E4156  # 'DNAV'
 DT_NAVMESH_VERSION = 7
 # DetourNavMesh.h:159
 DT_POLYTYPE_GROUND = 0
+# DetourNavMesh.h:97. A poly edge with this bit is a portal; its low byte is the side (0..7).
+DT_EXT_LINK = 0x8000
+# (dX, dY) step in tile x and y for each side, DetourNavMesh.cpp:1069-1084 (getNeighbourTilesAt)
+_SIDE_STEP = ((1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1))
 # src/server/game/Grids/GridDefines.h:36-39
 MAX_NUMBER_OF_GRIDS = 64
 SIZE_OF_GRIDS = 533.3333
@@ -170,6 +176,20 @@ def _inside(tile: Tile, poly: Poly, px: float, pz: float) -> bool:
     return inside
 
 
+def _on_edge(tile: Tile, poly: Poly, px: float, pz: float, eps: float = 1e-3) -> bool:
+    """Whether (px, pz) lies on an edge of the poly, within eps. _inside leaves both sides of a
+    boundary out, so a point on a border (a clamped overlap end, say) would have no ground at all."""
+    verts = [tile.verts[i] for i in poly.verts]
+    for i in range(len(verts)):
+        ax, az = verts[i - 1][0], verts[i - 1][2]
+        dx, dz = verts[i][0] - ax, verts[i][2] - az
+        length2 = dx * dx + dz * dz
+        t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (pz - az) * dz) / length2))
+        if math.hypot(px - (ax + t * dx), pz - (az + t * dz)) <= eps:
+            return True
+    return False
+
+
 def _height_in_poly(tile: Tile, index: int, px: float, pz: float) -> float | None:
     """Detail-mesh height at (px, pz), by barycentric weights in Detour x and z
     (DetourCommon.cpp:204-233, dtClosestHeightPointTriangle). The point is inside the polygon, so
@@ -196,6 +216,138 @@ def _height_in_poly(tile: Tile, index: int, px: float, pz: float) -> float | Non
         if best is None or margin > best[0]:
             best = (margin, a[1] + s * (c[1] - a[1]) + t * (b[1] - a[1]))
     return None if best is None else best[1]
+
+
+def _neighbour_key(key: tuple[int, int], side: int) -> tuple[int, int]:
+    """File key of the tile on `side` of tile `key`. Header x grows with Detour x (WoW y), and the
+    file's second index is the generator's tileX, which shrinks as WoW y grows: MapBuilder.cpp:945-946
+    gives bmax = (32 - tileX) * GRID_SIZE, and MapBuilder.cpp:886 writes the name as (map, tileY, tileX).
+    So a step of dX in header x is -dX in gy, and a step of dY in header y is -dY in gx."""
+    dx, dy = _SIDE_STEP[side]
+    return key[0] - dy, key[1] - dx
+
+
+def _slab_axes(side: int) -> tuple[int, int]:
+    """(slab, along): the Detour coordinate fixed on a border and the one it runs along. getSlabCoord
+    (DetourNavMesh.cpp:67-74) reads x for sides 0 and 4 and z for 2 and 6; calcSlabEndPoints
+    (DetourNavMesh.cpp:76-112) runs along the other one."""
+    return (0, 2) if side in (0, 4) else (2, 0)
+
+
+def _slab_span(p: tuple, q: tuple, along: int) -> tuple[tuple[float, float], tuple[float, float]]:
+    """(along, y) of both ends of a border edge, lower end first (calcSlabEndPoints)."""
+    lo, hi = (p, q) if p[along] < q[along] else (q, p)
+    return (lo[along], lo[1]), (hi[along], hi[1])
+
+
+def _overlap_slabs(amin, amax, bmin, bmax, climb: float) -> bool:
+    """overlapSlabs (DetourNavMesh.cpp:31-65) with px = 0.01 as findConnectingPolys passes it, and
+    py = walkableClimb of the neighbour tile (the tile that findConnectingPolys is given)."""
+    px, py = 0.01, climb
+    minx = max(amin[0] + px, bmin[0] + px)
+    maxx = min(amax[0] - px, bmax[0] - px)          # shrunk, so edges touching at an end do not link
+    if minx > maxx:
+        return False
+    ad = (amax[1] - amin[1]) / (amax[0] - amin[0])
+    ak = amin[1] - ad * amin[0]
+    bd = (bmax[1] - bmin[1]) / (bmax[0] - bmin[0])
+    bk = bmin[1] - bd * bmin[0]
+    dmin = (bd * minx + bk) - (ad * minx + ak)
+    dmax = (bd * maxx + bk) - (ad * maxx + ak)
+    if dmin * dmax < 0:                              # the two edges cross
+        return True
+    thr = (py * 2) ** 2
+    return dmin * dmin <= thr or dmax * dmax <= thr
+
+
+def _at_along(a: tuple, b: tuple, v: float, along: int) -> tuple:
+    """The point of edge a-b at along-coordinate v, clamped to the edge (DetourNavMesh.cpp:432-436)."""
+    t = min(1.0, max(0.0, (v - a[along]) / (b[along] - a[along])))
+    return tuple(p + t * (q - p) for p, q in zip(a, b, strict=True))
+
+
+def _ext_links(tile: Tile, a: tuple, b: tuple, side: int):
+    """Polys of the neighbour `tile` across our edge a-b (side `side`), as findConnectingPolys does
+    (DetourNavMesh.cpp:300-351). A poly links when its first edge with neis == DT_EXT_LINK | opposite side
+    lies on the same border line and its extent along the line overlaps ours. Yields (poly index, p, q):
+    the portal is the overlap, clamped to the edge (DetourNavMesh.cpp:342-343, :432-436). Its heights
+    are the neighbour's: the path steps onto that tile, and the corner belongs to it."""
+    slab, along = _slab_axes(side)
+    want = DT_EXT_LINK | ((side + 4) & 7)
+    if a[along] == b[along]:
+        return
+    amin, amax = _slab_span(a, b, along)
+    for k, poly in enumerate(tile.polys):
+        if poly.type != DT_POLYTYPE_GROUND:
+            continue
+        n = len(poly.verts)
+        for m, nei in enumerate(poly.neis):
+            if nei != want:
+                continue
+            c, d = tile.verts[poly.verts[m]], tile.verts[poly.verts[(m + 1) % n]]
+            if abs(a[slab] - c[slab]) > 0.01 or c[along] == d[along]:
+                continue
+            bmin, bmax = _slab_span(c, d, along)
+            if _overlap_slabs(amin, amax, bmin, bmax, tile.header["walkableClimb"]):
+                lo, hi = max(amin[0], bmin[0]), min(amax[0], bmax[0])
+                yield k, _at_along(c, d, lo, along), _at_along(c, d, hi, along)   # the neighbour's heights
+                break                                # one portal per poly, as Detour's break
+
+
+def _area(a: tuple, b: tuple, c: tuple) -> float:
+    """Signed area of a, b, c on Detour x and z (dtTriArea2D, DetourCommon.h:339)."""
+    return (c[0] - a[0]) * (b[2] - a[2]) - (b[0] - a[0]) * (c[2] - a[2])
+
+
+def _same_point(p: tuple, q: tuple) -> bool:
+    return abs(p[0] - q[0]) < 1e-6 and abs(p[2] - q[2]) < 1e-6
+
+
+def _left_right(a: tuple, b: tuple, travel: tuple[float, float]) -> tuple[tuple, tuple]:
+    """(left, right) of the portal a-b crossed in the direction `travel` (Detour x, z). A point is on the
+    left when cross(travel, p - mid) > 0. Decided from the geometry, so the polygon winding does not matter."""
+    mx, mz = (a[0] + b[0]) / 2, (a[2] + b[2]) / 2
+    if travel[0] * (a[2] - mz) - travel[1] * (a[0] - mx) > 0:
+        return a, b
+    return b, a
+
+
+def _funnel(start: tuple, end: tuple, portals: list[tuple[tuple, tuple]]) -> list[tuple]:
+    """Simple stupid funnel: the loop of dtNavMeshQuery::findStraightPath (DetourNavMeshQuery.cpp:1766-1980),
+    on (left, right) portals in travel order. Returns the corners, start and end included."""
+    portals = [(start, start), *portals, (end, end)]
+    path = [start]
+    apex = left = right = start
+    ai = li = ri = 0
+    i = 0
+    while i < len(portals):
+        pl, pr = portals[i]
+        if _area(apex, right, pr) <= 0:
+            if _same_point(apex, right) or _area(apex, left, pr) > 0:
+                right, ri = pr, i
+            else:                                  # right crossed over left: left is a corner
+                if not _same_point(path[-1], left):   # appendVertex, DetourNavMeshQuery.cpp:1666
+                    path.append(left)
+                apex, ai = left, li
+                left = right = apex
+                li = ri = ai
+                i = ai + 1
+                continue
+        if _area(apex, left, pl) >= 0:
+            if _same_point(apex, left) or _area(apex, right, pl) < 0:
+                left, li = pl, i
+            else:                                  # left crossed over right: right is a corner
+                if not _same_point(path[-1], right):  # appendVertex, DetourNavMeshQuery.cpp:1666
+                    path.append(right)
+                apex, ai = right, ri
+                left = right = apex
+                li = ri = ai
+                i = ai + 1
+                continue
+        i += 1
+    if not _same_point(path[-1], end):
+        path.append(end)
+    return path
 
 
 class NavMesh:
@@ -236,7 +388,7 @@ class NavMesh:
                 continue
             # ponytail: linear scan of every poly of 9 tiles per query; add a spatial index if p95 matters
             for index, poly in enumerate(tile.polys):
-                if poly.type != DT_POLYTYPE_GROUND or not _inside(tile, poly, px, pz):
+                if poly.type != DT_POLYTYPE_GROUND or not (_inside(tile, poly, px, pz) or _on_edge(tile, poly, px, pz)):
                     continue
                 height = _height_in_poly(tile, index, px, pz)
                 if height is not None:
@@ -260,3 +412,87 @@ class NavMesh:
         """Terrain height (WoW z) at (x, y) of the poly chosen as in find_poly; None off the mesh."""
         hit = self._best(x, y, z)
         return None if hit is None else hit[2]
+
+    def _portal_neighbours(self, ref: tuple[tuple[int, int], int]):
+        """(neighbour ref, a, b) for each edge of `ref` that leads to a ground poly. a and b are the
+        portal's Detour points: the whole edge inside the tile, the overlap across a tile border.
+        Edges with neis 0 are walls."""
+        key, index = ref
+        tile = self.tiles[key]
+        poly = tile.polys[index]
+        n = len(poly.verts)
+        for j, nei in enumerate(poly.neis):
+            if nei == 0:
+                continue
+            a, b = tile.verts[poly.verts[j]], tile.verts[poly.verts[(j + 1) % n]]
+            if nei & DT_EXT_LINK:
+                nkey = _neighbour_key(key, nei & 0xFF)
+                other = self.tiles.get(nkey)
+                if other is not None:
+                    for k, p, q in _ext_links(other, a, b, nei & 0xFF):
+                        yield (nkey, k), p, q
+            elif tile.polys[nei - 1].type == DT_POLYTYPE_GROUND:   # neis = poly index + 1, connectIntLinks DetourNavMesh.cpp:543-551
+                yield (key, nei - 1), a, b
+
+    def _centre(self, ref: tuple[tuple[int, int], int]) -> tuple[float, float]:
+        tile = self.tiles[ref[0]]
+        vs = [tile.verts[i] for i in tile.polys[ref[1]].verts]
+        return sum(v[0] for v in vs) / len(vs), sum(v[2] for v in vs) / len(vs)
+
+    def _corridor(self, begin, goal, s: tuple, e: tuple, max_polys: int) -> list[tuple[tuple, tuple]] | None:
+        """A* over polys from begin to goal. Cost is the distance between entry-edge midpoints (the start
+        point for the first poly), the heuristic the straight distance to e. Returns the portals in travel
+        order, or None when goal is unreachable within max_polys expanded polys."""
+        best = {begin: (0.0, None, None, s)}     # ref: (cost, parent, (a, b) entry edge, entry point)
+        heap = [(math.dist(s, e), 0, begin)]
+        seq, closed, expanded = 0, set(), 0
+        while heap:
+            _, _, cur = heapq.heappop(heap)
+            if cur in closed:
+                continue
+            if cur == goal:
+                return self._portals_to(best, goal)
+            closed.add(cur)
+            expanded += 1
+            if expanded > max_polys:
+                return None
+            cost, pos = best[cur][0], best[cur][3]
+            for nxt, a, b in self._portal_neighbours(cur):
+                if nxt in closed:
+                    continue
+                mid = tuple((p + q) / 2 for p, q in zip(a, b, strict=True))
+                g = cost + math.dist(pos, mid)
+                if nxt not in best or g < best[nxt][0]:
+                    best[nxt] = (g, cur, (a, b), mid)
+                    seq += 1
+                    heapq.heappush(heap, (g + math.dist(mid, e), seq, nxt))
+        return None
+
+    def _portals_to(self, best: dict, goal) -> list[tuple[tuple, tuple]]:
+        portals, ref = [], goal
+        while best[ref][1] is not None:
+            _, parent, (a, b), _ = best[ref]
+            (x0, z0), (x1, z1) = self._centre(parent), self._centre(ref)
+            portals.append(_left_right(a, b, (x1 - x0, z1 - z0)))
+            ref = parent
+        return portals[::-1]
+
+    def find_path(self, start: tuple[float, float, float], end: tuple[float, float, float],
+                  max_polys: int = 4096) -> list[tuple[float, float, float]] | None:
+        """Corners of the walkable path from start to end, WoW coordinates, start first and end last.
+        Each point's z is height() at that point, with the funnel point's y as the z hint. Only where height()
+        has no ground does the funnel point's own y stand. None when start or end is off the mesh,
+        or no path exists within max_polys expanded polys."""
+        begin, goal = self.find_poly(*start), self.find_poly(*end)
+        if begin is None or goal is None:
+            return None
+        s = (start[1], self.height(*start), start[0])    # Detour (y, z, x), PathGenerator.cpp:164
+        e = (end[1], self.height(*end), end[0])
+        portals = self._corridor(begin, goal, s, e, max_polys)
+        if portals is None:
+            return None
+        out = []
+        for p in _funnel(s, e, portals):              # Detour (y, z, x) back to WoW, PathGenerator.cpp:594
+            h = self.height(p[2], p[0], p[1])         # the funnel's y is the z hint
+            out.append((p[2], p[0], p[1] if h is None else h))
+        return out

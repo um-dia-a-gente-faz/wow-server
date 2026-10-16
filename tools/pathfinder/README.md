@@ -1,8 +1,9 @@
 # pathfinder: movement-map reader
 
 `navmesh.py` reads TrinityCore 3.3.5a movement maps (`mmaps/`) with the standard library only.
-It answers two questions: which ground polygon is under a WoW point, and the terrain height
-there. Path search is #760. The public API takes and returns WoW coordinates `(x, y, z)`.
+It answers three questions: which ground polygon is under a WoW point, the terrain height there,
+and the walkable path between two points (`find_path`, #760). The public API takes and returns
+WoW coordinates `(x, y, z)`.
 
 Every layout fact below was read from the TrinityCore `3.3.5` branch, not from upstream Recast.
 Paths are relative to the TrinityCore repository root.
@@ -84,10 +85,68 @@ Paths are relative to the TrinityCore repository root.
   `detailMeshes[i]` (`:685`). A detail triangle index `t[k] < poly->vertCount` is a poly vertex,
   `tile->verts[poly->verts[t[k]]]`. Any other index is detail vertex
   `detailVerts[vertBase + (t[k] - vertCount)]` (`:705-707`). `navmesh.py` `_height_in_poly` does the same.
-- Point in polygon: `dtPointInPolygon`, `DetourCommon.cpp:238-252`, tests Detour x and z.
+- Point in polygon: `dtPointInPolygon`, `DetourCommon.cpp:238-252`, tests Detour x and z. Its half-open
+  rule leaves a point on a border out of both polys, so `navmesh.py` `_on_edge` also counts a point on an
+  edge (within 1e-3). Without it a clamped overlap end has no ground, and `height()` returns `None`.
 - Height in a triangle: `dtClosestHeightPointTriangle`, `DetourCommon.cpp:204-233`. Barycentric
   weights in x and z, height from y. `navmesh.py` uses the same weights. For a point on an edge
   it takes the triangle with the largest margin.
+
+**Polygon links and DT_EXT_LINK**
+
+- `DT_EXT_LINK = 0x8000`, `DetourNavMesh.h:97`. Each edge value is `dtPoly::neis[j]`, `:177`; its
+  documented decoding is at `:738-755` (`neis[n] & 0xff` is the neighbour, `neis[n] & DT_EXT_LINK`
+  marks a portal).
+- Inside a tile, `neis[j]` is the neighbour poly index plus 1, and 0 is a wall. `connectIntLinks`
+  links `neis[j] - 1` at `DetourNavMesh.cpp:543-551`, skipping `0` and the `DT_EXT_LINK` bit.
+- On a portal, the low byte is the **side** of the neighbour tile, 0..7. `connectExtLinks` reads it
+  as `dir = neis[j] & 0xff` (`DetourNavMesh.cpp:406`) and looks for the neighbour on that side
+  (`DetourNavMesh.cpp:1036-1038`: `connectExtLinks(tile, neis[j], i)` for the tile on side `i`).
+- Side steps: `getNeighbourTilesAt`, `DetourNavMesh.cpp:1069-1084`. Sides 0..7 step tile x and y by
+  `(1,0) (1,1) (0,1) (-1,1) (-1,0) (-1,-1) (0,-1) (1,-1)`.
+- The neighbour's matching edge has the **opposite** side, `dtOppositeTile(side) = (side + 4) & 0x7`
+  (`DetourCommon.h:466`). `findConnectingPolys` (`DetourNavMesh.cpp:300-351`) searches the other
+  tile for `neis == DT_EXT_LINK | opposite` (`:312`, `:324`) that lies on the same border line
+  (`dtAbs(apos - bpos) > 0.01f`, `:331`) and whose extent overlaps ours (`:335-337`).
+- The border test is `overlapSlabs` (`DetourNavMesh.cpp:31-65`). Extents are shrunk by 0.01 so that
+  edges touching at an end do not link (`:38-40`). Edges that cross always overlap (`:56`). Otherwise
+  the end heights must be within `2 * walkableClimb` (`:60-63`), where `walkableClimb` is the
+  neighbour's (`findConnectingPolys` gets the target tile, `:337`). `calcSlabEndPoints`
+  (`:76-112`) and `getSlabCoord` (`:67-74`) give the slab axis: x for sides 0 and 4, z for 2 and 6.
+  `navmesh.py` `_ext_links` repeats this. One portal per neighbour poly: the `break` at `:347`, after `conarea` is written at `:342-343`.
+- Mapping a side to a file: the mmtile name is `(map, tileY, tileX)` (`MapBuilder.cpp:886`), and the
+  reader reads its two numbers as `(gx, gy)` (`MMapManager.cpp:131`). The header x and y count from
+  the map's origin, so they run opposite to the file indices: `bmax = (32 - tileX) * GRID_SIZE`
+  (`MapBuilder.cpp:945-946`), and the origin is the bounds of the largest tile (`:553-564`). So a step of
+  `(dX, dY)` in header x and y is `(gx - dY, gy - dX)` in file indices. Side 0 from file key `(31, 31)`
+  is `(31, 30)`, which holds WoW y in `[533, 1067)`, next to `(31, 31)` for y in `[0, 533)`.
+- `dtTriArea2D` (`DetourCommon.h:339-345`) is the signed area used by the funnel, with x and z.
+
+**Path search**
+
+- `find_path` returns the corners of the path, WoW `(x, y, z)`, first point start and last point end.
+  Each point's z is `height(x, y, hint)`, where the hint is the funnel point's Detour y. The hint picks
+  the floor nearest that height. The funnel point's own y is kept only where `height()` returns `None`.
+  A corner on a clamped overlap end is interpolated along our edge, so its y can differ from the
+  neighbour's surface: the z comes from the surface, not from the interpolation.
+- Corners never repeat: `appendVertex` (`DetourNavMeshQuery.cpp:1666-1673`) drops a point equal to the
+  last one, and `_funnel` does the same. Without it a corner that is also the end of the next portal is
+  emitted twice.
+- Search is A* over polygons. A poly is entered through an edge, so the cost is the distance between
+  entry-edge midpoints, and the heuristic is the straight distance to end. Both are this module's
+  choice, not TrinityCore's: `dtNavMeshQuery::findPath` is the reference.
+- The corners come from the simple stupid funnel, as in `dtNavMeshQuery::findStraightPath`
+  (`DetourNavMeshQuery.cpp:1766-1980`; the tightening tests are `:1876` and `:1927`).
+- The portal is the **overlap**, not the full edge. `connectExtLinks` clamps the overlap to the
+  edge and stores it as `bmin` and `bmax` (`DetourNavMesh.cpp:432-436`, `dtClamp` to `[0, 1]`), and
+  `navmesh.py` takes the same fractions along the neighbour's edge (`_at_along`), so the portal's heights
+  are the neighbour's. The path steps onto that tile at the corner.
+- Left and right of each portal are chosen from the geometry (the travel direction is the centre of
+  the next poly minus the centre of this one, and a point is on the left when its cross product is
+  positive). Detour takes `left = verts[edge]` and `right = verts[edge+1]` (`getPortalPoints`,
+  `DetourNavMeshQuery.cpp:2292`), which holds for Recast's winding only. The result does not depend
+  on the winding here.
+- Back to WoW: `PathGenerator.cpp:594` converts Detour `(y, z, x)` to WoW `(x, y, z)`, the inverse of `:164`.
 
 ## Axis order: WoW (x, y, z) is Detour (y, z, x)
 
@@ -101,7 +160,10 @@ Paths are relative to the TrinityCore repository root.
 ## Not done here
 
 - Links are read only to skip them. Off-mesh connections are kept but not traversed.
+- Path search expands at most `max_polys` polys with no pruning. Expect this to be enough for tiles,
+  not for whole maps. The measured limit is the 50 ms test on a 100-poly grid, not a real tile.
 - Each `.mmtile` of the map is read at load time, as the spec asks. A lazy loader is the upgrade if
   memory matters.
-- The layout is verified against the source, not yet against a real tile. The human step (print
-  the height at Sunstrider Isle start from a map 530 tile on the VM) is still open.
+- The layout is verified against the source, not yet against a real tile. The human steps are still
+  open: print the height at Sunstrider Isle start from a map 530 tile on the VM, and find a path
+  across a real tile border (this checks the overlap rule and the side-to-file mapping).
