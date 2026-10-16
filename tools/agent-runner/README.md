@@ -65,6 +65,7 @@ checkout under that old tag: check out that commit and run `scripts/build-agent-
 | `AGENT_RUNNER_REPO` | this checkout | holds `agents/roster.json`, `Dockerfile`, `.env`; the `agents/` library code always comes from the checkout `runner.py` is in (#391) |
 | `AGENT_RUNNER_RUNTIME_DIR` | `/opt/wow-agent-runtime` | runtime state, outside the checkout |
 | `AGENT_RUNNER_AUDIT_DIR` | `<runtime>/audit` | where the agents write `<agent>/<day>.jsonl` |
+| `AGENT_RUNNER_ACTION_LOG` | `<runtime>/actions.jsonl` | append-only action log (below); empty string turns it off |
 | `AGENT_RUNNER_PROJECT` | `wow-agents` | compose project name |
 | `AGENT_RUNNER_CHARACTER_URL` | `http://192.168.1.64:9400` | wowmap, source of level/zone/playtime |
 | `AGENT_RUNNER_AGENT_HOST` | `127.0.0.1` | where the agents' published APIs answer |
@@ -209,6 +210,13 @@ of where it last told the server it was, not a database read. Every call is logg
   resolve, and writes nothing into the checkout.
 - Every action is logged as one JSON line: `ts, action, agent, caller, token,
   result`. Refused writes are logged too.
+- The action log (#458, `AGENT_RUNNER_ACTION_LOG`) appends one line per mutating request
+  (start, stop, create, retire, walk; a dry-run walk moves nothing, so it is not logged):
+  `{"schema": 1, "ts", "who", "action", "target", "result": "ok"|"error", "status"}` (`schema` is
+  `ACTION_LOG_SCHEMA`, ADR 0018). `who` is the token label, or `unauthenticated` for a rejected token.
+  A request that fails with an error other than a refusal is logged as status 500, then fails as before. GETs are never logged, and the
+  token, headers and body never are. An unwritable file is warned about once and never fails
+  the request. No read endpoint yet.
 - Docker output is scrubbed of the token and of every `*PASSWORD`, `*KEY`,
   `*TOKEN` and `*SECRET` value in the environment before it is logged or
   returned. The shared account password is never returned, logged or written to the
