@@ -95,6 +95,20 @@ class LoadOrderTests(unittest.TestCase):
                 login.connect_and_login(Config(), mock.Mock())
         self.assertEqual(seen, [os.path.join(tmp, "names.json")])
 
+    def test_activity_events_flag_reaches_the_session_from_cfg(self):
+        # ADR 0020 (#390): AGENT_ACTIVITY_EVENTS, read by Config, is what the session buffers with.
+        for value, expected in (("1", True), ("0", False)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                sess = self.FakeSession(_world_state())
+                sess.activity_events = None  # a marker: connect_and_login must set the flag itself
+                char = {"guid": 7, "name": "Luaprata", "race": 1, "class_": 1}
+                env = {"WOW_ACCOUNT": "a", "WOW_PASSWORD": "p", "WOW_CHARACTER": "Luaprata",
+                       "AGENT_STATE_DIR": tmp, "AGENT_ACTIVITY_EVENTS": value}
+                with mock.patch.dict("os.environ", env, clear=True), \
+                        mock.patch.object(login, "authenticate_and_login", return_value=(sess, [char])):
+                    login.connect_and_login(Config(), mock.Mock())
+                self.assertIs(sess.activity_events, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

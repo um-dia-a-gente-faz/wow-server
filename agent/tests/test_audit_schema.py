@@ -33,6 +33,8 @@ class GoldenUpgradeTests(unittest.TestCase):
         self.assertIsNone(rec.jev_status)
         self.assertIsNone(rec.history_notes)
         self.assertIsNone(rec.snapshot)
+        self.assertEqual(rec.events, [])
+        self.assertNotIn("events", rec.to_json())
         self.assertEqual(rec.to_json()["schema"], SCHEMA_VERSION)
 
     def test_v0_unknown_keys_are_kept_in_extra_and_written_back(self):

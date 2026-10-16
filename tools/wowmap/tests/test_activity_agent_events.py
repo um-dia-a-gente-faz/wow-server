@@ -100,6 +100,17 @@ class StoreRulesTests(unittest.TestCase):
                          [("agent", "level"), ("db", "item"), ("db", "level")])
         self.assertEqual(len(self.rows("Thrall")), 1)
 
+    def test_db_first_then_agent_deletes_only_that_level_of_that_character(self):
+        # The db rows that must survive the agent's delete: another level and another kind of the
+        # same character, and the same level of another character.
+        self.store.add([_db_level("Thrall", 10.5, 11), _db_level("Jev1", 10.5, 12),
+                        activity.event("Jev1", 10.5, "item", "Got Linen Cloth", "db", "db:1:10.500:item:+1",
+                                       {"item": 2589, "count": 1})])
+        self.assertEqual(self.store.add(self.agent_level(11)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "level"), ("db", "item"), ("db", "level")])
+        self.assertEqual([(r["source"], r["text"]) for r in self.rows("Thrall")], [("db", "Reached level 11")])
+
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
         self.store.add(self.agent_level(11))
         self.assertEqual(self.store.add([_db_level("jev1", 10.5, 11)]), 0)
@@ -130,6 +141,24 @@ class TailerTests(unittest.TestCase):
         self.assertEqual(tailer.scan_once(), [])
         self.assertEqual(activity.AuditTailer(self.store, self.base).scan_once(), [])
         self.assertEqual(self.store.count("Jev1"), 2)
+
+    def test_an_idle_line_with_a_level_event_stores_the_agent_row_and_no_audit_row(self):
+        # idle is no feed row (audit_event returns None), but its level-up is still the agent's.
+        idle = {"schema": 3, "ts": 1731000020.0, "agent": "Jev1", "cycle": 30, "valid": True,
+                "tool_call": {"name": "idle", "args": {}}, "result": {"ok": True, "error": None},
+                "events": [{"kind": "level", "t": 1731000019.5, "detail": {"to": 12}}]}
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(idle) + "\n")
+        tailer = activity.AuditTailer(self.store, self.base)
+        tailer.scan_once()
+        rows = self.store.recent("Jev1", 50)
+        self.assertEqual(sorted((r["source"], r["text"]) for r in rows),
+                         [("agent", "Reached level 11"), ("agent", "Reached level 12"),
+                          ("audit", "Loot guid=7")])
+        self.assertEqual(self.store.count("Jev1"), 3)
+        # A rebuilt tailer reads the idle line again (no audit row moves _since past it): nothing new.
+        activity.AuditTailer(self.store, self.base).scan_once()
+        self.assertEqual(self.store.count("Jev1"), 3)
 
     def test_a_malformed_events_field_is_counted_and_the_decision_still_stored(self):
         with open(self.path, "a", encoding="utf-8") as f:
