@@ -11,7 +11,8 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-exec 9>/tmp/wow-auto-deploy.lock
+# Default is the VM's lock path; AUTO_DEPLOY_LOCK exists so tests can use a temp file.
+exec 9>"${AUTO_DEPLOY_LOCK:-/tmp/wow-auto-deploy.lock}"
 if ! flock -n 9; then
   echo "$(date -Is) another auto-deploy run in progress, skipping"
   exit 0
