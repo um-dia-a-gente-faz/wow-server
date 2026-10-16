@@ -63,8 +63,8 @@ fire this rule.
 
 ## AgentReconnectLoop
 
-**What it means.** One agent logged at least 2 reconnect waits in 15 minutes (`increase(...[15m]) > 1`)
-for 25 minutes. An agent that keeps failing logs waits for as long as it keeps failing, so this rule
+**What it means.** One agent logged one or more reconnect waits in 15 minutes (`increase(...[15m]) > 1`,
+which reads about 1.017 for a single wait at a 15 s scrape) for 30 minutes. An agent that keeps failing logs waits for as long as it keeps failing, so this rule
 fires on a sustained failure, not on a blip. The supervisor (`agent/supervisor.py`, `supervise_connection`) waits between attempts and counts each
 wait in `wow_agent_reconnect_attempts_total{agent,reason}`. The `reason` label says why:
 `connect_failed` (login or connect raised), `auth_rejected` (a transient auth refusal),
@@ -81,18 +81,18 @@ so a stopped container shows up in the logs, not here.
 agent, so a fleet-wide cause is the storm alert below, not this one.
 
 **Threshold.** The backoff starts at 5 s, doubles, and caps at 5 min; each wait is jittered between
-half and all of its step. Simulated from the supervisor's model (`agent/supervisor.py`,
+half and all of its step. Derived from the supervisor's model (`agent/supervisor.py`,
 `supervise_connection`, a 10 s connect timeout per failed attempt), not run against Prometheus:
 
 - **(a) An agent failing forever.** Waits are counted at 10, 25, 45, 75, 125, 215, 385 and 695 s
-  (all-maximum jitter). From 25 s the trailing 15 minutes always hold two or more waits; at the 5-minute
-  cap the steady state is 2 to 6 waits per 15 minutes, never fewer than 2. The expression is therefore
-  continuously true and the alert fires at about 1525 s, 25 minutes after the second wait.
+  (all-maximum jitter). The first wait is at 10 s, so the expression is true from then on: at the 5-minute
+  cap the trailing 15 minutes always hold a wait. The alert fires at about 1810 s, 30 minutes after the first wait.
 - **(b) One 5-minute outage (300 s).** The waits fall inside the outage and the agent reconnects at 300 s.
-  The expression is true from 25 s until 1025 s to 1038 s (all-maximum and all-minimum jitter), and at
-  most 1077 s over 400 simulated draws. That is under 25 minutes, so the alert stays silent.
-- **(c) One 10-minute outage (600 s).** At most 1309 s over the same draws, still under 1500 s, so it stays
-  silent with about 190 s to spare.
+  The last wait starts before the reconnect, so the expression is true until at most that wait plus 15 minutes,
+  about 1210 s. That is under 30 minutes after the first wait, so the alert stays silent.
+- **(c) One 10-minute outage (600 s).** The last wait starts at or before the outage end plus one 10 s connect
+  timeout, about 610 s, so the expression is true until about 1510 s at most. The alert needs about 1810 s,
+  so it stays silent with about 300 s (5 minutes) to spare.
 
 ## AgentReconnectStorm
 
@@ -226,21 +226,22 @@ It is the provider's reported cost in the retained audit rows, not a bill.
 
 1. Grafana, "Jev — decision usage", panels "Spend total, last 24h" and "Spend per agent, last 24h".
 2. Which agent drives it: the per-agent panel, then its audit rows for today.
-3. Whether a retention drop happened in the last hour (below). If so the rule is silent by design.
+3. Whether a retention drop happened in the last hour (below). If so, that agent is left out by design.
 
 **Retention caveat.** Retention deletes audit rows older than the window (14 days by default), so once
 a day an agent's counter falls. Prometheus reads a fall as a counter reset, and `increase()` then counts
 the whole remaining retained total as new spend. Without a guard the rule would page daily for about an
-hour (`monitoring/README-agent-metrics.md`). The expression therefore adds
-`and sum(resets(...[1h])) == 0`: for up to 1 hour after any agent's drop, the rule is silent. The same
-guard also silences real spend in that hour, which is the trade for not paging on every rotation; read
-the panels for that hour instead.
+hour (`monitoring/README-agent-metrics.md`). The expression therefore guards each agent's series with
+`and resets(...[1h]) == 0` inside the `sum(...)`. For up to 1 hour after one agent's counter drops, only
+that agent's contribution is left out; the other agents still count. The same guard also leaves out that
+agent's real spend in that hour, which is the trade for not paging on every rotation; read the panels for
+that hour instead.
 
 **Tune or silence.** The owner decides on the brain or the budget. The threshold is a starting value;
 compare it with the expected daily spend before changing it.
 
-**Threshold.** More than 1 USD in an hour across the fleet, sustained 15 minutes, and no counter reset
-in the same hour.
+**Threshold.** More than 1 USD in an hour across the fleet, sustained 15 minutes, counting only agents
+with no counter reset in the same hour.
 
 ## WowExporterDown
 
