@@ -122,16 +122,18 @@ class ActivityOnTests(unittest.TestCase):
         before = time.time()
         spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
         events = self.state.drain_activity()
-        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("kill", {"victim_entry": 1234})])
+        detail = {"victim_guid": CREATURE, "victim_entry": 1234}
+        self.assertEqual([(e["kind"], e["detail"]) for e in events], [("kill", detail)])
         self.assertLess(abs(events[0]["t"] - before), 60)  # wall clock
         self.assertEqual([e["kind"] for e in self.state.events], ["party_kill"])  # the handler's own work
         with tempfile.TemporaryDirectory() as tmp:
             _record(AuditLogger("Jev1", base_dir=tmp), events=events)
             line = _only_line(tmp)
-        self.assertEqual(line["events"], [{"kind": "kill", "t": events[0]["t"], "detail": {"victim_entry": 1234}}])
+        self.assertEqual(line["events"], [{"kind": "kill", "t": events[0]["t"], "detail": detail}])
 
     def test_a_party_members_kill_is_not_this_agents_kill(self):
-        # SMSG_PARTYKILLLOG reaches the whole group (Unit::Kill, Unit.cpp:10968): only the killer's is ours.
+        # SMSG_PARTYKILLLOG reaches the whole group (Unit::Kill, Unit.cpp:10968). Its first guid is the
+        # tagger, the loot recipient: only a kill tagged by this character is its credit.
         self.state.player_guid = ME
         spell_handlers.handle_party_kill_log(SimpleNamespace(state=self.state), _party_kill(OTHER_PLAYER, CREATURE))
         self.assertEqual(self.state.drain_activity(), [])
@@ -147,7 +149,8 @@ class ActivityOnTests(unittest.TestCase):
         ctx = SimpleNamespace(state=self.state)
         spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
         spell_handlers.handle_party_kill_log(ctx, _party_kill(ME, CREATURE))
-        self.assertEqual([e["detail"] for e in self.state.drain_activity()], [{"victim_entry": 1234}] * 2)
+        self.assertEqual([e["detail"] for e in self.state.drain_activity()],
+                         [{"victim_guid": CREATURE, "victim_entry": 1234}] * 2)
 
     def test_death_makes_one_death_event_with_the_guessed_killer(self):
         self.state.player_guid = ME

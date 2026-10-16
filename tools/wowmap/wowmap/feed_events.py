@@ -29,7 +29,7 @@ ACTION_KINDS = {
 AGENT_EVENT_KINDS = {
     "level": ("to",),
     "quest": ("quest_id",),
-    "kill": (),   # typed by _detail_ok: victim_entry or victim_guid
+    "kill": (),   # typed by _detail_ok: victim_guid (an int), and victim_entry for a creature
     "death": (),  # typed by _detail_ok: killer_guess, an int or None
 }
 # ADR 0020 (#390): the detail key that holds the fact of each kind, per source: `agent` as the agent
@@ -37,7 +37,7 @@ AGENT_EVENT_KINDS = {
 # store writes its value to the fact_key column; the migration backfills the same paths (activity_schema.py,
 # frozen). A kind not listed here has no fact and no de-duplication.
 FACT_KEYS = {"level": {"agent": "to", "db": "to"}, "quest": {"agent": "quest_id", "db": "quest"},
-             "kill": None, "death": None}  # no fact, so no de-duplication (ADR 0020 slice 5), so no de-duplication (ADR 0020 slice 5)
+             "kill": None, "death": None}  # no fact, so no de-duplication (ADR 0020 slice 5)
 
 
 def _clip(text, limit=MAX_TEXT):
@@ -99,7 +99,7 @@ def _detail_ok(kind, detail):
     """The typed detail of an agent event. A kill names its victim by entry (a creature) or by guid; a
     death names its killer as a guess, or None when unknown (ADR 0020 slice 5)."""
     if kind == "kill":
-        return _is_int(detail.get("victim_entry")) or _is_int(detail.get("victim_guid"))
+        return _is_int(detail.get("victim_guid"))
     if kind == "death":
         return detail.get("killer_guess") is None or _is_int(detail.get("killer_guess"))
     return all(_is_int(detail.get(k)) for k in AGENT_EVENT_KINDS[kind])
@@ -111,7 +111,7 @@ def _agent_text(kind, detail, quest_title):
         return f"Reached level {detail['to']}"
     if kind == "kill":
         return (f"Killed creature {detail['victim_entry']}" if _is_int(detail.get("victim_entry"))
-                else "Killed an unknown target")
+                else "Killed an unknown target")  # a non-creature victim has a guid and no entry
     if kind == "death":
         return "Died"
     return f"Turned in quest: {quest_title(detail['quest_id'])}"
@@ -119,8 +119,8 @@ def _agent_text(kind, detail, quest_title):
 
 def _uid_key(kind, detail):
     """What tells two agent events of one kind and millisecond apart in the uid (ADR 0020 rule 4)."""
-    if kind == "kill":  # _detail_ok has checked that one of the two is an int
-        return detail["victim_entry"] if _is_int(detail.get("victim_entry")) else detail["victim_guid"]
+    if kind == "kill":  # the guid tells two kills in one millisecond apart; _detail_ok checked it is an int
+        return detail["victim_guid"]
     if kind == "death":
         return detail.get("killer_guess")
     return detail[_fact_name(kind, "agent")]

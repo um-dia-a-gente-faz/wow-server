@@ -382,22 +382,34 @@ level in the feed. `SMSG_LEVELUP_INFO` goes to the leveller only: TrinityCore 3.
 
 Decided in the slice that adds the two kinds. Nothing here changes a wire parse.
 
-- **`kill`** comes from `handle_party_kill_log`. `Unit::Kill` (TrinityCore 92127cd,
-  `src/server/game/Entities/Unit/Unit.cpp:10958`) builds SMSG_PARTYKILLLOG with the killer's guid and
-  the victim's, and sends it to the killer alone when it is not grouped (`:10986`) and to the whole
-  group otherwise (`:10968`). A party member's kill therefore reaches this agent, so the agent emits
-  only when the killer is its own character. SMSG_LOG_XPGAIN is not used: it is the XP line
-  (`Player::SendLogXPGain`, `Player.cpp:2366`), not the credit. Detail: `victim_entry` when the victim
-  is a Unit, whose guid holds its entry in bits 24..47 (`ObjectGuid::GetEntry`, `ObjectGuid.h`,
-  92127cd); otherwise `victim_guid`.
+- **`kill`** comes from `handle_party_kill_log`. The first guid of SMSG_PARTYKILLLOG is not the killing
+  blow. In TrinityCore 92127cd, `Unit::Kill` (`src/server/game/Entities/Unit/Unit.cpp`) first sets
+  `player` to the attacker's player or owner (from `:10901`). Then, for a creature that passes
+  `IsDamageEnoughForLootingAndReward`, it replaces `player` with the creature's loot recipient,
+  `creature->GetLootRecipient()` (`:10925-10946`; when that player is not on the creature's map, the
+  first member of the recipient's group who is on the map). The packet is built with that `player` as
+  its first guid and the victim as its second (`:10958`). The loot recipient is set by the first damage
+  to the creature, in `Unit::DealDamage` (`:888`: `if (!hasLootRecipient()) SetLootRecipient(attacker)`).
+  So it is the **tagger**: the player who first damaged the creature, who need not land the killing
+  blow. The packet goes to the tagger alone when ungrouped (`:10986`) and to the whole group otherwise
+  (`:10968`). Consequence for the feed: **the tagger gets the `kill` row,
+  in a party and when ungrouped**, and every other member who receives the packet gets none. The
+  agent emits only when the first guid is its own character. SMSG_LOG_XPGAIN is not used: it is the XP
+  line (`Player::SendLogXPGain`, `Player.cpp:2366`), not the credit. Detail: `victim_guid` always, and
+  `victim_entry` too when the victim is a Unit, whose guid holds its entry in bits 24..47
+  (`ObjectGuid::GetEntry`, `ObjectGuid.h`, 92127cd). The guid is always carried because two kills in one
+  millisecond need it to get two uids.
 - **`death`** comes from `check_death_transition`, on the same health > 0 to 0 transition that writes
   the `death` game event. Detail: `killer_guess`, the guess `infer_killer_guid` makes, or `None`.
-- **Typing in wowmap.** A kill needs an int `victim_entry` or an int `victim_guid`; a death needs an
-  int `killer_guess` or none. Anything else is skipped and counted, as slice 1 does. A kill's text is
-  `Killed creature <entry>` or `Killed an unknown target`; a death's is `Died`.
+- **Typing in wowmap.** A kill needs an int `victim_guid` (`victim_entry` is used for the text when it
+  is an int); a death needs an int `killer_guess` or none. Anything else is skipped and counted, as
+  slice 1 does. A kill's text is `Killed creature <entry>` or `Killed an unknown target`; a death's is
+  `Died`.
 - **No de-duplication.** `FACT_KEYS` holds `None` for both kinds, so `fact_key` is `None`, and the store
-  keeps every row. Two kills of one entry within `FACT_WINDOW_S` are two rows. The uid is
-  `agent:<agent>:kill:<t>:<entry or guid>` and `agent:<agent>:death:<t>:<killer_guess>`.
+  keeps every row. Two kills of one entry within `FACT_WINDOW_S` are two rows, and so are two kills at
+  the same millisecond, because the uid carries the victim's guid. The uid is
+  `agent:<agent>:kill:<t:.3f>:<victim_guid>`, for example `agent:Jev1:kill:1731000013.250:17379390982725828761`,
+  and `agent:<agent>:death:<t:.3f>:<killer_guess>`.
 - **Buffer size: unchanged, 20 (`ACTIVITY_MAXLEN`).** A think cycle is at least
   `AGENT_THINK_INTERVAL_S` (3.0 s) and includes an LLM call, so more than 20 kills and deaths of one
   character inside one cycle would need more than one kill a second for the whole cycle. The bound

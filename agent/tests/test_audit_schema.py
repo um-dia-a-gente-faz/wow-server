@@ -82,7 +82,8 @@ class GoldenUpgradeTests(unittest.TestCase):
     def test_v3_kill_and_death_lines_round_trip_exactly_with_their_events(self):
         (kill,) = _lines("v3-kill.jsonl")
         self.assertEqual(AuditRecord.from_json(kill).events,
-                         [{"kind": "kill", "t": 1731000013.25, "detail": {"victim_entry": 1234}}])
+                         [{"kind": "kill", "t": 1731000013.25,
+                           "detail": {"victim_guid": 17379390982725828761, "victim_entry": 1234}}])
         self.assertEqual(AuditRecord.from_json(kill).to_json(), kill)
         (death,) = _lines("v3-death.jsonl")
         self.assertEqual(AuditRecord.from_json(death).events,
