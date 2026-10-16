@@ -23,6 +23,7 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(REPO))
 import runner  # noqa: E402
+from fleet import StateFileError  # noqa: E402
 from docker_backend import FakeDockerBackend  # noqa: E402
 from agent import api_contract  # noqa: E402  (#264: fixtures come from the shared agent API schema)
 from agents import compose  # noqa: E402
@@ -846,7 +847,7 @@ class SaveAgentAtomicTest(AtomicWriteChecks, RunnerCase):
         self.fleet.save_agent(self.planned(n))
 
     def expected(self, n):
-        return (json.dumps({"agents": [self.planned(n)]}, indent=2) + "\n").encode()
+        return (json.dumps({"schema": 1, "agents": [self.planned(n)]}, indent=2) + "\n").encode()
 
     def test_the_compose_file_is_written_atomically_too(self):
         self.fleet.write_compose()
@@ -1229,6 +1230,86 @@ class ConfigTest(unittest.TestCase):
             os.environ.pop("AGENT_RUNNER_TOKEN", None)
             with self.assertRaises(SystemExit):
                 runner.main()
+
+
+class StateFileTest(RunnerCase):
+    """ADR 0018 (state.json, slice 4): a state file that is newer, unreadable or malformed is refused
+    with a 503 that names the path and the version. The refusal never reads past it, moves it or overwrites it."""
+
+    def setUp(self):
+        super().setUp()
+        self.state = self.runtime / "state.json"
+        self.runtime.mkdir(parents=True, exist_ok=True)
+        self.log = Path(self.tmp.name) / "log" / "actions.jsonl"
+        self.config.action_log = self.log
+
+    def write_state(self, doc):
+        self.state.write_text(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def post(self, path, body=None):
+        r = urllib.request.Request(self.base + path, method="POST",
+                                   data=None if body is None else json.dumps(body).encode(),
+                                   headers={"Authorization": f"Bearer {TOKEN}"})
+        try:
+            with urllib.request.urlopen(r, timeout=10) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, json.loads(e.read())
+
+    def assert_refused(self, status, version):
+        before = self.state.read_bytes()
+        want = {"error": "state file refused", "path": str(self.state), "status": status, "version": version}
+        self.assertEqual(self.req("/agents"), (503, want))
+        self.assertEqual(self.post("/agents/Bravo/start"), (503, want))
+        self.assertEqual(self.post("/agents", {"account": "AGENT04", "race": 2, "class": 1}), (503, want))
+        with self.assertRaises(StateFileError):
+            self.fleet.save_agent({"account": "AGENT05", "character": "Echo"})
+        self.assertEqual(self.state.read_bytes(), before)
+        self.assertEqual(sorted(os.listdir(self.runtime)), ["state.json"])
+
+    def test_a_state_without_schema_loads_as_before(self):
+        self.write_state({"agents": [{"account": "AGENT04", "character": "Delta"}]})
+        self.assertEqual([e["name"] for e in self.fleet.roster()], ["Alpha", "Bravo", "Charlie", "Delta"])
+
+    def test_a_state_with_schema_1_loads(self):
+        self.write_state({"schema": 1, "agents": [{"account": "AGENT04", "character": "Delta"}]})
+        self.assertEqual([e["name"] for e in self.fleet.roster()], ["Alpha", "Bravo", "Charlie", "Delta"])
+
+    def test_a_newer_schema_is_refused_and_left_alone(self):
+        self.write_state({"schema": 2, "agents": [{"account": "AGENT04", "character": "Delta"}]})
+        self.assert_refused(status="NEWER", version=2)
+
+    def test_invalid_json_is_refused_and_left_alone(self):
+        self.write_state('{"agents": [')
+        self.assert_refused(status="UNREADABLE", version=0)
+
+    def test_an_entry_without_account_or_character_is_refused(self):
+        for agents in ([{"character": "Delta"}], [{"account": "", "character": "Delta"}],
+                       [{"account": "AGENT04"}], ["Delta"]):
+            with self.subTest(agents=agents):
+                self.write_state({"schema": 1, "agents": agents})
+                self.assert_refused(status="UNREADABLE", version=1)
+
+    def test_agents_that_is_not_a_list_is_refused(self):
+        self.write_state({"agents": {"account": "AGENT04", "character": "Delta"}})
+        self.assert_refused(status="UNREADABLE", version=1)
+
+    def test_a_save_writes_schema_1_and_keeps_unknown_keys(self):
+        self.write_state({"note": "kept", "agents": [{"account": "AGENT04", "character": "Delta"}]})
+        self.fleet.save_agent({"account": "AGENT05", "character": "Echo"})
+        doc = json.loads(self.state.read_text())
+        self.assertEqual(doc["schema"], 1)
+        self.assertEqual(doc["note"], "kept")
+        self.assertEqual([a["character"] for a in doc["agents"]], ["Delta", "Echo"])
+
+    def test_a_refused_post_writes_an_error_line_to_the_action_log(self):
+        self.write_state({"schema": 2, "agents": []})
+        self.assertEqual(self.post("/agents/Bravo/start")[0], 503)
+        lines = [json.loads(x) for x in self.log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual({k: lines[0][k] for k in ("action", "target", "result", "status")},
+                         {"action": "start", "target": "Bravo", "result": "error", "status": 503})
 
 
 if __name__ == "__main__":

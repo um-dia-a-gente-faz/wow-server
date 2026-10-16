@@ -26,7 +26,9 @@ if _CHECKOUT not in sys.path:
     sys.path.append(_CHECKOUT)
 from agents import compose  # noqa: E402
 from agents import roster as roster_lib  # noqa: E402
+from agent import persist  # noqa: E402
 
+STATE_SCHEMA = 1   # ADR 0018: the version of state.json this runner reads and writes
 PROBE_TIMEOUT_S = 2.0
 # #264: agent API versions this runner understands (agent/api_schema.json; a test pins it).
 SUPPORTED_API_VERSIONS = (1,)
@@ -85,6 +87,22 @@ def parse_docker_time(value):
     return value[:19] + "Z"
 
 
+class StateFileError(RunnerError):
+    """state.json is newer than this runner, unreadable or malformed (ADR 0018): every route that needs
+    the roster answers 503 with the path and the version, and the file is never read past, moved or written."""
+
+    def __init__(self, path, status, version):
+        super().__init__("state file refused", status=503,
+                         extra={"path": str(path), "status": status, "version": version})
+
+    def body(self):
+        return {"error": str(self), **self.extra}
+
+
+def _is_agent_entry(entry):
+    return isinstance(entry, dict) and all(isinstance(entry.get(k), str) and entry[k] for k in ("account", "character"))
+
+
 class Fleet:
     """The configured agents and the signals about each one."""
 
@@ -107,19 +125,31 @@ class Fleet:
         return self._character_service
 
     # ── configuration ────────────────────────────────────────────────
+    def _read_state(self):
+        """The runtime `state.json` (D5, ADR 0018), or {} when absent. A file that is newer, unreadable
+        or has an entry that is not an agent is a StateFileError; it is never moved or overwritten."""
+        path = self.cfg.runtime_dir / "state.json"
+        loaded = persist.read_versioned(path, STATE_SCHEMA)
+        if loaded.status == persist.MISSING:
+            return {}
+        if loaded.status not in (persist.OK, persist.OLDER):
+            raise StateFileError(path, loaded.status, loaded.version)
+        agents = loaded.data.get("agents", [])
+        if not isinstance(agents, list) or not all(_is_agent_entry(a) for a in agents):
+            raise StateFileError(path, persist.UNREADABLE, loaded.version)
+        return loaded.data
+
     def roster(self):
         """Committed roster plus the runtime `state.json` (D5): its `agents`
         entries replace a roster entry with the same account or are appended."""
         agents = [a.to_json() for a in roster_lib.load_roster(self.cfg.repo / "agents" / "roster.json")]
-        state_path = self.cfg.runtime_dir / "state.json"
-        if state_path.exists():
-            extra = json.loads(state_path.read_text()).get("agents", [])
-            by_account = {a["account"]: i for i, a in enumerate(agents)}
-            for entry in extra:
-                if entry["account"] in by_account:
-                    agents[by_account[entry["account"]]] = entry
-                else:
-                    agents.append(entry)
+        extra = self._read_state().get("agents", [])
+        by_account = {a["account"]: i for i, a in enumerate(agents)}
+        for entry in extra:
+            if entry["account"] in by_account:
+                agents[by_account[entry["account"]]] = entry
+            else:
+                agents.append(entry)
         entries = []
         for i, a in enumerate(agents):
             agent = compose.derive(i, a)
@@ -300,13 +330,13 @@ class Fleet:
         """Record an agent entry in the runtime state (D5): replaces the entry
         with the same account, or appends. Atomic; never touches the checkout."""
         with self._write_lock:
-            state_path = self.cfg.runtime_dir / "state.json"
-            state = json.loads(state_path.read_text()) if state_path.exists() else {}
+            state = self._read_state()
             agents = [a for a in state.get("agents", []) if a["account"] != planned["account"]]
             agents.append(planned)
             state["agents"] = agents
             self.cfg.runtime_dir.mkdir(parents=True, exist_ok=True)
-            _write_atomic(state_path, json.dumps(state, indent=2) + "\n")
+            _write_atomic(self.cfg.runtime_dir / "state.json",
+                          json.dumps({"schema": STATE_SCHEMA, **state}, indent=2) + "\n")
 
     def start(self, name, build=False):
         e = self.find(name)

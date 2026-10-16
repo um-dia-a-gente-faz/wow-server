@@ -181,7 +181,7 @@ INVENTORY: list[Row] = [
     ("scripts/mypy_legacy_baseline.py", "main", "mypy-legacy-baseline.json", "exempt",
      "generated, checked by --check"),
     ("scripts/mypy_legacy_baseline.py", "run_mypy", "temporary mypy config", "exempt", "temporary directory"),
-    ("tools/agent-runner/fleet.py", "Fleet.save_agent", "state.json", "document", "none"),
+    ("tools/agent-runner/fleet.py", "Fleet.save_agent", "state.json", "document", "STATE_SCHEMA"),
     ("tools/agent-runner/fleet.py", "Fleet.write_compose", "generated compose file", "exempt",
      "rewritten whole on every run"),
     ("tools/agent_dev/ab.py", "run", "ab --record fixtures and --output artifact", "exempt",

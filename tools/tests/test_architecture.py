@@ -61,7 +61,7 @@ PACKAGE_EDGES = {
 # Rule 2, into agent/: tool -> the agent modules (agent/<unit>) it may import. Serving tools import
 # none; the dev and test tools are pinned to exactly what they import today.
 AGENT_EDGES = {
-    "agent-runner": set(),
+    "agent-runner": {"persist"},   # fleet.py: read_versioned for state.json (ADR 0018, #396); the checkout's agent/persist.py
     "agent_dev": {"actions", "audit_schema", "candidates", "config", "death", "jev", "known_targets", "lines",
                   "llm", "login", "packets", "reflexes", "rules", "update_fields", "update_object"},
     "chat-feed": set(),
