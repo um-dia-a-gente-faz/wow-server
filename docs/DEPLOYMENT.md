@@ -767,9 +767,42 @@ Restarting it is allowed: no player is on it.
 The realm list advertises `auth.realmlist.port`, not the worldserver's port. That defaults to 8085,
 and the image's bootstrap does not set it. `TC_WORLD__WorldServerPort=8086` in the compose file only
 moves the worldserver's listen port. `scripts/staging.sh up` (and `reset`) therefore runs
-`scripts/staging.sh realmport`, which sets `auth.realmlist.port` to 8086 for realm 1. It is idempotent,
-and it can be run again by hand. Check it after the first `up`:
-`SELECT address, port FROM auth.realmlist` must show 8086.
+`scripts/staging.sh realmport`, which sets `auth.realmlist.port` to 8086 for realm 1 and reads it back.
+The row can be missing for a while after `up` (the image's bootstrap writes it), so `realmport`
+retries up to `STAGING_REALMPORT_TRIES` (default 30) times, 10 s apart (`STAGING_REALMPORT_SLEEP`), and
+exits 3 if it never reads 8086. It is idempotent and can be run again by hand. Check it after the first
+`up`: `SELECT address, port FROM auth.realmlist` must show 8086.
 
-Not yet covered (#400, follow-up): the smoke suite against the realm, an account seeding script,
-the `live-agent-test` variant and the resource measurement.
+### Staging accounts (seed)
+
+No script seeds them: the image's console is interactive (`docker attach`, as for the game stack), and
+the repo cannot verify a non-interactive path for `staging-worldserver`. By hand, with the password from
+`STAGING_ACCOUNT_PASSWORD` in `.env.staging` (typed or pasted, never echoed into a log):
+
+```bash
+docker attach staging-worldserver     # at the TC> prompt; Ctrl-P Ctrl-Q detaches
+account create STAGING01 <password>   # repeat for STAGING02 .. STAGING05
+```
+
+Then check: `docker exec staging-db sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SELECT username FROM auth.account WHERE username LIKE \"STAGING%\""'`.
+Unverified on `wow-agents`: the staging compose sets no `stdin_open`/`tty`, so `docker attach` may show no
+prompt. If it does not, this step is blocked and needs a change to `staging/docker-compose.yml`.
+
+### Smoke (login, enter world, logout, reconnect)
+
+`python3 -m tools.agent_dev.staging_smoke` runs the agent's own login code against the staging auth port (3725) and
+prints PASS or FAIL per step. It refuses the live realm (192.168.1.64:3724) and needs `WOW_HOST` and
+`WOW_AUTH_PORT` set. Run it from a clone on `wow-agents`:
+
+```bash
+set -a; . ./.env.staging; set +a
+WOW_HOST="$STAGING_PUBLIC_IP" WOW_AUTH_PORT=3725 WOW_ACCOUNT=STAGING01 \
+  WOW_PASSWORD="$STAGING_ACCOUNT_PASSWORD" python3 -m tools.agent_dev.staging_smoke
+```
+
+Exit 0 when all six steps pass. Each account needs one character already (the smoke does not create one;
+with none it fails at login). It is a manual check: not in `scripts/check.sh all`, not a CI job. Its
+unit tests (`tools/tests/test_staging_smoke.py`) run against a stub login.
+
+Not yet done (#400, follow-up): the chat-echo step, a scripted seed, and the resource measurement
+(needs a live run on `wow-agents`).
