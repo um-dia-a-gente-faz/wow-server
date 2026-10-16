@@ -1,4 +1,4 @@
-# Local dev stack (#389): world_mock + jev-mock + one agent + chat-feed + wowmap on a
+# Local dev stack (#389): world-mock + jev-mock + one agent + chat-feed + wowmap on a
 # fixture DB. No live server, no credentials: every value below is made up.
 #   dev/dev.sh up | down | logs | smoke        (run from anywhere)
 # Ports published on 127.0.0.1 only: wowmap 9400, chat-feed 9500, agent API 9601.
@@ -13,12 +13,12 @@ x-py: &py
     PYTHONDONTWRITEBYTECODE: "1"
 
 services:
-  world_mock:
+  world-mock:
     <<: *py
     command: python3 -m tools.world_mock.server
     environment:
       <<: *py-env
-      HOST: world_mock          # advertised in the realm list, so it must resolve for the agent
+      HOST: world-mock          # advertised in the realm list, so it must resolve for the agent
       AUTH_PORT: "13724"
       WORLD_PORT: "18085"
 
@@ -34,15 +34,15 @@ services:
   agent:
     <<: *py
     command: python3 -m agent
-    depends_on: [world_mock, jev-mock]
+    depends_on: [world-mock, jev-mock]
     restart: on-failure
     volumes: ["..:/repo:ro", "audit:/data/audit"]
     ports: ["127.0.0.1:9601:9601"]
     environment:
       <<: *py-env
-      WOW_HOST: world_mock
+      WOW_HOST: world-mock
       WOW_AUTH_PORT: "13724"
-      WOW_ACCOUNT: MOCKUSER      # world_mock defaults (tools/world_mock/server.py)
+      WOW_ACCOUNT: MOCKUSER      # world-mock defaults (tools/world_mock/server.py)
       WOW_PASSWORD: mockpass
       WOW_CHARACTER: Luaprata
       AGENT_NAME: Luaprata

@@ -4,12 +4,8 @@ Unlike test_server.py, nothing here is in-process with the mock. Skipped unless
 JEV_MOCK_URL names it, e.g. JEV_MOCK_URL=http://127.0.0.1:8090/api/alpha."""
 
 import os
-import pathlib
-import sys
 import unittest
 
-REPO = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO))
 from agent import jev  # noqa: E402
 
 URL = os.environ.get("JEV_MOCK_URL")

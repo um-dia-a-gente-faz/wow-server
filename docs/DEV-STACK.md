@@ -16,7 +16,7 @@ deploy workflow.
 
 | Service | What | Port (127.0.0.1) |
 |---|---|---|
-| `world_mock` | `tools/world_mock`, fake auth + world server | internal |
+| `world-mock` | `tools/world_mock`, fake auth + world server | internal |
 | `jev-mock` | `tools/jev-mock`, random Decisions API | internal |
 | `agent` | one real agent (Luaprata) on `AGENT_BRAIN=jev` against the two mocks | 9601 |
 | `chat-feed` | `tools/chat-feed` on an empty log | 9500 |
