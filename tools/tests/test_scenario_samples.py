@@ -133,6 +133,12 @@ class MainTest(unittest.TestCase):
         self.assertEqual(len(brain.calls), 5)
         self.assertIn("0.20", out)
 
+    def test_default_threshold_fails_two_violations_in_five(self):
+        brain = StubBrain([("idle", {}), ("idle", {}), ("idle", {}), ("loot", {}), ("loot", {})])   # 2 of 5 = 0.4
+        rc, out, _ = self.run_main([], brain=brain)
+        self.assertEqual(rc, 1)
+        self.assertIn("0.40", out)
+
     def test_exit_2_when_no_brain_is_configured(self):
         rc, out, err = self.run_main([], no_brain=True)
         self.assertEqual(rc, 2)
