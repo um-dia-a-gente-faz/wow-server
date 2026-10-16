@@ -33,6 +33,7 @@ LAYER_DIRS = {
 # agent-runner's fleet.py, and a name no root holds is an unresolved import, not a silent miss.
 ROOTS = {
     "agent-runner": ["tools/agent-runner", "tools", "."],         # characters.py: tools/; "." is the checkout root, for agents/ (#391)
+    "agent_dev": ["tools/agent_dev", "."],                        # staging_characters.py: agents/character_rules, run with -m from the checkout root (#803)
     "chat-feed": ["tools/chat-feed", "tools"],                    # app.py appends tools/
     "common": ["tools/common", "tools"],                          # imported by path from tools/ (wowmap, chat-feed, agent-runner)
     "dbc": ["tools/dbc", "tools"],                                # imported by path from tools/ (wowmap)
