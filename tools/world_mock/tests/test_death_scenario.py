@@ -1,19 +1,15 @@
-"""#321: the real agent against the death-with-corpse scenario (tools/world-mock/death_scenario.py).
+"""#321: the real agent against the death-with-corpse scenario (tools/world_mock/death_scenario.py).
 
 Dead on login -> release_spirit -> reclaim_corpse (corpse perceived) or spirit-healer fallback
 (corpse not perceived) -> alive again, confirmed by the server's VALUES update."""
 
 import logging
-import pathlib
 import struct
-import sys
 import unittest
 from types import SimpleNamespace
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import death_scenario as ds  # noqa: E402
-import server  # noqa: E402
+from tools.world_mock import death_scenario as ds  # noqa: E402
+from tools.world_mock import server  # noqa: E402
 
 from agent import actions as ac  # noqa: E402
 from agent import candidates  # noqa: E402

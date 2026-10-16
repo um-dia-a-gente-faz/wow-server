@@ -1,4 +1,4 @@
-"""Shared packet builders and fakes for the agent tests and tools/world-mock.
+"""Shared packet builders and fakes for the agent tests and tools/world_mock.
 
 Byte layouts here are the ones the agent's parsers already consume; where a
 layout is not self-evident the docstring cites the TrinityCore 3.3.5 writer.

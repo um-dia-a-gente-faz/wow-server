@@ -37,7 +37,7 @@ ROOTS = {
     "chat-feed": ["tools/chat-feed", "tools"],                    # app.py appends tools/
     "common": ["tools/common", "tools"],                          # imported by path from tools/ (wowmap, chat-feed, agent-runner)
     "dbc": ["tools/dbc", "tools"],                                # imported by path from tools/ (wowmap)
-    "loadtest": ["tools/loadtest", "tools/world-mock"],           # soak.py inserts the repo root and world-mock/
+    "loadtest": ["tools/loadtest", "."],                          # soak.py inserts the checkout root and imports tools.world_mock.server
     "wowmap": ["tools/wowmap/wowmap", "tools"],                   # state.py appends tools/
     "worldknowledge": ["tools/worldknowledge", "tools"],          # build.py inserts tools/ and the checkout root
     "wowmap/pipeline": ["tools/wowmap/pipeline", "tools/wowmap/wowmap"],   # extract_*.py insert ../wowmap
@@ -53,10 +53,10 @@ PACKAGE_EDGES = {
     "fleet-limits": set(),
     "jev-mock": set(),
     "pathfinder": set(),
-    "loadtest": {"world-mock"},          # soak.py: `import server` from tools/world-mock (not in the #387 list; pinned, see PR)
+    "loadtest": {"world_mock"},          # soak.py: `from tools.world_mock import server` (not in the #387 list; pinned, see PR)
     "wowmap": {"common", "dbc"},         # state.py, app.py, character.py
     "worldknowledge": {"dbc"},           # build.py: dbc.wdbc
-    "world-mock": set(),
+    "world_mock": set(),
 }
 
 # Rule 2, into agent/: tool -> the agent modules (agent/<unit>) it may import. Serving tools import
@@ -75,14 +75,14 @@ AGENT_EDGES = {
     "loadtest": {"handles", "items", "login", "names", "npc", "quests", "runloop", "supervisor"},
     "wowmap": set(),
     "worldknowledge": {"worldknowledge"},   # build.py: SCHEMA_VERSION and SCHEMA, one definition
-    "world-mock": {"auth", "crypt", "opcodes", "packets", "quests", "update_fields", "update_object"},
+    "world_mock": {"auth", "crypt", "opcodes", "packets", "quests", "update_fields", "update_object"},
 }
 
 # Rule 2: files that import agent.tests from outside a tests/ directory. #349 removes this.
 AGENT_TESTS_IMPORTERS = {
     "tools/agent_dev/scenario_samples.py",   # #541: SCENARIOS and _Handles, the table the N-sample run reads
-    "tools/world-mock/death_scenario.py",
-    "tools/world-mock/server.py",
+    "tools/world_mock/death_scenario.py",
+    "tools/world_mock/server.py",
 }
 
 # Rule 3, inside wowmap: each module of wowmap/wowmap/ (repo/ is one unit) -> the units it may import.

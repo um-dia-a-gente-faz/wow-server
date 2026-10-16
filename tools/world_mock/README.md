@@ -1,4 +1,4 @@
-# world-mock
+# world_mock
 
 Scripted, stdlib-only fake WoW 3.3.5a auth + world server (#253). It lets CI run
 the agent's **real** client code over localhost sockets: SRP6 login, realm list,
@@ -7,8 +7,8 @@ objects, a quest turn-in action and the server's confirmation. No LAN, no
 TrinityCore. Sibling of `tools/jev-mock`.
 
 ```bash
-python3 tools/world-mock/server.py        # auth :13724, world :18085
-python3 -m unittest discover -s tools/world-mock/tests -v   # what CI runs
+python3 -m tools.world_mock.server        # auth :13724, world :18085
+python3 -m unittest discover -s tools/world_mock/tests -v   # what CI runs
 ```
 
 Env: `HOST`, `AUTH_PORT`, `WORLD_PORT`, `MOCK_ACCOUNT`, `MOCK_PASSWORD` (defaults
@@ -45,7 +45,7 @@ mock.auth_connections, mock.world_connections      # reconnect count
 
 ```bash
 # same thing from the environment: ';' between attempts, ',' between fields, bare flag = 1
-MOCK_FAULTS='drop_after=8,reset;split_write=3' python3 tools/world-mock/server.py
+MOCK_FAULTS='drop_after=8,reset;split_write=3' python3 -m tools.world_mock.server
 ```
 
 World packets are numbered from 1 after the unencrypted `SMSG_AUTH_CHALLENGE`:
@@ -84,7 +84,7 @@ Run the mock as a process and let the fault list repeat for as long as the soak 
 
 ```bash
 MOCK_FAULTS=';;;drop_after=8,reset;;stall=20,stall_at=6;bad_crypt_from=6' \
-MOCK_FAULTS_LOOP=1 python3 tools/world-mock/server.py
+MOCK_FAULTS_LOOP=1 python3 -m tools.world_mock.server
 ```
 
 `MOCK_FAULTS_LOOP=1` cycles the list (in code: `faults=itertools.cycle(plans)`), so the
@@ -97,7 +97,7 @@ back to "online", thread count, `dropped_packets`).
 ## Lifecycle scenarios (#292)
 
 `tests/test_lifecycle_scenarios.py` builds a whole agent with `agent.root.build_agent()` from a
-real `Config` and runs `Agent.run()` over localhost sockets against a world-mock with a
+real `Config` and runs `Agent.run()` over localhost sockets against a world_mock with a
 `FaultPlan` (or `DeathMock`). Each scenario checks the lifecycle lines in the audit directory
 (ADR 0015), the backoffs the supervisor asked for (the sleep is injected, never slept) and the
 connections the mock saw.

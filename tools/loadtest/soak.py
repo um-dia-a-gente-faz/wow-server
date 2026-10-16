@@ -1,5 +1,5 @@
 """Soak harness (#299): N real agent sessions (auth, WoWSession, recv thread, think loop,
-reconnect supervisor) against an in-process tools/world-mock, with CPU, RSS, thread,
+reconnect supervisor) against an in-process tools/world_mock, with CPU, RSS, thread,
 tick-period and reconnect numbers recorded into one JSON report.
 
 Everything runs in this one process, so RSS/CPU/threads include the mock and the
@@ -18,9 +18,8 @@ import time
 from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-for p in (ROOT, ROOT / "tools" / "world-mock"):
-    sys.path.insert(0, str(p))
-import server  # noqa: E402  (tools/world-mock)
+sys.path.insert(0, str(ROOT))   # run by path; `python3 -m tools.loadtest` needs no edit
+from tools.world_mock import server  # noqa: E402
 
 from agent.handles import HandleMap  # noqa: E402
 from agent.items import ItemCache  # noqa: E402
@@ -42,7 +41,7 @@ def check_host(host: str, allow_non_loopback: bool = False) -> None:
     except ValueError:
         loopback = False
     if not loopback and not allow_non_loopback:
-        raise SystemExit(f"refusing non-loopback host {host!r}: the soak only targets its own world-mock")
+        raise SystemExit(f"refusing non-loopback host {host!r}: the soak only targets its own world_mock")
 
 
 def read_rss_kb() -> int:

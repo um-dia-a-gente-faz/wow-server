@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""world-mock: a scripted, stdlib-only fake WoW 3.3.5a auth + world server (#253).
+"""world_mock: a scripted, stdlib-only fake WoW 3.3.5a auth + world server (#253).
 
 It lets CI drive the agent's real client code (agent.auth.auth_logon,
 WoWSession.connect/enum_characters/login_character, the recv thread, the
@@ -37,7 +37,7 @@ Fault injection (#339): WorldMock(faults=[FaultPlan(...), ...]) or MOCK_FAULTS m
 a login attempt misbehave (drop, reset, truncate, stall, split writes, corrupt
 payload, bad header crypt, slow or rejected auth). See FaultPlan and the README.
 
-    python3 tools/world-mock/server.py     # auth :13724, world :18085
+    python3 -m tools.world_mock.server     # auth :13724, world :18085
 Environment: HOST, AUTH_PORT, WORLD_PORT, MOCK_ACCOUNT, MOCK_PASSWORD, MOCK_FAULTS,
 MOCK_FAULTS_LOOP.
 """
@@ -50,13 +50,10 @@ import pathlib
 import select
 import socket
 import struct
-import sys
 import threading
 import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-if str(REPO) not in sys.path:
-    sys.path.insert(0, str(REPO))
 
 from agent import auth as au  # noqa: E402
 from agent import crypt as cr  # noqa: E402
@@ -67,7 +64,7 @@ from agent import update_fields as uf  # noqa: E402
 from agent import update_object as uo  # noqa: E402
 from agent.tests import builders as bd  # noqa: E402
 
-log = logging.getLogger("world-mock")
+log = logging.getLogger("world_mock")
 
 FIXTURES = REPO / "agent" / "tests" / "fixtures"
 
@@ -281,7 +278,7 @@ class WorldMock:
             except OSError:
                 return
             t = threading.Thread(target=self._guarded, args=(handler, conn), daemon=True,
-                                 name="world-mock-handler")
+                                 name="world_mock-handler")
             with self._lock:
                 self._handlers.append((t, conn))
             t.start()
@@ -294,7 +291,7 @@ class WorldMock:
         except (TimeoutError, ConnectionError):
             pass
         except Exception:
-            log.exception("world-mock handler crashed")
+            log.exception("world_mock handler crashed")
         finally:
             conn.close()
 
@@ -511,7 +508,7 @@ def main():
                      os.environ.get("MOCK_PASSWORD", DEFAULT_PASSWORD), faults=faults,
                      stream_hz=float(os.environ.get("MOCK_STREAM_HZ", "0")),
                      stream_pool=int(os.environ.get("MOCK_STREAM_POOL", str(STREAM_POOL))))
-    log.info("world-mock: auth %s:%d, world %s:%d", mock.host, mock.auth_port, mock.host, mock.world_port)
+    log.info("world_mock: auth %s:%d, world %s:%d", mock.host, mock.auth_port, mock.host, mock.world_port)
     threading.Event().wait()
 
 

@@ -1,7 +1,7 @@
-"""#292: reconnect and death scenarios through the composition root, against the world-mock.
+"""#292: reconnect and death scenarios through the composition root, against the world_mock.
 
 Each row builds a whole agent with agent.root.build_agent() from a real Config, runs
-Agent.run() over real localhost sockets against a world-mock with a FaultPlan, and checks
+Agent.run() over real localhost sockets against a world_mock with a FaultPlan, and checks
 three things: the lifecycle lines left in the audit directory (ADR 0015), what the mock saw
 on the wire, and the backoffs the supervisor asked for (the sleep is injected, never slept)."""
 
@@ -10,20 +10,16 @@ import glob
 import json
 import logging
 import os
-import pathlib
 import struct
-import sys
 import tempfile
 import threading
 import time
 import unittest
 from unittest import mock
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import death_scenario as ds  # noqa: E402
-import server  # noqa: E402
-from server import FaultPlan  # noqa: E402
+from tools.world_mock import death_scenario as ds  # noqa: E402
+from tools.world_mock import server  # noqa: E402
+from tools.world_mock.server import FaultPlan  # noqa: E402
 
 from agent import opcodes as op  # noqa: E402
 from agent import root  # noqa: E402

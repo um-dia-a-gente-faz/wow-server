@@ -15,7 +15,7 @@ x-py: &py
 services:
   world-mock:
     <<: *py
-    command: python3 tools/world-mock/server.py
+    command: python3 -m tools.world_mock.server
     environment:
       <<: *py-env
       HOST: world-mock          # advertised in the realm list, so it must resolve for the agent
@@ -42,7 +42,7 @@ services:
       <<: *py-env
       WOW_HOST: world-mock
       WOW_AUTH_PORT: "13724"
-      WOW_ACCOUNT: MOCKUSER      # world-mock defaults (tools/world-mock/server.py)
+      WOW_ACCOUNT: MOCKUSER      # world-mock defaults (tools/world_mock/server.py)
       WOW_PASSWORD: mockpass
       WOW_CHARACTER: Luaprata
       AGENT_NAME: Luaprata

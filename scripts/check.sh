@@ -13,7 +13,7 @@ SUITES=(
   "common|python3 scripts/early_failures.py discover -s tools/common/tests"
   "tools-arch|python3 scripts/early_failures.py discover -s tools/tests"
   "dbc|python3 scripts/early_failures.py discover -s tools/dbc/tests"
-  "world-mock|python3 scripts/early_failures.py discover -s tools/world-mock/tests"
+  "world_mock|python3 scripts/early_failures.py discover -s tools/world_mock/tests"
   "loadtest|python3 scripts/early_failures.py discover -s tools/loadtest/tests"
   "jev-mock|python3 scripts/early_failures.py discover -s tools/jev-mock/tests"
   "agent-runner|python3 scripts/early_failures.py discover -s tools/agent-runner/tests"

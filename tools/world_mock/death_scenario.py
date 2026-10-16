@@ -1,4 +1,4 @@
-"""world-mock scenario "death with a corpse" (#321, parent #309).
+"""world_mock scenario "death with a corpse" (#321, parent #309).
 
 DeathMock is a WorldMock whose character is dead on arrival: after the login burst the own
 player gets a VALUES block with health 0. Then, like TrinityCore:
@@ -20,15 +20,11 @@ and opcode numbers repeated as literals so a mistake in agent/update_fields.py o
 make this mock agree with it. The CREATE/VALUES block framing reuses agent/tests/builders.py.
 """
 
-import pathlib
 import struct
-import sys
 import threading
 import time
 
-HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-import server  # noqa: E402
+from tools.world_mock import server  # noqa: E402
 
 from agent import update_object as uo  # noqa: E402
 from agent.tests import builders as bd  # noqa: E402
