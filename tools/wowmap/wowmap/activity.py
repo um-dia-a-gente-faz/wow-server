@@ -77,7 +77,7 @@ class ActivityStore:
             touched = set()
             for e in events:
                 key = fact_key(e)
-                if key is not None and e["source"] == "db" and agent_fact_stored(self._conn, key):
+                if key is not None and e["source"] == "db" and agent_fact_stored(self._conn, key, e["t"]):
                     continue
                 cur = self._conn.execute(
                     "INSERT OR IGNORE INTO events (uid, character, t, kind, text, detail_json,"
@@ -89,7 +89,7 @@ class ActivityStore:
                     added += 1
                     touched.add(e["character"])
                 if key is not None and e["source"] == "agent":
-                    drop_db_fact(self._conn, key)
+                    drop_db_fact(self._conn, key, e["t"])
             for character in touched:
                 self._conn.execute(
                     "DELETE FROM events WHERE character = ? AND id NOT IN ("

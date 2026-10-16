@@ -182,6 +182,19 @@ class StoreRulesTests(unittest.TestCase):
                          [("agent", "quest"), ("db", "item"), ("db", "quest")])
         self.assertEqual([(r["source"], r["kind"]) for r in self.rows("Thrall")], [("db", "quest")])
 
+    def test_a_db_quest_a_week_before_the_agent_turn_in_survives(self):
+        # The same quest id turned in again a week later: a different fact, so the db row stays.
+        self.store.add([_db_quest("Jev1", 10.5, 8325)])
+        self.assertEqual(self.store.add(self.agent_quest(8325, t=10.5 + 7 * 86400)), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "quest"), ("db", "quest")])
+
+    def test_a_db_quest_a_week_after_the_agent_turn_in_is_stored(self):
+        self.store.add(self.agent_quest(8325, t=10.5))
+        self.assertEqual(self.store.add([_db_quest("Jev1", 10.5 + 7 * 86400, 8325)]), 1)
+        self.assertEqual(sorted((r["source"], r["kind"]) for r in self.rows()),
+                         [("agent", "quest"), ("db", "quest")])
+
     def test_a_db_level_for_another_name_case_is_the_same_character(self):
         self.store.add(self.agent_level(11))
         self.assertEqual(self.store.add([_db_level("jev1", 10.5, 11)]), 0)
@@ -245,6 +258,41 @@ class TailerTests(unittest.TestCase):
         # A rebuilt tailer reads the idle quest line again and adds nothing.
         activity.AuditTailer(self.store, self.base).scan_once()
         self.assertEqual(self.store.count("Jev1"), 3)
+
+    def test_activity_names_a_turn_in_from_the_db_before_the_poll_saw_it(self):
+        # Through Activity, as the app wires it: the fake DB answers the quest-name query only.
+        class Cursor:
+            def execute(self, sql):
+                self.rows = [(8325, "Defias Pillager")] if "quest_template" in sql else []
+
+            def fetchall(self):
+                return self.rows
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class Conn:
+            def cursor(self):
+                return Cursor()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        with open(V3_QUEST, encoding="utf-8") as f:
+            line = f.readline()
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write(line)
+        act = activity.Activity(self.store, connect=Conn, audit_dir=self.base)
+        act.audit.scan_once()
+        quests = [r for r in self.store.recent("Jev1", 50) if r["kind"] == "quest"]
+        self.assertEqual([(r["source"], r["text"]) for r in quests],
+                         [("agent", "Turned in quest: Defias Pillager")])
 
     def test_a_malformed_events_field_is_counted_and_the_decision_still_stored(self):
         with open(self.path, "a", encoding="utf-8") as f:

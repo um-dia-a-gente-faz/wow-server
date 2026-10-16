@@ -228,7 +228,9 @@ character, and an agent's event replaces the DB event for the same fact.**
    - both under the lock `ActivityStore.add` already holds, so the two orders give one row.
 
    The key of `level` is `(character, "level", detail.to)`. A character reaches a level once, so no
-   time window is needed. A DB event can arrive first by arithmetic alone: the poller runs every
+   time window is needed. A quest can be turned in again, so `quest` (slice 2) matches only within
+   `FACT_WINDOW_S` (300 s) of the incoming event's `t`, for every kind: a repeat days later is a
+   second fact and keeps its own row. A DB event can arrive first by arithmetic alone: the poller runs every
    5 s, the agent's line waits for the end of a think cycle and for the 30 s pull. Matching is on
    the existing columns (`character`, `kind`, `source`, `detail_json`, compared in Python over at
    most 500 rows), so the first slice needs no schema change. A kind without a natural key (a

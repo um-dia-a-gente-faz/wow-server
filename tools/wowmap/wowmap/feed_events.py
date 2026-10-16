@@ -142,19 +142,27 @@ def fact_key(e):
 
 # The store's two rules (ADR 0020), on its connection. Every statement names the kind: a row of
 # another kind with the same number is another fact, and is never matched or deleted.
-def agent_fact_stored(conn, key):
-    """True when an agent row already holds the fact `key`: a db event of it is then not stored."""
+# ponytail: a fixed window, not a per-kind one; the same value for every kind (ADR 0020 rule 7).
+# DB lag is about 10 s (PlayerSaveInterval 5 s plus the 5 s poll) and clock skew is seconds. A fact
+# repeated outside the window (a quest turned in again days later) is a second fact, not a duplicate.
+FACT_WINDOW_S = 300
+
+
+def agent_fact_stored(conn, key, t):
+    """True when an agent row already holds the fact `key` within FACT_WINDOW_S of `t`: a db event of
+    it at `t` is then not stored."""
     character, kind, value = key
     return conn.execute(
         "SELECT 1 FROM events WHERE source = 'agent' AND kind = ? AND character = ?"
-        " AND json_extract(detail_json, ?) = ? LIMIT 1",
-        (kind, character, f"$.{FACT_KEYS[kind]['agent']}", value)).fetchone() is not None
+        " AND json_extract(detail_json, ?) = ? AND ABS(t - ?) <= ? LIMIT 1",
+        (kind, character, f"$.{FACT_KEYS[kind]['agent']}", value, t, FACT_WINDOW_S)).fetchone() is not None
 
 
-def drop_db_fact(conn, key):
-    """Delete the db rows of the fact `key`: an agent row for it has just been stored."""
+def drop_db_fact(conn, key, t):
+    """Delete the db rows of the fact `key` within FACT_WINDOW_S of `t`: an agent row for it at `t`
+    has just been stored."""
     character, kind, value = key
     conn.execute(
         "DELETE FROM events WHERE source = 'db' AND kind = ? AND character = ?"
-        " AND json_extract(detail_json, ?) = ?",
-        (kind, character, f"$.{FACT_KEYS[kind]['db']}", value))
+        " AND json_extract(detail_json, ?) = ? AND ABS(t - ?) <= ?",
+        (kind, character, f"$.{FACT_KEYS[kind]['db']}", value, t, FACT_WINDOW_S))
