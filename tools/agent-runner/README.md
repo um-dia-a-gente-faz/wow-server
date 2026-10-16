@@ -212,8 +212,9 @@ of where it last told the server it was, not a database read. Every call is logg
   result`. Refused writes are logged too.
 - The action log (#458, `AGENT_RUNNER_ACTION_LOG`) appends one line per mutating request
   (start, stop, create, retire, walk; a dry-run walk moves nothing, so it is not logged):
-  `{"ts", "who", "action", "target", "result": "ok"|"error", "status"}`. `who` is the
-  token label, or `unauthenticated` for a rejected token. GETs are never logged, and the
+  `{"schema": 1, "ts", "who", "action", "target", "result": "ok"|"error", "status"}` (`schema` is
+  `ACTION_LOG_SCHEMA`, ADR 0018). `who` is the token label, or `unauthenticated` for a rejected token.
+  A request that fails with an error other than a refusal is logged as status 500, then fails as before. GETs are never logged, and the
   token, headers and body never are. An unwritable file is warned about once and never fails
   the request. No read endpoint yet.
 - Docker output is scrubbed of the token and of every `*PASSWORD`, `*KEY`,

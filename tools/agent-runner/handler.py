@@ -130,6 +130,10 @@ class Handler(BaseHTTPRequestHandler):
             if not dry:
                 self._action_log("walk", name, self.config.token_label, "error", e.status)
             return self._send(e.status, result)
+        except Exception:  # not a refusal: record it as a 500, then fail as before (#458 review)
+            if not dry:
+                self._action_log("walk", name, self.config.token_label, "error", 500)
+            raise
         ok = result.get("outcome") in ("arrived", "dry_run")
         self._audit_write(action, name, "ok" if ok else f"error: {result.get('outcome')}: {result.get('error')}",
                           operator=self._operator(), **self._walk_audit(body, status, result))
@@ -170,6 +174,9 @@ class Handler(BaseHTTPRequestHandler):
             self._audit_write(action, name, f"error: {e}")
             self._action_log(action, target, self.config.token_label, "error", e.status)
             return self._send(e.status, e.body())
+        except Exception:  # not a refusal: record it as a 500, then fail as before (#458 review)
+            self._action_log(action, target, self.config.token_label, "error", 500)
+            raise
         self._audit_write(action, name, "ok")
         status = 201 if create else 200
         self._action_log(action, target, self.config.token_label, "ok", status)

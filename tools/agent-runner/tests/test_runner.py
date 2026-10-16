@@ -1127,6 +1127,34 @@ class ActionLogTest(RunnerCase):
             self.assertEqual(self.post_json("/agents/Alpha/walk", {"x": 1.0, "y": 2.0}), 422)
         self.assert_line(self.lines()[-1], action="walk", target="Alpha", result="error", status=422)
 
+    def test_an_unexpected_error_in_a_retire_leaves_one_error_line_and_still_fails(self):
+        # review round 1: a non-RunnerError after the container was stopped is recorded as a 500, then re-raised
+        with mock.patch.object(self.fleet, "save_agent", side_effect=OSError("disk full")), \
+                self.assertRaises(OSError):  # the server drops the connection, as it always did
+            self.req("/agents/Bravo/retire", "POST")
+        self.assertEqual(len(self.lines()), 1)
+        self.assert_line(self.lines()[-1], who="shared", action="retire", target="Bravo", result="error", status=500)
+
+    def test_an_unexpected_error_in_a_walk_leaves_one_error_line_and_still_fails(self):
+        with mock.patch.object(self.fleet, "walk", side_effect=OSError("boom")), self.assertRaises(OSError):
+            self.post_json("/agents/Alpha/walk", {"x": 1.0, "y": 2.0})
+        self.assertEqual(len(self.lines()), 1)
+        self.assert_line(self.lines()[-1], action="walk", target="Alpha", result="error", status=500)
+
+    def test_a_dry_run_walk_writes_nothing(self):
+        with mock.patch.object(self.fleet, "walk", return_value=(200, {"ok": True, "outcome": "dry_run"})):
+            self.assertEqual(self.post_json("/agents/Alpha/walk?dry_run=1", {"x": 1.0, "y": 2.0}), 200)
+        self.assertFalse(self.log.exists())
+
+    def test_a_walk_refused_with_a_runner_error_writes_one_error_line_with_its_status(self):
+        for status in (409, 502):
+            with self.subTest(status=status), \
+                    mock.patch.object(self.fleet, "walk", side_effect=runner.RunnerError("refused", status=status)):
+                before = len(self.lines())
+                self.assertEqual(self.post_json("/agents/Alpha/walk", {"x": 1.0, "y": 2.0}), status)
+                self.assertEqual(len(self.lines()), before + 1)
+                self.assert_line(self.lines()[-1], action="walk", target="Alpha", result="error", status=status)
+
     def test_a_get_writes_nothing(self):
         self.assertEqual(self.req("/agents")[0], 200)
         self.assertEqual(self.req("/agents/Alpha")[0], 200)
@@ -1151,6 +1179,16 @@ class ActionLogTest(RunnerCase):
         self.assertNotIn("wrong", text)
         self.assertNotIn("Bearer", text)
         self.assertNotIn("BODY-MARKER-458", text)
+
+    def test_a_secret_in_the_path_is_scrubbed_from_the_line(self):
+        # review round 1: a target taken from the URL is scrubbed by scrub(), so a token or a *_KEY value never lands
+        with mock.patch.dict(os.environ, {"LLM_API_KEY": "key-value-458"}):
+            self.assertEqual(self.req("/agents/key-value-458/stop", "POST")[0], 404)
+            self.assertEqual(self.req(f"/agents/{TOKEN}/stop", "POST", token="wrong")[0], 401)
+        text = self.log.read_text(encoding="utf-8")
+        self.assertNotIn("key-value-458", text)
+        self.assertNotIn(TOKEN, text)
+        self.assertEqual(len(self.lines()), 2)
 
     def test_an_unwritable_path_still_answers_and_warns_once(self):
         blocker = Path(self.tmp.name) / "a-file"
