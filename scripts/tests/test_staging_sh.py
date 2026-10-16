@@ -11,8 +11,14 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 STAGING_SH = ROOT / "scripts" / "staging.sh"
+# `docker ps` lists FAKE_CONTAINERS only with -a, so a stopped container is seen only by -a.
+# Every other call is logged twice: as a line (FAKE_LOG) and as its argv, tab-separated (FAKE_ARGV).
 STUB_DOCKER = """#!/bin/sh
-if [ "$1" = ps ]; then printf '%s\\n' "$FAKE_CONTAINERS"; exit 0; fi
+if [ "$1" = ps ]; then
+  if [ "$2" = -a ]; then printf '%s\\n' "$FAKE_CONTAINERS"; fi
+  exit 0
+fi
+printf '%s\\t' "$@" >> "$FAKE_ARGV"; echo >> "$FAKE_ARGV"
 echo "docker $*" >> "$FAKE_LOG"
 exit 0
 """
@@ -33,8 +39,10 @@ class StagingShTest(unittest.TestCase):
         docker.write_text(STUB_DOCKER)
         docker.chmod(0o755)
         self.log = tmp / "docker.log"
+        self.argv = tmp / "docker.argv"
         self.env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-                    "FAKE_LOG": str(self.log), "FAKE_CONTAINERS": "other-container"}
+                    "FAKE_LOG": str(self.log), "FAKE_ARGV": str(self.argv),
+                    "FAKE_CONTAINERS": "other-container"}
 
     def run_staging(self, *args, containers="other-container"):
         self.env["FAKE_CONTAINERS"] = containers
@@ -43,6 +51,11 @@ class StagingShTest(unittest.TestCase):
 
     def calls(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def argv_calls(self):
+        if not self.argv.exists():
+            return []
+        return [line.rstrip("\t").split("\t") for line in self.argv.read_text().splitlines()]
 
     def test_refuses_on_the_game_vm(self):
         self.env_file.write_text("STAGING_PUBLIC_IP=192.0.2.10\n")
@@ -82,6 +95,44 @@ class StagingShTest(unittest.TestCase):
         down = next(i for i, c in enumerate(calls) if " down -v" in c)
         up = next(i for i, c in enumerate(calls) if c.endswith(" up -d"))
         self.assertLess(down, up, calls)
+
+    def test_realmport_sets_the_advertised_port_inside_the_db_container(self):
+        self.env_file.write_text("STAGING_PUBLIC_IP=192.0.2.10\nSTAGING_MYSQL_ROOT_PASSWORD=pw-400\n")
+        r = self.run_staging("realmport")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(["exec", "staging-db", "sh", "-c",
+                       'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e '
+                       '"UPDATE auth.realmlist SET port=8086 WHERE id=1"'],
+                      self.argv_calls())
+
+    def test_up_sets_the_realm_port_after_compose_up(self):
+        self.env_file.write_text("STAGING_PUBLIC_IP=192.0.2.10\nSTAGING_MYSQL_ROOT_PASSWORD=pw-400\n")
+        r = self.run_staging("up")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        argv = self.argv_calls()
+        up = next(i for i, a in enumerate(argv) if a[-2:] == ["up", "-d"])
+        port = next(i for i, a in enumerate(argv) if a[:2] == ["exec", "staging-db"])
+        self.assertLess(up, port, argv)
+
+    def test_reset_sets_the_realm_port_after_its_up(self):
+        self.env_file.write_text("STAGING_PUBLIC_IP=192.0.2.10\nSTAGING_MYSQL_ROOT_PASSWORD=pw-400\n")
+        r = self.run_staging("reset")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        argv = self.argv_calls()
+        up = next(i for i, a in enumerate(argv) if a[-2:] == ["up", "-d"])
+        port = next(i for i, a in enumerate(argv) if a[:2] == ["exec", "staging-db"])
+        self.assertLess(up, port, argv)
+
+    def test_the_root_password_never_reaches_stdout_or_stderr(self):
+        password = "pw-400-sentinel"
+        self.env_file.write_text(f"STAGING_PUBLIC_IP=192.0.2.10\nSTAGING_MYSQL_ROOT_PASSWORD={password}\n")
+        for cmd in ("realmport", "up"):
+            with self.subTest(cmd=cmd):
+                r = self.run_staging(cmd)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn(password, r.stdout)
+                self.assertNotIn(password, r.stderr)
+                self.assertNotIn(password, self.argv.read_text())
 
     def test_unknown_command_is_a_usage_error(self):
         r = self.run_staging("deploy")

@@ -19,8 +19,9 @@ services:
       - ACCESS_USERNAME=admin
       - ACCESS_PASSWORD=${STAGING_ACCESS_PASSWORD:?set STAGING_ACCESS_PASSWORD in .env.staging}
       - TC_WORLD__PlayerSaveInterval=5000
-      # The realm list hands clients this port, so it must match the published world port
-      # (8086). The game stack keeps the stock 8085.
+      # The port the worldserver listens on (listen port only). The realm list advertises
+      # auth.realmlist.port instead, which scripts/staging.sh realmport sets to 8086.
+      # The game stack keeps the stock 8085.
       - TC_WORLD__WorldServerPort=8086
       # Telnet remote-admin console, not published: reachable only inside the staging network.
       - TC_WORLD__Ra.Enable=1

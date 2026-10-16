@@ -762,8 +762,14 @@ docker logs -f staging-worldserver
 
 Then `scripts/staging.sh down` stops it (volumes stay), `scripts/staging.sh reset` wipes the database
 and starts it again (`down -v`, then `up`), and `scripts/staging.sh config` only prints the file.
-Restarting it is allowed: no player is on it. Check the realm list after the first `up`: the auth
-server must advertise port 8086 (`TC_WORLD__WorldServerPort=8086` in the compose file).
+Restarting it is allowed: no player is on it.
+
+The realm list advertises `auth.realmlist.port`, not the worldserver's port. That defaults to 8085,
+and the image's bootstrap does not set it. `TC_WORLD__WorldServerPort=8086` in the compose file only
+moves the worldserver's listen port. `scripts/staging.sh up` (and `reset`) therefore runs
+`scripts/staging.sh realmport`, which sets `auth.realmlist.port` to 8086 for realm 1. It is idempotent,
+and it can be run again by hand. Check it after the first `up`:
+`SELECT address, port FROM auth.realmlist` must show 8086.
 
 Not yet covered (#400, follow-up): the smoke suite against the realm, an account seeding script,
 the `live-agent-test` variant and the resource measurement.
