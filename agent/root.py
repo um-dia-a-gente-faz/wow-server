@@ -18,6 +18,7 @@ from .metrics import swallowed
 from .missions import DEFAULT_MISSION
 from .runloop import run_loop
 from .supervisor import supervise_connection
+from .unmet import UnmetIntents
 from .worldknowledge import WorldKnowledge
 
 
@@ -35,6 +36,7 @@ class Agent:
     duration: float | None = None      # None = forever
     start_delay: float = 0.0           # #539: one wait before the first connection attempt
     perception_dump: bool = False
+    unmet: UnmetIntents | None = None  # #319: unmet-intent records, one per agent
 
     def build_session(self):
         """The supervisor's build_session(): a new, logged-in WoWSession."""
@@ -45,7 +47,7 @@ class Agent:
         session attempt, started and stopped by run_loop(). True when the session dropped."""
         return run_loop(sess, self.cfg, self.duration, perception_dump=self.perception_dump,
                         brain=self.brain, audit_logger=self.audit_logger, observer=self.observer,
-                        stop=stop)
+                        stop=stop, unmet=self.unmet)
 
     def run(self, stop: threading.Event | None = None, **supervisor_kwargs) -> None:
         """Supervise the connection until it ends, then close(). `stop` ends it (SIGTERM).
@@ -91,11 +93,15 @@ def build_agent(cfg, log, duration: float | None = None, perception_dump: bool =
     if brain is not None:
         brain.restore_jev_spend(cfg.audit_dir, cfg.agent_name)  # #213: budget survives restarts
 
+    unmet = UnmetIntents(cfg.agent_name, getattr(cfg, "mission", DEFAULT_MISSION), audit_logger)  # #319
     observer, http_server = start_observer(cfg, audit_logger, log, brain=brain)
+    if observer is not None:
+        observer.unmet = unmet   # GET /unmet-intents
     return Agent(cfg=cfg, log=log, chat_relay=chat_relay, brain=brain, audit_logger=audit_logger,
                  observer=observer, http_server=http_server,
                  lifecycle=build_lifecycle(audit_logger, observer),
-                 duration=duration, perception_dump=perception_dump, start_delay=cfg.start_delay)
+                 duration=duration, perception_dump=perception_dump, start_delay=cfg.start_delay,
+                 unmet=unmet)
 
 
 def guarded_lookup(wk, log):

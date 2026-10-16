@@ -38,6 +38,7 @@ DEFAULT_FULL_SNAPSHOT_EVERY = 20
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB per file before rotation
 LIFECYCLE_SUBDIR = "lifecycle"  # <base_dir>/<agent>/lifecycle/<YYYY-MM-DD>.jsonl (#292)
 LIFECYCLE_SCHEMA = 1
+UNMET_SUBDIR = "unmet"  # <base_dir>/<agent>/unmet/<YYYY-MM-DD>.jsonl (#319, agent/unmet.py)
 
 _DAY_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl(\.\d+)?$")
 
@@ -184,6 +185,19 @@ class AuditLogger:
             f.write(json.dumps(d) + "\n")
         return d
 
+    def record_unmet_intent(self, rec: dict) -> None:
+        """One unmet-intent record (#319, agent/unmet.py), appended to
+        `<base_dir>/<agent>/unmet/<YYYY-MM-DD>.jsonl` (the day of rec["ts"]).
+
+        Modelled on record_lifecycle, for the same reasons: it stays out of the decision day
+        files (one line per think cycle there) and off on_record. Retention is the day files'."""
+        ts = rec["ts"]
+        self._maybe_clean_retention(ts)
+        directory = os.path.join(self.agent_dir, UNMET_SUBDIR)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, f"{self._date_str(ts)}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(_redact(rec), default=str) + "\n")
+
     def _rotate_if_needed(self, path: str, incoming_bytes: int):
         if not os.path.exists(path):
             return  # nothing written yet this day — nothing to rotate
@@ -216,11 +230,12 @@ class AuditLogger:
     def clean_retention(self, now: float | None = None) -> list[str]:
         """Delete audit files (any `.jsonl` or rotated `.jsonl.N`) whose day
         is older than `retention_days`, in the agent directory and in its lifecycle
-        subdirectory (#292). Returns the list of deleted paths."""
+        (#292) and unmet-intent (#319) subdirectories. Returns the list of deleted paths."""
         now = now if now is not None else time.time()
         cutoff = now - self.retention_days * 86400
         deleted: list[str] = []
-        for directory in (self.agent_dir, os.path.join(self.agent_dir, LIFECYCLE_SUBDIR)):
+        for directory in (self.agent_dir, os.path.join(self.agent_dir, LIFECYCLE_SUBDIR),
+                          os.path.join(self.agent_dir, UNMET_SUBDIR)):
             if not os.path.isdir(directory):
                 continue
             for name in os.listdir(directory):

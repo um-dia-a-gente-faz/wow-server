@@ -24,6 +24,7 @@ from .actions.base import send
 from .loopguard import (HISTORY_LEN, LOOP_GUARD_COOLDOWN_S, LOOP_GUARD_REPEATS, ThinkState,  # noqa: F401 (re-exported)
                         _DETAIL_MAX_CHARS, progress_fingerprint)
 from .model import KnownSpell, Me, Snapshot
+from .unmet import UnmetIntents
 
 log = logging.getLogger("agent.think")
 
@@ -108,10 +109,11 @@ class Cycle:
     cycle early calls fail(); record() then writes the audit line and history."""
 
     def __init__(self, session, world, brain, persona, my_position, registry,
-                 audit_logger, cycle, reflex_state, state):
+                 audit_logger, cycle, reflex_state, state, unmet=None):
         self.session, self.world, self.brain, self.persona = session, world, brain, persona
         self.my_position, self.registry, self.audit_logger = my_position, registry, audit_logger
         self.cycle, self.reflex_state, self.state = cycle, reflex_state, state
+        self.unmet = unmet      # #319: UnmetIntents, or None (no unmet-intent records)
         self.snapshot: Snapshot = {}  # type: ignore[typeddict-item]  # filled by perceive
         self.fingerprint = ""
         self.decision = Decision()
@@ -176,6 +178,8 @@ def validate(c: Cycle) -> None:
     c.action = c.registry.get(name) if name is not None else None
     if c.action is None or name is None:
         log.warning("model chose unknown action %r (params=%r)", name, params)
+        if c.unmet is not None:
+            c.unmet.record("unknown_action", name, params, c.snapshot)
         return c.fail(f"unknown action: {name!r}")
     spec = specs_by_name.get(name)  # the spec is the source of `required`; a test-double action has none
     required = spec.required if spec is not None else c.action.required
@@ -218,6 +222,8 @@ def execute(c: Cycle) -> None:
 
 def record(c: Cycle) -> ThinkResult:
     d = c.decision
+    if c.unmet is not None and d.candidates == 1:   # the generator offered idle only (#319)
+        c.unmet.record("no_candidates", None, None, c.snapshot)
     if c.audit_logger is not None:
         try:
             c.audit_logger.record(
@@ -246,7 +252,8 @@ def think_and_act(session, world, brain, persona: str = "",
                    my_position=None, registry: dict | None = None,
                    audit_logger=None, cycle: int = 0,
                    reflex_state: dict | None = None,
-                   state: ThinkState | None = None) -> ThinkResult:
+                   state: ThinkState | None = None,
+                   unmet: UnmetIntents | None = None) -> ThinkResult:
     """One think cycle: guards -> perceive -> decide -> validate -> execute -> record.
 
     Decide asks the brain (agent.brain.Brain, UM-101; a bare LLM client is
@@ -254,13 +261,14 @@ def think_and_act(session, world, brain, persona: str = "",
     against the registry, resolves handles and applies the loop guard
     (`state`, UM-90). Execute runs it. Record appends the audit line (if
     `audit_logger`, UM-51) and the history entry, whatever the outcome.
+    `unmet` (#319) gets an unmet-intent record for an unknown action or an idle-only candidate list.
     Expected failures yield a non-ok ThinkResult, never an exception.
     """
     if not isinstance(brain, Brain):
         brain = Brain(llm=brain)
     c = Cycle(session, world, brain, persona, my_position,
               registry if registry is not None else ac.REGISTRY,
-              audit_logger, cycle, reflex_state, state)
+              audit_logger, cycle, reflex_state, state, unmet)
     for stage in STAGES:
         stage(c)
         if c.done:

@@ -107,7 +107,7 @@ class AgentRunTest(unittest.TestCase):
             self.assertIs(agent.run_session("SESSION", stop), True)
         login.assert_called_once_with(agent.cfg, agent.log, agent.chat_relay)
         run_loop.assert_called_once_with("SESSION", agent.cfg, 1.5, perception_dump=True, brain=None,
-                                         audit_logger=agent.audit_logger, observer=None, stop=stop)
+                                         audit_logger=agent.audit_logger, observer=None, stop=stop, unmet=None)
 
     def test_run_session_hands_its_brain_and_observer_to_run_loop(self):
         brain, observer, stop = object(), object(), threading.Event()
@@ -207,6 +207,19 @@ class BuildAgentTest(unittest.TestCase):
         self.assertEqual((agent.observer, agent.http_server), (None, None))
         self.assertEqual((agent.duration, agent.perception_dump), (None, False))
         self.assertFalse(agent.chat_relay.enabled)
+
+    def test_one_unmet_intents_recorder_is_the_observers_and_writes_to_the_audit_dir(self):
+        # #319: build_agent makes one UnmetIntents, the observer serves it and it audits to <agent>/unmet/
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        observer = root.AgentObserver("Built")
+        with mock.patch.object(root.Brain, "from_config", return_value=None), \
+                mock.patch.object(root, "start_observer", return_value=(observer, None)), \
+                self.assertLogs(LOG, level="WARNING"):
+            agent = root.build_agent(self.cfg(tmp.name), LOG)
+        self.assertIs(observer.unmet, agent.unmet)
+        self.assertIs(agent.unmet.audit_logger, agent.audit_logger)
+        self.assertEqual(agent.unmet.mission, "level_to_cap")
 
     def test_the_brain_and_audit_log_lines_are_each_logged_once(self):
         tmp = tempfile.TemporaryDirectory()

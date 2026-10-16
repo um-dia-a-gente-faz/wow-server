@@ -17,6 +17,7 @@ see agent/control.py). With no token configured every POST is still a 405.
     GET /brain       goal, brain (jev/llm), model, last decisions (from the audit records),
                      recent-action history, reflexes, token usage
     GET /events      Server-Sent Events: session.events + decisions
+    GET /unmet-intents   the newest unmet-intent records (agent.unmet, #319): unknown action or idle-only candidates
     GET /metrics     Prometheus text: wow_agent_swallowed_errors_total{agent,where}, router counters,
                      wow_agent_reconnect_attempts_total{agent,reason},
                      wow_agent_fleet_limits_state/_age_seconds and wow_agent_fleet_blocked_cycles_total (agent.metrics)
@@ -48,6 +49,7 @@ from .missions import DEFAULT_MISSION
 from . import update_fields as uf
 from .audit import _redact
 from .metrics import render_fleet, render_reconnects, render_router, render_swallowed, swallowed
+from .unmet import UnmetIntents
 
 log = logging.getLogger("agent.http")
 
@@ -120,6 +122,8 @@ class AgentObserver:
         # #675: the brain's fleet limits file, set by start_observer. /metrics reads only its
         # `health` (an immutable tuple); it never calls blocked(), so the file is read by the think thread alone.
         self.fleet: HealthView | None = None
+        # #319: the agent.unmet.UnmetIntents set by the composition root; None = no records (intents: []).
+        self.unmet: UnmetIntents | None = None
 
     def metrics_text(self) -> str:
         """The body of GET /metrics."""
@@ -265,6 +269,11 @@ class AgentObserver:
             },
         })
 
+    def unmet_intents(self) -> dict:
+        """GET /unmet-intents (#319): the newest unmet-intent records, oldest first."""
+        return _jsonable({"agent": self.agent_name,
+                          "intents": self.unmet.recent() if self.unmet is not None else []})
+
     def events_since(self, last_t: float) -> list:
         sess = self.session
         if sess is None:
@@ -349,6 +358,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._send_json(200, obs.brain(n))
             if path == "/events":
                 return self._stream_events()
+            if path == "/unmet-intents":
+                return self._send_json(200, obs.unmet_intents())
             if path == "/metrics":   # Prometheus text, not JSON; the swallowed-error counter (#306)
                 data = obs.metrics_text().encode("utf-8")
                 self.send_response(200)
@@ -359,7 +370,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             if path == "/":
                 return self._send_json(200, {"endpoints": ["/healthz", "/state", "/perception",
-                                                           "/brain", "/events"]})
+                                                           "/brain", "/events", "/unmet-intents"]})
             return self._send_json(404, {"error": "not found"})
         except (BrokenPipeError, ConnectionResetError):
             pass

@@ -115,6 +115,41 @@ class MissionContractTest(_ServerCase):
         self.assertEqual(ac.validate(body, ac.response_schema(endpoint, response)), [], path)
 
 
+class UnmetIntentsContractTest(_ServerCase):
+    """#319: GET /unmet-intents validates against the schema, with records and empty, and the
+    schema's enums are KINDS and MISSIONS."""
+
+    def test_records_validate(self):
+        from agent.unmet import UnmetIntents
+        self.observer.unmet = UnmetIntents("Luaprata", "explore")
+        self.observer.unmet.record("unknown_action", "fly_to_moon", {"speed": 9}, self.observer.perception())
+        self.observer.unmet.record("no_candidates", None, None, {})
+        body = json.loads(self.get("/unmet-intents")[1])
+        self.assertEqual(len(body["intents"]), 2)
+        self.assertEqual(ac.validate(body, ac.response_schema("/unmet-intents", "ok")), [])
+        self.assertEqual(body["api_version"], C["api_version"])
+
+    def test_empty_validates_with_and_without_a_recorder(self):
+        from agent.unmet import UnmetIntents
+        for unmet in (None, UnmetIntents("Luaprata", "explore")):
+            with self.subTest(attached=unmet is not None):
+                self.observer.unmet = unmet
+                body = json.loads(self.get("/unmet-intents")[1])
+                self.assertEqual(body["intents"], [])
+                self.assertEqual(ac.validate(body, ac.response_schema("/unmet-intents", "ok")), [])
+
+    def test_schema_enums_are_the_kinds_and_the_missions(self):
+        from agent.missions import MISSIONS
+        from agent.unmet import KINDS
+        item = ac.response_schema("/unmet-intents", "ok")["properties"]["intents"]["items"]
+        self.assertEqual(item["properties"]["kind"]["enum"], list(KINDS))
+        self.assertEqual(item["properties"]["mission"]["enum"], list(MISSIONS))
+
+    def test_the_endpoint_is_listed_in_the_index(self):
+        body = json.loads(self.get("/")[1])
+        self.assertIn("/unmet-intents", body["endpoints"])
+
+
 class DocTest(unittest.TestCase):
     def test_endpoint_reference_is_current(self):
         self.assertEqual((ROOT / "docs" / "AGENT-API.md").read_text("utf-8"), ac.render_markdown(),
