@@ -57,7 +57,9 @@ _grid_areas = None
 
 
 def db():
-    return pymysql.connect(**MYSQL)
+    """A read-only session with timeouts (#281); MYSQL keys override the timeouts."""
+    return pymysql.connect(**{"connect_timeout": 3, "read_timeout": 5, "write_timeout": 5, **MYSQL,
+                              "init_command": "SET SESSION TRANSACTION READ ONLY"})
 
 
 def tables():
