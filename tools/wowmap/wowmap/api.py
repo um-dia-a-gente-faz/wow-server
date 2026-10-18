@@ -21,6 +21,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+import character
+import decisions
 import players
 import routes
 import state
@@ -88,6 +90,39 @@ class ActivityResponse(BaseModel):
     sources: dict
 
 
+class Decision(BaseModel):
+    t: float
+    action: str | None
+    args: dict
+    ok: bool
+    error: str | None
+    confidence: float | None
+    brain: str | None
+    reason: str | None   # the audit record carries no rationale yet: always null
+
+
+class DecisionsResponse(BaseModel):
+    character: str
+    decisions: list[Decision]
+
+
+class CharacterSummary(BaseModel):
+    name: str
+    level: int
+    class_name: str
+    race_name: str
+    class_color: str
+    zone_name: str
+    online: bool
+    health: int | None
+    max_health: int | None      # null when characters.character_stats has no row
+    power_type: str
+    power: int | None
+    max_power: int | None
+    money: int                  # copper
+    # xp / next-level xp are not in character.fetch_character; left out rather than add a query.
+
+
 class ErrorResponse(BaseModel):
     error: str
 
@@ -111,6 +146,29 @@ def api_v2_activity(name: str, limit: int = Query(50, ge=1, le=200)):
     if state.activity is None:
         return JSONResponse({"error": "activity feed disabled"}, status_code=503)
     return state.activity.feed(name, limit)
+
+
+@app.get("/api/v2/characters/{name}/decisions", response_model=DecisionsResponse,
+         responses={503: {"model": ErrorResponse}})
+def api_v2_decisions(name: str, limit: int = Query(50, ge=1, le=200)):
+    if not state.AUDIT_DIR or not os.path.isdir(state.AUDIT_DIR):
+        return JSONResponse({"error": "audit log not available"}, status_code=503)
+    return {"character": name, "decisions": decisions.recent(state.AUDIT_DIR, name, limit)}
+
+
+# Power a class runs on (SharedDefines.h Classes): warrior rage, rogue energy, death knight runic power.
+_POWER_TYPE = {1: "rage", 4: "energy", 6: "runic_power"}
+
+
+@app.get("/api/v2/characters/{name}", response_model=CharacterSummary,
+         responses={404: {"model": ErrorResponse}})
+def api_v2_character(name: str):
+    c = character.fetch_character(name)
+    if c is None:
+        return JSONResponse({"error": "unknown character"}, status_code=404)
+    ptype = _POWER_TYPE.get(c["class"], "mana")
+    return {**c, "power_type": ptype, "power": c["power"].get(ptype),
+            "max_power": (c["max_power"] or {}).get(ptype)}
 
 
 def _interval() -> float:

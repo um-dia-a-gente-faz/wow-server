@@ -6,6 +6,7 @@
   import type { Area, AreasResponse } from '$lib/areas';
   import CharacterDrawer, { type Tab } from '$lib/CharacterDrawer.svelte';
   import ActivityTab from '$lib/ActivityTab.svelte';
+  import CharacterTab from '$lib/CharacterTab.svelte';
   import { lastSeenText } from '$lib/lastseen';
   import { SHEET_H, SHEET_W, MAP_FRAME_H, MAP_FRAME_W, ll, markerXY } from '$lib/position';
 
@@ -21,7 +22,10 @@
   let art: L.ImageOverlay | null = null;
   let selected = $state<string | null>(null);
   let now = $state(Math.floor(Date.now() / 1000));
-  const tabs: Tab[] = [{ id: 'activity', label: 'Activity', component: ActivityTab }];
+  const tabs: Tab[] = [
+    { id: 'character', label: 'Character', component: CharacterTab },
+    { id: 'activity', label: 'Activity', component: ActivityTab }
+  ];
   const markers = new Map<string, L.Marker>();
 
   const FRAME = L.latLngBounds(ll(0, MAP_FRAME_H), ll(MAP_FRAME_W, 0));

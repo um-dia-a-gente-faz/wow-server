@@ -90,12 +90,13 @@ WOWMAP_LAYERS = {
     "activity": {"activity_schema", "feed_events"},
     "activity_schema": set(),
     "agents": {"fleet", "state", "walk", "webio"},
-    "api": {"players", "routes", "state", "webio"},   # state.activity: the activity endpoint (#329)
+    "api": {"character", "decisions", "players", "routes", "state", "webio"},   # state.activity: the activity endpoint (#329)
     "app": {"activity", "api", "routes", "state", "webio"},
     "areas": {"calibration", "fog", "overlays", "repo", "state", "transform"},
     "assets": {"fogview", "state", "webio"},
     "calibration": {"state"},
     "character": {"agents", "inventory", "players", "repo", "state"},
+    "decisions": set(),
     "feed_events": set(),
     "fleet": set(),
     "fog": set(),

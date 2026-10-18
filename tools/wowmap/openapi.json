@@ -72,6 +72,212 @@
         "title": "ActivityResponse",
         "type": "object"
       },
+      "CharacterSummary": {
+        "properties": {
+          "class_color": {
+            "title": "Class Color",
+            "type": "string"
+          },
+          "class_name": {
+            "title": "Class Name",
+            "type": "string"
+          },
+          "health": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "max_health": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Health"
+          },
+          "max_power": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Power"
+          },
+          "money": {
+            "title": "Money",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "power": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power"
+          },
+          "power_type": {
+            "title": "Power Type",
+            "type": "string"
+          },
+          "race_name": {
+            "title": "Race Name",
+            "type": "string"
+          },
+          "zone_name": {
+            "title": "Zone Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "level",
+          "class_name",
+          "race_name",
+          "class_color",
+          "zone_name",
+          "online",
+          "health",
+          "max_health",
+          "power_type",
+          "power",
+          "max_power",
+          "money"
+        ],
+        "title": "CharacterSummary",
+        "type": "object"
+      },
+      "Decision": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "brain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brain"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "t": {
+            "title": "T",
+            "type": "number"
+          }
+        },
+        "required": [
+          "t",
+          "action",
+          "args",
+          "ok",
+          "error",
+          "confidence",
+          "brain",
+          "reason"
+        ],
+        "title": "Decision",
+        "type": "object"
+      },
+      "DecisionsResponse": {
+        "properties": {
+          "character": {
+            "title": "Character",
+            "type": "string"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            },
+            "title": "Decisions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "character",
+          "decisions"
+        ],
+        "title": "DecisionsResponse",
+        "type": "object"
+      },
       "ErrorResponse": {
         "properties": {
           "error": {
@@ -397,6 +603,55 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v2/characters/{name}": {
+      "get": {
+        "operationId": "api_v2_character_api_v2_characters__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CharacterSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Api V2 Character"
+      }
+    },
     "/api/v2/characters/{name}/activity": {
       "get": {
         "operationId": "api_v2_activity_api_v2_characters__name__activity_get",
@@ -456,6 +711,67 @@
           }
         },
         "summary": "Api V2 Activity"
+      }
+    },
+    "/api/v2/characters/{name}/decisions": {
+      "get": {
+        "operationId": "api_v2_decisions_api_v2_characters__name__decisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Api V2 Decisions"
       }
     },
     "/api/v2/players": {
