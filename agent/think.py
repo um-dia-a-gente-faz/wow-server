@@ -213,6 +213,11 @@ def execute(c: Cycle) -> None:
         log.warning("action %s rejected params %r: %s", c.action_name, c.params, e)
         return c.fail(f"bad params: {e}", valid=True)
     c.valid, c.detail = True, result.detail
+    if ("corpse_unreachable" in (result.detail or {}) and c.unmet is not None
+            and not c.session.corpse_unreachable_recorded):
+        # #763: one record per death, not one per cycle; the flag re-arms when the character is alive again
+        c.unmet.record("corpse_unreachable", c.action_name, c.params, c.snapshot)
+        c.session.corpse_unreachable_recorded = True
     if not result.ok:
         log.info("action %s failed validation/execution: %s", c.action_name, result.error)
         return c.fail(result.error, valid=True, detail=result.detail)

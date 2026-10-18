@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Unmet-intent records (#319): one record when the brain names an action that does not
-exist (`unknown_action`), or when a cycle's candidate list held only `idle` (`no_candidates`).
+exist (`unknown_action`), when a cycle's candidate list held only `idle` (`no_candidates`), or
+when a ghost's corpse run reached the corpse spot with no corpse there (`corpse_unreachable`, #763,
+once per death).
 
 Kept in memory (GET /unmet-intents, the newest MAX_RECENT) and written to
 `<agent>/unmet/<day>.jsonl` through AuditLogger.record_unmet_intent, never to the decision
@@ -17,7 +19,7 @@ from collections import deque
 log = logging.getLogger("agent.unmet")
 
 UNMET_SCHEMA = 1
-KINDS = ("unknown_action", "no_candidates")
+KINDS = ("unknown_action", "no_candidates", "corpse_unreachable")
 MAX_RECENT = 50
 DEDUP_S = 60.0
 STATE_MAX_CHARS = 512      # the state holds scalars and counts only, so it is bounded by construction

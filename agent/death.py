@@ -162,6 +162,18 @@ def _find_spirit_healer(world, my_position, max_range: float = SPIRIT_HEALER_SEA
     return best
 
 
+def _walk_to_graveyard(session: ports.ActionSession, world):
+    """#763: the way back from an unreachable corpse. Walk to the graveyard the server released us at (same map
+    only: there are no portal coordinates) and return the spirit healer perceived there, or None."""
+    grave, pos = session.graveyard_position, session.player_position
+    if grave is None or pos is None or grave[0] != pos[0]:
+        return None
+    _map_id, gx, gy, gz = grave
+    if not movement.get_mover(session, world).move_to(gx, gy, gz).get("ok"):
+        return None
+    return _find_spirit_healer(world, session.player_position)
+
+
 def _activate_spirit_healer(session: ports.ActionSession, world, guid: int) -> actions.ActionResult:
     mover = movement.get_mover(session, world)
     move_result = mover.move_towards(guid, stop_distance=SPIRIT_HEALER_STOP_DISTANCE_YD)
@@ -230,6 +242,7 @@ class ReclaimCorpseAction(actions.Action):
             run_result = {"ok": False, "error": "corpse position unknown (no MSG_CORPSE_QUERY response)"}
         else:
             run_result = _corpse_run(session, world, corpse_at)
+        unreachable = False  # #763: we stand where the corpse should be, and no corpse object is there
         if run_result.get("ok") and corpse_at is not None:
             corpse = _find_my_corpse(world, corpse_at)
             if corpse is not None:
@@ -243,11 +256,19 @@ class ReclaimCorpseAction(actions.Action):
                         session.record_event("resurrect", method="corpse")
                         return actions.ActionResult(ok=True, detail={"method": "corpse", "corpse_guid": corpse.guid})
                     # fall through to the spirit-healer fallback below
+            else:
+                unreachable = True
 
         healer = _find_spirit_healer(world, session.player_position)
+        if healer is None and unreachable:
+            healer = _walk_to_graveyard(session, world)
         if healer is None:
-            return actions.ActionResult(
+            result = actions.ActionResult(
                 ok=False,
                 error=f"corpse run failed ({run_result.get('error')}) and no spirit healer in perception",
                 detail=run_result)
-        return _activate_spirit_healer(session, world, healer.guid)
+        else:
+            result = _activate_spirit_healer(session, world, healer.guid)
+        if unreachable:
+            result.detail = {**(result.detail or {}), "corpse_unreachable": True}  # #763: think.execute records it once per death
+        return result
