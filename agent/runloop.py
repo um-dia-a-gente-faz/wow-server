@@ -6,6 +6,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 
 from .metrics import swallowed
 from .reflexes.follow import get_follow_reflex
@@ -17,33 +18,38 @@ REST_REFLEX_TICK_INTERVAL_S = 0.3  # same cadence, per UM-43's card
 
 
 def run_follow_reflex_loop(sess, stop_event: threading.Event,
-                             tick_interval: float = FOLLOW_REFLEX_TICK_INTERVAL_S):
+                             tick_interval: float = FOLLOW_REFLEX_TICK_INTERVAL_S,
+                             suspended: Callable[[], bool] | None = None):
     """Runs agent.reflexes.follow's FollowReflex.tick() on its own thread at
     a fixed cadence, independent of the (much slower) LLM think_interval —
     this is what makes it a reflex ("between LLM steps") rather than
     another step of the think loop. One bad tick shouldn't kill the whole
-    loop or the recv thread, so exceptions are logged and swallowed."""
+    loop or the recv thread, so exceptions are logged and swallowed.
+    `suspended` (#330): while it returns true the tick is skipped; the wait still runs."""
     log = logging.getLogger("agent.reflexes.follow")
     reflex = get_follow_reflex(sess)
     while not stop_event.is_set():
-        try:
-            reflex.tick(sess, sess.world_state)
-        except Exception:  # noqa: BLE001 — one bad tick must not end the reflex
-            swallowed("reflex.follow_tick", log)
+        if not (suspended and suspended()):
+            try:
+                reflex.tick(sess, sess.world_state)
+            except Exception:  # noqa: BLE001 — one bad tick must not end the reflex
+                swallowed("reflex.follow_tick", log)
         stop_event.wait(tick_interval)
 
 
 def run_rest_reflex_loop(sess, stop_event: threading.Event,
-                           tick_interval: float = REST_REFLEX_TICK_INTERVAL_S):
+                           tick_interval: float = REST_REFLEX_TICK_INTERVAL_S,
+                           suspended: Callable[[], bool] | None = None):
     """Same shape as run_follow_reflex_loop, driving agent.reflexes.rest's
     RestReflex.tick() (UM-43) on its own thread."""
     log = logging.getLogger("agent.reflexes.rest")
     reflex = get_rest_reflex(sess)
     while not stop_event.is_set():
-        try:
-            reflex.tick(sess, sess.world_state)
-        except Exception:  # noqa: BLE001 — one bad tick must not end the reflex
-            swallowed("reflex.rest_tick", log)
+        if not (suspended and suspended()):
+            try:
+                reflex.tick(sess, sess.world_state)
+            except Exception:  # noqa: BLE001 — one bad tick must not end the reflex
+                swallowed("reflex.rest_tick", log)
         stop_event.wait(tick_interval)
 
 
@@ -52,9 +58,13 @@ def run_loop(sess, cfg, duration: float | None, perception_dump: bool = False, b
     start = time.monotonic()
 
     reflex_stop = threading.Event()
+    # #330: an operator override holds both reflexes (the observer owns the flag).
+    held = (lambda: observer.control_state.overridden()) if observer is not None else None
     reflex_threads = [
-        threading.Thread(target=run_follow_reflex_loop, args=(sess, reflex_stop), daemon=True),
-        threading.Thread(target=run_rest_reflex_loop, args=(sess, reflex_stop), daemon=True),
+        threading.Thread(target=run_follow_reflex_loop, args=(sess, reflex_stop),
+                         kwargs={"suspended": held}, daemon=True),
+        threading.Thread(target=run_rest_reflex_loop, args=(sess, reflex_stop),
+                         kwargs={"suspended": held}, daemon=True),
     ]
     for t in reflex_threads:
         t.start()
@@ -135,7 +145,9 @@ def run_think_loop(sess, cfg, duration: float | None, start: float, perception_d
             print(json.dumps(snapshot))
 
         # ── think + act (brain call → one validated action per cycle) ────
-        if brain is not None:
+        # #330: a paused or overridden brain decides nothing this cycle; the sleep below still runs.
+        held = observer is not None and observer.control_state.brain_held()
+        if brain is not None and not held:
             cycle += 1
             # #178: an operator walk (agent/control.py) holds this lock while it moves the
             # character, so a think cycle never starts a competing move mid-walk.

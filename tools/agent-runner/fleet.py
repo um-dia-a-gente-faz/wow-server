@@ -31,7 +31,7 @@ from agent import persist  # noqa: E402
 STATE_SCHEMA = 1   # ADR 0018: the version of state.json this runner reads and writes
 PROBE_TIMEOUT_S = 2.0
 # #264: agent API versions this runner understands (agent/api_schema.json; a test pins it).
-SUPPORTED_API_VERSIONS = (1,)
+SUPPORTED_API_VERSIONS = (1, 2)  # 2: #330 control routes and /state control field (additive)
 CHARACTER_TTL_S = 10.0
 AUDIT_TAIL_BYTES = 256 * 1024
 UP_TIMEOUT_S = 120

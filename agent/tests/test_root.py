@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent import __main__ as main_mod
+from agent import control
 from agent import root
 from agent.audit import AuditLogger
 from agent.auth import AuthRejected
@@ -360,6 +361,7 @@ class OneStartStopPathTest(unittest.TestCase):
         before = set(threading.enumerate())
         observer = mock.Mock()
         observer.action_lock = threading.Lock()
+        observer.control_state = control.ControlState()  # #330: the think and reflex loops read it
         sess = make_session()
         try:
             runloop.run_loop(sess, SimpleNamespace(think_interval=0.01, persona=""), 0.05, observer=observer, **kw)
