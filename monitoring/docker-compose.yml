@@ -148,8 +148,8 @@ services:
       context: ../tools          # tools/ so the image holds only tools/pathfinder (its Dockerfile copies that)
       dockerfile: pathfinder/Dockerfile
     restart: unless-stopped
-    # Known ceiling (#834): the reader keeps about 9x a map's .mmtile bytes in memory, so a continent does not
-    # fit under this limit until the per-tile lazy loader lands (#834). A crash loop holds at most 512m here.
+    # Memory (#834): tiles load lazily; an LRU keeps PATHFINDER_MAX_TILES parsed tiles per map (default 64).
+    # Whether 512m covers that on the real movement maps is a human step (PR #830), not measured here.
     mem_limit: 512m
     ports:
       - "8770:8770"
