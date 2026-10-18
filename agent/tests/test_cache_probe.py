@@ -91,6 +91,13 @@ class PathsTest(unittest.TestCase):
         self.day = self._write("", "2026-10-18.jsonl", 1)
         self._write("lifecycle", "2026-10-18.jsonl", 2)
         self._write("unmet", "2026-10-18.jsonl", 3)
+        # a fresh agent: lifecycle and unmet lines, no day file yet
+        self.fresh = os.path.join(self.base, "fresh")
+        for sub in ("lifecycle", "unmet"):
+            os.makedirs(os.path.join(self.fresh, sub))
+        for sub, cycle in (("lifecycle", 4), ("unmet", 5)):
+            with open(os.path.join(self.fresh, sub, "2026-10-18.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"cycle": cycle, "agent": "fresh"}) + "\n")
 
     def _write(self, sub, name, cycle):
         path = os.path.join(self.agent, sub, name)
@@ -106,6 +113,9 @@ class PathsTest(unittest.TestCase):
 
     def test_base_dir_reads_only_day_files(self):
         self.assertEqual(self._cycles(self.base), [1])
+
+    def test_agent_dir_without_day_files_reads_nothing(self):
+        self.assertEqual(self._cycles(self.fresh), [])
 
     def test_file_argument_is_read_as_given(self):
         self.assertEqual(self._cycles(self.day), [1])

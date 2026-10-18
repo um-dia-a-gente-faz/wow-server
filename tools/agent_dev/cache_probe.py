@@ -27,6 +27,7 @@ import sys
 from collections import Counter
 
 from agent import candidates as cand
+from agent.audit import LIFECYCLE_SUBDIR, UNMET_SUBDIR
 from tools.agent_dev.replay import load_records
 
 # Health/mana bands: the edges are where the "obvious" behaviour changes
@@ -35,8 +36,6 @@ BAND_EDGES = (0.25, 0.5, 0.8)
 BAND_NAMES = ("crit", "low", "mid", "full")
 DIST_EDGES = (5.0, 15.0, 40.0)  # melee / interact, short hop, approach limit
 THREAT_CAP = 3
-# agent/audit.py subdirectories; not imported, tools/ may not reach agent/audit (test_architecture).
-LIFECYCLE_SUBDIR, UNMET_SUBDIR = "lifecycle", "unmet"
 
 # Action classes the ADR is willing to serve from cache; everything else is refused.
 SERVED_ACTIONS = {"accept_quest", "complete_quest", "turn_in_quest", "loot", "accept_group",
