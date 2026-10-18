@@ -104,10 +104,10 @@ snapshot, over the existing map art, with the 3D character model at the centre.
 - M: radar renderer (typed, facing, target, phone viewport), which is #328 itself.
 - M (optional): the model at the radar centre with facing, after #510 lands.
 
-**Prerequisite:** #328 is blocked by the open #324 (SvelteKit shell), #326 (character panel)
-and #288. The SSE fan-out belongs in the Console v4 FastAPI backend (ADR 0012), whose shell and
+**Prerequisite:** #328's remaining open blockers are #324 (SvelteKit shell) and #326
+(character panel); #288 (the typed snapshot) is already closed. The SSE fan-out belongs in the Console v4 FastAPI backend (ADR 0012), whose shell and
 SSE stream are #323; it is not a new endpoint in the old `tools/wowmap` pages. So the real
-order is: #323, #324, #326 and #288 land first, then the three slices above. Total: about 3 to
+order is: #323, #324 and #326 land first, then the three slices above. Total: about 3 to
 4 PR-sized slices on top of that prerequisite; the first useful one is the radar (#328).
 The facing change is agent-side and can go in at any time.
 
@@ -204,8 +204,8 @@ owner playing, not a site feature, and it carries the exposure risk above.
 
 ## Recommendation
 
-1. **Do option 1 first**, once its prerequisites land (#328 is blocked by the open #324, #326 and
-   #288; the SSE fan-out goes in the FastAPI backend, #323, per ADR 0012), in this order: facing
+1. **Do option 1 first**, once its prerequisites land (#328's remaining open blockers are #324 and #326, #288
+   is already done; the SSE fan-out goes in the FastAPI backend, #323, per ADR 0012), in this order: facing
    in the snapshot (S), snapshot SSE fan-out (S/M), radar (#328, M). It uses only data and art the repo has, honors "perception, not database
    truth", works on a phone, and costs no new service. Add the 3D model at the centre only
    after #510.
