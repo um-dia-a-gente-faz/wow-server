@@ -2,8 +2,8 @@
 
 > **Research spike.** Outcome: do not build or adopt a browser client now; ship the
 > presence toggle without it. Issue #338, milestone *Later - Autonomy + multi-agent*.
-> Related: the live-view spike, spikes/live-view-in-the-site.md (#337, written in parallel;
-> not linked here until it merges). Researched 2026-10-18, read-only. Every external claim
+> Related: [live view in the site](live-view-in-the-site.md) (#337).
+> Researched 2026-10-18, read-only. Every external claim
 > carries a link; anything not checked against a primary source is marked **Unverified**.
 
 ## Question
@@ -155,7 +155,7 @@ Rough person-effort estimates, not measured. **Unverified**; no primary source e
 | Option | What | Size |
 |---|---|---|
 | A. Presence toggle on the agent API | Store field, admin-gated endpoint, poller on `characters.online`, pause and resume wiring, one site control | S to M, after the ADR 0012 store exists |
-| B. #337 stage 1, rendered agent view | See the live-view spike (spikes/live-view-in-the-site.md); reuses the #171 three.js model | M |
+| B. #337 stage 1, rendered agent view | See [live view in the site](live-view-in-the-site.md); reuses the #171 three.js model | M |
 | C. Try Wowser as is | Run its pipeline on the owner's MPQs plus a websockify gateway | S to try; the result is a login demo, not a game |
 | D. Finish a browser client (Wowser or fresh) | Full world protocol, movement, combat, spells, UI, terrain, WMO and M2 rendering, audio, input, asset pipeline | XL, many weeks to months; Wowser has not reached playability |
 
