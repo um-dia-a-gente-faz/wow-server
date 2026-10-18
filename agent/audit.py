@@ -26,7 +26,7 @@ import re
 import time
 
 from . import config
-from .audit_schema import AuditRecord
+from .audit_schema import REASON_MAX_CHARS, AuditRecord
 from .metrics import swallowed
 from .model import Snapshot
 
@@ -127,7 +127,7 @@ class AuditLogger:
                jev_status: str | None = None,
                history_notes: list | None = None, prompt_id: str | None = None,
                substituted: bool = False, events: list | None = None,
-               ts: float | None = None) -> AuditRecord:
+               reason: str | None = None, ts: float | None = None) -> AuditRecord:
         ts = ts if ts is not None else time.time()
         snap: Snapshot | dict = snapshot or {}
         compact = _compact_json(snap)
@@ -149,6 +149,7 @@ class AuditLogger:
                    if isinstance(usage, dict) and isinstance(usage.get(k), (int, float))},
             jev_status=jev_status, history_notes=history_notes, substituted=substituted,
             prompt_id=prompt_id, events=events or [],
+            reason=reason[:REASON_MAX_CHARS] if reason else None,
             snapshot=snap if include_full else None,
         )
 

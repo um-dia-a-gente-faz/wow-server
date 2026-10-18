@@ -246,7 +246,7 @@ def record(c: Cycle) -> ThinkResult:
                 candidates=d.candidates, confidence_threshold=d.confidence_threshold,
                 confidence_rule=d.confidence_rule, overridden=d.overridden, usage=d.usage,
                 jev_status=d.jev_status, history_notes=d.history_notes, prompt_id=d.prompt_id,
-                events=events)
+                events=events, reason=d.reason)
         except OSError as e:  # never let audit I/O crash a think cycle
             log.warning("audit log write failed: %s", e)
     if c.state is not None and c.remember:

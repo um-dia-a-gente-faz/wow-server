@@ -551,6 +551,21 @@ class BrainSeamTest(unittest.TestCase):
         self.assertFalse(rec["substituted"])
         self.assertEqual(rec["tool_call"], {"name": "test_action", "args": {"value": 2}})
 
+    def test_jev_path_audits_the_chosen_candidates_label_as_reason(self):
+        self._think(brain.Brain(jev=FakeJevClient(pick=1)))  # TEST_CANDIDATES[1] is labelled "two"
+        self.assertEqual(self.audit.records[-1]["reason"], "two")
+
+    def test_low_confidence_substitution_audits_the_safe_candidates_label(self):
+        self._think(brain.Brain(jev=FakeJevClient(pick=1, confidence=0.1), min_confidence=0.9))
+        rec = self.audit.records[-1]
+        self.assertEqual((rec["tool_call"]["name"], rec["reason"]), ("idle", "do nothing"))
+
+    def test_brain_error_and_llm_cycles_audit_no_reason(self):
+        self._think(brain.Brain(jev=FakeJevClient(error=JevError("HTTP 500 from x: boom", status=500))))
+        self.assertIsNone(self.audit.records[-1].get("reason"))
+        self._think(brain.Brain(llm=FakeLLMClient(action_name="test_action", params={"value": 5})))
+        self.assertIsNone(self.audit.records[-1].get("reason"))
+
     def test_single_candidate_cycle_is_audited_as_skipped_not_success(self):
         self.generate.side_effect = lambda *a, **k: [{"id": "only", "action": "test_action",
                                                        "params": {"value": 4}}]
