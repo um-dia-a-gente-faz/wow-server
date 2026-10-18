@@ -76,6 +76,18 @@ class KillObjectiveTest(unittest.TestCase):
         s = snap(units=[mob(60 + i, 1001, 6 + i) for i in range(6)], quest_log=[quest([kill(1001, 0, 9)])])
         self.assertEqual(len(quest_reasons(cand.generate(s, my_guid=1))), cand.MAX_ATTACK)
 
+    def test_quest_mobs_at_the_attack_cap_do_not_crowd_out_a_plain_attack(self):
+        # Three matching mobs fill MAX_ATTACK; the plain attack on the fourth (non-matching) mob must
+        # still be offered, and each quest mob appears once (the offered-guid skip in _attack_provider).
+        quest_mobs = [mob(61, 1001, 6), mob(62, 1001, 7), mob(63, 1001, 8)]
+        plain = mob(64, 2002, 20)
+        cands = cand.generate(snap(units=quest_mobs + [plain], quest_log=[quest([kill(1001, 0, 3)])]), my_guid=1)
+        for guid in (61, 62, 63):
+            with self.subTest(guid=guid):
+                self.assertEqual(sum(c["params"].get("guid") == guid for c in cands), 1)
+        self.assertIn("move_towards:guid=64,stop_distance=3.0", ids(cands))
+        self.assertEqual(len(quest_reasons(cands)), cand.MAX_ATTACK)
+
     def test_failed_quest_offers_no_target(self):
         s = snap(units=[mob(61, 1001, 4)], quest_log=[quest([kill(1001, 0, 3)], state="failed")])
         self.assertEqual(quest_reasons(cand.generate(s, my_guid=1)), [])

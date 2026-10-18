@@ -178,6 +178,13 @@ class CurrentObjectiveContractTest(_ServerCase):
                         "time": 0, "title": "Next", "objectives": [self.KILL]})
         self.assertEqual(self.state()["current_objective"]["quest_id"], 2)
 
+    def test_two_open_quests_report_the_first_in_log_order(self):
+        self.quest_log({"slot": 0, "quest_id": 1, "state": 0, "state_name": "incomplete", "counters": [1],
+                        "time": 0, "title": "First", "objectives": [self.KILL]},
+                       {"slot": 1, "quest_id": 2, "state": 0, "state_name": "incomplete", "counters": [1],
+                        "time": 0, "title": "Second", "objectives": [{**self.KILL, "entry": 1002}]})
+        self.assertEqual(self.state()["current_objective"]["quest_id"], 1)
+
     def test_null_without_an_incomplete_objective_and_still_validates(self):
         self.quest_log({"slot": 0, "quest_id": 1, "state": 1, "state_name": "complete", "counters": [3],
                         "time": 0, "title": "Done", "objectives": [{**self.KILL, "count": 3}]})
