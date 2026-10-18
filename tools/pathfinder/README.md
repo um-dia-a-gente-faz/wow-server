@@ -163,7 +163,7 @@ Every response is JSON. Errors are `{"error": "<reason>"}`.
   for stacked floors (`height`). An unknown map or a point off the mesh gives `null`.
 - `GET /healthz` answers 200 `{"ok": true, "maps_loaded": [<map ids>]}`.
 - Bad JSON, a missing or non-numeric field (a bool or a non-finite number counts as non-numeric), or a
-  bad query gives 400. An unknown path gives 404. A corrupt movement-map file gives 500.
+  bad query gives 400. An unknown path gives 404. A corrupt or unreadable movement-map file gives 500 with its reason. Any other failure gives 500 `{"error": "internal error"}` (logged).
 
 ## Axis order: WoW (x, y, z) is Detour (y, z, x)
 

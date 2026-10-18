@@ -32,6 +32,9 @@ class Maps:
         self._lock = threading.Lock()   # ponytail: one lock over all loads; per-map locks if a slow first load stalls others
 
     def get(self, map_id: int) -> NavMesh | None:
+        mesh = self._meshes.get(map_id)          # a loaded map answers without the lock
+        if mesh is not None:
+            return mesh
         with self._lock:
             if map_id not in self._meshes:
                 try:
@@ -41,8 +44,7 @@ class Maps:
             return self._meshes[map_id]
 
     def loaded(self) -> list[int]:
-        with self._lock:
-            return sorted(self._meshes)
+        return sorted(list(self._meshes))         # list(dict) is atomic under the GIL
 
 
 def _json_scalar(text: str, name: str):
@@ -65,9 +67,15 @@ def _int(value, name: str) -> int:
 
 
 def _number(value, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise BadRequest(f"{name} must be a finite number")
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:                         # a huge integer has no float
+        raise BadRequest(f"{name} must be a finite number") from None
+    if not math.isfinite(number):
+        raise BadRequest(f"{name} must be a finite number")
+    return number
 
 
 def _point(obj, name: str) -> tuple[float, float, float]:
@@ -96,6 +104,9 @@ class Handler(BaseHTTPRequestHandler):
             status, body = 400, {"error": str(err)}
         except NavMeshError as err:
             status, body = 500, {"error": str(err)}
+        except Exception:   # the last resort: log it, and answer JSON rather than drop the connection
+            LOG.exception("unhandled error answering %s %s", self.command, self.path)
+            status, body = 500, {"error": "internal error"}
         data = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
