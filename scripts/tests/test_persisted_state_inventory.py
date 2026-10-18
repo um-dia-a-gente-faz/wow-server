@@ -198,6 +198,8 @@ INVENTORY: list[Row] = [
      "tools/wowmap/wowmap/models.py:BLOB_VERSION"),
     ("tools/wowmap/wowmap/activity.py", "ActivityStore.__init__", "activity.sqlite3", "sqlite",
      "tools/wowmap/wowmap/activity_schema.py:MIGRATIONS"),
+    ("tools/wowmap/wowmap/sitestore.py", "SiteStore.__init__", "site.sqlite3", "sqlite",
+     "tools/wowmap/wowmap/sitestore.py:MIGRATIONS"),
     ("tools/wowmap/wowmap/calibration.py", "save_calibration", "calibration.json", "document",
      "CALIBRATION_SCHEMA"),
 ]
@@ -216,6 +218,7 @@ ADR_NAMES = {
     "<runtime>/state.json": "state.json",
     "calibration.json": "calibration.json",
     "ACTIVITY_DB": "activity.sqlite3",
+    "SITE_DB": "site.sqlite3",
     "MODELS_DIR/<race>_<gender>.bin": "model blob",
     "<runtime>/world/world.sqlite3": "world bundle",
 }

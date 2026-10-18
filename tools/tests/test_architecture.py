@@ -110,6 +110,7 @@ WOWMAP_LAYERS = {
     "repo": {"item_tooltip", "state"},
     "routes": {"agents", "areas", "assets", "calibration", "character", "fogview", "pages", "players", "state",
                "webio"},
+    "sitestore": set(),
     "state": {"item_icons", "models", "overlays", "transform"},
     "transform": set(),
     "walk": set(),
