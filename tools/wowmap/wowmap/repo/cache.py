@@ -15,9 +15,10 @@ class _Call:
         self.expires = 0.0
 
 
-def ttl_cache(seconds, clock=time.monotonic):
+def ttl_cache(seconds, clock=None):
     """Decorator: cache the result per positional-args key for `seconds`.
 
+    `clock` defaults to time.monotonic, read at call time so tests can patch it.
     Adds `cache_clear()` to the wrapped function. Keys are never evicted, so this suits
     functions called with a few fixed argument sets (ponytail: add LRU when keys grow)."""
     def decorator(fn):
@@ -25,9 +26,10 @@ def ttl_cache(seconds, clock=time.monotonic):
         calls: dict[tuple, _Call] = {}
 
         def wrapper(*args):
+            now = (clock or time.monotonic)
             with lock:
                 call = calls.get(args)
-                if call is not None and (not call.done.is_set() or clock() < call.expires):
+                if call is not None and (not call.done.is_set() or now() < call.expires):
                     leader = False  # in flight, or filled and still fresh
                 else:
                     call = calls[args] = _Call()
@@ -47,7 +49,7 @@ def ttl_cache(seconds, clock=time.monotonic):
                 call.done.set()
                 raise
             call.value = value
-            call.expires = clock() + seconds
+            call.expires = now() + seconds
             call.done.set()
             return value
 

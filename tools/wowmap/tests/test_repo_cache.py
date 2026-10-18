@@ -145,8 +145,9 @@ class TtlCacheTests(unittest.TestCase):
 
 class PlayersOnlineTests(unittest.TestCase):
     def setUp(self):
-        players_repo.online.cache_clear()
-        self.addCleanup(players_repo.online.cache_clear)
+        for fn in (players_repo.online, players_repo.online_zones):
+            fn.cache_clear()
+            self.addCleanup(fn.cache_clear)
 
     def test_ten_parallel_polls_make_one_query(self):
         fake = CountingDb()
@@ -154,6 +155,30 @@ class PlayersOnlineTests(unittest.TestCase):
             results, errors = run_threads(players_repo.online)
         self.assertEqual((errors, fake.queries), ([], 1))
         self.assertTrue(all(r == [("Aaa", 10)] for r in results))
+
+    def test_ten_parallel_polls_then_a_refresh_after_one_second(self):
+        fake = CountingDb()
+        with mock.patch.object(state, "db", fake), \
+                mock.patch("repo.cache.time.monotonic", return_value=100.0) as clock:
+            results, errors = run_threads(players_repo.online)
+            self.assertEqual((errors, fake.queries), ([], 1))
+            clock.return_value = 100.9
+            self.assertEqual(players_repo.online(), [("Aaa", 10)])
+            self.assertEqual(fake.queries, 1)
+            clock.return_value = 101.1
+            self.assertEqual(players_repo.online(), [("Aaa", 10)])
+        self.assertEqual(fake.queries, 2)
+
+    def test_online_zones_refreshes_after_one_second(self):
+        fake = CountingDb(rows=((12, 0),))
+        with mock.patch.object(state, "db", fake), \
+                mock.patch("repo.cache.time.monotonic", return_value=100.0) as clock:
+            self.assertEqual(players_repo.online_zones(), [(12, 0)])
+            self.assertEqual(players_repo.online_zones(), [(12, 0)])
+            self.assertEqual(fake.queries, 1)
+            clock.return_value = 101.1
+            self.assertEqual(players_repo.online_zones(), [(12, 0)])
+        self.assertEqual(fake.queries, 2)
 
     def test_failed_query_reaches_every_waiter_and_next_poll_retries(self):
         fake = CountingDb(fail=True)
