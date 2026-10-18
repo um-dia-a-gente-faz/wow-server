@@ -43,6 +43,7 @@ Finished investigations in [spikes/](spikes/). Each starts with a status line: o
 
 | Doc | Outcome |
 |---|---|
+| [spikes/GH313-TERRAIN-Z-AND-WALL-STARING.md](spikes/GH313-TERRAIN-Z-AND-WALL-STARING.md) | partial: sidecar latency measured, terrain z and wall-staring still to diagnose live (#313) |
 | [spikes/live-view-in-the-site.md](spikes/live-view-in-the-site.md) | live view options: rendered radar first, no stream, control later (#337) |
 | [spikes/CHARACTER-MODEL-SPIKE.md](spikes/CHARACTER-MODEL-SPIKE.md) | go: 3D body model in the inspect drawer (#171) |
 | [spikes/CHAT_FEED_SPIKE.md](spikes/CHAT_FEED_SPIKE.md) | log-tail recommendation, superseded in part by the chat relay (UM-47) |
