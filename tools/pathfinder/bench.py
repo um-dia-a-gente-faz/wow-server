@@ -5,9 +5,8 @@
 The real .mmtile files live on the VM, so the default mesh is built here: a tiles x tiles block of
 tiles, each cells x cells quad polys (40x40 = 1600, the size of a real Azeroth tile), a detail vertex
 and four detail triangles per poly, about 8% wall cells, and ext links on every shared border. The
-query set is fixed by --seed. Tiles are written as .mmtile files and loaded through NavMesh.load, so
-the timed queries go through LazyTiles as the sidecar does. Queries run warm (every tile parsed once
-first); the cold parse time is printed separately.
+query set is fixed by --seed. Tiles are built as bytes, parsed with read_tile and handed to NavMesh as a dict; nothing is written
+to disk. The index of each tile is built by the first query that touches it.
 """
 from __future__ import annotations
 
@@ -16,17 +15,15 @@ import cProfile
 import pstats
 import random
 import struct
-import tempfile
 import time
-from pathlib import Path
 
-from .navmesh import NavMesh
+from .navmesh import NavMesh, read_tile
 
 GRID = 533.3333
 EXT = 0x8000
 
 
-def write_tile(path: Path, ti: int, tj: int, tiles: int, cells: int, walls: set):
+def tile_bytes(ti: int, tj: int, tiles: int, cells: int, walls: set) -> bytes:
     """Tile at Detour x block ti and z block tj: file key (31 - tj, 31 - ti), see navmesh._grid_index."""
     cell = GRID / cells
     index = {}
@@ -62,22 +59,21 @@ def write_tile(path: Path, ti: int, tj: int, tiles: int, cells: int, walls: set)
         b"".join(struct.pack("<3f", *v) for v in verts), b"".join(recs), b"\0" * 32,
         b"".join(details), b"".join(struct.pack("<3f", *v) for v in dverts),
         b"".join(struct.pack("<4B", *t) for t in tris), b"", b""))
-    path.write_bytes(struct.pack("<IIIIB3x", 0x4D4D4150, 7, 15, len(body), 1) + body)
+    return struct.pack("<IIIIB3x", 0x4D4D4150, 7, 15, len(body), 1) + body
 
 
-def build(directory: Path, tiles: int, cells: int, seed: int) -> list:
-    """Write the mesh into `directory`; return the cells that are walkable as WoW (x, y) points."""
+def build(tiles: int, cells: int, seed: int) -> tuple[NavMesh, list]:
+    """The mesh, parsed in memory (no files), and its walkable cells as WoW (x, y) points."""
     rng = random.Random(seed)
-    (directory / "999.mmap").write_bytes(struct.pack("<5f2i", 0, 0, 0, GRID, GRID, 1, 1))
-    free = []
+    parts, free = {}, []
+    cell = GRID / cells
     for ti in range(tiles):
         for tj in range(tiles):
             walls = {(rng.randrange(cells), rng.randrange(cells)) for _ in range(cells * cells // 12)}
-            write_tile(directory / f"999{31 - tj:02}{31 - ti:02}.mmtile", ti, tj, tiles, cells, walls)
-            cell = GRID / cells
+            parts[31 - tj, 31 - ti] = read_tile(tile_bytes(ti, tj, tiles, cells, walls))
             free += [(tj * GRID + (c + .5) * cell, ti * GRID + (r + .5) * cell)       # WoW x = Detour z
                      for r in range(cells) for c in range(cells) if (c, r) not in walls]
-    return free
+    return NavMesh({}, parts), free
 
 
 def queries(free: list, count: int, seed: int) -> dict:
@@ -106,15 +102,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=848)
     ap.add_argument("--profile", action="store_true")
     args = ap.parse_args()
-    with tempfile.TemporaryDirectory() as tmp:
-        free = build(Path(tmp), args.tiles, args.cells, args.seed)
-        mesh = NavMesh.load(Path(tmp), 999, max_tiles=args.tiles ** 2)
-        sets = queries(free, args.queries, args.seed)
-        t0 = time.perf_counter()
-        for key in list(mesh.tiles):
-            mesh.tiles.get(key)
-        print(f"{args.tiles ** 2} tiles x {args.cells ** 2} polys; cold parse {time.perf_counter() - t0:.2f} s")
-
+    t0 = time.perf_counter()
+    mesh, free = build(args.tiles, args.cells, args.seed)
+    sets = queries(free, args.queries, args.seed)
+    print(f"{args.tiles ** 2} tiles x {args.cells ** 2} polys; build + parse {time.perf_counter() - t0:.2f} s")
+    if True:
         def run(pairs):
             ms, none = [], 0
             for s, e in pairs:
