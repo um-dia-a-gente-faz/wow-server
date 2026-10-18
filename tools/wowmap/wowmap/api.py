@@ -19,7 +19,6 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.exceptions import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 import players
@@ -124,8 +123,8 @@ class SpaFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         try:
             return await super().get_response(path, scope)
-        except HTTPException as e:
-            if e.status_code != 404 or "." in path.rsplit("/", 1)[-1]:
+        except Exception as e:   # starlette's HTTPException; fastapi does not re-export that one
+            if getattr(e, "status_code", None) != 404 or "." in path.rsplit("/", 1)[-1]:
                 raise
             return await super().get_response("index.html", scope)
 
