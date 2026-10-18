@@ -42,10 +42,10 @@ class SiteStoreCase(unittest.TestCase):
 class SchemaTest(SiteStoreCase):
     def test_schema_created_and_reopen_is_idempotent(self):
         names = {r[0] for r in self.rows("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        self.assertTrue({"users", "sessions", "site", "schema_version"} <= names, names)
+        self.assertTrue({"users", "sessions", "site"} <= names, names)
         self._close()
         self.store = sitestore.SiteStore(self.path)  # re-open runs the migration again
-        self.assertEqual(self.rows("SELECT version FROM schema_version"), [(sitestore.SCHEMA_VERSION,)])
+        self.assertEqual(self.rows("PRAGMA user_version"), [(sitestore.SCHEMA_VERSION,)])
         self.assertEqual(self.rows("SELECT COUNT(*) FROM site"), [(1,)])
 
     def test_wal_and_foreign_keys_are_on(self):
@@ -115,6 +115,79 @@ class SessionTest(SiteStoreCase):
             with open(os.path.join(self._dir.name, name), "rb") as f:
                 self.assertNotIn(token.encode(), f.read(), name)
         self.store = sitestore.SiteStore(self.path)  # keep the addCleanup close valid
+
+
+def raw(path, sql, *args):
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(sql, args)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class MigrationTest(unittest.TestCase):
+    """ADR 0018: an older file is backed up and migrated, a newer or unreadable one is refused as it is."""
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory(prefix="sitestore-mig-")
+        self.addCleanup(self._dir.cleanup)
+        self.path = os.path.join(self._dir.name, "site.sqlite3")
+
+    def test_old_version_is_backed_up_then_migrated(self):
+        store = sitestore.SiteStore(self.path)
+        store.create_admin("owner", PASSWORD)
+        store.close()
+        step = "CREATE TABLE probe (id INTEGER PRIMARY KEY)"
+        with mock.patch.multiple(sitestore, MIGRATIONS=sitestore.MIGRATIONS + ((step,),), SCHEMA_VERSION=2):
+            store = sitestore.SiteStore(self.path)
+            self.addCleanup(store.close)
+            self.assertIsNotNone(store.verify("owner", PASSWORD))
+        self.assertEqual(raw_rows(self.path, "PRAGMA user_version"), [(2,)])
+        self.assertEqual(raw_rows(self.path, "SELECT name FROM sqlite_master WHERE name = 'probe'"), [("probe",)])
+        bak = f"{self.path}.v1.bak"
+        self.assertTrue(os.path.exists(bak))
+        self.assertEqual(raw_rows(bak, "PRAGMA user_version"), [(1,)])
+        self.assertEqual(raw_rows(bak, "SELECT COUNT(*) FROM users"), [(1,)])
+
+    def test_newer_version_refused_and_file_untouched(self):
+        store = sitestore.SiteStore(self.path)
+        store.create_admin("owner", PASSWORD)
+        store.close()
+        raw(self.path, "PRAGMA user_version = 99")
+        with self.assertRaises(sitestore.SiteStoreError) as ctx:
+            sitestore.SiteStore(self.path)
+        message = str(ctx.exception)
+        self.assertIn(self.path, message)
+        self.assertIn("99", message)
+        self.assertIn(str(sitestore.SCHEMA_VERSION), message)
+        self.assertEqual(raw_rows(self.path, "PRAGMA user_version"), [(99,)])
+        self.assertEqual(raw_rows(self.path, "SELECT COUNT(*) FROM users"), [(1,)])
+        self.assertFalse(os.path.exists(f"{self.path}.v1.bak"))
+
+    def test_corrupt_file_refused(self):
+        with open(self.path, "wb") as f:
+            f.write(b"this is not a sqlite database\n" * 64)
+        with self.assertRaises(sitestore.SiteStoreError) as ctx:
+            sitestore.SiteStore(self.path)
+        self.assertIn(self.path, str(ctx.exception))
+        with open(self.path, "rb") as f:
+            self.assertEqual(f.read(), b"this is not a sqlite database\n" * 64)
+
+    def test_unversioned_file_with_users_table_refused_not_recreated(self):
+        raw(self.path, "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, pw_hash TEXT, created_at TEXT)")
+        raw(self.path, "INSERT INTO users (username, pw_hash, created_at) VALUES ('owner', 'x', 'x')")
+        with self.assertRaises(sitestore.SiteStoreError):
+            sitestore.SiteStore(self.path)
+        self.assertEqual(raw_rows(self.path, "SELECT username FROM users"), [("owner",)])
+
+
+def raw_rows(path, sql):
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute(sql).fetchall()
+    finally:
+        conn.close()
 
 
 class CliTest(unittest.TestCase):

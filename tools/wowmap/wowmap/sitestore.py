@@ -22,7 +22,8 @@ MIN_PASSWORD = 12
 SESSION_TTL_S = 7 * 24 * 3600
 SCRYPT_N, SCRYPT_R, SCRYPT_P, SCRYPT_DKLEN = 2 ** 14, 8, 1, 64
 
-# Forward-only, like activity_schema: append a step, never edit one that has shipped.
+# ADR 0018 (SQLite, authoritative): the version is PRAGMA user_version. Forward-only: append a step,
+# never edit one that has shipped. Step N brings a file from user_version N-1 to N.
 MIGRATIONS = ((
     """CREATE TABLE users (
         id INTEGER PRIMARY KEY,
@@ -39,6 +40,10 @@ MIGRATIONS = ((
     "INSERT INTO site (id, presence_mode) VALUES (1, NULL)",
 ),)
 SCHEMA_VERSION = len(MIGRATIONS)
+
+
+class SiteStoreError(Exception):
+    """The store file cannot be used (newer version, unreadable or corrupt). Startup stops; the file is left alone."""
 
 
 def default_db_path():
@@ -87,12 +92,28 @@ class SiteStore:
         directory = os.path.dirname(path)
         if directory:
             os.makedirs(directory, exist_ok=True)
+        self.path = path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         try:
+            version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > SCHEMA_VERSION:
+                raise SiteStoreError(
+                    f"{path}: schema version {version} is newer than this code ({SCHEMA_VERSION}); "
+                    "refusing to start. Run the newer code or restore an older backup.")
+            if 0 < version < SCHEMA_VERSION:  # ADR 0018: keep the old file before the first step runs
+                backup = sqlite3.connect(f"{path}.v{version}.bak")
+                try:
+                    self._conn.backup(backup)
+                finally:
+                    backup.close()
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
-            _migrate(self._conn)
+            _migrate(self._conn, version)
+        except sqlite3.DatabaseError as e:
+            self._conn.close()
+            raise SiteStoreError(f"{path}: cannot be read or migrated ({e}); refusing to start. "
+                                 "The file is left as it is; restore a backup.") from e
         except BaseException:
             self._conn.close()
             raise
@@ -158,22 +179,18 @@ def _token_hash(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _migrate(conn):
-    """Bring the file to SCHEMA_VERSION in one transaction per step. Safe to run on every open."""
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
-        version = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version").fetchone()[0]
-        if version > SCHEMA_VERSION:
-            raise sqlite3.DatabaseError(f"schema version {version} is newer than {SCHEMA_VERSION}")
-        for n in range(version, SCHEMA_VERSION):
+def _migrate(conn, version):
+    """Run the steps after `version`, each in its own transaction that also sets user_version."""
+    for n in range(version, SCHEMA_VERSION):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
             for statement in MIGRATIONS[n]:
                 conn.execute(statement)
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (n + 1,))
-        conn.execute("COMMIT")
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
+            conn.execute(f"PRAGMA user_version = {n + 1}")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
 
 
 def main(argv=None):
@@ -189,7 +206,11 @@ def main(argv=None):
     if password != getpass.getpass("Repeat password: "):
         print("passwords do not match; no user created", file=sys.stderr)
         return 1
-    store = SiteStore(args.db)
+    try:
+        store = SiteStore(args.db)
+    except SiteStoreError as e:
+        print(str(e), file=sys.stderr)
+        return 1
     try:
         store.create_admin(args.username, password)
     except ValueError as e:
