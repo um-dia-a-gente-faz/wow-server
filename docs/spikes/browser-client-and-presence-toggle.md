@@ -15,15 +15,18 @@ deferred "agents play while the owner is away" toggle really depend on that? (#3
 
 1. **Feasibility: partial at best.** The only open-source browser WoW client aimed at 3.3.5a,
    Wowser, authenticates, lists realms and characters and enters the world, but renders
-   terrain and models only experimentally and its last core commit is from 2021. Nothing found
+   terrain and models only experimentally and its last code change is the v0.0.2 release on 2020-03-20 (a 2021 commit touches only the README). Nothing found
    is a playable browser client.
 2. **Legal limit:** every project needs the user's own copy of the client files, and Blizzard's
    EULA restricts derivative works and unauthorized servers. A design must keep assets on the
    owner's machine or LAN. Not legal advice.
 3. **The toggle does not need a browser client.** It needs a place to store the mode, a
    controller that pauses and resumes agents, and a way to know the owner is online. The
-   only real link is "present" without a desktop PC.
-4. **Recommendation:** build the toggle first, on the agent API; do #337 stage 1 (a rendered
+   only real link is "present" without a desktop PC. **Owner decision needed:** the toggle was
+   deferred until the game is playable in a browser (#338); this spike finds no technical
+   dependency, so building it first reverses that recorded deferral. Keep the deferral or
+   lift it?
+4. **Recommendation:** if the owner lifts the deferral, build the toggle first, on the agent API; do #337 stage 1 (a rendered
    view of agent state) in the site; revisit a browser client only if the owner needs to play
    from a device with no Windows client. Rough size if ever built: very large.
 
@@ -34,7 +37,7 @@ README.
 
 | Project | What it is | State | Licence |
 |---|---|---|---|
-| [wowserhq/wowser](https://github.com/wowserhq/wowser#readme) (umbrella) | "World of Warcraft in the browser using JavaScript and WebGL"; 3.3.5a only | Proof of concept; being split into client and pipeline; package v0.0.2; last commit 2021-02-12 | MIT |
+| [wowserhq/wowser](https://github.com/wowserhq/wowser#readme) (umbrella) | "World of Warcraft in the browser using JavaScript and WebGL"; 3.3.5a only | Proof of concept; being split into client and pipeline; package v0.0.2; last code change 2020-03-20 (release v0.0.2); last commit 2021-02-12 is README only | MIT |
 | [wowserhq/client](https://github.com/wowserhq/client#readme) | TypeScript, vite, WebGL 2 web client for Blizzard UI files | Pushed 2025-10-08. README: "extremely primitive scene rendering" (frames and textures mostly), "no BLP support yet" | MIT |
 | [wowserhq/pipeline](https://github.com/wowserhq/pipeline#readme) | Node asset server: serves client MPQ data over HTTP, BLP to PNG, DBC to JSON | Pushed 2018; MPQ clients only | MIT per README; GitHub reports `NOASSERTION` |
 | [Deamon87/WebWowViewerCpp](https://github.com/Deamon87/WebWowViewerCpp#readme) | C++ map and model viewer with a WebGL build used at wow.tools/mv | Active (pushed 2026-09-14). A viewer with no game protocol; its README describes opening a local CASC storage, not 3.3.5a MPQs | GitHub reports no licence |
@@ -50,7 +53,7 @@ progress" on terrain and models. It warns against use on retail servers.
 | Layer | Status in the browser | Evidence |
 |---|---|---|
 | Transport | Browsers have no raw TCP. Wowser opens `ws://` and depends on `websockify` to reach the realm's TCP ports | [`src/lib/net/socket.js`](https://github.com/wowserhq/wowser/blob/master/src/lib/net/socket.js), [`package.json`](https://github.com/wowserhq/wowser/blob/master/package.json). The general platform rule is **Unverified** here |
-| Auth (SRP6) | Done in JS (own big-number and SHA1 code) | [`src/lib/crypto/srp.js`](https://github.com/wowserhq/wowser/blob/master/src/lib/crypto/srp.js) |
+| Auth (SRP6) | Done in JS, wrapping the third-party `jsbn` library (`jsbn/lib/big-integer`, `jsbn/lib/sha1`) for big numbers and SHA1; see also [`big-num.js`](https://github.com/wowserhq/wowser/blob/master/src/lib/crypto/big-num.js) | [`src/lib/crypto/srp.js`](https://github.com/wowserhq/wowser/blob/master/src/lib/crypto/srp.js) |
 | World protocol | Partial: connect, characters, enter world, packet logging. Movement, combat, spells, quests and inventory are not in its feature list | Wowser README, *Features* |
 | Rendering | ADT, M2 and WMO loaders exist in [`src/lib/pipeline`](https://github.com/wowserhq/wowser/tree/master/src/lib/pipeline); README says only "good progress". The UI client is at frames and textures | Wowser and client READMEs |
 | Asset delivery | A server converts MPQ data; the browser never reads MPQs. The server needs StormLib and BLPConverter | Wowser README *Development*; pipeline README |
@@ -97,8 +100,9 @@ admin-adjacent service (ADR 0013).
 
 ## How the presence toggle depends on a browser client
 
-**Source of the requirement.** The deferral is stated in #338 and in
-[ADR 0012](../adr/0012-site-stack.md) (the field is "reserved ... not exposed yet"). Spec #310
+**Source of the requirement.** The condition that the toggle waits for
+a playable browser game is recorded in #338 only. [ADR 0012](../adr/0012-site-stack.md)
+records only that the field is "reserved ... not exposed yet". Spec #310
 (story 41 and *Out of Scope*) lists live view, the browser WebAssembly client and the toggle
 as research issues, with "only the data field" reserved. `docs/AGENT-DIRECTION.md` has no
 entry on it (searched for presence, away, toggle, browser). The reason for tying it to browser
@@ -157,7 +161,8 @@ Rough person-effort estimates, not measured. **Unverified**; no primary source e
 
 ## Recommendation
 
-1. Do **A** once the Console v4 store exists. First settle the open product questions (modes,
+1. **Owner decision first:** A reverses the recorded deferral (#338: wait until the game is
+   playable in a browser). If the owner lifts it, do **A** once the Console v4 store exists. First settle the open product questions (modes,
    global vs. per agent, definition of away) in the issue. Keep it client-independent.
 2. Do **B** for visibility; it covers watching from a phone far more cheaply than D.
 3. Do not start **D** unless the owner needs to play from a device with no Windows client. If
