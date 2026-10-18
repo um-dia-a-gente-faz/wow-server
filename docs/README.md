@@ -51,3 +51,4 @@ Finished investigations in [spikes/](spikes/). Each starts with a status line: o
 | [spikes/MAP_ENGINE_SPIKE.md](spikes/MAP_ENGINE_SPIKE.md) | stay on Leaflet (UM-77); prototype in `spikes/map-engine-spike/` |
 | [spikes/AI-AGENT-SPEC.md](spikes/AI-AGENT-SPEC.md) | archived plan (#365): original spec for the playing agents; `AGENT-DIRECTION.md` overrides it |
 | [spikes/ROADMAP.md](spikes/ROADMAP.md) | archived plan (#365): background and design notes; the tracker is the source for scope and status |
+| [spikes/browser-client-and-presence-toggle.md](spikes/browser-client-and-presence-toggle.md) | no browser client now; build the presence toggle without it (#338) |
