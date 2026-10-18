@@ -74,7 +74,8 @@ class GameState:
         # Death/resurrection (UM-43)
         self.corpse_position: tuple | None = None  # (map_id, x, y, z) from MSG_CORPSE_QUERY's response, or None
         self.corpse_reclaim_ready_at: float | None = None  # time.monotonic() deadline from SMSG_CORPSE_RECLAIM_DELAY, or None
-        self.graveyard_position = None    # (map_id, x, y, z) from SMSG_DEATH_RELEASE_LOC, informational only
+        self.graveyard_position = None    # (map_id, x, y, z) from SMSG_DEATH_RELEASE_LOC: the way back when the corpse is unreachable (#763)
+        self.corpse_unreachable_recorded = False  # #763: an unmet intent was recorded for this death; re-armed once alive
         self._was_alive = True            # tracks health>0 -> 0 for the 'death' event (see handlers/world.py::sync_self_from_block)
 
         # Reconnect supervisor (UM-43, agent/supervisor.py)

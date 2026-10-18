@@ -45,6 +45,7 @@ def check_death_transition(ctx, me):
         ctx.state._was_alive = True
         if not me.is_ghost():
             ctx.state.corpse_position = None  # #521: alive again, so the corpse we queried for is gone
+            ctx.state.corpse_unreachable_recorded = False  # #763: the next death may record again
 
 
 def infer_killer_guid(ctx):

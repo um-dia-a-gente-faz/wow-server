@@ -20,6 +20,7 @@ from agent.handlers import death as hd
 from agent.tests.builders import FakeSession
 from agent.tests.test_think import FakeLLMClient
 from agent.tests.restore import join_new_threads
+from agent.unmet import UnmetIntents
 
 
 PLAYER_FLAGS_GHOST = per.PLAYER_FLAGS_GHOST
@@ -61,6 +62,10 @@ def create_self(world, guid, x, y, z, health, player_flags=0, max_health=100):
 def set_player_flags(world, guid, flags):
     world.update_object(uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=guid,
                                         fields={uf.PLAYER_FLAGS: flags}))
+
+
+def set_fields(world, guid, fields):
+    world.update_object(uo.UpdateBlock(update_type=uo.UPDATETYPE_VALUES, guid=guid, fields=fields))
 
 
 def create_corpse(world, guid, x, y, z):
@@ -390,6 +395,141 @@ class ReclaimLoopGuardWalkTest(unittest.TestCase):
                 self.assertIsNotNone(alive_at, "still a ghost after 20 minutes")
                 self.assertLessEqual(alive_at, delay_s + think.LOOP_GUARD_COOLDOWN_S + self.CYCLE_S)
                 self.assertGreaterEqual(alive_at, delay_s)  # never before the server's delay
+
+GRAVEYARD = (0, 50.0, 0.0, 0.0)
+
+
+def _unreachable_corpse_session(graveyard=GRAVEYARD):
+    """A ghost at the corpse-query position (5 yd out), no corpse object in perception, and the
+    spirit healer only at the graveyard: it appears in perception once the fake mover arrives there."""
+    sess, world, _clock = fast_session(position=(0, 0.0, 0.0, 0.0, 0.0))
+    create_self(world, sess.player_guid, 0, 0, 0, health=1, player_flags=PLAYER_FLAGS_GHOST)
+    sess.corpse_position = (0, 5.0, 0.0, 0.0)
+    sess.graveyard_position = graveyard
+    return sess, world
+
+
+def _arrive_at_graveyard(sess, world, healer_at=GRAVEYARD, moves=None):
+    """A fake mover: a move to the graveyard puts a spirit healer into perception there."""
+    def move_to(x, y, z=None, **_kw):
+        if moves is not None:
+            moves.append((x, y))
+        if (x, y) == (healer_at[1], healer_at[2]):
+            create_spirit_healer(world, 0xEA10, x, y, 0.0)
+        return {"ok": True, "error": None, "detail": {}}
+
+    sess.mover.move_to = move_to
+    sess.mover.move_towards = lambda guid, **_kw: {"ok": True, "error": None, "detail": {}}
+
+
+def _resurrect_on_activate(sess, world):
+    def answer(opcode, payload=b''):
+        sess._sent.append((opcode, payload))
+        if opcode == dt.CMSG_SPIRIT_HEALER_ACTIVATE:
+            set_player_flags(world, sess.player_guid, 0)
+    sess._send_packet = answer
+
+
+class CorpseUnreachableTest(unittest.TestCase):
+    """#763: the corpse run arrives where the corpse was, and there is no corpse object there
+    (an instance death: ActualMapID is the dungeon entrance). The way back is the graveyard's spirit healer."""
+
+    def test_walks_to_graveyard_and_activates_the_healer_flagged(self):
+        sess, world = _unreachable_corpse_session()
+        moves = []
+        _arrive_at_graveyard(sess, world, moves=moves)
+        _resurrect_on_activate(sess, world)
+
+        result = ac.REGISTRY["reclaim_corpse"].execute(sess, world)
+
+        self.assertTrue(result.ok, result.error)
+        self.assertIn((GRAVEYARD[1], GRAVEYARD[2]), moves)
+        self.assertEqual(result.detail["method"], "spirit_healer")
+        self.assertEqual(result.detail["guid"], 0xEA10)
+        self.assertIs(result.detail["corpse_unreachable"], True)
+        self.assertIn((dt.CMSG_SPIRIT_HEALER_ACTIVATE, struct.pack('<Q', 0xEA10)), sess._sent)
+
+    def test_failure_when_the_graveyard_has_no_healer_is_still_flagged(self):
+        sess, world = _unreachable_corpse_session()
+        _arrive_at_graveyard(sess, world, healer_at=(0, 999.0, 0.0, 0.0))  # no healer at the graveyard
+
+        result = ac.REGISTRY["reclaim_corpse"].execute(sess, world)
+
+        self.assertFalse(result.ok)
+        self.assertIn("no spirit healer", result.error)
+        self.assertIs(result.detail["corpse_unreachable"], True)
+
+    def test_graveyard_on_another_map_is_not_walked_and_the_failure_is_flagged(self):
+        sess, world = _unreachable_corpse_session(graveyard=(1, 50.0, 0.0, 0.0))
+        moves = []
+        _arrive_at_graveyard(sess, world, moves=moves)
+
+        result = ac.REGISTRY["reclaim_corpse"].execute(sess, world)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(moves, [(5.0, 0.0)])  # only the corpse run; no walk to the other map's graveyard
+        self.assertIs(result.detail["corpse_unreachable"], True)
+
+    def test_a_reachable_corpse_is_not_flagged(self):
+        sess, world = _unreachable_corpse_session()
+        create_corpse(world, 0xC001, 5.0, 0.0, 0.0)
+        sess.mover.move_to = lambda *a, **k: {"ok": True, "error": None, "detail": {}}
+        sess._send_packet = lambda opcode, payload=b'': None  # never confirms: falls through to the healer path
+
+        with mock.patch.object(dt, "RESURRECT_CONFIRM_TIMEOUT_S", 0.01):
+            result = ac.REGISTRY["reclaim_corpse"].execute(sess, world)
+
+        self.assertNotIn("corpse_unreachable", result.detail or {})
+
+
+class CorpseUnreachableRecordTest(unittest.TestCase):
+    """#763 record: one unmet intent per death. UnmetIntents' own 60 s dedup is kept out of the
+    way by a clock that moves 90 s between cycles, so only the per-death flag can stop a second record."""
+
+    CYCLE_S = 90.0
+
+    def setUp(self):
+        self.sess, self.world = _unreachable_corpse_session()
+        self.clock = _Clock()
+        self.unmet = UnmetIntents("Luaprata", "explore", clock=self.clock.now)
+        self.state = think.ThinkState(clock=self.clock.now)
+        self.llm = FakeLLMClient(action_name="reclaim_corpse", params={})
+        _arrive_at_graveyard(self.sess, self.world, healer_at=(0, 999.0, 0.0, 0.0))  # the healer never shows up
+
+    def _think(self):
+        return think.think_and_act(self.sess, self.world, self.llm, my_position=self.sess.player_position,
+                                   registry=ac.REGISTRY, state=self.state, unmet=self.unmet)
+
+    def _next_cycle(self):
+        self.clock.t += self.CYCLE_S
+
+    def _records(self):
+        return [r for r in self.unmet.recent() if r["kind"] == "corpse_unreachable"]
+
+    def test_two_cycles_in_one_death_record_once(self):
+        self._think()
+        self._next_cycle()
+        self._think()
+        recs = self._records()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["wanted"]["action"], "reclaim_corpse")
+
+    def test_a_second_death_records_again(self):
+        self._think()
+        self._next_cycle()
+        self._think()
+        self.assertEqual(len(self._records()), 1)
+
+        # resurrected (alive, not a ghost), then a second death
+        set_fields(self.world, self.sess.player_guid, {uf.UNIT_FIELD_HEALTH: 100, uf.PLAYER_FLAGS: 0})
+        hd.check_death_transition(SimpleNamespace(state=self.sess), self.world.get_my_object())
+        set_fields(self.world, self.sess.player_guid, {uf.UNIT_FIELD_HEALTH: 1, uf.PLAYER_FLAGS: PLAYER_FLAGS_GHOST})
+        self.sess.corpse_position = (0, 5.0, 0.0, 0.0)
+        self._next_cycle()
+        self._think()
+
+        self.assertEqual(len(self._records()), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

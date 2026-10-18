@@ -87,6 +87,10 @@ class PlayerView(Protocol):
     corpse_position: tuple | None
     # time.monotonic() deadline from SMSG_CORPSE_RECLAIM_DELAY, or None.
     corpse_reclaim_ready_at: float | None
+    # (map_id, x, y, z) from SMSG_DEATH_RELEASE_LOC, or None: the graveyard, the way back when the corpse is unreachable (#763).
+    graveyard_position: tuple | None
+    # #763: an unmet intent was already recorded for this death.
+    corpse_unreachable_recorded: bool
     # True once the socket died without a requested logout.
     unexpected_disconnect: bool
     # The world model, agent.perception.WorldState; typed Any because this module imports
