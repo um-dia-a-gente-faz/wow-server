@@ -86,6 +86,15 @@ class AdminTest(SiteStoreCase):
         self.assertTrue(stored.startswith("scrypt$16384$8$1$"), stored)
         self.assertNotIn(PASSWORD, stored)
 
+    def test_unknown_user_still_runs_scrypt(self):
+        # Username enumeration by timing: an unknown user must cost one scrypt check too.
+        self.store.create_admin("owner", PASSWORD)
+        with mock.patch.object(sitestore, "check_password", wraps=sitestore.check_password) as check:
+            self.assertIsNone(self.store.verify("nobody", PASSWORD))
+        check.assert_called_once()
+        self.assertEqual(check.call_args.args[0], PASSWORD)
+        self.assertTrue(check.call_args.args[1].startswith("scrypt$"))
+
 
 class SessionTest(SiteStoreCase):
     def setUp(self):
@@ -177,9 +186,27 @@ class MigrationTest(unittest.TestCase):
     def test_unversioned_file_with_users_table_refused_not_recreated(self):
         raw(self.path, "CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, pw_hash TEXT, created_at TEXT)")
         raw(self.path, "INSERT INTO users (username, pw_hash, created_at) VALUES ('owner', 'x', 'x')")
+        before = file_sha256(self.path)
         with self.assertRaises(sitestore.SiteStoreError):
             sitestore.SiteStore(self.path)
+        self.assertEqual(file_sha256(self.path), before)
         self.assertEqual(raw_rows(self.path, "SELECT username FROM users"), [("owner",)])
+
+    def test_unversioned_file_with_unrelated_table_refused_and_bytes_unchanged(self):
+        raw(self.path, "CREATE TABLE characters (guid int)")
+        raw(self.path, "INSERT INTO characters (guid) VALUES (42)")
+        before = file_sha256(self.path)
+        with self.assertRaises(sitestore.SiteStoreError) as ctx:
+            sitestore.SiteStore(self.path)
+        self.assertIn(self.path, str(ctx.exception))
+        self.assertEqual(file_sha256(self.path), before)
+        self.assertEqual(raw_rows(self.path, "SELECT name FROM sqlite_master WHERE type = 'table'"),
+                         [("characters",)])
+
+
+def file_sha256(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 def raw_rows(path, sql):

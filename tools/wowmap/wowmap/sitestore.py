@@ -97,6 +97,11 @@ class SiteStore:
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         try:
             version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            # Before any write (the WAL switch rewrites the header): a file with tables but no version is
+            # not ours to migrate, whatever its tables are called.
+            if version == 0 and self._conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0]:
+                raise SiteStoreError(f"{path}: has tables but no user_version; refusing to start. "
+                                     "The file is left as it is; restore a backup or point SITE_DB elsewhere.")
             if version > SCHEMA_VERSION:
                 raise SiteStoreError(
                     f"{path}: schema version {version} is newer than this code ({SCHEMA_VERSION}); "
