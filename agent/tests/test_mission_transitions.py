@@ -9,6 +9,7 @@ from agent import brain as br
 from agent import config
 from agent import root as main_mod
 from agent.brain import BrainError, Decision
+from agent.jev import JevError
 from agent.http_api import AgentObserver
 from agent.perception import WorldState
 from agent.state import GameState
@@ -54,6 +55,19 @@ class BrainTransitionTest(unittest.TestCase):
         snaps = [snap(5, ZONE_A), snap(5, ZONE_A), snap(5, ZONE_B), snap(5, ZONE_C), snap(5, ZONE_A)]
         self.assertEqual(changes(b, snaps), [(2, ("explore", "level_to_cap", "explored"))])
         self.assertEqual(b.mission, "level_to_cap")
+
+    def test_a_failing_brain_still_carries_the_transition(self):
+        class DownJev:
+            model = "down"
+
+            def choose_action(self, *a, **kw):
+                raise JevError("down")
+
+        b = br.Brain(jev=DownJev(), mission="level_to_cap", explore_new_zones=2, level_cap=CAP)
+        with self.assertRaises(BrainError) as caught:
+            b.decide(snap(CAP, ZONE_A))
+        self.assertEqual(caught.exception.decision.mission_change, ("level_to_cap", "explore", "level_cap"))
+        self.assertEqual(b.mission, "explore")
 
     def test_a_snapshot_without_level_or_zone_moves_nothing(self):
         b = br.Brain(jev=FirstJev(), mission="explore", explore_new_zones=1, level_cap=CAP)
