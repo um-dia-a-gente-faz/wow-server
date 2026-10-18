@@ -88,8 +88,9 @@ from . import action_names as A, item_compare
 from .action_specs import cap_of
 from .candidate_history import finish, history_effects
 from .candidate_history import HISTORY_DEMOTE_REPEATS, HISTORY_DROP_WINDOW  # noqa: F401 (re-exported)
+from .candidate_windows import _backpack, _sellable, _window_candidates, candidate  # noqa: F401 (re-exported)
 from .missions import DEFAULT_MISSION
-from .model import ActionRecord, Candidate, Item, KnownSpell, Me, Snapshot, Unit
+from .model import ActionRecord, Candidate, KnownSpell, Me, Snapshot, Unit
 from .rules import APPROACH_MAX_YD, ATTACK_LEVEL_MARGIN, INTERACT_RANGE_YD, MELEE_RANGE_YD, NO_PULL_RANKS, SELL_TRIP_MIN_ITEMS
 
 MAX_CANDIDATES = 15
@@ -124,15 +125,6 @@ _EQUIP_SLOTS = {
     19: (18,), 20: (4,), 21: (15,), 22: (16,), 23: (16,),
     25: (17,), 26: (17,), 28: (17,),
 }
-_BACKPACK_FIRST, _BACKPACK_LAST = 23, 38
-
-
-def _backpack(item: Item) -> bool:
-    return isinstance(item.get("slot"), int) and _BACKPACK_FIRST <= item["slot"] <= _BACKPACK_LAST
-
-
-def _sellable(item: Item, mission: str) -> bool:
-    return _backpack(item) and item_compare.sellable(item, mission)
 
 
 def _resource_pct(me: Me | None, resource: Literal["health", "mana"]) -> float | None:
@@ -168,13 +160,6 @@ NOT_OFFERED = {
 # agent.quests.QUEST_GIVER_STATUS_NAMES values worth walking over for.
 _QUEST_GIVER_WORTH_VISITING = {"available": "has a quest", "reward": "quest ready to turn in",
                                "reward_rep": "quest ready to turn in"}
-
-
-def candidate(action: str, params: dict, label: str) -> Candidate:
-    """Build one candidate with its stable id."""
-    key = ",".join(f"{k}={params[k]}" for k in sorted(params))
-    return {"id": f"{action}:{key}" if key else action, "label": label,
-            "action": action, "params": dict(params)}
 
 
 def _name(unit: Unit) -> str:
@@ -241,66 +226,6 @@ def is_mission_fallback(c: Candidate) -> bool:
     """True for the option _mission_candidates builds (any mission, any heading)."""
     label = str(c.get("label") or "")
     return any(label.endswith(f": explore {MISSION_STEP_YD:g} yd {name}") for name, _, _ in _MISSION_HEADINGS)
-
-
-def _window_candidates(snapshot: Snapshot, mission: str = DEFAULT_MISSION) -> list[Candidate]:
-    window = snapshot.get("window")
-    if not isinstance(window, dict):
-        return []
-    kind = window.get("kind")
-    # A vendor window names its NPC vendor_guid (npc.parse_list_inventory via apply_list_inventory), not npc_guid.
-    npc_guid = window.get("npc_guid", window.get("vendor_guid"))
-    in_log = {q.get("quest_id") for q in snapshot.get("quest_log") or []}
-    out = []
-
-    if kind == "trainer" and npc_guid is not None:
-        known = {s.get("id") for s in snapshot.get("spells") or []}
-        for spell in (window.get("spells") or [])[:MAX_TRAIN]:
-            if spell.get("spell_id") not in known:
-                out.append(candidate(A.TRAIN_SPELL, {"trainer_guid": npc_guid, "spell_id": spell["spell_id"]},
-                                     f"train spell {spell['spell_id']}"))
-    if kind == "vendor" and npc_guid is not None:
-        inventory = snapshot.get("inventory") or []
-        for item in inventory:
-            if _sellable(item, mission):
-                grey = (item.get("template") or {}).get("quality") == item_compare.ITEM_QUALITY_POOR
-                out.append(candidate(A.SELL_ITEM, {"vendor_guid": npc_guid, "bag": 255, "slot": item["slot"]},
-                                     f"sell {'grey' if grey else 'gold'} item {item.get('name') or item.get('entry')}"))
-                if sum(c["action"] == A.SELL_ITEM for c in out) >= MAX_SELL:
-                    break
-
-    if kind == "quest_details" and npc_guid is not None:
-        out.append(candidate(A.ACCEPT_QUEST, {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
-                             f"accept quest {window.get('title') or window['quest_id']}"))
-    elif kind in ("quest_list", "gossip") and npc_guid is not None:
-        for q in window.get("quests") or []:
-            title = q.get("title") or q["quest_id"]
-            if q["quest_id"] in in_log:
-                out.append(candidate(A.COMPLETE_QUEST, {"npc_guid": npc_guid, "quest_id": q["quest_id"]},
-                                     f"hand in quest {title}"))
-            else:
-                out.append(candidate(A.ACCEPT_QUEST, {"npc_guid": npc_guid, "quest_id": q["quest_id"]},
-                                     f"accept quest {title}"))
-        if kind == "gossip":
-            # Coded options need typed text; that's free text, so never offered.
-            options = [o for o in window.get("options") or [] if not o.get("coded")]
-            for o in options[:MAX_GOSSIP_OPTIONS]:
-                out.append(candidate(A.GOSSIP_SELECT, {"option_index": o["index"]},
-                                     f"choose dialogue option: {o.get('text') or o['index']}"))
-    elif kind == "quest_request_items" and npc_guid is not None:
-        out.append(candidate(A.COMPLETE_QUEST, {"npc_guid": npc_guid, "quest_id": window["quest_id"]},
-                             f"hand in quest {window.get('title') or window['quest_id']}"))
-    elif kind == "quest_offer_reward" and npc_guid is not None:
-        title = window.get("title") or window["quest_id"]
-        choices = window.get("reward_choice_items") or []
-        for i, item in enumerate(choices or [None]):
-            what = f" taking reward item {item.get('entry')}" if item else ""
-            out.append(candidate(A.TURN_IN_QUEST,
-                                 {"npc_guid": npc_guid, "quest_id": window["quest_id"], "reward_choice": i},
-                                 f"turn in quest {title}{what}"))
-
-    out.append(candidate(A.CLOSE_WINDOW, {}, f"close the {kind or 'open'} window"))
-    return out
 
 
 class _Context:
