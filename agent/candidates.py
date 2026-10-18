@@ -33,7 +33,7 @@ Each candidate is a plain JSON-serialisable dict:
 
 Selection rules, briefly: units attacking the agent come first; lootable
 corpses and quest givers worth visiting (quest available / reward ready)
-within APPROACH_MAX_YD; unprovoked attack options only for units with no
+within APPROACH_MAX_YD; units and gameobjects an open quest objective names come before the attack options (#315); unprovoked attack options only for units with no
 npc_flags, not in someone else's fight, and at most ATTACK_LEVEL_MARGIN
 levels above the agent (none at all while its level is unknown; while hurt
 (needs_health) only units already in combat). Anything out of reach becomes a short `move_towards` hop.
@@ -501,25 +501,72 @@ def _abandon_quest_provider(ctx: _Context, out: list[Candidate]) -> None:
                              f"abandon failed quest {q.get('title') or q.get('quest_id')}"))
 
 
+def _pullable(ctx: _Context, u: Unit) -> bool:
+    """An unprovoked pull is allowed for this unit. Shared by _attack_provider and _quest_target_provider
+    (#315), so a quest target is never pulled where a plain attack would not be."""
+    return (u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
+            and not u.get("npc_flags")
+            # gh-674: no unprovoked pull on an elite or on a unit of unknown rank. In combat, a unit that
+            # may be our attacker (stunned or fleeing: target 0 or none, gh-555) is defence, never filtered.
+            and ((u.get("resolved", True) and u.get("rank") not in NO_PULL_RANKS)
+                 or (ctx.in_combat and ctx._may_attack_me(u)))
+            and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
+            # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays),
+            # unless we are in combat with no possible attacker in view: a stuck combat flag, so the pull
+            # is offered again (gh-544, narrowed by gh-555)
+            and not (ctx.needs_health and not u.get("in_combat") and not (ctx.in_combat and not ctx.possible_attackers))
+            # unprovoked pulls only when both levels are known and the mob isn't too strong
+            and ctx.my_level is not None and isinstance(u.get("level"), int)
+            and u["level"] <= ctx.my_level + ATTACK_LEVEL_MARGIN
+            # someone else's fight: not ours to take (only knowable with my_guid)
+            and not (ctx.my_guid is not None and u.get("in_combat")
+                     and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, ctx.my_guid)))
+
+
+def _open_entries(ctx: _Context, gameobject: bool) -> dict[int, str]:
+    """entry -> objective text for each open kill (gameobject=False) or gameobject (True) objective of an
+    incomplete quest (#315). Item objectives have no counter in the snapshot (count None) and never match."""
+    out: dict[int, str] = {}
+    for q in ctx.snapshot.get("quest_log") or []:
+        if q.get("state_name") != "incomplete":
+            continue
+        for o in q.get("objectives") or []:
+            is_go = "gameobject" in o and bool(o["gameobject"])  # item objectives have no such key
+            if is_go == gameobject and o.get("entry") and isinstance(o.get("count"), int) and o["count"] < o["needed"]:
+                out.setdefault(o["entry"], o["text"])
+    return out
+
+
+def _kill_targets(ctx: _Context) -> list[tuple[Unit, str]]:
+    """Units an open kill objective names and _pullable allows, nearest first, with the objective text."""
+    kills = _open_entries(ctx, gameobject=False)
+    return [(u, kills[e]) for u in ctx.units
+            if (e := u.get("entry")) is not None and e in kills and _pullable(ctx, u)]
+
+
+@offers(A.AUTO_ATTACK, A.MOVE_TOWARDS, A.INTERACT)
+def _quest_target_provider(ctx: _Context, out: list[Candidate]) -> None:
+    """#315: units an open kill objective names, and gameobjects an open gameobject objective names."""
+    for u, text in _kill_targets(ctx)[:MAX_ATTACK]:
+        out.append(_engage(u, f"quest: {text}"))
+    gos = _open_entries(ctx, gameobject=True)
+    objects = [(u, gos[e]) for u in ctx.snapshot.get("nearby_objects") or []
+               if u.get("type") == "gameobject" and (e := u.get("entry")) is not None and e in gos
+               and _dist(u) <= APPROACH_MAX_YD and _guid_value(u, "guid", ctx.handles) is not None]
+    for u, text in sorted(objects, key=lambda pair: _dist(pair[0]))[:MAX_QUEST_GIVERS]:
+        why = f"quest: {text}"
+        if _dist(u) <= INTERACT_RANGE_YD:
+            out.append(candidate(A.INTERACT, {"guid": u["guid"]}, f"use {_name(u)} ({why})"))
+        else:
+            out.append(candidate(A.MOVE_TOWARDS, {"guid": u["guid"], "stop_distance": 3.0},
+                                 f"walk to {_name(u)} ({why}, {_dist(u):.1f} yd)"))
+
+
 @offers(A.AUTO_ATTACK, A.MOVE_TOWARDS)
 def _attack_provider(ctx: _Context, out: list[Candidate]) -> None:
-    targets = [u for u in ctx.units if u["guid"] not in ctx.threat_guids and _alive(u) and not u.get("lootable")
-               and not u.get("npc_flags")
-               # gh-674: no unprovoked pull on an elite or on a unit of unknown rank. In combat, a unit that
-               # may be our attacker (stunned or fleeing: target 0 or none, gh-555) is defence, never filtered.
-               and ((u.get("resolved", True) and u.get("rank") not in NO_PULL_RANKS)
-                    or (ctx.in_combat and ctx._may_attack_me(u)))
-               and u.get("quest_giver_status") in (None, "none") and _dist(u) <= APPROACH_MAX_YD
-               # hurt: only a unit already fighting (health does not regen in combat, so a stunned attacker stays),
-               # unless we are in combat with no possible attacker in view: a stuck combat flag, so the pull
-               # is offered again (gh-544, narrowed by gh-555)
-               and not (ctx.needs_health and not u.get("in_combat") and not (ctx.in_combat and not ctx.possible_attackers))
-               # unprovoked pulls only when both levels are known and the mob isn't too strong
-               and ctx.my_level is not None and isinstance(u.get("level"), int)
-               and u["level"] <= ctx.my_level + ATTACK_LEVEL_MARGIN
-               # someone else's fight: not ours to take (only knowable with my_guid)
-               and not (ctx.my_guid is not None and u.get("in_combat")
-                        and _guid_value(u, "target_guid", ctx.handles) not in (None, 0, ctx.my_guid))]
+    # The quest targets _quest_target_provider offered (#315) are not offered again as plain attacks.
+    offered = {_guid_value(u, "guid", ctx.handles) for u, _ in _kill_targets(ctx)[:MAX_ATTACK]}
+    targets = [u for u in ctx.units if _pullable(ctx, u) and _guid_value(u, "guid", ctx.handles) not in offered]
     for u in targets[:MAX_ATTACK]:
         out.append(_engage(u, ""))
 
@@ -565,7 +612,8 @@ def _follow_reflex_provider(ctx: _Context, out: list[Candidate]) -> None:
 ALIVE_PROVIDERS: tuple[Provider, ...] = (
     _window_provider, _offensive_spell_provider, _heal_provider, _consumable_provider, _equip_provider,
     _group_invite_provider, _threat_provider, _loot_provider, _quest_giver_provider,
-    _abandon_quest_provider, _attack_provider, _sell_trip_provider, _follow_reflex_provider,
+    _abandon_quest_provider, _quest_target_provider, _attack_provider, _sell_trip_provider,
+    _follow_reflex_provider,
 )
 DEAD_PROVIDERS: tuple[Provider, ...] = (_dead_candidates,)
 
