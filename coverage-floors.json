@@ -19,6 +19,7 @@
     "agent/auth.py": 93,
     "agent/brain.py": 96,
     "agent/candidate_history.py": 98,
+    "agent/candidate_windows.py": 98,
     "agent/candidates.py": 96,
     "agent/channels.py": 98,
     "agent/chat_relay.py": 85,
