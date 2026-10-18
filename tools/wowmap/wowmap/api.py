@@ -18,6 +18,8 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 import players
@@ -113,6 +115,26 @@ def _answer(resp: tuple) -> Response:
         headers["Cache-Control"] = cache
     # media_type stays None: Starlette would add "; charset=utf-8" to text/* types, which the old server never sent.
     return Response(content=body, status_code=status, headers=headers)
+
+
+class SpaFiles(StaticFiles):
+    """The SvelteKit build (#324). A path that is not a file and has no extension is a client
+    route (/v2/some/deep/link), so index.html answers it; a missing asset stays a 404."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as e:
+            if e.status_code != 404 or "." in path.rsplit("/", 1)[-1]:
+                raise
+            return await super().get_response("index.html", scope)
+
+
+# The Dockerfile copies web/build here. Absent in a source checkout (build it in web/): /v2 then fails loudly.
+WEB_BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+web = SpaFiles(directory=WEB_BUILD, html=True, check_dir=False)
+# Before the catch-all below, which would otherwise answer /v2/... first.
+app.mount("/v2", web)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)
