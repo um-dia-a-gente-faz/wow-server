@@ -153,6 +153,16 @@ Three scrape targets on this VM:
 Prometheus jobs: `node_wow`, `cadvisor_wow`, `wow_game` (all labelled
 `host="wow-server"`).
 
+**Pathfinder sidecar (#816).** `pathfinder` (`tools/pathfinder`, the navmesh reader behind #82) runs
+in `monitoring/docker-compose.yml` on this VM, published on **8770** (LAN only, like every port here).
+It reads the worldserver's `mmaps/` from the `server_data` volume read-only, so it never writes game
+data and a restart of it leaves the worldserver alone. The agents reach it at
+`AGENT_PATHFINDER_URL=http://192.168.1.64:8770` (set in `agents/compose.py`). Check it with
+`curl http://192.168.1.64:8770/healthz`. **Memory (#834):** tiles load lazily, and an LRU keeps
+`PATHFINDER_MAX_TILES` parsed tiles per map (default 64) under the 512m limit. Whether 512m covers that on
+the real movement maps is a human step, not measured yet.
+The image is not in the path-aware deploy gate until #832 adds `tools/pathfinder/*` to `stacks_for`.
+
 - Prometheus: http://192.168.1.60:9091
 - Grafana: http://192.168.1.60:3001
   - **WoW — Jogadores & Atividade** (`wow-players`)

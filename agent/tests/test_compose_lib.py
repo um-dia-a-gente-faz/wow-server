@@ -50,6 +50,13 @@ class ComposeLibraryTests(unittest.TestCase):
         for marker in ("x-agent:", "container_name:", "jev-mock:", "def render", "def derive"):
             self.assertNotIn(marker, source, marker)
 
+    def test_agents_get_the_pathfinder_url_in_the_shared_env(self):
+        # #816: the sidecar runs on the wow-server VM (monitoring/docker-compose.yml), published on 8770
+        text = compose.render(entries())
+        self.assertEqual(text.count("AGENT_PATHFINDER_URL:"), 1)   # one anchor, every service merges it
+        env = text.split("environment: &env-defaults\n", 1)[1].split("  # Decision audit log", 1)[0]
+        self.assertIn("    AGENT_PATHFINDER_URL: http://192.168.1.64:8770\n", env)
+
     def test_audit_dir_replaces_only_the_volume_line(self):
         default, other = compose.render(entries()), compose.render(entries(), audit_dir="/srv/audit")
         self.assertIn("    - /srv/audit:/data/audit\n", other)

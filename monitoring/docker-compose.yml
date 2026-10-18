@@ -19,6 +19,7 @@
 #   :8080  cadvisor          per-container CPU / RAM / net
 #   :9300  wow-exporter      GAME metrics (players online, characters, activity...)
 #   :9400  wowmap            live map page + JSON API + map art
+#   :8770  pathfinder        navmesh sidecar for the agents (tools/pathfinder), LAN only
 #
 # Prometheus jobs (add to /opt/pandora/prometheus/prometheus.yml on VM201):
 #
@@ -140,6 +141,21 @@ services:
       - server_data:/server-data:ro
     networks:
       - wow-game
+
+  pathfinder:
+    container_name: pathfinder
+    build:
+      context: ../tools          # tools/ so the image holds only tools/pathfinder (its Dockerfile copies that)
+      dockerfile: pathfinder/Dockerfile
+    restart: unless-stopped
+    # Memory (#834): tiles load lazily; an LRU keeps PATHFINDER_MAX_TILES parsed tiles per map (default 64).
+    # Whether 512m covers that on the real movement maps is a human step (PR #830), not measured here.
+    mem_limit: 512m
+    ports:
+      - "8770:8770"
+    volumes:
+      # The worldserver's mmaps/, read-only: the pathfinder never writes the game's data.
+      - server_data:/server-data:ro
 
 networks:
   wow-game:

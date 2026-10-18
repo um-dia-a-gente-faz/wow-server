@@ -22,6 +22,7 @@ PER_SERVICE = {
     "AGENT_ROSTER": "the names of the whole roster, the same on every agent service",
     "AGENT_MISSION": "this service's own roster mission (#314, #762)",
     "AGENT_STATE_DIR": "this agent's own cache directory under the state volume (#252)",
+    "AGENT_PATHFINDER_URL": "the sidecar URL the generator writes as a literal (#816); a .env value never reaches the containers",
 }
 
 
