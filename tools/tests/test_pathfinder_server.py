@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from test_pathfinder_navmesh import build_tile, grid, sloped  # noqa: E402  (tools/tests is the start dir)
 from tools.pathfinder.navmesh import NavMesh  # noqa: E402  (the checkout root is on sys.path, ADR 0019)
-from tools.pathfinder.server import Server  # noqa: E402
+from tools.pathfinder.server import Maps, Server  # noqa: E402
 
 MAP = 530
 TILE_KEY = NavMesh({}, {}).tile_coords(25, 25)   # every fixture point is in this tile
@@ -193,6 +193,12 @@ class HealthzTests(ServerCase):
         self.assertEqual(self.call("GET", "/healthz"), (200, {"ok": True, "maps_loaded": []}))
         self.path(wow_point(5, 5), wow_point(5, 15))
         self.assertEqual(self.call("GET", "/healthz"), (200, {"ok": True, "maps_loaded": [MAP]}))
+
+
+class MapsTests(ServerCase):
+    def test_each_loaded_map_is_capped_at_max_tiles(self):
+        self.write_map(grid(2, 1, 10))
+        self.assertEqual(Maps(self.mmaps, max_tiles=2).get(MAP).tiles.max_tiles, 2)
 
 
 if __name__ == "__main__":

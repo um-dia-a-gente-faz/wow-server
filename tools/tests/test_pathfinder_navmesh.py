@@ -8,8 +8,10 @@ import random
 import struct
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -212,8 +214,8 @@ class LoadTests(unittest.TestCase):
             (mmaps / f"530{key[0]:02}{key[1]:02}.mmtile").write_bytes(mesh_data)
             (mmaps / "001000000.mmtile").write_bytes(b"not read")   # another map: ignored
             mesh = NavMesh.load(mmaps, 530)
-        self.assertEqual(mesh.params["maxPolys"], 1024)
-        self.assertIsNotNone(mesh.find_poly(5, 5))
+            self.assertEqual(mesh.params["maxPolys"], 1024)
+            self.assertIsNotNone(mesh.find_poly(5, 5))  # the tile is read on this query, so inside the dir
 
 
 def at(dx, dz, h=0.0):
@@ -426,6 +428,109 @@ class PathTests(unittest.TestCase):
         elapsed = time.perf_counter() - start
         self.assertIsNotNone(path)
         self.assertLess(elapsed, 0.05)
+
+class LazyTileTests(unittest.TestCase):
+    """NavMesh.load lists the .mmtile files and parses a tile on first use; max_tiles bounds the parsed ones."""
+
+    def write_map(self, mmaps, tiles):
+        """The .mmap of map 530 and one .mmtile per (file key, bytes) in tiles."""
+        (mmaps / "530.mmap").write_bytes(struct.pack("<5f2i", 0, 0, 0, GRID, GRID, 64, 1024))
+        for (gx, gy), data in tiles.items():
+            (mmaps / f"530{gx:02}{gy:02}.mmtile").write_bytes(data)
+
+    def chain(self, n):
+        """n tiles in a row on Detour z (WoW x), each [0, GRID] in x, joined on sides 2 and 6. Returns
+        {file key: bytes}; tile i sits at WoW x = 100 + 600 i, so its key steps once on gx per tile."""
+        keys = [NavMesh({}, {}).tile_coords(100 + 600 * i, 100) for i in range(n)]
+        out = {}
+        for i, key in enumerate(keys):
+            neis = [DT_EXT_LINK | 6 if i > 0 else 0, 0, DT_EXT_LINK | 2 if i < n - 1 else 0, 0]
+            out[key] = build_tile([{"verts": square(0, GRID, i * GRID, (i + 1) * GRID), "neis": neis}])
+        return out
+
+    def spy_reads(self):
+        """Patch Path.read_bytes to record the file names read; returns the list."""
+        real, names = pathlib.Path.read_bytes, []
+
+        def spy(path):
+            names.append(path.name)
+            return real(path)
+        return names, patch.object(pathlib.Path, "read_bytes", spy)
+
+    def test_load_reads_no_mmtile_bytes(self):
+        tiles = self.chain(3)
+        with tempfile.TemporaryDirectory() as tmp:
+            mmaps = pathlib.Path(tmp)
+            self.write_map(mmaps, tiles)
+            names, spy = self.spy_reads()
+            with spy:
+                mesh = NavMesh.load(mmaps, 530)
+            self.assertEqual([n for n in names if n.endswith(".mmtile")], [])
+            self.assertEqual(sorted(mesh.tiles), sorted(tiles))
+
+    def test_find_path_across_two_tiles_parses_exactly_those_tiles(self):
+        tiles = self.chain(2)
+        with tempfile.TemporaryDirectory() as tmp:
+            mmaps = pathlib.Path(tmp)
+            self.write_map(mmaps, tiles)
+            mesh = NavMesh.load(mmaps, 530)
+            names, spy = self.spy_reads()
+            with spy:
+                path = mesh.find_path(at(50, 50), at(50, 800))
+            self.assertEqual(path, [at(50, 50), at(50, 800)])
+            self.assertEqual(sorted(n for n in names if n.endswith(".mmtile")),
+                             sorted(f"530{gx:02}{gy:02}.mmtile" for gx, gy in tiles))
+
+    def test_a_path_over_three_tiles_holds_two_and_reparses_the_evicted_one(self):
+        tiles = self.chain(3)
+        first = NavMesh({}, {}).tile_coords(100, 100)
+        with tempfile.TemporaryDirectory() as tmp:
+            mmaps = pathlib.Path(tmp)
+            self.write_map(mmaps, tiles)
+            mesh = NavMesh.load(mmaps, 530, max_tiles=2)
+            self.assertEqual(mesh.find_path(at(50, 50), at(50, 1200)), [at(50, 50), at(50, 1200)])
+            self.assertLessEqual(len(mesh.tiles.resident), 2)
+            names, spy = self.spy_reads()
+            with spy:
+                self.assertEqual(mesh.find_path(at(50, 50), at(50, 1200)), [at(50, 50), at(50, 1200)])
+            self.assertIn(f"530{first[0]:02}{first[1]:02}.mmtile", names)   # evicted, so read again
+
+    def test_a_key_with_no_file_is_none_or_keyerror_and_never_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mmaps = pathlib.Path(tmp)
+            self.write_map(mmaps, self.chain(1))
+            mesh = NavMesh.load(mmaps, 530)
+            names, spy = self.spy_reads()
+            with spy:
+                self.assertIsNone(mesh.tiles.get((0, 0)))
+                self.assertNotIn((0, 0), mesh.tiles)
+                with self.assertRaises(KeyError):
+                    mesh.tiles[(0, 0)]
+            self.assertEqual(names, [])
+
+    def test_threads_sharing_one_mesh_get_whole_tiles_under_eviction(self):
+        tiles = self.chain(3)
+        expected = [at(50, 50), at(50, 1200)]
+        with tempfile.TemporaryDirectory() as tmp:
+            mmaps = pathlib.Path(tmp)
+            self.write_map(mmaps, tiles)
+            mesh = NavMesh.load(mmaps, 530, max_tiles=1)
+            errors = []
+
+            def query():
+                try:
+                    for _ in range(5):
+                        if mesh.find_path(at(50, 50), at(50, 1200)) != expected:
+                            errors.append("wrong path")
+                except Exception as err:  # noqa: BLE001 - carried back to the test thread, asserted empty
+                    errors.append(repr(err))
+            threads = [threading.Thread(target=query) for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(60)
+            self.assertEqual(errors, [])
+            self.assertLessEqual(len(mesh.tiles.resident), 1)
 
 
 if __name__ == "__main__":

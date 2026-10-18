@@ -1,7 +1,8 @@
 """HTTP sidecar over navmesh.py (#82): POST /path, GET /height, GET /healthz. Stdlib only.
 
 Run from tools/ as `python -m pathfinder.server`. Env: MMAPS_DIR (required, the TrinityCore mmaps/
-directory) and PATHFINDER_PORT (default 8770). The contract is in tools/pathfinder/README.md.
+directory), PATHFINDER_PORT (default 8770) and PATHFINDER_MAX_TILES (parsed tiles kept per map, default
+64). The contract is in tools/pathfinder/README.md.
 """
 import json
 import logging
@@ -12,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .navmesh import NavMesh, NavMeshError
+from .navmesh import DEFAULT_MAX_TILES, NavMesh, NavMeshError
 
 LOG = logging.getLogger("pathfinder")
 MAX_BODY = 1 << 16   # bytes; a path request is a few hundred
@@ -24,10 +25,11 @@ class BadRequest(Exception):
 
 class Maps:
     """One NavMesh per map, loaded on first use and kept. A failed load (no .mmap) is not kept, so the
-    next request tries again and finds the files once they appear."""
+    next request tries again and finds the files once they appear. Each map keeps max_tiles parsed tiles."""
 
-    def __init__(self, mmaps_dir: Path):
+    def __init__(self, mmaps_dir: Path, max_tiles: int = DEFAULT_MAX_TILES):
         self.mmaps_dir = mmaps_dir
+        self.max_tiles = max_tiles
         self._meshes: dict[int, NavMesh] = {}
         self._lock = threading.Lock()   # ponytail: one lock over all loads; per-map locks if a slow first load stalls others
 
@@ -38,9 +40,11 @@ class Maps:
         with self._lock:
             if map_id not in self._meshes:
                 try:
-                    self._meshes[map_id] = NavMesh.load(self.mmaps_dir, map_id)
+                    mesh = NavMesh.load(self.mmaps_dir, map_id)
                 except FileNotFoundError:
                     return None
+                mesh.tiles.max_tiles = self.max_tiles   # load keeps its default; the server's cap wins
+                self._meshes[map_id] = mesh
             return self._meshes[map_id]
 
     def loaded(self) -> list[int]:
@@ -162,9 +166,9 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], mmaps_dir: Path):
+    def __init__(self, address: tuple[str, int], mmaps_dir: Path, max_tiles: int = DEFAULT_MAX_TILES):
         super().__init__(address, Handler)
-        self.maps = Maps(mmaps_dir)
+        self.maps = Maps(mmaps_dir, max_tiles)
 
 
 def main() -> None:
@@ -172,9 +176,10 @@ def main() -> None:
     if not mmaps_dir:
         raise SystemExit("MMAPS_DIR is required: the TrinityCore mmaps/ directory")
     port = int(os.environ.get("PATHFINDER_PORT", "8770"))
+    max_tiles = int(os.environ.get("PATHFINDER_MAX_TILES", DEFAULT_MAX_TILES))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    with Server(("", port), Path(mmaps_dir)) as server:
-        LOG.info("pathfinder on :%d, mmaps %s", port, mmaps_dir)
+    with Server(("", port), Path(mmaps_dir), max_tiles) as server:
+        LOG.info("pathfinder on :%d, mmaps %s, max_tiles %d", port, mmaps_dir, max_tiles)
         server.serve_forever()
 
 

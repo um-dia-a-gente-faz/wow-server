@@ -148,10 +148,32 @@ Paths are relative to the TrinityCore repository root.
   on the winding here.
 - Back to WoW: `PathGenerator.cpp:594` converts Detour `(y, z, x)` to WoW `(x, y, z)`, the inverse of `:164`.
 
+## Memory: tiles load lazily
+
+`NavMesh.load(mmaps_dir, map_id, max_tiles=64)` reads the `.mmap` params and lists the `.mmtile` files
+of the map by file index. It reads none of them. A tile is read and parsed on the first query that
+touches it (`find_path`, `find_poly`, `height`) and held in a least-recently-used cache of at most
+`max_tiles` parsed tiles. An evicted tile is parsed again when a query needs it. A key with no file is
+`None` from `tiles.get` and `KeyError` from `tiles[key]`, with no read. The cache is thread-safe: a lock
+covers the LRU, and two threads may parse one tile, the later parse is kept.
+
+Measured on the test fixture (`tracemalloc` around `read_tile`; a fixture figure, not a real tile):
+
+| Fixture tile | On disk | Parsed in memory |
+|---|---|---|
+| 100 polys (`grid(10, 10, 10)`) | 10,152 B | about 125 KB |
+| 900 polys (`grid(30, 30, 10)`) | 90,152 B | about 1.25 MB (13.9x the file) |
+
+The ceiling is per map: about `max_tiles` x (parsed size of the largest tile of that map). The server
+keeps one `NavMesh` per map, so the process ceiling is about `maps loaded` x `max_tiles` x that size.
+At the 900-poly fixture size, 64 tiles is about 80 MB per map. Queries in flight hold a few more tiles
+each while they run.
+
 ## HTTP contract
 
 `server.py` serves `navmesh.py` over HTTP (stdlib `http.server`, #82). Run from `tools/`:
-`MMAPS_DIR=<TrinityCore mmaps/> [PATHFINDER_PORT=8770] python -m pathfinder.server`.
+`MMAPS_DIR=<TrinityCore mmaps/> [PATHFINDER_PORT=8770] [PATHFINDER_MAX_TILES=64] python -m pathfinder.server`.
+`PATHFINDER_MAX_TILES` is the `max_tiles` of each map's `NavMesh` (see *Memory* above).
 One `NavMesh` is kept per map after its first successful load. A map with no `.mmap` is not kept.
 Every response is JSON. Errors are `{"error": "<reason>"}`.
 
@@ -179,8 +201,8 @@ Every response is JSON. Errors are `{"error": "<reason>"}`.
 - Links are read only to skip them. Off-mesh connections are kept but not traversed.
 - Path search expands at most `max_polys` polys with no pruning. Expect this to be enough for tiles,
   not for whole maps. The measured limit is the 50 ms test on a 100-poly grid, not a real tile.
-- Each `.mmtile` of the map is read at load time, as the spec asks. A lazy loader is the upgrade if
-  memory matters.
+- The cache counts tiles, not bytes. A byte budget is the upgrade if tile sizes vary a lot on a real map.
+- A corrupt `.mmtile` fails the query that reads it (500), not the map load: the load only lists files.
 - The layout is verified against the source, not yet against a real tile. The human steps are still
   open: print the height at Sunstrider Isle start from a map 530 tile on the VM, and find a path
   across a real tile border (this checks the overlap rule and the side-to-file mapping).
