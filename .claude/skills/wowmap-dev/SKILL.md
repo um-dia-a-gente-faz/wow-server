@@ -5,8 +5,7 @@ description: Work on tools/wowmap, the internal observability site (live map, ch
 
 # Working on the observability site
 
-`tools/wowmap/wowmap/` is the runtime (offline `pipeline/` is run by hand, never shipped); a stdlib `http.server` app: `app.py` is wiring only, `routes.py` is the
-route table, SQL lives in `repo/`, and the HTML/CSS/JS lives in `static/` (one file per panel, `index.html` is the template `pages.py` fills in) — no build step, no framework. Keep it that way.
+`tools/wowmap/wowmap/` is the runtime (offline `pipeline/` is run by hand, never shipped). It is a FastAPI app (ADR 0012, #323): `api.py` holds the typed `/api/v2/` routes and the SSE stream, plus a catch-all that answers every other GET/POST through `routes.dispatch`; `app.py` starts `api.app` under uvicorn. `routes.py` is the route table, SQL lives in `repo/`, and the HTML/CSS/JS lives in `static/` (one file per panel, `index.html` is the template `pages.py` fills in). The page has no build step and no framework; keep it that way (the SvelteKit front end is ADR 0012's later step, not this).
 The map stage is Leaflet (`L.CRS.Simple`, map units = zone-art pixels), vendored in
 `tools/wowmap/wowmap/static/` and served under `/static/`; never load it from a CDN.
 `tools/wowmap/README.md` documents the endpoints and the bag/slot convention;
@@ -16,11 +15,30 @@ The map stage is Leaflet (`L.CRS.Simple`, map units = zone-art pixels), vendored
 
 ```bash
 cd tools/wowmap/wowmap
-pip install -r ../requirements.txt              # pymysql, Pillow
+pip install -r ../requirements.txt              # pymysql, Pillow, fastapi, uvicorn (hash-locked)
 export MYSQL_HOST=192.168.1.64 MYSQL_USER=root MYSQL_PASSWORD=...   # from the VM's .env
 export DBC_DIR=/path/to/dbc MAPS_DIR=/path/to/maps LISTEN_PORT=9401
-python3 app.py                                  # then open http://localhost:9401
+python3 app.py                                  # uvicorn on 0.0.0.0:9401, then open http://localhost:9401
 ```
+
+`app.py` is `uvicorn.run(api.app, ...)`; there is no other server. Without a reachable
+MySQL the process still starts (`/healthz` answers 200), but the DB-backed routes return 500
+(checked: `/api/v2/players`, `/api/players`) and the log shows the connection error.
+
+## The API spec (`openapi.json`)
+
+`tools/wowmap/openapi.json` is the checked-in spec of the `/api/v2/` routes (the old
+routes are `include_in_schema=False` and are not in it). A running server serves the same
+document at `GET /openapi.json`. `tools/wowmap/tests/test_api.py` fails when the file
+differs from `api.app.openapi()`; its message prints the regeneration command. Run it from
+the repo root after changing a v2 route or the `Player` model in `api.py`, then commit the file:
+
+```bash
+cd tools/wowmap/wowmap && python3 -c "import api, json; print(json.dumps(api.app.openapi(), indent=2, sort_keys=True))" > ../openapi.json
+```
+
+The command needs the runtime requirements installed (it imports `api`, so FastAPI and
+pydantic must be present). Running it on an unchanged tree rewrites the file byte for byte.
 
 ### Against a working agent, no live realm (dev stack, #481)
 

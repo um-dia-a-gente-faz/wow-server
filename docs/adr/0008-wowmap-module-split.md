@@ -4,6 +4,12 @@
 
 Accepted. Records a decision already merged in PR #257 (commit `f2066b2`, closes #249).
 
+Dated note (2026-10-18, #833): ADR 0012 superseded the `ThreadingHTTPServer` server
+described in the Decision (#323, PR #831). `app.py` now starts `api.app` (FastAPI) under
+uvicorn; `api.py` serves `/api/v2/` and hands every other GET/POST to `routes.dispatch`.
+The old `app.Handler` is no longer served. The rest of this ADR stands: `routes.py`,
+`webio.py`, `repo/`, the service modules and the module table are unchanged.
+
 ## Context
 
 `tools/wowmap/wowmap/app.py` had reached about 2900 lines (per the diffstat of

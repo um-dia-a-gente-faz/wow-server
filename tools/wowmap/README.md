@@ -14,6 +14,8 @@ local use, install `requirements.txt` and run:
 python3 wowmap/app.py
 ```
 
+`app.py` starts `api.app` (FastAPI) under uvicorn, on `LISTEN_PORT` (ADR 0012, #323).
+
 Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 `MYSQL_PASSWORD` (plus the optional paths and port described below and in
 `app.py`).
@@ -34,7 +36,8 @@ Configure MySQL with `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, and
 
 ### Code layout (#249)
 
-`app.py` only wires the `http.server` handler to `routes.py`, whose table maps
+`api.py` is the FastAPI app: the `/api/v2/` routes and the SSE stream (see *API v2* below),
+plus a catch-all that hands every other GET/POST to `routes.py`, whose table maps
 `(method, path pattern)` to handlers returning `(status, body[, ctype, cache])` so they
 run without a socket (`webio.Request`). All SQL lives in `repo/` (`players`,
 `characters`); `players.py`, `character.py`, `inventory.py`, `areas.py` turn rows into
@@ -43,7 +46,8 @@ JSON, `calibration.py`, `fogview.py`, `agents.py` (fleet/agent proxy glue) and
 caches, and `pages.py` fills in `static/index.html`. The front end is plain files in
 `static/` (see "Front end" below). (`activity.py` keeps its own
 SQL: its poller and sqlite store are a separate subsystem.) A new endpoint is one
-handler plus one line in `ROUTES`.
+handler plus one line in `ROUTES`. `app.py` still defines the old `http.server` `Handler`,
+but nothing serves it; the api tests use it as the reference for the catch-all's bytes.
 
 | Env | Default | Meaning |
 |---|---|---|
@@ -53,6 +57,7 @@ handler plus one line in `ROUTES`.
 | `MODELS_DIR` | `/models` | directory containing extracted character meshes and skins `<race>_<gender>.bin|.png` (see *Character model*); empty means the drawer shows a placeholder |
 | `GRID_MAPS_DIR` | `/server-maps` | the worldserver's extracted `maps/*.map` (read-only), for subzones; without it `subzone` is `null` |
 | `LISTEN_PORT` | `9400` | HTTP listen port |
+| `WOWMAP_SSE_INTERVAL_S` | `2` | seconds between the `event: players` messages on `/api/v2/stream` |
 | `CALIBRATION_FILE` | `tools/wowmap/wowmap/calibration.json` | persisted per-zone pixel offsets |
 | `CHAT_FEED_URL` | derived from the page's own hostname at `:9500` | override if chat-feed isn't reachable on the same host as wowmap |
 | `ACTIVITY_DB` | `/data/activity.sqlite3` | activity feed store; empty disables the feed |
@@ -67,6 +72,17 @@ Tests (need the `requirements.txt` packages):
 ```bash
 python3 -m unittest discover -s tools/wowmap/tests
 ```
+
+## API v2 and the live stream (#323)
+
+| Route | Answer |
+|---|---|
+| `GET /api/v2/players` | `{"players": [...]}`: the `players` list of `GET /api/players` (without its `server_time`), each row checked against the `Player` model in `api.py` |
+| `GET /api/v2/stream` | SSE (`text/event-stream`, `Cache-Control: no-store`): one `event: players` with the same JSON at once, then one every `WOWMAP_SSE_INTERVAL_S` seconds |
+
+The spec of these routes is `tools/wowmap/openapi.json`, also served at `GET /openapi.json`.
+`tests/test_api.py` fails when the checked-in file is stale and prints the command that
+regenerates it (the one in the wowmap-dev skill). The old routes are not in the spec.
 
 ## Map art and subzones
 
