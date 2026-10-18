@@ -99,9 +99,10 @@ class FaceAction(Action):
 @register
 class MoveToAction(Action):
     name = an.MOVE_TO
-    description = ("Walk in a straight line to a point on the ground, stopping within "
-                    "stop_distance yards. No pathfinding — obstacles will block it (returns "
-                    "ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.")
+    description = ("Walk to a point on the ground, stopping within stop_distance yards. Follows "
+                    "navmesh paths when the pathfinder sidecar is configured, else a straight line "
+                    "that obstacles will block (returns ok=False, error='stuck'). Blocks until "
+                    "arrival, stuck, or stopped.")
 
     def check(self, session, world, x: float, y: float, z: float | None = None,
               stop_distance: float = movement.ARRIVE_STOP_DISTANCE_YD, **_) -> str | None:
