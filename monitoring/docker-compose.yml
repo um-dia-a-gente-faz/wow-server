@@ -148,7 +148,9 @@ services:
       context: ../tools          # tools/ so the image holds only tools/pathfinder (its Dockerfile copies that)
       dockerfile: pathfinder/Dockerfile
     restart: unless-stopped
-    mem_limit: 1g                # the movement maps are read whole at first use (tools/pathfinder/README.md)
+    # Known ceiling (#834): the reader keeps about 9x a map's .mmtile bytes in memory, so a continent does not
+    # fit under this limit until the per-tile lazy loader lands (#834). A crash loop holds at most 512m here.
+    mem_limit: 512m
     ports:
       - "8770:8770"
     volumes:

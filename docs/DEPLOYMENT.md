@@ -158,7 +158,9 @@ in `monitoring/docker-compose.yml` on this VM, published on **8770** (LAN only, 
 It reads the worldserver's `mmaps/` from the `server_data` volume read-only, so it never writes game
 data and a restart of it leaves the worldserver alone. The agents reach it at
 `AGENT_PATHFINDER_URL=http://192.168.1.64:8770` (set in `agents/compose.py`). Check it with
-`curl http://192.168.1.64:8770/healthz`.
+`curl http://192.168.1.64:8770/healthz`. **Known ceiling:** the reader keeps about 9x a map's `.mmtile`
+bytes in memory, so a continent does not fit the 512m limit until the per-tile lazy loader lands (#834).
+The image is not in the path-aware deploy gate until #832 adds `tools/pathfinder/*` to `stacks_for`.
 
 - Prometheus: http://192.168.1.60:9091
 - Grafana: http://192.168.1.60:3001
