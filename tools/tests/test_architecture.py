@@ -18,7 +18,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 STDLIB = sys.stdlib_module_names
-THIRD_PARTY = {"pymysql", "PIL", "mpyq"}   # what tools/ may import from outside (CLAUDE.md)
+THIRD_PARTY = {"pymysql", "PIL", "mpyq", "fastapi", "pydantic", "uvicorn"}   # what tools/ may import from outside (CLAUDE.md; the wowmap site stack, ADR 0012)
 TOOL_DIRS = {d.name for d in TOOLS.iterdir() if d.is_dir() and d.name not in {"__pycache__", "tests"}}
 
 # Layered trees: a layer is a directory whose modules are units (wowmap/wowmap/repo/* is one unit).
@@ -90,7 +90,8 @@ WOWMAP_LAYERS = {
     "activity": {"activity_schema", "feed_events"},
     "activity_schema": set(),
     "agents": {"fleet", "state", "walk", "webio"},
-    "app": {"activity", "routes", "state", "webio"},
+    "api": {"players", "routes", "webio"},
+    "app": {"activity", "api", "routes", "state", "webio"},
     "areas": {"calibration", "fog", "overlays", "repo", "state", "transform"},
     "assets": {"fogview", "state", "webio"},
     "calibration": {"state"},
@@ -384,7 +385,7 @@ def cycle_problems(graph, known=frozenset()):
 def unresolved_problems(edges):
     return [f"{e['where']} imports {e['name']}: no file under its roots {e['roots']}. If that is a real "
             f"sys.path root of this tool, add it to ROOTS; if it is a library, add it to THIRD_PARTY "
-            f"(CLAUDE.md allows only pymysql, PIL, mpyq); otherwise the import is wrong"
+            f"(CLAUDE.md allows only pymysql, PIL, mpyq, and fastapi, uvicorn, pydantic in wowmap); otherwise the import is wrong"
             for e in edges if e["kind"] == "unresolved"]
 
 

@@ -1,0 +1,282 @@
+{
+  "components": {
+    "schemas": {
+      "MapCoords": {
+        "properties": {
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "MapCoords",
+        "type": "object"
+      },
+      "Player": {
+        "description": "One row of players.fetch_players().",
+        "properties": {
+          "class": {
+            "title": "Class",
+            "type": "integer"
+          },
+          "class_color": {
+            "title": "Class Color",
+            "type": "string"
+          },
+          "class_name": {
+            "title": "Class Name",
+            "type": "string"
+          },
+          "cont_x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cont X"
+          },
+          "cont_y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cont Y"
+          },
+          "continent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continent"
+          },
+          "continent_name": {
+            "title": "Continent Name",
+            "type": "string"
+          },
+          "in_world": {
+            "title": "In World",
+            "type": "boolean"
+          },
+          "instance": {
+            "title": "Instance",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "map": {
+            "title": "Map",
+            "type": "integer"
+          },
+          "map_coords": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MapCoords"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "norm_x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Norm X"
+          },
+          "norm_y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Norm Y"
+          },
+          "orientation": {
+            "title": "Orientation",
+            "type": "number"
+          },
+          "playtime_seconds": {
+            "title": "Playtime Seconds",
+            "type": "integer"
+          },
+          "race": {
+            "title": "Race",
+            "type": "integer"
+          },
+          "race_name": {
+            "title": "Race Name",
+            "type": "string"
+          },
+          "subzone": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subzone"
+          },
+          "subzone_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subzone Name"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          },
+          "z": {
+            "title": "Z",
+            "type": "number"
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          },
+          "zone_name": {
+            "title": "Zone Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "level",
+          "class",
+          "class_name",
+          "class_color",
+          "race",
+          "race_name",
+          "map",
+          "zone",
+          "zone_name",
+          "x",
+          "y",
+          "z",
+          "orientation",
+          "instance",
+          "in_world",
+          "norm_x",
+          "norm_y",
+          "continent",
+          "cont_x",
+          "cont_y",
+          "playtime_seconds",
+          "continent_name",
+          "subzone",
+          "subzone_name",
+          "map_coords"
+        ],
+        "title": "Player",
+        "type": "object"
+      },
+      "PlayersResponse": {
+        "properties": {
+          "players": {
+            "items": {
+              "$ref": "#/components/schemas/Player"
+            },
+            "title": "Players",
+            "type": "array"
+          }
+        },
+        "required": [
+          "players"
+        ],
+        "title": "PlayersResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "wowmap",
+    "version": "2"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v2/players": {
+      "get": {
+        "operationId": "api_v2_players_api_v2_players_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlayersResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api V2 Players"
+      }
+    },
+    "/api/v2/stream": {
+      "get": {
+        "operationId": "api_v2_stream_api_v2_stream_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api V2 Stream"
+      }
+    }
+  }
+}
