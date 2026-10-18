@@ -44,6 +44,15 @@ class RecentTests(unittest.TestCase):
             self.write(f"2026-10-{day}.jsonl", [rec(i)])
         self.assertEqual([d["t"] for d in decisions.recent(self.dir, "Luaprata", 9)], [2, 1])
 
+    def test_live_file_comes_before_its_rotated_files(self):
+        self.write("2026-10-18.jsonl.2", [rec(1)])
+        self.write("2026-10-18.jsonl.10", [rec(0)])
+        self.write("2026-10-18.jsonl.1", [rec(2)])
+        self.write("2026-10-18.jsonl", [rec(3)])
+        self.write("2026-10-18.jsonl.bak", [rec(99)])
+        self.write("notes.jsonl", [rec(98)])
+        self.assertEqual([d["t"] for d in decisions.recent(self.dir, "Luaprata", 9)], [3, 2])
+
     def test_lifecycle_and_unmet_ignored(self):
         self.write("2026-10-18.jsonl", [rec(1)])
         self.write("lifecycle/2026-10-18.jsonl", [rec(50)])
@@ -51,7 +60,10 @@ class RecentTests(unittest.TestCase):
         self.assertEqual([d["t"] for d in decisions.recent(self.dir, "Luaprata", 9)], [1])
 
     def test_malformed_line_skipped(self):
-        self.write("2026-10-18.jsonl", [json.dumps(rec(1)) + "\n", "{not json\n", "[1]\n", json.dumps(rec(2)) + "\n"],
+        self.write("2026-10-18.jsonl", [json.dumps(rec(1)) + "\n", "{not json\n", "[1]\n",
+                                          '{"ts": "abc"}\n', '{"ts": null}\n', '{"ts": true}\n',
+                                          json.dumps(dict(rec(3), ts=4, tool_call={"name": "x", "args": [1]})) + "\n",
+                                          json.dumps(rec(2)) + "\n"],
                    raw=True)
         self.assertEqual([d["t"] for d in decisions.recent(self.dir, "Luaprata", 9)], [2, 1])
 
