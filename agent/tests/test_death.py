@@ -508,6 +508,9 @@ class CorpseUnreachableRecordTest(unittest.TestCase):
 
     def test_two_cycles_in_one_death_record_once(self):
         self._think()
+        # a ghost has health 1: a self VALUES update while still a ghost must not re-arm the flag
+        set_fields(self.world, self.sess.player_guid, {uf.UNIT_FIELD_HEALTH: 1, uf.PLAYER_FLAGS: PLAYER_FLAGS_GHOST})
+        hd.check_death_transition(SimpleNamespace(state=self.sess), self.world.get_my_object())
         self._next_cycle()
         self._think()
         recs = self._records()
