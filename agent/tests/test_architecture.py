@@ -96,8 +96,9 @@ LAYERS = {
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "fleetlimits": {"metrics"},   # the ADR 0017 limits file reader; metrics for swallowed()
     "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "missions", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
-    "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
-    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "unmet", "update_fields"},  # #411: ports; #319: unmet
+    "loopguard": {"config", "model", "watchdog"},     # think-loop history + loop guard, no session dependency (#385); config and watchdog: #320's ThinkState watchdog settings
+    "watchdog": {"model"},   # #320: the idle watchdog and progress_fingerprint (the loop guard's "changed" test); no import of loopguard
+    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "metrics", "model", "ports", "spells", "trade", "unmet", "update_fields", "watchdog"},  # #411: ports; #319: unmet; #320: swallowed() and progress_fingerprint
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport", "wire"},   # enum_characters and handle_time_sync read through Reader (#517)

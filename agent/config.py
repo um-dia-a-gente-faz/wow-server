@@ -56,6 +56,10 @@ SETTINGS: tuple[Setting, ...] = (
        "(#318) never follows an agent that is not the party leader; empty = every character counts as human",
        compose=False),
     _s("AGENT_THINK_INTERVAL_S", float, 3.0, "minimum delay between think-loop decisions, seconds"),
+    _s("AGENT_WATCHDOG_WINDOW_S", float, 300.0, "idle watchdog (#320): a follow with no progress for this many "
+       "seconds is stopped; 0 = off", compose=False),
+    _s("AGENT_WATCHDOG_IDLE_CYCLES", int, 40, "idle watchdog (#320): this many think cycles without progress "
+       "records a no_progress unmet intent; 0 = off", compose=False),
     _s("AGENT_START_DELAY_S", float, 0.0, "seconds to wait once before the first connection attempt, 0 to 300 "
        "(set per service by compose from the roster position, #539)"),
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),

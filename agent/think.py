@@ -22,9 +22,11 @@ from .action_specs import specs_by_name
 from .handles import UnknownHandle
 from .actions.base import send
 from .loopguard import (HISTORY_LEN, LOOP_GUARD_COOLDOWN_S, LOOP_GUARD_REPEATS, ThinkState,  # noqa: F401 (re-exported)
-                        _DETAIL_MAX_CHARS, progress_fingerprint)
+                        _DETAIL_MAX_CHARS)
+from .metrics import swallowed
 from .model import KnownSpell, Me, Snapshot
 from .unmet import UnmetIntents
+from .watchdog import progress_fingerprint
 
 log = logging.getLogger("agent.think")
 
@@ -253,6 +255,22 @@ def record(c: Cycle) -> ThinkResult:
     return ThinkResult(ok=c.ok, action_name=c.action_name, params=c.params, error=c.error, detail=c.detail)
 
 
+def watchdog(c: Cycle) -> None:
+    """#320: the idle watchdog, run after record. A stuck follow is stopped with reason
+    'watchdog'; a fired trigger records one no_progress unmet intent. Never raises."""
+    try:
+        reflex = getattr(c.session, "follow_reflex", None)
+        following = reflex is not None and reflex.enabled
+        fired = c.state.watchdog.observe(c.snapshot, following=following)
+        if fired and c.unmet is not None:
+            c.unmet.record("no_progress", c.action_name, None, c.snapshot)
+        if reflex is not None and "stuck_follow" in fired:
+            log.warning("no progress for the follow window, stopping the follow")
+            reflex.stop(c.session, c.world, reason="watchdog")
+    except Exception:  # noqa: BLE001 — a monitor must never take the think loop down
+        swallowed("think.watchdog", log)
+
+
 STAGES = (guards, perceive, decide, validate, execute)
 
 
@@ -281,4 +299,7 @@ def think_and_act(session, world, brain, persona: str = "",
         stage(c)
         if c.done:
             break
-    return record(c)
+    result = record(c)
+    if state is not None:
+        watchdog(c)
+    return result
