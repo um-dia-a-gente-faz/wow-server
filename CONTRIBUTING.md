@@ -159,7 +159,7 @@ in `CLAUDE.md`, *Milestones and board naming*.
 
 ## Code style
 
-- Python: 3.12+, follow PEP 8. No external framework in `agent/` — stdlib `urllib`, `pymysql`. `tools/wowmap` uses FastAPI and uvicorn (ADR 0012).
+- Python: 3.12+, follow PEP 8. `agent/` is stdlib-only (`urllib`, `struct`, `socket`); `tools/` may use `pymysql`/`Pillow`, and `tools/wowmap` uses FastAPI and uvicorn (ADR 0012).
 - Shell: POSIX `/bin/sh` or `bash`. No bashisms unless needed.
 - SQL in Python: triple-quoted raw strings. No ORM.
 - Prometheus: exporter metrics use a custom `Collector`, not module-level `Gauge`. This keeps series from going stale when a label value disappears.

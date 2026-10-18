@@ -3,8 +3,8 @@ spec, and the catch-all that serves the old routes with the bytes app.Handler se
 
 No socket to the game and no database: the repo functions are patched with fakes, as in
 test_routes.py. The catch-all is compared with routes.dispatch and with the old server."""
+import asyncio
 import io
-import itertools
 import json
 import os
 import pathlib
@@ -27,6 +27,9 @@ import players  # noqa: E402
 import routes  # noqa: E402
 import state  # noqa: E402
 import webio  # noqa: E402
+import anyio  # noqa: E402
+import anyio.to_thread  # noqa: E402
+import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from repo import players as players_repo  # noqa: E402
 
@@ -97,6 +100,32 @@ class PlayersTests(FakeGameDb):
             self.assertEqual(self.client.get("/api/v2/players").json(), {"players": [row]})
 
 
+async def open_stream(app, path):
+    """Run an ASGI GET as a task. Returns (task, queue of body chunks, disconnect event): the
+    stream runs until the test sets disconnect, which is how a client that went away looks to it."""
+    chunks = asyncio.Queue()
+    disconnect = asyncio.Event()
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET",
+             "scheme": "http", "path": path, "raw_path": path.encode(), "root_path": "",
+             "query_string": b"", "headers": [], "client": ("testclient", 50000),
+             "server": ("testserver", 80)}
+    sent_request = False
+
+    async def receive():
+        nonlocal sent_request
+        if not sent_request:
+            sent_request = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body"):
+            await chunks.put(message["body"])
+
+    return asyncio.ensure_future(app(scope, receive, send)), chunks, disconnect
+
+
 class StreamTests(FakeGameDb):
     def setUp(self):
         super().setUp()
@@ -106,8 +135,13 @@ class StreamTests(FakeGameDb):
         # The real generator, cut to its first event: TestClient reads a response only to its
         # end, and this stream never ends. The endless loop is covered by the next test.
         real_events = api._players_events
-        with mock.patch.object(api, "_players_events",
-                               side_effect=lambda: itertools.islice(real_events(), 1)), \
+
+        async def first_only():
+            async for event in real_events():
+                yield event
+                return
+
+        with mock.patch.object(api, "_players_events", side_effect=first_only), \
                 self.client.stream("GET", "/api/v2/stream") as r:
             self.assertEqual(r.status_code, 200)
             self.assertTrue(r.headers["content-type"].startswith("text/event-stream"))
@@ -120,14 +154,44 @@ class StreamTests(FakeGameDb):
         self.assertEqual(json.loads(lines[1][len("data: "):]), {"players": players.fetch_players()})
 
     def test_every_interval_sends_the_players_again(self):
-        gen = api._players_events()
+        async def two_events():
+            gen = api._players_events()
+            first = await gen.__anext__()
+            second = await gen.__anext__()
+            return first, second
+
         with mock.patch.dict(os.environ, {"WOWMAP_SSE_INTERVAL_S": "0.25"}), \
-                mock.patch.object(api.time, "sleep") as sleep:
-            first = next(gen)
-            second = next(gen)
+                mock.patch.object(api.asyncio, "sleep", new_callable=mock.AsyncMock) as sleep:
+            first, second = asyncio.run(two_events())
         self.assertTrue(first.startswith("event: players\ndata: "))
         self.assertEqual(first, second)
-        sleep.assert_called_with(0.25)
+        sleep.assert_awaited_with(0.25)
+
+    def test_streams_do_not_hold_the_threadpool(self):
+        # Three open streams against a threadpool of two: a stream that sleeps on a worker thread
+        # would hold its token for good, so /healthz (a catch-all route, also threadpool) would wait.
+        async def scenario():
+            limiter = anyio.to_thread.current_default_thread_limiter()
+            limiter.total_tokens = 2
+            try:
+                streams = [await open_stream(api.app, "/api/v2/stream") for _ in range(3)]
+                for _task, chunks, _disconnect in streams:
+                    await asyncio.wait_for(chunks.get(), 5)   # every stream gets its first event
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app),
+                                             base_url="http://testserver") as client:
+                    health = await asyncio.wait_for(client.get("/healthz"), 3)
+                for task, _chunks, disconnect in streams:
+                    disconnect.set()
+                    await asyncio.wait_for(task, 5)
+                return health.status_code, health.json()
+            finally:
+                limiter.total_tokens = 40   # anyio's default
+
+        # A long interval: a sync generator sleeps on its worker thread for all of it, so /healthz
+        # would wait the whole 10 s. The async one holds no thread while it waits.
+        with mock.patch.object(players, "fetch_players", return_value=[]), \
+                mock.patch.dict(os.environ, {"WOWMAP_SSE_INTERVAL_S": "10"}):
+            self.assertEqual(asyncio.run(scenario()), (200, {"ok": True}))
 
 
 class CatchAllTests(FakeGameDb):
@@ -200,19 +264,21 @@ class CatchAllTests(FakeGameDb):
         self.assertEqual((status, json.loads(body)), (404, {"error": "not found"}))
 
     def test_post_body_reaches_its_route(self):
-        seen = {}
+        calls = []
 
         def fake_action(req, name, action):
-            seen.update(name=name, action=action, body=req.read_body(int(req.header("Content-Length"))))
+            calls.append({"name": name, "action": action,
+                          "body": req.read_body(int(req.header("Content-Length")))})
             return 200, {"ok": True}
 
         body = b'{"dry_run": true}'
         with mock.patch.object(agents, "fleet_action", side_effect=fake_action):
-            status, out, ctype, _ = self.assert_same_as_old_server(
+            # Only the catch-all's own call: nothing else (routes.dispatch, app.Handler) runs first.
+            status, out, ctype, _ = self.through_api(
                 "POST", "/api/fleet/agents/Luaprata/walk", body,
                 {"X-Fleet-Action": "1", "Content-Type": "application/json"})
+        self.assertEqual(calls, [{"name": "Luaprata", "action": "walk", "body": body}])
         self.assertEqual((status, json.loads(out)), (200, {"ok": True}))
-        self.assertEqual(seen, {"name": "Luaprata", "action": "walk", "body": body})
 
 
 class OpenApiTests(unittest.TestCase):

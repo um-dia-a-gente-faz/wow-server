@@ -8,11 +8,11 @@
 app.py serves `app` with uvicorn. The game-database calls are plain sync functions, so
 FastAPI runs them in the threadpool and the event loop never waits for MySQL.
 """
+import asyncio
 import io
 import json
 import os
-import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request
@@ -77,16 +77,16 @@ def _interval() -> float:
     return float(os.environ.get("WOWMAP_SSE_INTERVAL_S", "2"))
 
 
-def _players_events() -> Iterator[str]:
+async def _players_events() -> AsyncIterator[str]:
+    # Async, so a waiting stream holds no threadpool worker: only the query runs there.
     while True:
-        data = json.dumps({"players": players.fetch_players()})
+        data = json.dumps({"players": await run_in_threadpool(players.fetch_players)})
         yield f"event: players\ndata: {data}\n\n"
-        time.sleep(_interval())
+        await asyncio.sleep(_interval())
 
 
 @app.get("/api/v2/stream")
 def api_v2_stream() -> StreamingResponse:
-    # A sync generator: Starlette iterates it in the threadpool, so a slow query does not block the loop.
     return StreamingResponse(_players_events(), media_type="text/event-stream",
                              headers={"Cache-Control": webio.NO_STORE})
 
