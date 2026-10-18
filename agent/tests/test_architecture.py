@@ -329,8 +329,9 @@ class ToolsArchitectureTests(unittest.TestCase):
 
     def test_tools_use_only_the_allowed_third_party_libraries(self):
         # CLAUDE.md: `tools/` may use pymysql/Pillow; mpyq is the MPQ reader of the
-        # client-extraction scripts (extract_maps.py, extract_icons.py).
-        allowed = {"pymysql", "PIL", "mpyq"}
+        # client-extraction scripts (extract_maps.py, extract_icons.py); fastapi, uvicorn and
+        # pydantic are the tools/wowmap site stack (ADR 0012).
+        allowed = {"pymysql", "PIL", "mpyq", "fastapi", "uvicorn", "pydantic"}
         # First-party names: any module or package under tools/ or scripts/ (gen_agents_compose).
         local = {p.stem for p in list(TOOLS.rglob("*.py")) + list((ROOT / "scripts").rglob("*.py"))}
         local |= {d.name for d in TOOLS.rglob("*") if d.is_dir()}

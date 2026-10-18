@@ -13,7 +13,7 @@ COPY dbc/__init__.py dbc/wdbc.py dbc/names.py dbc/spelltext.py ./dbc/
 # pipeline/ is not shipped (#392); a new module needs no edit here.
 COPY wowmap/wowmap/ ./
 # Import smoke test: a module missing from the image fails the build, not the deploy.
-RUN python -c "import app, routes"
+RUN python -c "import app, routes, api"
 
 EXPOSE 9400
 CMD ["python", "-u", "app.py"]

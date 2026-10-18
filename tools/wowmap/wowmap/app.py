@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """wowmap — live map of online players for a TrinityCore 3.3.5a server.
 
-Serves:
+Serves (through api.py, under uvicorn; the v2 routes are documented in openapi.json):
+    GET /api/v2/players       online players (typed); GET /api/v2/stream is their SSE feed
     GET /                     the map page (static/index.html; css/js under /static/, no build step)
     GET /api/players          online players with world + normalised coords
     GET /api/character/<name> one character's state, inventory and progression
@@ -48,10 +49,12 @@ Env:
 import json
 import logging
 import threading
-from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import uvicorn
+
 import activity as activity_feed
+import api
 import routes
 import state
 from common.jsonserver import JsonHandler
@@ -62,7 +65,8 @@ log = logging.getLogger("wowmap")
 
 # ---------------------------------------------------------------- HTTP
 class Handler(JsonHandler):
-    """Wiring only: build a webio.Request, let routes.dispatch answer, write the reply."""
+    """Wiring only: build a webio.Request, let routes.dispatch answer, write the reply.
+    No longer served (api.py is); kept as the reference the api tests compare the catch-all with."""
     server_version = "wowmap/1.0"
 
     def _send(self, code, body, ctype="application/json", cache=None):
@@ -109,4 +113,5 @@ if __name__ == "__main__":
     log.info("wowmap on :%d (db=%s dbc=%s maps=%s)", state.LISTEN_PORT, state.MYSQL["host"],
              state.DBC_DIR, state.MAPS_DIR)
     threading.Thread(target=state.names, name="load-names", daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", state.LISTEN_PORT), Handler).serve_forever()
+    # access_log off: the old server logged each request at debug only.
+    uvicorn.run(api.app, host="0.0.0.0", port=state.LISTEN_PORT, access_log=False)
