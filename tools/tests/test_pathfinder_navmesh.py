@@ -16,6 +16,7 @@ from unittest.mock import patch
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
+from pathfinder import navmesh  # noqa: E402
 from pathfinder.navmesh import NavMesh, NavMeshError, read_tile  # noqa: E402
 
 MMAP_MAGIC = 0x4D4D4150
@@ -191,6 +192,27 @@ class FindPolyAndHeightTests(unittest.TestCase):
         self.assertAlmostEqual(mesh.height(5, 5, z=1.0), 0.0, delta=1e-4)
         self.assertAlmostEqual(mesh.height(5, 5, z=9.0), 10.0, delta=1e-4)
         self.assertAlmostEqual(mesh.height(5, 5), 10.0, delta=1e-4)     # no z: the highest
+
+    def test_spatial_index_returns_the_same_poly_as_a_linear_scan(self):
+        # 12 x 12 cells of 10 yd with holes, plus one strip poly spanning many index buckets.
+        # A point on a shared edge or corner may be in several cells; any of them is right.
+        holes = {(c, r) for c in range(12) for r in range(12) if (c * 7 + r * 3) % 5 == 0}
+        polys = grid(12, 12, 10, missing=holes, height=sloped) + [{"verts": square(0, 200, 300, 305)}]
+        mesh = mesh_with(((50, 50), build_tile(polys)))
+        key = mesh.tile_coords(50, 50)
+        tile = mesh.tiles[key]
+        rng = random.Random(848)
+        pts = [(rng.uniform(-5, 205), rng.uniform(-5, 310)) for _ in range(2000)]
+        pts += [(rng.randrange(0, 13) * 10.0, rng.randrange(0, 13) * 10.0) for _ in range(200)]   # edges, corners
+        for dx, dz in pts:
+            expected = {k for k, poly in enumerate(tile.polys)
+                        if navmesh._inside([tile.verts[i] for i in poly.verts], dx, dz)
+                        or navmesh._on_edge([tile.verts[i] for i in poly.verts], dx, dz)}
+            hit = mesh.find_poly(*wow(dx, dz))
+            if expected:
+                self.assertIn(hit[1], expected, (dx, dz))
+            else:
+                self.assertIsNone(hit, (dx, dz))
 
     def test_off_mesh_polys_are_kept_but_never_hit(self):
         tile = read_tile(build_tile([{"verts": square(0, 10, 0, 10), "type": 1, "tris": []}],

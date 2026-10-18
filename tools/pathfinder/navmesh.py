@@ -95,6 +95,8 @@ class Tile:
     detail_tris: list[tuple[int, int, int, int]]            # 3 indices (< vertCount: a poly vert,
                                                             # else detail vert) and edge flags
     off_mesh: list[OffMeshCon] = field(default_factory=list)
+    # Query tables built on first use from the fields above (see _index); dropped with the tile.
+    _cache: dict = field(default_factory=dict, compare=False, repr=False)
 
 
 def _section(body: bytes, off: int, rec: struct.Struct, count: int) -> tuple[list[tuple], int]:
@@ -170,9 +172,8 @@ def _grid_index(coord: float) -> int:
     return (MAX_NUMBER_OF_GRIDS - 1) - grid
 
 
-def _inside(tile: Tile, poly: Poly, px: float, pz: float) -> bool:
+def _inside(verts: list, px: float, pz: float) -> bool:
     """Point in polygon on Detour x and z (DetourCommon.cpp:238-252, dtPointInPolygon)."""
-    verts = [tile.verts[i] for i in poly.verts]
     inside = False
     j = len(verts) - 1
     for i in range(len(verts)):
@@ -183,10 +184,13 @@ def _inside(tile: Tile, poly: Poly, px: float, pz: float) -> bool:
     return inside
 
 
-def _on_edge(tile: Tile, poly: Poly, px: float, pz: float, eps: float = 1e-3) -> bool:
+_EDGE_EPS = 1e-3
+_CELL = 16.0     # yards; side of a spatial-index bucket, about one poly
+
+
+def _on_edge(verts: list, px: float, pz: float, eps: float = _EDGE_EPS) -> bool:
     """Whether (px, pz) lies on an edge of the poly, within eps. _inside leaves both sides of a
     boundary out, so a point on a border (a clamped overlap end, say) would have no ground at all."""
-    verts = [tile.verts[i] for i in poly.verts]
     for i in range(len(verts)):
         ax, az = verts[i - 1][0], verts[i - 1][2]
         dx, dz = verts[i][0] - ax, verts[i][2] - az
@@ -223,6 +227,37 @@ def _height_in_poly(tile: Tile, index: int, px: float, pz: float) -> float | Non
         if best is None or margin > best[0]:
             best = (margin, a[1] + s * (c[1] - a[1]) + t * (b[1] - a[1]))
     return None if best is None else best[1]
+
+
+class _Index:
+    """Per-tile query tables, built once per parsed tile. A grid of buckets over the polys' bounding boxes
+    answers find_poly from fields already parsed; the BV tree (dtBVNode, DetourNavMesh.h:227) stays unread.
+    ponytail: grid, not the BV tree; huge polys would want the tree."""
+
+    def __init__(self, tile: Tile):
+        self.verts = [[tile.verts[i] for i in poly.verts] for poly in tile.polys]
+        self.buckets: dict[tuple[int, int], list[int]] = {}
+        self.ext: dict[int, list[tuple[int, tuple, tuple]]] = {}   # neis value -> (poly, edge a, edge b)
+        self.bounds = []                           # (x0, x1, z0, z1) per poly, widened by _EDGE_EPS
+        for k, (poly, vs) in enumerate(zip(tile.polys, self.verts, strict=True)):
+            x0, x1 = min(v[0] for v in vs) - _EDGE_EPS, max(v[0] for v in vs) + _EDGE_EPS
+            z0, z1 = min(v[2] for v in vs) - _EDGE_EPS, max(v[2] for v in vs) + _EDGE_EPS
+            self.bounds.append((x0, x1, z0, z1))
+            if poly.type != DT_POLYTYPE_GROUND:
+                continue
+            for ix in range(math.floor(x0 / _CELL), math.floor(x1 / _CELL) + 1):
+                for iz in range(math.floor(z0 / _CELL), math.floor(z1 / _CELL) + 1):
+                    self.buckets.setdefault((ix, iz), []).append(k)
+            n = len(vs)
+            for m, nei in enumerate(poly.neis):
+                if nei & DT_EXT_LINK:
+                    self.ext.setdefault(nei, []).append((k, vs[m], vs[(m + 1) % n]))
+        self.neighbours: dict[int, list] = {}      # poly -> its portal links, filled by NavMesh
+
+
+def _index(tile: Tile) -> _Index:
+    # two threads may both build; either result is whole
+    return tile._cache.get("index") or tile._cache.setdefault("index", _Index(tile))
 
 
 def _neighbour_key(key: tuple[int, int], side: int) -> tuple[int, int]:
@@ -284,21 +319,17 @@ def _ext_links(tile: Tile, a: tuple, b: tuple, side: int):
     if a[along] == b[along]:
         return
     amin, amax = _slab_span(a, b, along)
-    for k, poly in enumerate(tile.polys):
-        if poly.type != DT_POLYTYPE_GROUND:
+    done = -1
+    for k, c, d in _index(tile).ext.get(want, ()):        # ground polys only, in poly then edge order
+        if k == done:
             continue
-        n = len(poly.verts)
-        for m, nei in enumerate(poly.neis):
-            if nei != want:
-                continue
-            c, d = tile.verts[poly.verts[m]], tile.verts[poly.verts[(m + 1) % n]]
-            if abs(a[slab] - c[slab]) > 0.01 or c[along] == d[along]:
-                continue
-            bmin, bmax = _slab_span(c, d, along)
-            if _overlap_slabs(amin, amax, bmin, bmax, tile.header["walkableClimb"]):
-                lo, hi = max(amin[0], bmin[0]), min(amax[0], bmax[0])
-                yield k, _at_along(c, d, lo, along), _at_along(c, d, hi, along)   # the neighbour's heights
-                break                                # one portal per poly, as Detour's break
+        if abs(a[slab] - c[slab]) > 0.01 or c[along] == d[along]:
+            continue
+        bmin, bmax = _slab_span(c, d, along)
+        if _overlap_slabs(amin, amax, bmin, bmax, tile.header["walkableClimb"]):
+            lo, hi = max(amin[0], bmin[0]), min(amax[0], bmax[0])
+            yield k, _at_along(c, d, lo, along), _at_along(c, d, hi, along)   # the neighbour's heights
+            done = k                                 # one portal per poly, as Detour's break
 
 
 def _area(a: tuple, b: tuple, c: tuple) -> float:
@@ -446,9 +477,13 @@ class NavMesh:
             tile = self.tiles.get(key)
             if tile is None:
                 continue
-            # ponytail: linear scan of every poly of 9 tiles per query; add a spatial index if p95 matters
-            for index, poly in enumerate(tile.polys):
-                if poly.type != DT_POLYTYPE_GROUND or not (_inside(tile, poly, px, pz) or _on_edge(tile, poly, px, pz)):
+            idx = _index(tile)
+            for index in idx.buckets.get((math.floor(px / _CELL), math.floor(pz / _CELL)), ()):
+                x0, x1, z0, z1 = idx.bounds[index]
+                if not (x0 <= px <= x1 and z0 <= pz <= z1):
+                    continue
+                vs = idx.verts[index]
+                if not (_inside(vs, px, pz) or _on_edge(vs, px, pz)):
                     continue
                 height = _height_in_poly(tile, index, px, pz)
                 if height is not None:
@@ -479,6 +514,12 @@ class NavMesh:
         Edges with neis 0 are walls."""
         key, index = ref
         tile = self.tiles[key]
+        cache = _index(tile).neighbours       # a missing neighbour tile is a missing file: stable
+        if index not in cache:
+            cache[index] = list(self._portal_links(key, tile, index))
+        return cache[index]
+
+    def _portal_links(self, key, tile: Tile, index: int):
         poly = tile.polys[index]
         n = len(poly.verts)
         for j, nei in enumerate(poly.neis):
