@@ -2,9 +2,10 @@
 """Idle watchdog (#320): a general no-progress monitor run once per think cycle.
 
 Progress is `progress_fingerprint` changing: the same test the loop guard's "changed"
-flag uses (agent.loopguard re-exports it). Two triggers, each fired once per idle stretch
-and re-armed when the fingerprint changes:
-  - "stuck_follow": following, and no progress for `window_s` seconds.
+flag uses. Two triggers, each fired once per idle stretch and re-armed when the
+fingerprint changes:
+  - "stuck_follow": following, and no progress for `window_s` seconds, counted from the
+    later of the last change and the moment the follow started.
   - "idle": no progress for `idle_cycles` consecutive cycles, following or not.
 A trigger set to 0 is off. Stdlib only; no I/O. This module must not import agent.loopguard
 (loopguard builds a Watchdog for ThinkState), so the fingerprint lives here.
@@ -48,12 +49,17 @@ class Watchdog:
         self._clock = clock
         self._fingerprint: str | None = None
         self._changed_at = 0.0
+        self._following = False
+        self._follow_started_at = 0.0
         self._unchanged = 0
         self._fired: set[str] = set()
 
     def observe(self, snapshot: Snapshot, following: bool) -> list[str]:
         """Called once per think cycle. Returns the triggers that fire this cycle."""
         now = self._clock()
+        if following and not self._following:
+            self._follow_started_at = now  # the window counts from the follow's start too
+        self._following = following
         fingerprint = progress_fingerprint(snapshot)
         if fingerprint != self._fingerprint:
             self._fingerprint, self._changed_at, self._unchanged = fingerprint, now, 0
@@ -61,7 +67,8 @@ class Watchdog:
             return []
         self._unchanged += 1
         fires: list[str] = []
-        if following and self.window_s > 0 and now - self._changed_at >= self.window_s:
+        since = max(self._changed_at, self._follow_started_at)
+        if following and self.window_s > 0 and now - since >= self.window_s:
             fires.append("stuck_follow")
         if self.idle_cycles > 0 and self._unchanged >= self.idle_cycles:
             fires.append("idle")

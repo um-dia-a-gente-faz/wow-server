@@ -3,6 +3,7 @@ seam tests through think_and_act (a follow that stops, one no_progress record)."
 import unittest
 from unittest import mock
 
+from agent import actions as ac
 from agent import config
 from agent import think
 from agent.reflexes.follow import FollowReflex
@@ -58,6 +59,20 @@ class WatchdogTest(unittest.TestCase):
             clock.t += 1.0
             fired += wd.observe(STILL, following=False)
         self.assertEqual(fired, [])
+
+    def test_stuck_follow_counts_from_when_the_follow_started(self):
+        clock = FakeClock()
+        wd = Watchdog(window_s=10, idle_cycles=0, clock=clock)
+        for _ in range(30):  # parked and not following for three windows
+            clock.t += 1.0
+            self.assertEqual(wd.observe(STILL, following=False), [])
+        fired = []
+        for _ in range(10):  # the follow starts at the first of these: 0 to 9 s elapsed
+            clock.t += 1.0
+            fired += wd.observe(STILL, following=True)
+        self.assertEqual(fired, [])
+        clock.t += 1.0  # 10 s since the follow started: a full window
+        self.assertEqual(wd.observe(STILL, following=True), ["stuck_follow"])
 
     def test_normal_movement_never_trips_either_trigger(self):
         clock = FakeClock()
@@ -133,6 +148,7 @@ class ThinkWatchdogSeamTest(unittest.TestCase):
     def test_idle_stretch_records_one_no_progress_per_stretch(self):
         env = {"AGENT_WATCHDOG_WINDOW_S": "0", "AGENT_WATCHDOG_IDLE_CYCLES": "4"}
         self.reflex.stop()
+        self.llm = FakeLLMClient(action_name="test_action", params={"value": 7})
         with mock.patch.dict("os.environ", env, clear=True):
             state = think.ThinkState(clock=self.clock)
         for _ in range(12):
@@ -140,6 +156,29 @@ class ThinkWatchdogSeamTest(unittest.TestCase):
         records = self.unmet.recent()
         self.assertEqual([r["kind"] for r in records], ["no_progress"])
         self.assertEqual(records[0]["wanted"]["action"], "test_action")
+        self.assertEqual(records[0]["wanted"]["params"], {})  # params=None: the cycle's args are not recorded
+
+    def test_a_follow_started_after_a_long_park_gets_a_full_window(self):
+        class StartFollow(RecordingAction):
+            name = "test_follow"
+
+            def execute(self, session, world, **params):
+                session.follow_reflex.start(0x99, leader_name="Leader")
+                return ac.ActionResult(ok=True, detail={"followed": True})
+
+        self.reflex.stop()
+        self.registry = {"test_action": RecordingAction(), "test_follow": StartFollow()}
+        with mock.patch.dict("os.environ", self.ENV, clear=True):
+            state = think.ThinkState(clock=self.clock)
+        for _ in range(30):  # parked, not following, for three windows
+            self.cycle(state)
+        self.llm = FakeLLMClient(action_name="test_follow", params={})
+        self.cycle(state)  # the brain's follow action runs in this cycle
+        self.assertTrue(self.reflex.enabled)
+        for _ in range(5):  # well inside the window since the follow started
+            self.llm = FakeLLMClient(action_name="test_action", params={})
+            self.cycle(state)
+        self.assertTrue(self.reflex.enabled)
 
     def test_disabled_window_leaves_the_follow_running(self):
         env = dict(self.ENV, AGENT_WATCHDOG_WINDOW_S="0")

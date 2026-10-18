@@ -1,4 +1,4 @@
-"""Think-loop memory (UM-90): recent-action history, progress fingerprint and
+"""Think-loop memory (UM-90): recent-action history, the idle watchdog (#320) and
 the loop guard. No session or world dependency; agent.think re-exports these."""
 
 import json

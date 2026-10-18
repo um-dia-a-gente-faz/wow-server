@@ -263,7 +263,7 @@ def watchdog(c: Cycle) -> None:
         following = reflex is not None and reflex.enabled
         fired = c.state.watchdog.observe(c.snapshot, following=following)
         if fired and c.unmet is not None:
-            c.unmet.record("no_progress", c.action_name, c.params, c.snapshot)
+            c.unmet.record("no_progress", c.action_name, None, c.snapshot)
         if reflex is not None and "stuck_follow" in fired:
             log.warning("no progress for the follow window, stopping the follow")
             reflex.stop(c.session, c.world, reason="watchdog")
