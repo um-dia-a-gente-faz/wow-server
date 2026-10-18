@@ -27,6 +27,7 @@ import sys
 from collections import Counter
 
 from agent import candidates as cand
+from agent.audit import LIFECYCLE_SUBDIR, UNMET_SUBDIR
 from tools.agent_dev.replay import load_records
 
 # Health/mana bands: the edges are where the "obvious" behaviour changes
@@ -148,10 +149,20 @@ def analyse(records) -> dict:
 
 
 def _paths(args) -> list[str]:
+    """A directory is one agent's dir (day files at its top level) or the audit
+    base (one agent dir per child). lifecycle/ and unmet/ hold no decision
+    records (docs/adr/0018-persisted-state-versioning.md), so they are skipped."""
     out = []
     for a in args:
-        out += sorted(glob.glob(os.path.join(a, "**", "*.jsonl*"), recursive=True)) \
-            if os.path.isdir(a) else [a]
+        if not os.path.isdir(a):
+            out.append(a)
+            continue
+        days = sorted(glob.glob(os.path.join(a, "*.jsonl*")))
+        if days:
+            out += days
+            continue
+        out += [p for p in sorted(glob.glob(os.path.join(a, "*", "*.jsonl*")))
+                if os.path.basename(os.path.dirname(p)) not in (LIFECYCLE_SUBDIR, UNMET_SUBDIR)]
     return out
 
 

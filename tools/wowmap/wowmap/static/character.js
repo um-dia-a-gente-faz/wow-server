@@ -166,8 +166,10 @@ const Inspect = (() => {
     const none = (why) => box.replaceChildren(el('div', 'none', why));
     if (!c.model) { none('No 3D model extracted'); return box; }
     if (!window.CharView) { none('3D viewer unavailable'); return box; }
-    box.title = 'Drag to rotate, scroll to zoom';
-    window.CharView.mount(box, c.model).catch(() => none('3D model unavailable'));
+    box.title = 'Drag to rotate, scroll to zoom. Body only: equipment is not drawn.';
+    window.CharView.mount(box, c.model)
+      .then(() => box.append(el('div', 'model-note', 'Body only: equipment is not drawn')))
+      .catch(() => none('3D model unavailable'));
     return box;
   }
   function paperDoll(equipped, c) {

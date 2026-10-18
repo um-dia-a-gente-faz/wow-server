@@ -148,6 +148,23 @@ Paths are relative to the TrinityCore repository root.
   on the winding here.
 - Back to WoW: `PathGenerator.cpp:594` converts Detour `(y, z, x)` to WoW `(x, y, z)`, the inverse of `:164`.
 
+## HTTP contract
+
+`server.py` serves `navmesh.py` over HTTP (stdlib `http.server`, #82). Run from `tools/`:
+`MMAPS_DIR=<TrinityCore mmaps/> [PATHFINDER_PORT=8770] python -m pathfinder.server`.
+One `NavMesh` is kept per map after its first successful load. A map with no `.mmap` is not kept.
+Every response is JSON. Errors are `{"error": "<reason>"}`.
+
+- `POST /path` with `{"map": int, "from": {"x","y","z"}, "to": {"x","y","z"}}` answers 200:
+  `{"status": "ok", "points": [{"x","y","z"}, ...]}`, start first and end last (`find_path`).
+  `{"status": "no_path", "points": []}` when `find_path` returns `None` (an end off the mesh, or no
+  route). `{"status": "no_map", "points": []}` when the map has no `.mmap`.
+- `GET /height?map=<int>&x=<num>&y=<num>[&z=<num>]` answers 200 `{"z": float | null}`. `z` is the hint
+  for stacked floors (`height`). An unknown map or a point off the mesh gives `null`.
+- `GET /healthz` answers 200 `{"ok": true, "maps_loaded": [<map ids>]}`.
+- Bad JSON, a missing or non-numeric field (a bool or a non-finite number counts as non-numeric), or a
+  bad query gives 400. An unknown path gives 404. A corrupt or unreadable movement-map file gives 500 with its reason. Any other failure gives 500 `{"error": "internal error"}` (logged).
+
 ## Axis order: WoW (x, y, z) is Detour (y, z, x)
 
 - WoW point to Detour: `PathGenerator.cpp:164` `float startPoint[VERTEX_SIZE] = {startPos.y, startPos.z, startPos.x};`
