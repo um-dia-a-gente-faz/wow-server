@@ -15,7 +15,7 @@ deferred "agents play while the owner is away" toggle really depend on that? (#3
 
 1. **Feasibility: partial at best.** The only open-source browser WoW client aimed at 3.3.5a,
    Wowser, authenticates, lists realms and characters and enters the world, but renders
-   terrain and models only experimentally and its last code change is the v0.0.2 release on 2020-03-20 (a 2021 commit touches only the README). Nothing found
+   terrain and models only experimentally and its last source change (`src/`) is from 2016-07-27; the v0.0.2 release (2020-03-20) only bumped package metadata and the 2021 commit touches only the README. Nothing found
    is a playable browser client.
 2. **Legal limit:** every project needs the user's own copy of the client files, and Blizzard's
    EULA restricts derivative works and unauthorized servers. A design must keep assets on the
@@ -37,7 +37,7 @@ README.
 
 | Project | What it is | State | Licence |
 |---|---|---|---|
-| [wowserhq/wowser](https://github.com/wowserhq/wowser#readme) (umbrella) | "World of Warcraft in the browser using JavaScript and WebGL"; 3.3.5a only | Proof of concept; being split into client and pipeline; package v0.0.2; last code change 2020-03-20 (release v0.0.2); last commit 2021-02-12 is README only | MIT |
+| [wowserhq/wowser](https://github.com/wowserhq/wowser#readme) (umbrella) | "World of Warcraft in the browser using JavaScript and WebGL"; 3.3.5a only | Proof of concept; being split into client and pipeline; package v0.0.2; last source change (`src/`) 2016-07-27; v0.0.2 release (2020-03-20) only bumped package metadata (CHANGELOG, package.json); last commit 2021-02-12 is README only | MIT |
 | [wowserhq/client](https://github.com/wowserhq/client#readme) | TypeScript, vite, WebGL 2 web client for Blizzard UI files | Pushed 2025-10-08. README: "extremely primitive scene rendering" (frames and textures mostly), "no BLP support yet" | MIT |
 | [wowserhq/pipeline](https://github.com/wowserhq/pipeline#readme) | Node asset server: serves client MPQ data over HTTP, BLP to PNG, DBC to JSON | Pushed 2018; MPQ clients only | MIT per README; GitHub reports `NOASSERTION` |
 | [Deamon87/WebWowViewerCpp](https://github.com/Deamon87/WebWowViewerCpp#readme) | C++ map and model viewer with a WebGL build used at wow.tools/mv | Active (pushed 2026-09-14). A viewer with no game protocol; its README describes opening a local CASC storage, not 3.3.5a MPQs | GitHub reports no licence |
