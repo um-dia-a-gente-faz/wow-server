@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v2/characters/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api V2 Character */
+        get: operations["api_v2_character_api_v2_characters__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/characters/{name}/activity": {
         parameters: {
             query?: never;
@@ -13,6 +30,23 @@ export interface paths {
         };
         /** Api V2 Activity */
         get: operations["api_v2_activity_api_v2_characters__name__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/characters/{name}/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api V2 Decisions */
+        get: operations["api_v2_decisions_api_v2_characters__name__decisions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -88,6 +122,63 @@ export interface components {
             sources: {
                 [key: string]: unknown;
             };
+        };
+        /** CharacterSummary */
+        CharacterSummary: {
+            /** Class Color */
+            class_color: string;
+            /** Class Name */
+            class_name: string;
+            /** Health */
+            health: number | null;
+            /** Level */
+            level: number;
+            /** Max Health */
+            max_health: number | null;
+            /** Max Power */
+            max_power: number | null;
+            /** Money */
+            money: number;
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+            /** Power */
+            power: number | null;
+            /** Power Type */
+            power_type: string;
+            /** Race Name */
+            race_name: string;
+            /** Zone Name */
+            zone_name: string;
+        };
+        /** Decision */
+        Decision: {
+            /** Action */
+            action: string | null;
+            /** Args */
+            args: {
+                [key: string]: unknown;
+            };
+            /** Brain */
+            brain: string | null;
+            /** Confidence */
+            confidence: number | null;
+            /** Error */
+            error: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason: string | null;
+            /** T */
+            t: number;
+        };
+        /** DecisionsResponse */
+        DecisionsResponse: {
+            /** Character */
+            character: string;
+            /** Decisions */
+            decisions: components["schemas"]["Decision"][];
         };
         /** ErrorResponse */
         ErrorResponse: {
@@ -197,6 +288,46 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    api_v2_character_api_v2_characters__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CharacterSummary"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     api_v2_activity_api_v2_characters__name__activity_get: {
         parameters: {
             query?: {
@@ -217,6 +348,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    api_v2_decisions_api_v2_characters__name__decisions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionsResponse"];
                 };
             };
             /** @description Validation Error */

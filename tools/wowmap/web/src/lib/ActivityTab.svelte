@@ -12,10 +12,12 @@
     try {
       const r = await fetch(`/api/v2/characters/${encodeURIComponent(n)}/activity?limit=50`);
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
-      feed = (await r.json()) as Feed;
+      const f = (await r.json()) as Feed;
+      if (n !== name) return;   // a slow answer for a character that is no longer open
+      feed = f;
       error = '';
     } catch (e) {
-      error = String(e instanceof Error ? e.message : e);
+      if (n === name) error = String(e instanceof Error ? e.message : e);
     }
   }
 
@@ -31,7 +33,7 @@
 
 {#if error}<p class="err">{error}</p>{/if}
 <ul class="events">
-  {#each feed?.events ?? [] as e (e.t + e.kind + e.text)}
+  {#each feed?.events ?? [] as e, i (i)}
     <li><time>{when(e.t)}</time> <b>{e.kind}</b> {e.text}</li>
   {:else}
     {#if feed}<li class="none">No recent activity.</li>{/if}
