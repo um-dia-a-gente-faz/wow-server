@@ -1,45 +1,21 @@
 """Think-loop memory (UM-90): recent-action history, progress fingerprint and
 the loop guard. No session or world dependency; agent.think re-exports these."""
 
-import hashlib
 import json
 import time
 from collections import deque
 
-from .model import ActionRecord, Snapshot
+from . import config
+from .model import ActionRecord
+from .watchdog import Watchdog  # #320: ThinkState owns one
 
 HISTORY_LEN = 8          # UM-90: recent cycles shown to the model
 LOOP_GUARD_REPEATS = 3   # UM-90: identical failed/no-op calls before the guard blocks the next one
 LOOP_GUARD_COOLDOWN_S = 15.0  # #521: a block lapses once its newest matching entry is this old
 _DETAIL_MAX_CHARS = 160  # keep each history line short; the prompt is token-budgeted
 
-# Snapshot keys whose change means an action did something. Deliberately
-# leaves out things that drift on their own (own health/mana regen, chat,
-# other units' positions) so "changed" means progress, not noise.
-_PROGRESS_KEYS = ("position", "is_dead", "is_ghost", "window", "trade", "mailbox",
-                  "equipment", "inventory", "quest_log", "pending_invite", "group")
-
-
 def _args_key(params: dict) -> str:
     return json.dumps(params or {}, sort_keys=True, default=str)
-
-
-def progress_fingerprint(snapshot: Snapshot) -> str:
-    """Digest of the parts of a snapshot an action can change (UM-90's
-    "returned no state change" test): the _PROGRESS_KEYS (position rounded
-    to 1 yd so float jitter doesn't count), own level/xp, and the health of
-    units in combat (so a fight in progress counts as a change)."""
-    view = {k: snapshot.get(k) for k in _PROGRESS_KEYS}
-    pos = snapshot.get("position")
-    if isinstance(pos, dict):
-        view["position"] = {k: round(v) if isinstance(v, float) else v for k, v in pos.items()}
-    me = snapshot.get("me")
-    view["me"] = {"level": me.get("level") if me else None, "xp": me.get("xp") if me else None}
-    view["fights"] = sorted(
-        (str(u.get("guid")), u.get("health_pct"))
-        for u in snapshot.get("nearby_units") or [] if u.get("in_combat"))
-    raw = json.dumps(view, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha1(raw).hexdigest()
 
 
 def _short(value) -> str | None:
@@ -60,6 +36,8 @@ class ThinkState:
     def __init__(self, maxlen: int = HISTORY_LEN, clock=time.monotonic):
         self.history: deque = deque(maxlen=maxlen)
         self.clock = clock  # #521: injectable so the cooldown is testable without sleeping
+        self.watchdog = Watchdog(window_s=config.get("AGENT_WATCHDOG_WINDOW_S"),  # #320
+                                 idle_cycles=config.get("AGENT_WATCHDOG_IDLE_CYCLES"), clock=clock)
 
     def observe(self, fingerprint: str) -> None:
         """Called once per cycle with the fresh snapshot's fingerprint:

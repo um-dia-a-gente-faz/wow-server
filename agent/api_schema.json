@@ -132,7 +132,7 @@
             "ts": {"type": "number"},
             "agent": {"type": "string"},
             "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]},
-            "kind": {"type": "string", "enum": ["unknown_action", "no_candidates", "corpse_unreachable"]},
+            "kind": {"type": "string", "enum": ["unknown_action", "no_candidates", "corpse_unreachable", "no_progress"]},
             "wanted": {"type": "object", "required": ["action", "params"], "properties": {
               "action": {"type": ["string", "null"]},
               "params": {"type": "object"}}},
