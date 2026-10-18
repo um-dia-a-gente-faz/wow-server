@@ -12,12 +12,19 @@ import heapq
 import math
 import re
 import struct
+import threading
+from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
 class NavMeshError(ValueError):
     """A movement-map file that is not the 3.3.5a format this reader knows."""
+
+
+# Parsed tiles one NavMesh keeps by default. Memory per tile is measured on the fixture only (README).
+DEFAULT_MAX_TILES = 64
 
 
 # src/common/Collision/Maps/MapDefines.h:25-26
@@ -350,15 +357,68 @@ def _funnel(start: tuple, end: tuple, portals: list[tuple[tuple, tuple]]) -> lis
     return path
 
 
-class NavMesh:
-    """Every .mmtile of one map, keyed by its (gx, gy) file index."""
+class LazyTiles(Mapping):
+    """The tiles of one map by (gx, gy) file index, parsed from their .mmtile on first use. The last
+    max_tiles parsed are kept, least recently used out first. Thread-safe: the lock covers the LRU only,
+    so two threads may parse one tile and the later parse is the one kept."""
+    # ponytail: parse outside the lock; per-key locks if a duplicate parse ever shows up in the logs
 
-    def __init__(self, params: dict, tiles: dict[tuple[int, int], Tile]):
+    def __init__(self, files: dict[tuple[int, int], Path], max_tiles: int):
+        self.files = files
+        self.max_tiles = max_tiles
+        self._parsed: OrderedDict[tuple[int, int], Tile] = OrderedDict()
+        self._lock = threading.Lock()
+
+    @property
+    def resident(self) -> list[tuple[int, int]]:
+        """The keys whose tiles are parsed and held right now."""
+        with self._lock:
+            return list(self._parsed)
+
+    def get(self, key, default=None):
+        path = self.files.get(key)
+        if path is None:                          # no file: no tile, and no read
+            return default
+        with self._lock:
+            tile = self._parsed.get(key)
+            if tile is not None:
+                self._parsed.move_to_end(key)
+                return tile
+        tile = read_tile(path.read_bytes())       # outside the lock
+        with self._lock:
+            self._parsed[key] = tile
+            self._parsed.move_to_end(key)
+            while len(self._parsed) > self.max_tiles:
+                self._parsed.popitem(last=False)
+        return tile
+
+    def __getitem__(self, key) -> Tile:
+        tile = self.get(key)
+        if tile is None:
+            raise KeyError(key)
+        return tile
+
+    def __contains__(self, key) -> bool:          # a file, not a parse: Mapping's default would parse
+        return key in self.files
+
+    def __iter__(self):
+        return iter(self.files)
+
+    def __len__(self) -> int:
+        return len(self.files)
+
+
+class NavMesh:
+    """Every .mmtile of one map, keyed by its (gx, gy) file index. `tiles` is a mapping: a LazyTiles from
+    load, or a dict of parsed Tiles."""
+
+    def __init__(self, params: dict, tiles: Mapping[tuple[int, int], Tile]):
         self.params = params
         self.tiles = tiles
 
     @classmethod
-    def load(cls, mmaps_dir: Path, map_id: int) -> NavMesh:
+    def load(cls, mmaps_dir: Path, map_id: int, max_tiles: int = DEFAULT_MAX_TILES) -> NavMesh:
+        """Read the map's .mmap and list its .mmtile files. No tile is read until a query needs it."""
         raw = (mmaps_dir / f"{map_id:03}.mmap").read_bytes()
         if len(raw) < _PARAMS.size:
             raise NavMeshError(f"{map_id:03}.mmap is shorter than dtNavMeshParams")
@@ -366,12 +426,12 @@ class NavMesh:
         params = {"orig": v[0:3], "tileWidth": v[3], "tileHeight": v[4], "maxTiles": v[5], "maxPolys": v[6]}
         # File name is mmaps/MMMXXYY.mmtile with (map, x, y), MMapManager.cpp:131 and Map.cpp:170.
         name = re.compile(rf"{map_id:03}(\d\d)(\d\d)\.mmtile")
-        tiles = {}
+        files = {}
         for path in mmaps_dir.glob(f"{map_id:03}*.mmtile"):
             m = name.fullmatch(path.name)
             if m:
-                tiles[(int(m[1]), int(m[2]))] = read_tile(path.read_bytes())
-        return cls(params, tiles)
+                files[(int(m[1]), int(m[2]))] = path
+        return cls(params, LazyTiles(files, max_tiles))
 
     def tile_coords(self, x: float, y: float) -> tuple[int, int]:
         """The file index of the tile that holds WoW point (x, y)."""
