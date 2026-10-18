@@ -33,8 +33,7 @@ test('zone marker equals map.js px() with the zone calibration', () => {
 
 test('continent marker is cont_x/cont_y times the frame, no calibration', () => {
   const area = {area_id: '0', continent_view: true, calibration: {dx: 99, dy: 99}};
-  const [x, y] = ctx.markerXY(player({}), area);
-  assert.ok(Math.abs(x - 0.4 * 1002) < 1e-9 && Math.abs(y - 0.6 * 668) < 1e-9);
+  assert.deepEqual(plain(ctx.markerXY(player({cont_x: 0.1, cont_y: 0.9}), area)), [100.2, 601.2]);
 });
 
 test('players not on the area, offline or without coordinates have no marker', () => {
