@@ -40,33 +40,40 @@ def position_fields(t, cmap, zone, x, y):
     }
 
 
+def _player(row):
+    (name, level, cls, race, cmap, zone, x, y, z, orient, inst, totaltime, online) = row[:13]
+    t = state.tables()
+    n = t.to_normalised(zone, float(x), float(y)) if zone else None
+    c = None if inst else continent_position(t, cmap, zone, float(x), float(y))
+    return {
+        "name": name, "level": level, "class": cls,
+        "class_name": CLASSES.get(cls, str(cls)),
+        "class_color": CLASS_COLORS.get(cls, "#888888"),
+        "race": race, "race_name": RACES.get(race, str(race)),
+        "map": cmap, "zone": zone, "zone_name": t.zone_name(zone) if zone else "Unknown",
+        "x": round(float(x), 2), "y": round(float(y), 2), "z": round(float(z), 2),
+        "orientation": round(float(orient), 3),
+        "instance": inst or 0,
+        "in_world": not inst,
+        "norm_x": round(n[0], 4) if n else None,
+        "norm_y": round(n[1], 4) if n else None,
+        # The same position on the continent map (UM-78), as /api/areas names it.
+        "continent": f"c{c[0]}" if c else None,
+        "cont_x": round(c[1], 4) if c else None,
+        "cont_y": round(c[2], 4) if c else None,
+        "playtime_seconds": totaltime,
+        **position_fields(t, cmap, zone, float(x), float(y)),
+    }
+
+
 def fetch_players():
-    out = []
-    for (name, level, cls, race, cmap, zone, x, y, z, orient,
-         inst, totaltime, online) in players_repo.online():
-        t = state.tables()
-        n = t.to_normalised(zone, float(x), float(y)) if zone else None
-        c = None if inst else continent_position(t, cmap, zone, float(x), float(y))
-        out.append({
-            "name": name, "level": level, "class": cls,
-            "class_name": CLASSES.get(cls, str(cls)),
-            "class_color": CLASS_COLORS.get(cls, "#888888"),
-            "race": race, "race_name": RACES.get(race, str(race)),
-            "map": cmap, "zone": zone, "zone_name": t.zone_name(zone) if zone else "Unknown",
-            "x": round(float(x), 2), "y": round(float(y), 2), "z": round(float(z), 2),
-            "orientation": round(float(orient), 3),
-            "instance": inst or 0,
-            "in_world": not inst,
-            "norm_x": round(n[0], 4) if n else None,
-            "norm_y": round(n[1], 4) if n else None,
-            # The same position on the continent map (UM-78), as /api/areas names it.
-            "continent": f"c{c[0]}" if c else None,
-            "cont_x": round(c[1], 4) if c else None,
-            "cont_y": round(c[2], 4) if c else None,
-            "playtime_seconds": totaltime,
-            **position_fields(t, cmap, zone, float(x), float(y)),
-        })
-    return out
+    return [_player(row) for row in players_repo.online()]
+
+
+def fetch_offline():
+    """Characters logged out in the last 7 days (#329), at their last position."""
+    return [{**_player(row), "online": False, "last_seen": row[13]}
+            for row in players_repo.recent_offline()]
 
 
 def summary():

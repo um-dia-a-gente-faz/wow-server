@@ -1,6 +1,6 @@
 """The FastAPI shell of wowmap (ADR 0012, #323).
 
-    GET /api/v2/players   online players, typed by the Player model (the OpenAPI spec)
+    GET /api/v2/players   online players, then recently logged-out ones, typed by the Player model (the OpenAPI spec)
     GET /api/v2/stream    SSE: `event: players` at once, then every WOWMAP_SSE_INTERVAL_S seconds
     any other GET/POST    the old route table (routes.dispatch), answered with the same bytes
                           app.Handler sent, so the existing pages keep working on the same port
@@ -15,14 +15,15 @@ import os
 from collections.abc import AsyncIterator
 from urllib.parse import parse_qs
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 import players
 import routes
+import state
 import webio
 
 app = FastAPI(title="wowmap", version="2")
@@ -63,15 +64,53 @@ class Player(BaseModel):
     subzone: int | None
     subzone_name: str | None
     map_coords: MapCoords | None
+    online: bool = True
+    last_seen: int | None = None   # logout epoch, offline rows only
 
 
 class PlayersResponse(BaseModel):
     players: list[Player]
 
 
+class ActivityEvent(BaseModel):
+    t: float
+    kind: str
+    text: str
+    detail: dict
+    source: str
+    inferred: bool
+
+
+class ActivityResponse(BaseModel):
+    character: str
+    agent: bool
+    events: list[ActivityEvent]
+    sources: dict
+
+
+class ErrorResponse(BaseModel):
+    error: str
+
+
+def _all_players() -> list[dict]:
+    """Online players, then the recently logged out ones (an offline row of an online name is dropped)."""
+    online = players.fetch_players()
+    names = {p["name"] for p in online}
+    return [{**p, "online": True, "last_seen": None} for p in online] + \
+           [p for p in players.fetch_offline() if p["name"] not in names]
+
+
 @app.get("/api/v2/players", response_model=PlayersResponse)
 def api_v2_players() -> dict:
-    return {"players": players.fetch_players()}
+    return {"players": _all_players()}
+
+
+@app.get("/api/v2/characters/{name}/activity", response_model=ActivityResponse,
+         responses={503: {"model": ErrorResponse}})
+def api_v2_activity(name: str, limit: int = Query(50, ge=1, le=200)):
+    if state.activity is None:
+        return JSONResponse({"error": "activity feed disabled"}, status_code=503)
+    return state.activity.feed(name, limit)
 
 
 def _interval() -> float:
@@ -81,7 +120,7 @@ def _interval() -> float:
 async def _players_events() -> AsyncIterator[str]:
     # Async, so a waiting stream holds no threadpool worker: only the query runs there.
     while True:
-        data = json.dumps({"players": await run_in_threadpool(players.fetch_players)})
+        data = json.dumps({"players": await run_in_threadpool(_all_players)})
         yield f"event: players\ndata: {data}\n\n"
         await asyncio.sleep(_interval())
 

@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v2/characters/{name}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api V2 Activity */
+        get: operations["api_v2_activity_api_v2_characters__name__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/players": {
         parameters: {
             query?: never;
@@ -42,6 +59,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityEvent */
+        ActivityEvent: {
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Inferred */
+            inferred: boolean;
+            /** Kind */
+            kind: string;
+            /** Source */
+            source: string;
+            /** T */
+            t: number;
+            /** Text */
+            text: string;
+        };
+        /** ActivityResponse */
+        ActivityResponse: {
+            /** Agent */
+            agent: boolean;
+            /** Character */
+            character: string;
+            /** Events */
+            events: components["schemas"]["ActivityEvent"][];
+            /** Sources */
+            sources: {
+                [key: string]: unknown;
+            };
+        };
+        /** ErrorResponse */
+        ErrorResponse: {
+            /** Error */
+            error: string;
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /** MapCoords */
         MapCoords: {
             /** X */
@@ -72,6 +129,8 @@ export interface components {
             in_world: boolean;
             /** Instance */
             instance: number;
+            /** Last Seen */
+            last_seen?: number | null;
             /** Level */
             level: number;
             /** Map */
@@ -83,6 +142,11 @@ export interface components {
             norm_x: number | null;
             /** Norm Y */
             norm_y: number | null;
+            /**
+             * Online
+             * @default true
+             */
+            online: boolean;
             /** Orientation */
             orientation: number;
             /** Playtime Seconds */
@@ -111,6 +175,19 @@ export interface components {
             /** Players */
             players: components["schemas"]["Player"][];
         };
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -120,6 +197,48 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    api_v2_activity_api_v2_characters__name__activity_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     api_v2_players_api_v2_players_get: {
         parameters: {
             query?: never;
