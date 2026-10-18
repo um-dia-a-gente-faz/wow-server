@@ -6,9 +6,9 @@ set (off by default). Every endpoint is GET and returns JSON; any other
 method gets 405. There is no write or control endpoint on purpose: actions
 stay inside the agent loop.
 
-The single exception (#178) is `POST /control/walk`, which exists only when
-AGENT_CONTROL_TOKEN is set (bearer-authenticated, called by tools/agent-runner,
-see agent/control.py). With no token configured every POST is still a 405.
+The exceptions (#178, #330) are the POST routes in agent/control.py (ROUTES), which exist
+only when AGENT_CONTROL_TOKEN is set (bearer-authenticated, called by tools/agent-runner).
+With no token configured every POST is still a 405.
 
     GET /healthz     liveness, agent name, whether a session is attached
     GET /state       own stats, spellbook, quest log, equipment, inventory; the connection
@@ -22,6 +22,7 @@ see agent/control.py). With no token configured every POST is still a 405.
                      wow_agent_reconnect_attempts_total{agent,reason},
                      wow_agent_fleet_limits_state/_age_seconds and wow_agent_fleet_blocked_cycles_total (agent.metrics)
     POST /control/walk   operator walk, only with AGENT_CONTROL_TOKEN set (agent/control.py)
+    POST /control/pause, /resume, /override, /release, /stop_follow, /follow   operator controls (#330), same gate
 
 Threading: the recv thread and the think loop mutate state; handlers only
 read it, through the same locked getters the think loop uses
@@ -54,7 +55,7 @@ from .unmet import UnmetIntents
 log = logging.getLogger("agent.http")
 
 # #264: bump with agent/api_schema.json (a test pins them together); breaking changes only.
-API_VERSION = 1
+API_VERSION = 2   # #330: the control routes and /state's control field
 DECISIONS_MAXLEN = 50     # decisions kept in memory for /brain and /events
 DEFAULT_BRAIN_DECISIONS = 10
 SSE_POLL_S = 0.5
@@ -116,6 +117,7 @@ class AgentObserver:
         # whole duration, so the two never drive the character at once.
         self.action_lock = threading.Lock()
         self.control_token = ""  # set by the main loop from AGENT_CONTROL_TOKEN; "" = no control endpoint
+        self.control_state = control.ControlState()  # #330: pause/override flags, read by the think and reflex threads
         # #292: the supervisor's agent.lifecycle.Lifecycle. None until the supervisor is wired:
         # /state then has no "lifecycle".
         self.lifecycle: LifecycleView | None = None
@@ -176,7 +178,8 @@ class AgentObserver:
     def state(self) -> dict:
         sess = self.session
         if sess is None:
-            return {"agent": self.agent_name, "connected": False, "mission": self.mission, **self._lifecycle()}
+            return {"agent": self.agent_name, "connected": False, "mission": self.mission,
+                    "control": self.control_state.snapshot(), **self._lifecycle()}
         world = sess.world_state
         me = world.get_my_object()
         stats = {
@@ -218,6 +221,7 @@ class AgentObserver:
             "quest_log": world.build_quest_log(),
             "equipment": equipment,
             "inventory": inventory,
+            "control": self.control_state.snapshot(),
             **self._lifecycle(),
         })
 
@@ -310,8 +314,10 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         url = urlsplit(self.path)
         obs = self.observer
-        if not obs.control_token or url.path.rstrip("/") != "/control/walk":
+        route = control.ROUTES.get(url.path.rstrip("/"))
+        if not obs.control_token or route is None:
             return self._method_not_allowed()
+        handler, body_optional = route
         header = self.headers.get("Authorization", "")
         supplied = header[7:] if header.lower().startswith("bearer ") else ""
         if not hmac.compare_digest(supplied.encode("utf-8"), obs.control_token.encode("utf-8")):
@@ -320,20 +326,23 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = -1
-        if not 0 < length <= MAX_CONTROL_BODY_BYTES:
+        if body_optional and length == 0:
+            body = {}
+        elif not 0 < length <= MAX_CONTROL_BODY_BYTES:
             return self._send_json(400, {"ok": False, "outcome": "refused", "code": "bad_request",
                                          "error": "a JSON object body is required"})
-        try:
-            body = json.loads(self.rfile.read(length))
-        except ValueError:
-            return self._send_json(400, {"ok": False, "outcome": "refused", "code": "bad_request",
-                                         "error": "body is not valid JSON"})
+        else:
+            try:
+                body = json.loads(self.rfile.read(length))
+            except ValueError:
+                return self._send_json(400, {"ok": False, "outcome": "refused", "code": "bad_request",
+                                             "error": "body is not valid JSON"})
         dry = parse_qs(url.query).get("dry_run", [""])[0] in ("1", "true")
-        status, result = control.walk(obs, body, dry_run=dry)
-        log.info("operator walk from %s: %s -> %s %s", self.client_address[0],
-                 json.dumps({k: body.get(k) for k in ("x", "y", "z", "near_player")}
+        status, result = handler(obs, body, dry)
+        log.info("operator %s from %s: %s -> %s %s", url.path, self.client_address[0],
+                 json.dumps({k: body.get(k) for k in ("x", "y", "z", "near_player", "player")}
                             if isinstance(body, dict) else None),
-                 result.get("outcome"), "(dry run)" if dry else "")
+                 result.get("outcome") or result.get("code") or status, "(dry run)" if dry else "")
         try:
             self._send_json(status, result)
         except (BrokenPipeError, ConnectionResetError):

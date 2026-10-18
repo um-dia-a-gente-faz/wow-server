@@ -81,7 +81,7 @@ LAYERS = {
     "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "update_fields"},
-    "control": {"actions", "metrics", "movement", "ports"},   # #411: the session contract (ports)
+    "control": {"actions", "metrics", "movement", "ports", "reflexes"},   # #411: the session contract (ports); #330: the operator follow route starts the follow reflex
     "death": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "rules"},   # #411: ports
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
