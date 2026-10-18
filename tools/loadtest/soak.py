@@ -132,6 +132,9 @@ class Agent:
         self.session = None
         self.builds = self.dropped = 0
         self.packets = 0           # packets the recv loop read, over every session of this agent
+        self.stream_s = 0.0        # streaming seconds (login done -> think loop ends), summed over sessions
+        self.stream_packets = 0    # packets read inside those windows (no login burst)
+        self._window = None        # (monotonic start, packets at start) of the open window
         self.recoveries = []       # seconds from "went down" to "online again"
         self.down_since = None
         self.log = logging.getLogger("soak." + self.name)
@@ -148,6 +151,7 @@ class Agent:
         if self.down_since is not None:
             self.recoveries.append(time.monotonic() - self.down_since)
             self.down_since = None
+        self._window = (time.monotonic(), self.packets)
         return self.session
 
     def _count_packets(self, sess):
@@ -162,11 +166,23 @@ class Agent:
         sess._recv_packet = counted
 
     def _run(self, sess):
-        down = run_think_loop(sess, self.cfg, self.deadline - time.monotonic(), time.monotonic())
+        try:
+            down = run_think_loop(sess, self.cfg, self.deadline - time.monotonic(), time.monotonic())
+        finally:
+            self._close_window()
         self.dropped += sess.dropped_packets
         if down:
             self.down_since = time.monotonic()
         return down
+
+    def _close_window(self):
+        """End the streaming window opened by the last successful login (#775): the rate is
+        read on the monotonic clock the mock schedules its ticks on, so login time is excluded."""
+        if self._window is not None:
+            t0, p0 = self._window
+            self.stream_s += time.monotonic() - t0
+            self.stream_packets += self.packets - p0
+            self._window = None
 
     def _sleep(self, backoff):
         if time.monotonic() >= self.deadline:
@@ -265,6 +281,7 @@ def report(pool, mock, ticks, samples, interval, duration, threads0, rss0, fault
         "stream_hz": stream_hz, "stream_pool": stream_pool, "recv_packets_total": sum(a.packets for a in pool),
         "recv_packets_per_s_per_agent": packet_rate(sum(a.packets for a in pool), n * duration),
         "recv_packets_per_agent": {str(i): packet_rate(a.packets, duration) for i, a in enumerate(pool)},
+        "recv_stream_packets_per_agent": {str(i): packet_rate(a.stream_packets, a.stream_s) for i, a in enumerate(pool)},
         "container_items": {"first": items[0] if items else None, "last": items[-1] if items else None,
                             "max": max(items, default=None)},
         "samples": samples,

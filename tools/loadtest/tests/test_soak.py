@@ -83,12 +83,18 @@ class SoakTest(unittest.TestCase):
         self.assertIsNone(soak.packet_rate(5, 0))
 
     def test_stream_run_reports_the_recv_packet_rate(self):
-        rep = soak.run_soak(2, 6, think_interval=0.05, sample_every=0.5, stream_hz=20)
+        rep = soak.run_soak(2, 8, think_interval=0.05, sample_every=0.5, stream_hz=20)
         self.assertEqual(rep["stream_hz"], 20)
-        # 3 packets per tick at 20 Hz = 60/s per agent; a login gap costs a few percent. A half-rate
-        # (10 Hz = 30/s) or double-rate stream falls outside +-15 %.
-        for rate in rep["recv_packets_per_agent"].values():
-            self.assertTrue(51 <= rate <= 69, rate)
+        # 3 packets per tick at 20 Hz = 60/s per agent, measured over each agent's streaming window (end of
+        # its login to end of its run), so login time does not count. The mock skips late ticks rather than
+        # catching up (server.py `max(stream_at + 1/hz, now)`), so a whole-process stall of S seconds inside
+        # an 8 s window lowers the rate to about 60 * (8 - S) / 8. The bound of 40 therefore tolerates a stall
+        # of up to about 2.7 s (8 * (1 - 40/60)). Measured with a 2 s stall in the mock's stream: 46.0 over 8 s
+        # (it was 41.5 over the old 6 s window, which is why the window is 8 s). A half-rate (30/s) or
+        # double-rate (120/s) stream falls outside 40..80.
+        self.assertEqual(len(rep["recv_stream_packets_per_agent"]), 2)
+        for rate in rep["recv_stream_packets_per_agent"].values():
+            self.assertTrue(40 <= rate <= 80, rate)
         self.assertEqual(rep["dropped_packets"], 0)
         self.assertGreater(rep["recv_packets_total"], 0)
 
