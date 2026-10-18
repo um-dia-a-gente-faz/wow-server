@@ -43,6 +43,7 @@ Finished investigations in [spikes/](spikes/). Each starts with a status line: o
 
 | Doc | Outcome |
 |---|---|
+| [spikes/live-view-in-the-site.md](spikes/live-view-in-the-site.md) | live view options: rendered radar first, no stream, control later (#337) |
 | [spikes/CHARACTER-MODEL-SPIKE.md](spikes/CHARACTER-MODEL-SPIKE.md) | go: 3D body model in the inspect drawer (#171) |
 | [spikes/CHAT_FEED_SPIKE.md](spikes/CHAT_FEED_SPIKE.md) | log-tail recommendation, superseded in part by the chat relay (UM-47) |
 | [spikes/HP_POWER_SPIKE.md](spikes/HP_POWER_SPIKE.md) | no-go on RA/GM commands for max HP and power (UM-46) |
