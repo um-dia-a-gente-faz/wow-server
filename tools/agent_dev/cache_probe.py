@@ -35,6 +35,8 @@ BAND_EDGES = (0.25, 0.5, 0.8)
 BAND_NAMES = ("crit", "low", "mid", "full")
 DIST_EDGES = (5.0, 15.0, 40.0)  # melee / interact, short hop, approach limit
 THREAT_CAP = 3
+# agent/audit.py subdirectories; not imported, tools/ may not reach agent/audit (test_architecture).
+LIFECYCLE_SUBDIR, UNMET_SUBDIR = "lifecycle", "unmet"
 
 # Action classes the ADR is willing to serve from cache; everything else is refused.
 SERVED_ACTIONS = {"accept_quest", "complete_quest", "turn_in_quest", "loot", "accept_group",
@@ -148,10 +150,20 @@ def analyse(records) -> dict:
 
 
 def _paths(args) -> list[str]:
+    """A directory is one agent's dir (day files at its top level) or the audit
+    base (one agent dir per child). lifecycle/ and unmet/ hold no decision
+    records (docs/adr/0018-persisted-state-versioning.md), so they are skipped."""
     out = []
     for a in args:
-        out += sorted(glob.glob(os.path.join(a, "**", "*.jsonl*"), recursive=True)) \
-            if os.path.isdir(a) else [a]
+        if not os.path.isdir(a):
+            out.append(a)
+            continue
+        days = sorted(glob.glob(os.path.join(a, "*.jsonl*")))
+        if days:
+            out += days
+            continue
+        out += [p for p in sorted(glob.glob(os.path.join(a, "*", "*.jsonl*")))
+                if os.path.basename(os.path.dirname(p)) not in (LIFECYCLE_SUBDIR, UNMET_SUBDIR)]
     return out
 
 

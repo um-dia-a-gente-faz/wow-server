@@ -4,10 +4,12 @@ repeat/agreement arithmetic, on the candidate-generator fixtures."""
 import copy
 import json
 import os
+import tempfile
 import unittest
 
 from agent import candidates as cand
 from tools.agent_dev import cache_probe as cp
+from tools.agent_dev.replay import load_records
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "candidates")
 
@@ -73,6 +75,41 @@ class AnalyseTest(unittest.TestCase):
         s = cp.analyse([{"tool_call": {"name": "idle", "args": {}}}])
         self.assertEqual(s["keyed_cycles"], 0)
         self.assertIsNone(s["repeat_rate"])
+
+
+class PathsTest(unittest.TestCase):
+    """#772: a directory argument reads only the per-agent day files, never the
+    lifecycle/ and unmet/ subdirectories (docs/adr/0018-persisted-state-versioning.md)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.base = tmp.name
+        self.agent = os.path.join(self.base, "jev")
+        for sub in ("", "lifecycle", "unmet"):
+            os.makedirs(os.path.join(self.agent, sub))
+        self.day = self._write("", "2026-10-18.jsonl", 1)
+        self._write("lifecycle", "2026-10-18.jsonl", 2)
+        self._write("unmet", "2026-10-18.jsonl", 3)
+
+    def _write(self, sub, name, cycle):
+        path = os.path.join(self.agent, sub, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"cycle": cycle, "agent": "jev"}) + "\n")
+        return path
+
+    def _cycles(self, arg):
+        return sorted(r["cycle"] for p in cp._paths([arg]) for r in load_records(p))
+
+    def test_agent_dir_reads_only_day_files(self):
+        self.assertEqual(self._cycles(self.agent), [1])
+
+    def test_base_dir_reads_only_day_files(self):
+        self.assertEqual(self._cycles(self.base), [1])
+
+    def test_file_argument_is_read_as_given(self):
+        self.assertEqual(self._cycles(self.day), [1])
+        self.assertEqual(self._cycles(os.path.join(self.agent, "unmet", "2026-10-18.jsonl")), [3])
 
 
 if __name__ == "__main__":
