@@ -169,6 +169,30 @@ keeps one `NavMesh` per map, so the process ceiling is about `maps loaded` x `ma
 At the 900-poly fixture size, 64 tiles is about 80 MB per map. Queries in flight hold a few more tiles
 each while they run.
 
+## Speed
+
+`python3 -m tools.pathfinder.bench` times `find_path` on a synthetic 4 x 4 block of tiles (1600 quad
+polys each, 8% walls, ext links on every border). The real `.mmtile` files are on the VM and were not
+available, so these are fixture numbers; the profile before the change put 95% of the time in
+`find_poly`'s linear scan (`_on_edge` and `_inside` over every poly of 9 tiles, once per path corner).
+`find_path` calls it for both ends and for every corner. Fixes, all in `navmesh.py`:
+
+- a per-tile grid of 16 yd buckets over the polys' bounding boxes, built on a tile's first query
+  (`_Index`). The tile data carries a BV tree (`dtBVNode`, `DetourNavMesh.h:227`) but it is still not read:
+  the grid needs only fields already parsed;
+- the portal list of a poly is built once and kept on the tile (`_Index.neighbours`);
+- ext-link candidates are kept per `neis` value, so `_ext_links` no longer walks every poly of the neighbour tile.
+
+Before and after, same machine, same 150 queries (50 per distance band):
+
+| | p50 | p95 |
+|---|---|---|
+| before | 180 ms | 466 ms |
+| after | 0.6 ms | 11 ms |
+
+The index costs about 0.5 MB per 1500-poly tile (a tile parses to about 2.5 MB) and one build on its first
+query. The deployed sidecar measured p50 635 ms and p95 932 ms before (#846); re-run that probe after deploy.
+
 ## HTTP contract
 
 `server.py` serves `navmesh.py` over HTTP (stdlib `http.server`, #82). Run from `tools/`:
