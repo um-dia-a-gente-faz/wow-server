@@ -176,7 +176,12 @@ def main() -> None:
     if not mmaps_dir:
         raise SystemExit("MMAPS_DIR is required: the TrinityCore mmaps/ directory")
     port = int(os.environ.get("PATHFINDER_PORT", "8770"))
-    max_tiles = int(os.environ.get("PATHFINDER_MAX_TILES", DEFAULT_MAX_TILES))
+    try:
+        max_tiles = int(os.environ.get("PATHFINDER_MAX_TILES", DEFAULT_MAX_TILES))
+    except ValueError:
+        raise SystemExit("PATHFINDER_MAX_TILES must be a positive integer") from None
+    if max_tiles < 1:
+        raise SystemExit("PATHFINDER_MAX_TILES must be a positive integer")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     with Server(("", port), Path(mmaps_dir), max_tiles) as server:
         LOG.info("pathfinder on :%d, mmaps %s, max_tiles %d", port, mmaps_dir, max_tiles)

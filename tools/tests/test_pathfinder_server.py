@@ -3,6 +3,7 @@ dir holding the fixture tiles that test_pathfinder_navmesh.py builds (build_tile
 Stdlib only.
 """
 import json
+import os
 import pathlib
 import struct
 import tempfile
@@ -13,8 +14,8 @@ import urllib.request
 from unittest.mock import patch
 
 from test_pathfinder_navmesh import build_tile, grid, sloped  # noqa: E402  (tools/tests is the start dir)
-from tools.pathfinder.navmesh import NavMesh  # noqa: E402  (the checkout root is on sys.path, ADR 0019)
-from tools.pathfinder.server import Maps, Server  # noqa: E402
+from tools.pathfinder.navmesh import DEFAULT_MAX_TILES, NavMesh  # noqa: E402  (the checkout root is on sys.path, ADR 0019)
+from tools.pathfinder.server import Maps, Server, main  # noqa: E402
 
 MAP = 530
 TILE_KEY = NavMesh({}, {}).tile_coords(25, 25)   # every fixture point is in this tile
@@ -199,6 +200,30 @@ class MapsTests(ServerCase):
     def test_each_loaded_map_is_capped_at_max_tiles(self):
         self.write_map(grid(2, 1, 10))
         self.assertEqual(Maps(self.mmaps, max_tiles=2).get(MAP).tiles.max_tiles, 2)
+
+
+class MainEnvTests(ServerCase):
+    """main() reads PATHFINDER_MAX_TILES at startup; Server is patched so main returns instead of serving."""
+
+    def run_main(self, max_tiles_env):
+        with patch.dict(os.environ, {"MMAPS_DIR": str(self.mmaps)}), \
+                patch("logging.basicConfig"), patch("tools.pathfinder.server.Server") as server_cls:
+            os.environ.pop("PATHFINDER_MAX_TILES", None)   # patch.dict restores the environment after
+            if max_tiles_env is not None:
+                os.environ["PATHFINDER_MAX_TILES"] = max_tiles_env
+            main()
+        return server_cls
+
+    def test_max_tiles_below_one_or_not_an_int_is_refused_at_startup(self):
+        for value in ("-1", "0", "abc", "1.5", ""):
+            with self.subTest(value=value):
+                with self.assertRaises(SystemExit) as ctx:
+                    self.run_main(value)
+                self.assertIn("PATHFINDER_MAX_TILES must be a positive integer", str(ctx.exception))
+
+    def test_valid_max_tiles_reaches_the_server_and_the_default_is_64(self):
+        self.assertEqual(self.run_main("7").call_args.args[2], 7)
+        self.assertEqual(self.run_main(None).call_args.args[2], DEFAULT_MAX_TILES)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ class NavMeshError(ValueError):
     """A movement-map file that is not the 3.3.5a format this reader knows."""
 
 
-# Parsed tiles one NavMesh keeps by default. A real tile is a few hundred KB in memory (README).
+# Parsed tiles one NavMesh keeps by default. Memory per tile is measured on the fixture only (README).
 DEFAULT_MAX_TILES = 64
 
 
