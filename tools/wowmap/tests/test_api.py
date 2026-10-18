@@ -74,7 +74,8 @@ class FakeGameDb(unittest.TestCase):
     def setUp(self):
         for p in (mock.patch.object(state, "tables", return_value=FakeTables()),
                   mock.patch.object(state, "grid_areas", return_value=FakeGrid()),
-                  mock.patch.object(players_repo, "online", return_value=ONLINE)):
+                  mock.patch.object(players_repo, "online", return_value=ONLINE),
+                  mock.patch.object(players_repo, "recent_offline", return_value=[])):
             p.start()
             self.addCleanup(p.stop)
 
@@ -89,7 +90,7 @@ class PlayersTests(FakeGameDb):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["content-type"], "application/json")
         expected = players.fetch_players()
-        self.assertEqual(r.json(), {"players": expected})
+        self.assertEqual(r.json(), {"players": [dict(p, online=True, last_seen=None) for p in expected]})
         self.assertEqual(len(expected), 2)
         for p in r.json()["players"]:
             api.Player.model_validate(p)
@@ -98,7 +99,66 @@ class PlayersTests(FakeGameDb):
     def test_players_route_runs_the_patched_fetch(self):
         row = dict(players.fetch_players()[0], name="Ccc")
         with mock.patch.object(players, "fetch_players", return_value=[row]):
-            self.assertEqual(self.client.get("/api/v2/players").json(), {"players": [row]})
+            self.assertEqual(self.client.get("/api/v2/players").json(),
+                             {"players": [dict(row, online=True, last_seen=None)]})
+
+    def test_offline_rows_follow_the_online_ones_and_a_duplicate_name_is_dropped(self):
+        online = [dict(players.fetch_players()[0], name="Aaa"), dict(players.fetch_players()[0], name="Zzz")]
+        off = [dict(online[0], name="Aaa", online=False, last_seen=5),
+               dict(online[0], name="Bbb", online=False, last_seen=9)]
+        with mock.patch.object(players, "fetch_players", return_value=online), \
+                mock.patch.object(players, "fetch_offline", return_value=off):
+            got = self.client.get("/api/v2/players").json()["players"]
+        self.assertEqual([(p["name"], p["online"], p["last_seen"]) for p in got],
+                         [("Aaa", True, None), ("Zzz", True, None), ("Bbb", False, 9)])
+
+    def test_fetch_offline_marks_rows_offline_with_last_seen(self):
+        row = ("Off", 10, 1, 1, 0, 12, 1.0, 2.0, 3.0, 0.0, 0, 60, 0, 1700000000)
+        with mock.patch.object(players_repo, "recent_offline", return_value=[row]):
+            got = players.fetch_offline()
+        self.assertEqual((got[0]["name"], got[0]["online"], got[0]["last_seen"]), ("Off", False, 1700000000))
+        api.Player.model_validate(got[0])
+
+    def test_old_players_route_never_reads_the_offline_rows(self):
+        with mock.patch.object(players_repo, "recent_offline", side_effect=AssertionError("called")):
+            r = self.client.get("/api/players")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual([p["name"] for p in r.json()["players"]], ["Aaa", "Bbb"])
+
+
+class ActivityTests(unittest.TestCase):
+    class Fake:
+        def feed(self, name, limit):
+            return {"character": name, "agent": True, "sources": {"db": None},
+                    "events": [{"t": 1.5, "kind": "level", "text": f"limit {limit}",
+                                "detail": {"to": 5}, "source": "db", "inferred": False}]}
+
+    def setUp(self):
+        self.client = TestClient(api.app)
+
+    def test_feed_is_returned_with_the_limit(self):
+        with mock.patch.object(state, "activity", self.Fake()):
+            r = self.client.get("/api/v2/characters/Luaprata/activity?limit=7")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["character"], "Luaprata")
+        self.assertEqual(r.json()["events"][0]["text"], "limit 7")
+
+    def test_default_limit_is_50(self):
+        with mock.patch.object(state, "activity", self.Fake()):
+            r = self.client.get("/api/v2/characters/Luaprata/activity")
+        self.assertEqual(r.json()["events"][0]["text"], "limit 50")
+
+    def test_disabled_feed_is_503(self):
+        with mock.patch.object(state, "activity", None):
+            r = self.client.get("/api/v2/characters/Luaprata/activity")
+        self.assertEqual((r.status_code, r.json()), (503, {"error": "activity feed disabled"}))
+
+    def test_limit_outside_1_to_200_is_422(self):
+        with mock.patch.object(state, "activity", self.Fake()):
+            for limit in ("0", "201", "-1", "x"):
+                self.assertEqual(self.client.get(f"/api/v2/characters/A/activity?limit={limit}").status_code, 422)
+            for limit in ("1", "200"):
+                self.assertEqual(self.client.get(f"/api/v2/characters/A/activity?limit={limit}").status_code, 200)
 
 
 async def open_stream(app, path):
@@ -152,7 +212,7 @@ class StreamTests(FakeGameDb):
                 if line == "" and len(lines) > 2:   # the blank line ends the first event
                     break
         self.assertEqual(lines[0], "event: players")
-        self.assertEqual(json.loads(lines[1][len("data: "):]), {"players": players.fetch_players()})
+        self.assertEqual(json.loads(lines[1][len("data: "):]), {"players": [dict(p, online=True, last_seen=None) for p in players.fetch_players()]})
 
     def test_every_interval_sends_the_players_again(self):
         async def two_events():
@@ -326,6 +386,7 @@ class OpenApiTests(unittest.TestCase):
         paths = api.app.openapi()["paths"]
         self.assertIn("/api/v2/players", paths)
         self.assertIn("/api/v2/stream", paths)
+        self.assertIn("/api/v2/characters/{name}/activity", paths)
         self.assertNotIn("/{path}", paths)   # the catch-all is not part of the contract
 
 

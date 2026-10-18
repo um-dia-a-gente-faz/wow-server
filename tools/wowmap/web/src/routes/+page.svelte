@@ -4,6 +4,9 @@
   import 'leaflet/dist/leaflet.css';
   import type { components } from '$lib/api';
   import type { Area, AreasResponse } from '$lib/areas';
+  import CharacterDrawer, { type Tab } from '$lib/CharacterDrawer.svelte';
+  import ActivityTab from '$lib/ActivityTab.svelte';
+  import { lastSeenText } from '$lib/lastseen';
   import { SHEET_H, SHEET_W, MAP_FRAME_H, MAP_FRAME_W, ll, markerXY } from '$lib/position';
 
   type Player = components['schemas']['Player'];
@@ -16,6 +19,9 @@
   let mapEl: HTMLDivElement;
   let map: L.Map;
   let art: L.ImageOverlay | null = null;
+  let selected = $state<string | null>(null);
+  let now = $state(Math.floor(Date.now() / 1000));
+  const tabs: Tab[] = [{ id: 'activity', label: 'Activity', component: ActivityTab }];
   const markers = new Map<string, L.Marker>();
 
   const FRAME = L.latLngBounds(ll(0, MAP_FRAME_H), ll(MAP_FRAME_W, 0));
@@ -42,13 +48,14 @@
       area = d.areas.find((a) => a.area_id === busy?.zone) ?? d.continents[0] ?? d.areas[0] ?? null;
     });
 
+    const tick = setInterval(() => { now = Math.floor(Date.now() / 1000); }, 30_000);
     const es = new EventSource('/api/v2/stream');
     es.addEventListener('players', (e) => {
       players = (JSON.parse((e as MessageEvent).data) as { players: Player[] }).players;
       reconnecting = false;
     });
     es.onerror = () => { reconnecting = true; };   // EventSource reconnects by itself
-    return () => { es.close(); map.remove(); };
+    return () => { clearInterval(tick); es.close(); map.remove(); };
   });
 
   // Zone art: re-laid and re-fitted only when the zone changes, never on a player update.
@@ -71,12 +78,14 @@
       let m = markers.get(p.name);
       if (!m) {
         m = L.marker(at, { keyboard: false }).addTo(map);
+        const name = p.name;
+        m.on('click', () => { selected = name; });
         markers.set(p.name, m);
       } else {
         m.setLatLng(at);
       }
       m.setIcon(L.divIcon({
-        className: 'marker', iconSize: undefined,
+        className: p.online ? 'marker' : 'marker offline', iconSize: undefined,
         html: `<i style="background:${esc(p.class_color)}"></i><b>${esc(p.name)} ${p.level}</b>`
       }));
     }
@@ -105,10 +114,18 @@
     <summary>Players here ({here.length})</summary>
     <ul>
       {#each here as { p } (p.name)}
-        <li><i style="background:{p.class_color}"></i>{p.name} <small>{p.level} {p.class_name}</small></li>
+        <li class:offline={!p.online}>
+          <button type="button" class="row" onclick={() => (selected = p.name)}>
+            <i style="background:{p.class_color}"></i>{p.name} <small>{p.level} {p.class_name}</small>
+            {#if !p.online && p.last_seen}<small>offline · last seen {lastSeenText(p.last_seen, now)}</small>{/if}
+          </button>
+        </li>
       {/each}
     </ul>
   </details>
+  {#if selected}
+    <CharacterDrawer name={selected} {tabs} onclose={() => (selected = null)} />
+  {/if}
 </main>
 
 <style>
@@ -122,6 +139,9 @@
   ul { list-style: none; margin: 4px 0 0; padding: 0; }
   li { padding: 3px 0; }
   i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .row { all: unset; cursor: pointer; display: block; }
+  li.offline { opacity: 0.45; }
+  :global(.marker.offline) { opacity: 0.45; }
   small { opacity: 0.6; }
   :global(.marker) { white-space: nowrap; width: 0; height: 0; }
   :global(.marker i) { position: absolute; left: -5px; top: -5px; border: 1px solid #000; margin: 0; }

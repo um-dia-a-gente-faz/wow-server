@@ -193,6 +193,40 @@ class PlayersOnlineTests(unittest.TestCase):
         self.assertEqual(fake.queries, 2)
 
 
+class RecentOfflineTests(unittest.TestCase):
+    def setUp(self):
+        players_repo.recent_offline.cache_clear()
+        self.addCleanup(players_repo.recent_offline.cache_clear)
+
+    def test_sql_is_offline_only_inside_seven_days_newest_first_and_capped(self):
+        sqls = []
+
+        class Db(CountingDb):
+            def execute(self, sql, args=None):
+                sqls.append(" ".join(sql.split()))
+                super().execute(sql, args)
+
+        with mock.patch.object(state, "db", Db()):
+            players_repo.recent_offline()
+        sql = sqls[0]
+        self.assertIn("c.online = 0", sql)
+        self.assertIn("c.logout_time >= UNIX_TIMESTAMP() - 7 * 86400", sql)
+        self.assertIn("ORDER BY c.logout_time DESC LIMIT 200", sql)
+        self.assertTrue(sql.split("FROM")[0].rstrip().endswith("c.logout_time"))
+
+    def test_cache_holds_for_30_seconds(self):
+        fake = CountingDb()
+        with mock.patch.object(state, "db", fake), \
+                mock.patch("repo.cache.time.monotonic", return_value=100.0) as clock:
+            players_repo.recent_offline()
+            clock.return_value = 129.0
+            players_repo.recent_offline()
+            self.assertEqual(fake.queries, 1)
+            clock.return_value = 130.1
+            players_repo.recent_offline()
+        self.assertEqual(fake.queries, 2)
+
+
 class ReadOnlySessionTests(unittest.TestCase):
     def test_every_connection_is_read_only_with_timeouts(self):
         with mock.patch("pymysql.connect") as connect:
