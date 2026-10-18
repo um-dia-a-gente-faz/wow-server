@@ -75,6 +75,7 @@ Response: in game
 | `spellbook[].id` | integer | yes |
 | `spellbook[].name` | string/null | yes |
 | `quest_log` | array | yes |
+| `current_objective` | object/null | yes |
 | `equipment` | object | yes |
 | `inventory` | array | yes |
 | `control` | object | yes |

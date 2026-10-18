@@ -87,7 +87,8 @@ LAYERS = {
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
     "candidate_history": {"metrics", "model"},   # #550: the history drop/demote and the cap, moved out of candidates
-    "candidates": {"action_names", "action_specs", "candidate_history", "handles", "item_compare", "missions", "model", "rules"},   # #550: metrics moved with the history code
+    "candidate_windows": {"action_names", "action_specs", "item_compare", "missions", "model"},   # #315 split: the NPC window candidates and the sellable/backpack helpers, moved out of candidates
+    "candidates": {"action_names", "action_specs", "candidate_history", "candidate_windows", "handles", "item_compare", "missions", "model", "rules"},   # #550: metrics moved with the history code
     # deciding
     "prompts": set(),   # versioned prompt text assets (#395)
     "httpjson": set(),   # POST JSON over urllib, shared by jev and llm (#454)

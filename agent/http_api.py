@@ -81,6 +81,19 @@ def _jsonable(obj):
     return _redact(json.loads(json.dumps(obj, default=str)))
 
 
+def current_objective(quest_log) -> dict | None:
+    """#315: the first incomplete objective of the first incomplete quest, in log order. An item objective
+    has no counter (count None), so it counts as incomplete until the quest leaves the log."""
+    for q in quest_log or []:
+        if q.get("state_name") != "incomplete":
+            continue
+        for o in q.get("objectives") or []:
+            if o.get("count") is None or o["count"] < o["needed"]:
+                return {"quest_id": q["quest_id"], "title": q.get("title"), "text": o.get("text"),
+                        "count": o.get("count"), "needed": o.get("needed")}
+    return None
+
+
 class LifecycleView(Protocol):
     """What the observer needs from agent.lifecycle.Lifecycle (#292): a thread-safe snapshot."""
 
@@ -212,13 +225,15 @@ class AgentObserver:
             info = sp.get_spell_info(sid)
             spellbook.append({"id": sid, "name": info.name if info else None})
         equipment, inventory = world.build_equipment_and_inventory()
+        quest_log = world.build_quest_log()
         return _jsonable({
             "agent": self.agent_name,
             "connected": True,
             "mission": self.mission,
             "self": stats,
             "spellbook": spellbook,
-            "quest_log": world.build_quest_log(),
+            "quest_log": quest_log,
+            "current_objective": current_objective(quest_log),
             "equipment": equipment,
             "inventory": inventory,
             "control": self.control_state.snapshot(),

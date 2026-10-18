@@ -150,6 +150,63 @@ class UnmetIntentsContractTest(_ServerCase):
         self.assertIn("/unmet-intents", body["endpoints"])
 
 
+class CurrentObjectiveContractTest(_ServerCase):
+    """#315: /state carries current_objective, the first incomplete objective in log order, or null."""
+
+    KILL = {"entry": 1001, "gameobject": False, "name": "Mana Wyrm", "count": 1, "needed": 3,
+            "text": "Mana Wyrm slain: 1/3"}
+
+    def quest_log(self, *entries):
+        self.session.world_state.build_quest_log = lambda: list(entries)
+
+    def state(self):
+        return json.loads(self.get("/state")[1])
+
+    def test_objective_in_progress_is_reported_and_validates(self):
+        self.quest_log({"slot": 0, "quest_id": 8330, "state": 0, "state_name": "incomplete", "counters": [1],
+                        "time": 0, "title": "Mana Wyrms", "objectives": [self.KILL]})
+        body = self.state()
+        self.assertEqual(body["current_objective"], {"quest_id": 8330, "title": "Mana Wyrms",
+                                                     "text": "Mana Wyrm slain: 1/3", "count": 1, "needed": 3})
+        self.check("/state", "/state", "in game")
+
+    def test_first_incomplete_objective_in_log_order(self):
+        done = {**self.KILL, "count": 3}
+        self.quest_log({"slot": 0, "quest_id": 1, "state": 0, "state_name": "incomplete", "counters": [3],
+                        "time": 0, "title": "Done", "objectives": [done]},
+                       {"slot": 1, "quest_id": 2, "state": 0, "state_name": "incomplete", "counters": [1],
+                        "time": 0, "title": "Next", "objectives": [self.KILL]})
+        self.assertEqual(self.state()["current_objective"]["quest_id"], 2)
+
+    def test_two_open_quests_report_the_first_in_log_order(self):
+        self.quest_log({"slot": 0, "quest_id": 1, "state": 0, "state_name": "incomplete", "counters": [1],
+                        "time": 0, "title": "First", "objectives": [self.KILL]},
+                       {"slot": 1, "quest_id": 2, "state": 0, "state_name": "incomplete", "counters": [1],
+                        "time": 0, "title": "Second", "objectives": [{**self.KILL, "entry": 1002}]})
+        self.assertEqual(self.state()["current_objective"]["quest_id"], 1)
+
+    def test_null_without_an_incomplete_objective_and_still_validates(self):
+        self.quest_log({"slot": 0, "quest_id": 1, "state": 1, "state_name": "complete", "counters": [3],
+                        "time": 0, "title": "Done", "objectives": [{**self.KILL, "count": 3}]})
+        self.assertIsNone(self.state()["current_objective"])
+        self.check("/state", "/state", "in game")
+
+    def test_null_with_an_empty_quest_log(self):
+        self.quest_log()
+        self.assertIsNone(self.state()["current_objective"])
+        self.check("/state", "/state", "in game")
+
+    def check(self, path, endpoint, response):
+        body = json.loads(self.get(path)[1])
+        self.assertEqual(ac.validate(body, ac.response_schema(endpoint, response)), [], path)
+        self.assertEqual(body["api_version"], C["api_version"])
+
+    def test_schema_requires_the_field_in_game_only(self):
+        in_game = ac.response_schema("/state", "in game")
+        self.assertIn("current_objective", in_game["required"])
+        self.assertNotIn("current_objective", ac.response_schema("/state", "not in game")["required"])
+
+
 class DocTest(unittest.TestCase):
     def test_endpoint_reference_is_current(self):
         self.assertEqual((ROOT / "docs" / "AGENT-API.md").read_text("utf-8"), ac.render_markdown(),

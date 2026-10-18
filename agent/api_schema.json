@@ -30,7 +30,7 @@
             "reason": {"type": "string"},
             "transitions": {"type": "array", "items": {"type": "object", "required": ["from", "to", "reason", "at"], "properties": {
               "from": {"type": "string"}, "to": {"type": "string"}, "reason": {"type": "string"}, "at": {"type": "number"}}}}}}}},
-        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission", "self", "spellbook", "quest_log", "equipment", "inventory", "control"], "properties": {
+        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission", "self", "spellbook", "quest_log", "current_objective", "equipment", "inventory", "control"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
@@ -55,6 +55,12 @@
           "spellbook": {"type": "array", "items": {"type": "object", "required": ["id", "name"], "properties": {
             "id": {"type": "integer"}, "name": {"type": ["string", "null"]}}}},
           "quest_log": {"type": "array"},
+          "current_objective": {"type": ["object", "null"], "description": "#315: the first incomplete objective of the first incomplete quest in log order, or null.", "required": ["quest_id", "title", "text", "count", "needed"], "properties": {
+            "quest_id": {"type": "integer"},
+            "title": {"type": ["string", "null"]},
+            "text": {"type": ["string", "null"]},
+            "count": {"type": ["integer", "null"], "description": "Null for an item objective (no counter in the snapshot)."},
+            "needed": {"type": "integer"}}},
           "equipment": {"type": "object"},
           "inventory": {"type": "array"},
           "control": {"type": "object", "required": ["brain_paused", "override"], "properties": {"brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
