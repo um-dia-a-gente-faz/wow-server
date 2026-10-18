@@ -70,6 +70,7 @@ class RouteTest(unittest.TestCase):
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["detail"]["waypoints"], 3)  # DETOUR minus the start point
+        self.assertEqual(sess.events, [])  # a served route records no fallback
         self.assertEqual(stub.requests[0]["map"], MAP)
         positions = heartbeat_positions(sess)
         cursor = 0
@@ -118,6 +119,38 @@ class RouteTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(sess.events, [])
         self.assertTrue(near(heartbeat_positions(sess)[-1], END))
+
+    def test_caller_stop_distance_applies_to_the_last_segment_only(self):
+        stub = self.sidecar(lambda req: ok_reply(DETOUR))
+        sess = fake_session(PathClient(stub.url))
+        clock = FakeClock()
+        mover = mv.Mover(sess, per.WorldState(), clock=clock.clock, sleep=clock.sleep)
+        result = mover.move_to(END[0], END[1], stop_distance=5.0, run_speed=7.0, tick_interval=0.1)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["detail"]["waypoints"], 3)
+        # Stopped on the 5-yd arrival ring of END, not on the 1-yd corner rule.
+        final = heartbeat_positions(sess)[-1]
+        self.assertGreater(math.hypot(final[0] - END[0], final[1] - END[1]), 4.0)
+        self.assertLessEqual(math.hypot(final[0] - END[0], final[1] - END[1]), 5.0)
+
+    def test_stop_between_segments_ends_the_route_before_segment_two(self):
+        stub = self.sidecar(lambda req: ok_reply(DETOUR))
+        sess = fake_session(PathClient(stub.url))
+        clock = FakeClock()
+        mover = mv.Mover(sess, per.WorldState(), clock=clock.clock, sleep=clock.sleep)
+        send = sess.send_packet
+
+        def stop_when_segment_one_ends(opcode, payload=b''):
+            send(opcode, payload)
+            if opcode == mv.MSG_MOVE_STOP:  # segment 1's arrival stop: stop lands between segments
+                mover._stop_event.set()
+
+        sess.send_packet = stop_when_segment_one_ends
+        result = mover.move_to(END[0], END[1], stop_distance=1.0, run_speed=7.0, tick_interval=0.1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "stopped")
+        self.assertEqual(result["detail"]["waypoint"], 1)
+        self.assertEqual(len(opcodes_of(sess, mv.MSG_MOVE_START_FORWARD)), 1)  # segment 2 never started
 
     def test_stop_during_segment_two_ends_the_route(self):
         stub = self.sidecar(lambda req: ok_reply(DETOUR))

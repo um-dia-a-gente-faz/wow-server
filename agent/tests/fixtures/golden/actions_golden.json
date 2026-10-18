@@ -568,7 +568,7 @@
    }
   },
   {
-   "description": "Walk in a straight line to a point on the ground, stopping within stop_distance yards. No pathfinding \u2014 obstacles will block it (returns ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.",
+   "description": "Walk to a point on the ground, stopping within stop_distance yards. Follows navmesh paths when the pathfinder sidecar is configured, else a straight line that obstacles will block (returns ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.",
    "name": "move_to",
    "parameters": {
     "properties": {
@@ -1364,7 +1364,7 @@
   },
   {
    "function": {
-    "description": "Walk in a straight line to a point on the ground, stopping within stop_distance yards. No pathfinding \u2014 obstacles will block it (returns ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.",
+    "description": "Walk to a point on the ground, stopping within stop_distance yards. Follows navmesh paths when the pathfinder sidecar is configured, else a straight line that obstacles will block (returns ok=False, error='stuck'). Blocks until arrival, stuck, or stopped.",
     "name": "move_to",
     "parameters": {
      "properties": {

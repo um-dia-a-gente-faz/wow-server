@@ -9,6 +9,7 @@ raises nothing else, and never blocks longer than its timeout.
 
 import http.client
 import json
+import math
 import threading
 import urllib.error
 import urllib.request
@@ -74,7 +75,18 @@ class PathClient:
             if status in ("no_path", "no_map"):
                 return None
             if status == "ok":
-                return [(float(p["x"]), float(p["y"]), float(p["z"])) for p in data["points"]]
+                points = [_point(p) for p in data["points"]]
+                # A NaN or infinite waypoint never arrives, so the move would never end.
+                if all(math.isfinite(c) for pt in points for c in pt):
+                    return points
         except (ValueError, TypeError, KeyError):
             pass
         raise PathUnavailable("malformed response")
+
+
+def _point(p) -> Point:
+    """One {"x","y","z"} object as floats; a JSON boolean is not a number here."""
+    values = (p["x"], p["y"], p["z"])
+    if any(isinstance(v, bool) for v in values):
+        raise TypeError("boolean coordinate")
+    return (float(values[0]), float(values[1]), float(values[2]))

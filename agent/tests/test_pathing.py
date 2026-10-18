@@ -91,6 +91,21 @@ class PathClientTest(unittest.TestCase):
             with self.assertRaises(PathUnavailable, msg=raw):
                 PathClient(stub.url).path(1, (0, 0, 0), (1, 0, 0))
 
+    def test_non_finite_coordinates_are_malformed(self):
+        # json.loads accepts NaN and Infinity literals; a NaN waypoint would make the mover's
+        # arrival test never true, so the move would never end.
+        for raw in (b'{"status": "ok", "points": [{"x": NaN, "y": 0, "z": 0}]}',
+                    b'{"status": "ok", "points": [{"x": 0, "y": Infinity, "z": 0}]}',
+                    b'{"status": "ok", "points": [{"x": 0, "y": 0, "z": -Infinity}]}'):
+            stub = self.serve(lambda req, r=raw: (200, r))
+            with self.assertRaises(PathUnavailable, msg=raw):
+                PathClient(stub.url).path(1, (0, 0, 0), (1, 0, 0))
+
+    def test_boolean_coordinates_are_malformed(self):
+        stub = self.serve(lambda req: (200, b'{"status": "ok", "points": [{"x": true, "y": 0, "z": 0}]}'))
+        with self.assertRaises(PathUnavailable):
+            PathClient(stub.url).path(1, (0, 0, 0), (1, 0, 0))
+
     def test_never_blocks_longer_than_its_timeout(self):
         def slow(req):
             time.sleep(1.0)
