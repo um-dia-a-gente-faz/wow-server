@@ -86,7 +86,7 @@ class SendSetFacingTest(unittest.TestCase):
 
 def fake_session(guid=0xF130000000000099, position=(530, 0.0, 0.0, 0.0, 0.0)):
     sent = []
-    sess = SimpleNamespace(player_guid=guid, player_position=position, mover=None)
+    sess = SimpleNamespace(player_guid=guid, player_position=position, mover=None, path_client=None)
     sess.send_packet = lambda opcode, payload=b'': sent.append((opcode, payload))
     sess._sent = sent
     return sess

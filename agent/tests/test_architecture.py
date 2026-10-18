@@ -68,7 +68,8 @@ LAYERS = {
     "item_compare": set(),
     "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
-    "movement": {"opcodes", "packets", "ports", "update_object"},   # #411: the session contract (ports)
+    "movement": {"opcodes", "packets", "pathing", "ports", "update_object"},   # #411: the session contract (ports); #312: the sidecar client
+    "pathing": set(),   # #312: the navmesh sidecar's POST /path client; stdlib urllib and json only
     # state
     "perception": {"changes", "group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
@@ -108,7 +109,7 @@ LAYERS = {
     "supervisor": {"auth", "lifecycle", "metrics"},   # the reconnect supervisor (#292)
     "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
     "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "metrics", "missions",
-             "runloop", "spells", "supervisor", "unmet", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
+             "pathing", "runloop", "spells", "supervisor", "unmet", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
     "__main__": {"auth", "config", "root"},
 }
 
