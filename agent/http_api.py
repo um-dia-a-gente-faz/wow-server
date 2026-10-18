@@ -40,6 +40,7 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
@@ -114,7 +115,8 @@ class AgentObserver:
                  decisions_maxlen: int = DECISIONS_MAXLEN, brain: str | None = None,
                  mission: str = DEFAULT_MISSION):
         self.agent_name = agent_name
-        self.mission = mission  # #314: what the agent is for; set once by the composition root
+        self._mission = mission  # #314: what the agent is for; set once by the composition root
+        self.mission_source: Callable[[], str] | None = None  # #316: the brain's MissionState.current, set by agent.root
         self.goal = goal or None
         self.model = model or None
         self.brain_name = brain or None  # UM-101: "jev"/"llm", until a decision says otherwise
@@ -145,6 +147,15 @@ class AgentObserver:
         return (render_swallowed(self.agent_name) + render_router(self.agent_name)
                 + render_reconnects(self.agent_name)
                 + render_fleet(self.agent_name, self.fleet.health if self.fleet is not None else None, time.time()))
+
+    @property
+    def mission(self) -> str:
+        """The mission in force: the brain's current mission once wired (#316), else the configured one."""
+        return self.mission_source() if self.mission_source is not None else self._mission
+
+    @mission.setter
+    def mission(self, value: str) -> None:
+        self._mission = value
 
     # ── fed by the agent loop ────────────────────────────────────────
     def attach(self, session, think_state=None, reflex_state_fn=None):
@@ -219,6 +230,8 @@ class AgentObserver:
         pos = getattr(sess, "player_position", None)
         if pos:
             stats["position"] = {"map": pos[0], "x": pos[1], "y": pos[2], "z": pos[3]}
+            if getattr(sess, "zone_id", None) is not None:
+                stats["position"]["zone"] = sess.zone_id   # #316: absent until SMSG_INIT_WORLD_STATES arrives
         spell_ids = sorted(_copy(lambda: list(getattr(sess, "spellbook", None) or ())))
         spellbook = []
         for sid in spell_ids:
@@ -250,7 +263,7 @@ class AgentObserver:
             corpse_position=getattr(sess, "corpse_position", None),
             pending_invite=getattr(sess, "pending_invite", None),
             group=getattr(sess, "group", None),
-            chat_inbox=chat)
+            chat_inbox=chat, zone=getattr(sess, "zone_id", None))
         return _jsonable({"agent": self.agent_name, "connected": True, **snap})
 
     def brain(self, n: int = DEFAULT_BRAIN_DECISIONS) -> dict:

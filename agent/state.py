@@ -43,6 +43,9 @@ class GameState:
         self.xp = None
         self.next_level_xp = None
         self.coinage = None
+        # #316: zone and area ids of the last SMSG_INIT_WORLD_STATES (agent/handlers/world_states.py); None until it arrives.
+        self.zone_id: int | None = None
+        self.area_id: int | None = None
         self.world_state = per.WorldState()  # nearby objects, players, etc.
         self.chat_inbox = collections.deque(maxlen=CHAT_INBOX_MAXLEN)
         # UM-47: optional agent.chat_relay.ChatRelay, set by the caller

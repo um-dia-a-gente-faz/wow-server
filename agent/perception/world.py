@@ -239,7 +239,7 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
 
     def snapshot(self, my_position=None, max_range: float = 50.0, limit: int = 40,
                  corpse_position=None, pending_invite=None, chat_inbox=None,
-                 group=None) -> Snapshot:
+                 group=None, zone=None) -> Snapshot:
         """A JSON-serialisable view shaped like docs/AI-AGENT-SPEC.md's
         `GET /agent/{id}/perception`: position, nearby_units, nearby_players,
         nearby_objects, sorted by distance and capped at `limit` each.
@@ -267,6 +267,8 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
         exposed as `group` (leader, loot method, members; None when
         ungrouped), and marks each nearby player `in_group` when they are
         in *our* group.
+
+        `zone` (#316, session.zone_id from SMSG_INIT_WORLD_STATES) is `position.zone`.
         """
         # #701: one acquisition for the whole snapshot (measured: ~1.4 ms for 500 objects), so
         # no section shows a different moment and the live objects are never read after the
@@ -290,7 +292,7 @@ class WorldState(FieldsMixin, ResolutionMixin, WindowsMixin, TradeMixin):
                 "quest_log": build_quest_log(me, self.quest_texts, self.names),
             }
             out = compose_snapshot(view, my_position, max_range, limit, corpse_position,
-                                   pending_invite, chat_inbox, group)
+                                   pending_invite, chat_inbox, group, zone)
             # UM-89: every GUID-valued field (guid, *_guid, *_guids) anywhere in
             # the snapshot becomes a handle; see agent/handles.py.
             return self.handles.encode(out)

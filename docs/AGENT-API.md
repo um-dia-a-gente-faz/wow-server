@@ -71,6 +71,7 @@ Response: in game
 | `self.position.x` | number | yes |
 | `self.position.y` | number | yes |
 | `self.position.z` | number | yes |
+| `self.position.zone` | integer/null |  |
 | `spellbook` | array | yes |
 | `spellbook[].id` | integer | yes |
 | `spellbook[].name` | string/null | yes |

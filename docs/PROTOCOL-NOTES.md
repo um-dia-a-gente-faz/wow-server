@@ -954,3 +954,23 @@ Source: TrinityCore `3.3.5` @ `92127cd6252edb96fbfa36540db0eba17d0031fa`.
 - The agent keeps it as `client_cache_version` on the session and hands it to `NameCache`
   (`set_server_cache_id`); `names.json` carries it as the additive key `cache_id`. It is not in `GET /state`
   (no packet of that login phase is).
+
+## `SMSG_INIT_WORLD_STATES`: the zone of the character (#316)
+
+Source: TrinityCore `3.3.5` @ `9ab2b43e1aa78b2d88c6dd654a875179a34472ab`.
+
+- **Opcode** `0x2C2`: `Server/Protocol/Opcodes.h`, `SMSG_INIT_WORLD_STATES = 0x2C2`.
+- **Payload**: `WorldPackets::WorldState::InitWorldStates::Write` (`Server/Packets/WorldStatePackets.cpp`) writes
+  `int32 MapID`, `int32 AreaID`, `int32 SubareaID`, then `uint16 count`, then `count` pairs of
+  `int32 VariableID`, `int32 Value`. Little endian. The three ids are the header's `MapID`, the zone
+  (`AreaID` in the struct, the `zoneId` argument), and the area (`SubareaID`, the `areaId` argument).
+  The header declares them `int32`; the Decision on #316 said `uint32`. The bytes are the same for every
+  real id, so the agent reads them with `Reader.i32()`.
+- **When** `Player::UpdateZone` (`Entities/Player/Player.cpp`) calls `SendInitWorldStates(newZone, newArea)`
+  on a zone change; `Player::SendInitWorldStates(zoneId, areaId)` builds the packet. On login it is reached
+  through `Player::SendInitialPacketsAfterAddToMap` -> `UpdateZone`. The pairs (scourge invasion, arena season,
+  Outland and per-zone counters) are ones the agent ignores.
+- The agent reads the first three fields only (`agent/handlers/world_states.py`) and keeps the zone and
+  area ids on the session as `zone_id` and `area_id`. The snapshot's `position` carries `zone`, and `/state`
+  shows it under `self.position`. A payload shorter than 12 bytes is a `PacketTruncated`, like other short
+  packets: nothing is stored.

@@ -141,7 +141,8 @@ def run_think_loop(sess, cfg, duration: float | None, start: float, perception_d
                     log.debug("  %5.1fyd  entry=%s level=%s hp=%s  %s",
                               o.distance_to(pos), o.entry, o.level, hp_pct, o)
         if perception_dump:
-            snapshot = sess.world_state.snapshot(my_position=sess.player_position)
+            snapshot = sess.world_state.snapshot(my_position=sess.player_position,
+                                                 zone=getattr(sess, "zone_id", None))
             print(json.dumps(snapshot))
 
         # ── think + act (brain call → one validated action per cycle) ────

@@ -199,6 +199,9 @@ def start_observer(cfg, audit_logger, log, brain=None):
     else:
         observer = AgentObserver(cfg.agent_name, goal=cfg.persona, model=cfg.llm_model, mission=mission)
     observer.fleet = getattr(brain, "fleet", None)  # #675: /metrics reads its health
+    mission_state = getattr(brain, "mission_state", None)
+    if mission_state is not None:
+        observer.mission_source = lambda: mission_state.current  # #316: the brain's mission, no second copy
     observer.control_token = cfg.control_token  # #178: "" keeps the API read-only
     if audit_logger is not None:
         audit_logger.on_record = observer.record_decision

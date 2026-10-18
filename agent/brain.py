@@ -47,7 +47,8 @@ from .fleetlimits import FleetLimits
 from .jev import JevClient, JevError
 from .llm import COOLDOWN_JITTER, MAX_COOLDOWN_S, MIN_COOLDOWN_S, LLMClient, LLMError
 from .metrics import count_fleet_blocked
-from .missions import DEFAULT_MISSION
+from .mission_state import EXPLORE, MissionState
+from .missions import DEFAULT_EXPLORE_NEW_ZONES, DEFAULT_LEVEL_CAP, DEFAULT_MISSION
 from .model import ActionRecord, Candidate, Snapshot
 from .tokenbudget import WINDOW_S as JEV_BUDGET_WINDOW_S, TokenBudget
 
@@ -107,6 +108,7 @@ class Decision:
     jev_status: str | None = None
     prompt_id: str | None = None        # agent.prompts ids of the LLM prompt, None if no LLM request
     history_notes: list | None = None   # candidates dropped/demoted because of history, with why
+    mission_change: tuple | None = None  # #316: (old, new, reason) when this cycle moved the mission
 
 
 def llm_catalog() -> list[dict]:
@@ -135,11 +137,13 @@ class Brain:
                  min_confidence: float = DEFAULT_JEV_MIN_CONFIDENCE,
                  max_tokens_per_hour: int = 0, budget: TokenBudget | None = None,
                  fleet: FleetLimits | None = None, rng: random.Random | None = None,
-                 mission: str = DEFAULT_MISSION):
+                 mission: str = DEFAULT_MISSION, explore_new_zones: int = DEFAULT_EXPLORE_NEW_ZONES,
+                 level_cap: int = DEFAULT_LEVEL_CAP):
         self.jev = jev
         self.llm = llm
         self.min_confidence = min_confidence
-        self.mission = mission   # #314: only the candidate generator's fallback reads it
+        # #314/#316: the mission in force; the candidate generator's fallback reads it (see `mission`).
+        self.mission_state = MissionState(mission, explore_new_zones, level_cap)
         self._mission_step = 0   # counts the fallbacks offered, so the heading turns each time
         self._clock = clock
         self._jev_cooldown_until = 0.0
@@ -173,7 +177,14 @@ class Brain:
         return cls(jev=jev, llm=llm, min_confidence=cfg.jev_min_confidence,
                    max_tokens_per_hour=getattr(cfg, "max_tokens_per_hour", 0),
                    fleet=FleetLimits(limits_file) if limits_file else None,
-                   mission=getattr(cfg, "mission", DEFAULT_MISSION))
+                   mission=getattr(cfg, "mission", DEFAULT_MISSION),
+                   explore_new_zones=getattr(cfg, "explore_new_zones", DEFAULT_EXPLORE_NEW_ZONES),
+                   level_cap=getattr(cfg, "level_cap", DEFAULT_LEVEL_CAP))
+
+    @property
+    def mission(self) -> str:
+        """#316: the mission in force (MissionState.current). There is no second copy."""
+        return self.mission_state.current
 
     def describe(self) -> str:
         parts = []
@@ -199,7 +210,32 @@ class Brain:
         (ThinkState.repeat_blocked) drops candidates the loop guard would
         refuse anyway, so Jev is not offered them (`idle` is always kept).
         `handles` (world.handles) lets the candidate generator resolve the
-        snapshot's handle-string GUIDs (UM-89) for its unit comparisons."""
+        snapshot's handle-string GUIDs (UM-89) for its unit comparisons.
+        #316: the mission rules see this snapshot first; a transition is on
+        `Decision.mission_change`, whether or not a brain decided."""
+        change = self._observe_mission(snapshot)
+        try:
+            d = self._decide(snapshot, persona=persona, history=history, my_guid=my_guid,
+                             reflex_state=reflex_state, blocked=blocked, handles=handles)
+        except BrainError as e:
+            e.decision.mission_change = change
+            raise
+        d.mission_change = change
+        return d
+
+    # ── internals ──────────────────────────────────────────────────
+    def _observe_mission(self, snapshot: Snapshot) -> tuple | None:
+        """#316: feed this snapshot's level and zone to the mission rules; (old, new, reason) on a transition."""
+        old = self.mission_state.current
+        me, pos = snapshot.get("me"), snapshot.get("position")
+        new = self.mission_state.observe(me.get("level") if me else None, pos.get("zone") if pos else None)
+        if new is None:
+            return None
+        return old, new, "level_cap" if new == EXPLORE else "explored"
+
+    def _decide(self, snapshot: Snapshot, *, persona: str, history, my_guid, reflex_state,
+                blocked, handles) -> Decision:
+        """decide() without the mission observation: the brain choice itself."""
         fallback = None
         failed_jev = None
         skip_status = None   # jev_status of a cycle where Jev was not called (budget or fleet block)
@@ -212,7 +248,7 @@ class Brain:
                     notes: list[dict] = []
                     options = cand.generate(snapshot, my_guid=my_guid, reflex_state=reflex_state,
                                             handles=handles, history=history, notes=notes,
-                                            mission=self.mission, mission_step=self._mission_step)
+                                            mission=self.mission_state.current, mission_step=self._mission_step)
                     if any(cand.is_mission_fallback(c) for c in options):
                         self._mission_step += 1
                     d.history_notes = notes or None
@@ -264,7 +300,6 @@ class Brain:
         self._fill_llm(d)
         return d
 
-    # ── internals ──────────────────────────────────────────────────
     def _jev_gate(self, d: Decision) -> str | None:
         """Why Jev is not called this cycle, or None. Order: cooldown, fleet limits file
         (ADR 0017), per-agent token budget; a fleet or budget skip sets `d.jev_status`."""

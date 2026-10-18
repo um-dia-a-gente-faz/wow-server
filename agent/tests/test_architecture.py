@@ -39,6 +39,7 @@ LAYERS = {
     "transport": {"packets", "opcodes"},   # #793: the in-world desync check reads NUM_MSG_TYPES (Opcodes.h end of enum)
     "config": {"missions"},   # AGENT_MISSION is one of missions.MISSIONS (#314)
     "missions": set(),   # the closed mission set (#314); a leaf
+    "mission_state": {"missions"},   # the mission in force and its transitions (#316); stdlib, the mission set only
     "handles": set(),
     "lines": set(),
     "known_targets": set(),
@@ -97,7 +98,7 @@ LAYERS = {
     "jev": {"httpjson", "llm"},
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "fleetlimits": {"metrics"},   # the ADR 0017 limits file reader; metrics for swallowed()
-    "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "missions", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
+    "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "mission_state", "missions", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs; #316: MissionState
     "loopguard": {"config", "model", "watchdog"},     # think-loop history + loop guard, no session dependency (#385); config and watchdog: #320's ThinkState watchdog settings
     "watchdog": {"model"},   # #320: the idle watchdog and progress_fingerprint (the loop guard's "changed" test); no import of loopguard
     "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "metrics", "model", "ports", "spells", "trade", "unmet", "update_fields", "watchdog"},  # #411: ports; #319: unmet; #320: swallowed() and progress_fingerprint

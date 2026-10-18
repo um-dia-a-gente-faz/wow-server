@@ -21,10 +21,13 @@ def resolved_position(me: ObjectInfo | None, my_position: tuple | None) -> tuple
 
 
 def self_section(me: ObjectInfo | None, my_position: tuple | None,
-                 corpse_position: tuple | None) -> SelfSection:
+                 corpse_position: tuple | None, zone: int | None = None) -> SelfSection:
     pos = resolved_position(me, my_position)
+    position = position_dict(pos)
+    if position is not None and zone is not None:
+        position["zone"] = zone   # #316: session state (SMSG_INIT_WORLD_STATES); absent until the server sends a zone
     return {
-        "position": position_dict(pos),
+        "position": position,
         "is_dead": bool(me is not None and me.is_dead()),
         "is_ghost": bool(me is not None and me.is_ghost()),
         "corpse_position": position_dict(corpse_position) if corpse_position is not None else None,
