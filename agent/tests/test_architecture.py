@@ -68,7 +68,8 @@ LAYERS = {
     "item_compare": set(),
     "update_object": {"opcodes", "packets", "wire"},
     "update_fields": {"update_object"},
-    "movement": {"opcodes", "packets", "ports", "update_object"},   # #411: the session contract (ports)
+    "movement": {"opcodes", "packets", "pathing", "ports", "update_object"},   # #411: the session contract (ports); #312: the sidecar client
+    "pathing": set(),   # #312: the navmesh sidecar's POST /path client; stdlib urllib and json only
     # state
     "perception": {"changes", "group", "handles", "items", "model", "names", "npc", "packets", "quests", "trade",
                    "update_fields", "update_object"},
@@ -81,7 +82,7 @@ LAYERS = {
     "actions": {"action_names", "action_specs", "changes", "channels", "item_compare", "loot", "mail", "movement", "npc", "opcodes", "ports",
                 "quests", "rules", "spells", "trade", "update_fields"},
     "reflexes": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "update_fields"},
-    "control": {"actions", "metrics", "movement", "ports"},   # #411: the session contract (ports)
+    "control": {"actions", "metrics", "movement", "ports", "reflexes"},   # #411: the session contract (ports); #330: the operator follow route starts the follow reflex
     "death": {"action_names", "actions", "movement", "opcodes", "perception", "ports", "rules"},   # #411: ports
     "action_specs": set(),   # one spec per action: name, params, required, cap (#419); below actions and candidates
     "action_names": {"action_specs"},
@@ -96,8 +97,9 @@ LAYERS = {
     "deciders": {"jev", "llm"},  # the Decider protocol and ScriptedDecider (#278)
     "fleetlimits": {"metrics"},   # the ADR 0017 limits file reader; metrics for swallowed()
     "brain": {"action_specs", "actions", "candidates", "fleetlimits", "jev", "llm", "metrics", "missions", "model", "tokenbudget"},  # #531: LLM_EXCLUDED_ACTIONS lives in action_specs
-    "loopguard": {"model"},     # think-loop history + loop guard, no session dependency (#385)
-    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "model", "ports", "spells", "trade", "unmet", "update_fields"},  # #411: ports; #319: unmet
+    "loopguard": {"config", "model", "watchdog"},     # think-loop history + loop guard, no session dependency (#385); config and watchdog: #320's ThinkState watchdog settings
+    "watchdog": {"model"},   # #320: the idle watchdog and progress_fingerprint (the loop guard's "changed" test); no import of loopguard
+    "think": {"action_specs", "actions", "brain", "handles", "llm", "loopguard", "metrics", "model", "ports", "spells", "trade", "unmet", "update_fields", "watchdog"},  # #411: ports; #319: unmet; #320: swallowed() and progress_fingerprint
     # entry and observing; nothing imports __main__
     "session": {"actions", "channels", "crypt", "handlers", "metrics", "opcodes", "packets", "router", "state",
                 "transport", "wire"},   # enum_characters and handle_time_sync read through Reader (#517)
@@ -108,7 +110,7 @@ LAYERS = {
     "supervisor": {"auth", "lifecycle", "metrics"},   # the reconnect supervisor (#292)
     "runloop": {"metrics", "reflexes", "think"},   # reflex threads and the think loop of one session (#292)
     "root": {"audit", "brain", "chat_relay", "http_api", "lifecycle", "login", "metrics", "missions",
-             "runloop", "spells", "supervisor", "unmet", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
+             "pathing", "runloop", "spells", "supervisor", "unmet", "worldknowledge"},   # the composition root (#292): the one module that wires a whole agent
     "__main__": {"auth", "config", "root"},
 }
 
@@ -329,8 +331,9 @@ class ToolsArchitectureTests(unittest.TestCase):
 
     def test_tools_use_only_the_allowed_third_party_libraries(self):
         # CLAUDE.md: `tools/` may use pymysql/Pillow; mpyq is the MPQ reader of the
-        # client-extraction scripts (extract_maps.py, extract_icons.py).
-        allowed = {"pymysql", "PIL", "mpyq"}
+        # client-extraction scripts (extract_maps.py, extract_icons.py); fastapi, uvicorn and
+        # pydantic are the tools/wowmap site stack (ADR 0012).
+        allowed = {"pymysql", "PIL", "mpyq", "fastapi", "uvicorn", "pydantic"}
         # First-party names: any module or package under tools/ or scripts/ (gen_agents_compose).
         local = {p.stem for p in list(TOOLS.rglob("*.py")) + list((ROOT / "scripts").rglob("*.py"))}
         local |= {d.name for d in TOOLS.rglob("*") if d.is_dir()}

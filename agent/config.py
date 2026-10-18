@@ -56,9 +56,15 @@ SETTINGS: tuple[Setting, ...] = (
        "(#318) never follows an agent that is not the party leader; empty = every character counts as human",
        compose=False),
     _s("AGENT_THINK_INTERVAL_S", float, 3.0, "minimum delay between think-loop decisions, seconds"),
+    _s("AGENT_WATCHDOG_WINDOW_S", float, 300.0, "idle watchdog (#320): a follow with no progress for this many "
+       "seconds is stopped; 0 = off", compose=False),
+    _s("AGENT_WATCHDOG_IDLE_CYCLES", int, 40, "idle watchdog (#320): this many think cycles without progress "
+       "records a no_progress unmet intent; 0 = off", compose=False),
     _s("AGENT_START_DELAY_S", float, 0.0, "seconds to wait once before the first connection attempt, 0 to 300 "
        "(set per service by compose from the roster position, #539)"),
     _s("AGENT_RUN_DURATION_S", float, 0.0, "run for N seconds, 0 = forever"),
+    _s("AGENT_PATHFINDER_URL", str, "", "tools/pathfinder URL for waypoint paths (#312); empty = straight-line "
+       "movement, no HTTP call", compose=False),
     _s("AGENT_PERSONA", str, "", "persona text for the LLM"),
     _s("AGENT_MISSION", str, DEFAULT_MISSION, "what the agent is for: level_to_cap | explore | make_gold (#314); "
        "set per service by compose from that agent's roster entry (#762; a .env value never reaches the containers)",
@@ -165,6 +171,8 @@ class Config:
     think_interval: float = _f("AGENT_THINK_INTERVAL_S")
     start_delay: float = _f("AGENT_START_DELAY_S")  # #539: one wait before the first connect
     run_duration: float = _f("AGENT_RUN_DURATION_S")  # 0 = forever
+    # #312: tools/pathfinder base URL; "" = no sidecar, the mover goes straight to its target.
+    pathfinder_url: str = _f("AGENT_PATHFINDER_URL")
     persona: str = _f("AGENT_PERSONA")
     # #314: one of agent.missions.MISSIONS; load_config() rejects anything else.
     mission: str = field(default_factory=lambda: get("AGENT_MISSION") or default("AGENT_MISSION"))

@@ -15,7 +15,9 @@ from unittest import mock
 
 from agent import actions as ac
 from agent import control
+from agent import http_api
 from agent import movement as mv
+from agent.reflexes import follow as fl
 from agent import perception as per
 from agent import update_object as uo
 from agent.http_api import AgentObserver, make_server
@@ -244,7 +246,7 @@ class WalkTest(unittest.TestCase):
         obs.action_lock.release()
 
 
-class HttpTest(unittest.TestCase):
+class _HttpCase(unittest.TestCase):
     def setUp(self):
         self.session = make_session()
         self.observer = make_observer(self.session)
@@ -266,6 +268,7 @@ class HttpTest(unittest.TestCase):
             with e:
                 return e.code, json.loads(e.read())
 
+class HttpTest(_HttpCase):
     def test_walk_over_http(self):
         status, out = self.post("/control/walk", {"x": 30.0, "y": 20.0})
         self.assertEqual((status, out["outcome"]), (200, "arrived"))
@@ -300,6 +303,118 @@ class HttpTest(unittest.TestCase):
         status, out = self.post("/control/walk", {"x": 30.0, "y": 20.0})
         self.assertEqual(status, 405)
         self.assertEqual(self.session._sent, [])
+
+
+class ControlRoutesHttpTest(_HttpCase):
+    """#330: pause, resume, override, release, follow and stop_follow over HTTP."""
+
+    ROUTES = ("/control/pause", "/control/resume", "/control/override", "/control/release",
+              "/control/stop_follow")
+
+    def get_state(self):
+        with urllib.request.urlopen(self.base + "/state", timeout=10) as r:
+            return json.loads(r.read())
+
+    def test_flag_routes_answer_200_with_the_flags_and_accept_an_empty_body(self):
+        for path, flags in (("/control/pause", {"brain_paused": True, "override": False}),
+                            ("/control/resume", {"brain_paused": False, "override": False}),
+                            ("/control/override", {"brain_paused": True, "override": True}),
+                            ("/control/release", {"brain_paused": False, "override": False})):
+            with self.subTest(path=path):
+                status, out = self.post(path, None, raw=b"")
+                self.assertEqual(status, 200)
+                self.assertEqual(out, {"api_version": http_api.API_VERSION, "ok": True, **flags})
+
+    def test_every_new_route_needs_the_token(self):
+        for path in self.ROUTES + ("/control/follow",):
+            with self.subTest(path=path):
+                self.assertEqual(self.post(path, {"player": "Rubens"}, token="wrong")[0], 401)
+                self.assertEqual(self.post(path, {"player": "Rubens"}, token=None)[0], 401)
+        self.assertEqual(self.session._sent, [])
+
+    def test_every_new_route_is_405_when_no_token_is_configured(self):
+        self.observer.control_token = ""
+        for path in self.ROUTES + ("/control/follow",):
+            with self.subTest(path=path):
+                self.assertEqual(self.post(path, {"player": "Rubens"})[0], 405)
+        self.assertFalse(self.observer.control_state.snapshot()["brain_paused"])
+
+    def test_unknown_control_path_stays_405(self):
+        self.assertEqual(self.post("/control/teleport", {})[0], 405)
+
+    def test_resume_during_override_is_409_and_changes_nothing(self):
+        self.post("/control/override", None, raw=b"")
+        status, out = self.post("/control/resume", None, raw=b"")
+        self.assertEqual((status, out["code"], out["ok"]), (409, "override_active", False))
+        self.assertEqual(self.observer.control_state.snapshot(), {"brain_paused": True, "override": True})
+
+    def test_override_stops_the_follow_reflex_and_follow_is_refused_while_held(self):
+        status, out = self.post("/control/follow", {"player": "Rubens"})
+        self.assertEqual((status, out["following"]), (200, "Rubens"))
+        self.assertTrue(fl.get_follow_reflex(self.session).enabled)
+        self.post("/control/override", None, raw=b"")
+        self.assertFalse(fl.get_follow_reflex(self.session).enabled)
+        self.assertIn(("follow_stopped", "override"), [(e["kind"], e.get("reason")) for e in self.session.events])
+        status, out = self.post("/control/follow", {"player": "Rubens"})
+        self.assertEqual((status, out["code"]), (409, "override_active"))
+        self.assertFalse(fl.get_follow_reflex(self.session).enabled)
+
+    def test_release_lets_the_brain_and_follow_run_again(self):
+        self.post("/control/override", None, raw=b"")
+        self.assertEqual(self.post("/control/release", None, raw=b"")[1]["override"], False)
+        self.assertEqual(self.post("/control/follow", {"player": "Rubens"})[0], 200)
+
+    def test_follow_then_stop_follow(self):
+        self.post("/control/follow", {"player": "rubens"})  # case-insensitive, like the follow action
+        self.assertEqual(fl.get_follow_reflex(self.session).leader_name, "Rubens")
+        status, out = self.post("/control/stop_follow", None, raw=b"")
+        self.assertEqual((status, out["was_following"]), (200, True))
+        self.assertFalse(fl.get_follow_reflex(self.session).enabled)
+        status, out = self.post("/control/stop_follow", None, raw=b"")  # nothing to stop: still 200
+        self.assertEqual((status, out["was_following"]), (200, False))
+
+    def test_follow_unknown_or_unseen_player_is_404_target_not_found(self):
+        status, out = self.post("/control/follow", {"player": "Nobodyhere"})
+        self.assertEqual((status, out["code"], out["ok"]), (404, "target_not_found", False))
+        self.assertIn("Nobodyhere is not perceived", out["error"])
+        self.assertFalse(fl.get_follow_reflex(self.session).enabled)
+
+    def test_follow_refuses_a_creature_or_oneself(self):
+        self.session.world_state.get_object(ME).name = "Luaprata"  # the character's own object, named
+        self.assertEqual(self.post("/control/follow", {"player": "Wolf"})[1]["code"], "target_not_found")
+        status, out = self.post("/control/follow", {"player": "Luaprata"})
+        self.assertEqual((status, out["code"]), (409, "follow_refused"))
+        self.assertIn("cannot follow itself", out["error"])
+        self.assertFalse(fl.get_follow_reflex(self.session).enabled)
+
+    def test_follow_body_must_be_exactly_a_player_name(self):
+        for body in ({}, {"player": "}}dots"}, {"player": "Rubens", "x": 1}, {"player": 5}):
+            with self.subTest(body=body):
+                self.assertEqual(self.post("/control/follow", body)[0], 400)
+        self.assertEqual(self.post("/control/follow", None, raw=b"")[0], 400)
+
+    def test_state_reports_the_control_flags(self):
+        self.assertEqual(self.get_state()["control"], {"brain_paused": False, "override": False})
+        self.post("/control/pause", None, raw=b"")
+        self.assertEqual(self.get_state()["control"], {"brain_paused": True, "override": False})
+
+
+class ControlStateTest(unittest.TestCase):
+    def test_pause_resume_and_override_release(self):
+        state = control.ControlState()
+        self.assertFalse(state.brain_held() or state.overridden())
+        state.pause()
+        self.assertTrue(state.brain_held())
+        self.assertFalse(state.overridden())
+        self.assertTrue(state.resume())
+        self.assertFalse(state.brain_held())
+        state.override()
+        self.assertEqual(state.snapshot(), {"brain_paused": True, "override": True})
+        self.assertTrue(state.brain_held() and state.overridden())
+        self.assertFalse(state.resume())   # refused, nothing changed
+        self.assertTrue(state.brain_held())
+        state.release()
+        self.assertEqual(state.snapshot(), {"brain_paused": False, "override": False})
 
 
 if __name__ == "__main__":

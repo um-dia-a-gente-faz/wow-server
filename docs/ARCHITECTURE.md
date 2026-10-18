@@ -191,10 +191,10 @@ The import rules for `agent/` are enforced by `agent/tests/test_architecture.py`
 table lists, for every module, the modules it may import (stdlib-only, parsers pure, handlers do
 not act, `actions` never import `reflexes`, no cycles, nothing imports `__main__`). A new
 module or edge is a deliberate edit to that table. The same file checks that only
-`tools/agent-runner` imports `docker`/`subprocess` and that `tools/` uses only `pymysql`, `Pillow`
-and `mpyq`.
+`tools/agent-runner` imports `docker`/`subprocess` and that `tools/` uses only `pymysql`, `Pillow`,
+`mpyq`, and `fastapi`, `uvicorn`, `pydantic` (ADR 0012, for `tools/wowmap`).
 
-### `tools/` (may use `pymysql`/`Pillow`)
+### `tools/` (may use `pymysql`/`Pillow`, and FastAPI in `tools/wowmap`)
 
 | Directory | Owns | Runs on |
 |---|---|---|

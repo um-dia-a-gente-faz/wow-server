@@ -48,6 +48,7 @@
     "agent/npc.py": 97,
     "agent/opcodes.py": 98,
     "agent/packets.py": 96,
+    "agent/pathing.py": 96,
     "agent/perception/nearby.py": 98,
     "agent/perception/objects.py": 95,
     "agent/perception/resolution.py": 86,

@@ -16,6 +16,7 @@ from .lifecycle import Lifecycle
 from .login import authenticate_and_login, connect_and_login
 from .metrics import swallowed
 from .missions import DEFAULT_MISSION
+from .pathing import PathClient
 from .runloop import run_loop
 from .supervisor import supervise_connection
 from .unmet import UnmetIntents
@@ -40,7 +41,9 @@ class Agent:
 
     def build_session(self):
         """The supervisor's build_session(): a new, logged-in WoWSession."""
-        return connect_and_login(self.cfg, self.log, self.chat_relay)
+        sess = connect_and_login(self.cfg, self.log, self.chat_relay)
+        sess.path_client = build_path_client(self.cfg)
+        return sess
 
     def run_session(self, sess, stop: threading.Event) -> bool:
         """The supervisor's run_session(): the reflex threads and the think loop of one
@@ -205,6 +208,12 @@ def start_observer(cfg, audit_logger, log, brain=None):
         log.error("observability API disabled: cannot bind %s:%d (%s)", cfg.http_bind, cfg.http_port, e)
         return None, None
     return observer, server
+
+
+def build_path_client(cfg) -> PathClient | None:
+    """#312: the one PathClient of a session, or None when AGENT_PATHFINDER_URL is empty (no sidecar,
+    straight-line movement, no HTTP call)."""
+    return PathClient(cfg.pathfinder_url) if cfg.pathfinder_url else None
 
 
 def build_chat_relay(cfg, log) -> ChatRelay:

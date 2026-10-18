@@ -19,7 +19,7 @@ from collections import deque
 log = logging.getLogger("agent.unmet")
 
 UNMET_SCHEMA = 1
-KINDS = ("unknown_action", "no_candidates", "corpse_unreachable")
+KINDS = ("unknown_action", "no_candidates", "corpse_unreachable", "no_progress")
 MAX_RECENT = 50
 DEDUP_S = 60.0
 STATE_MAX_CHARS = 512      # the state holds scalars and counts only, so it is bounded by construction

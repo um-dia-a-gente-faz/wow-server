@@ -8,6 +8,10 @@ the only way a player can, with the character's own session: the same `move_to` 
 which send MSG_MOVE_START_FORWARD / heartbeats / MSG_MOVE_STOP as the client would.
 There is no teleport, no GM command and no database write anywhere in this file.
 
+#330 adds the other operator controls on the same gate (ROUTES below): pause and resume
+the brain, override (brain and reflexes held until release), follow a perceived player and
+stop following. Every one is an ordinary player action; ControlState holds their flags.
+
 Request body (exactly one target form):
     {"x": 1.0, "y": 2.0, "z": 3.0}     z optional; coordinates on the character's current map
     {"near_player": "Rubens"}          a player this agent currently perceives
@@ -33,6 +37,7 @@ from . import actions as ac
 from . import movement
 from . import ports
 from .metrics import swallowed
+from .reflexes import follow as fl
 
 DEFAULT_TIMEOUT_S = 60.0
 MAX_TIMEOUT_S = 120.0
@@ -251,3 +256,154 @@ def _execute(observer, session: ports.ActionSession, plan: dict, base: dict, sta
             out["end_distance"] = round(math.hypot(end["x"] - obj.position[1], end["y"] - obj.position[2]), 1)
     # Failed walks are 422 so a caller that only checks the status never reads them as success.
     return (200 if outcome == "arrived" else 422), out
+
+
+class ControlState:
+    """The operator's pause and override flags (#330). The HTTP thread writes them; the think
+    thread and the reflex threads read them. Every read and write holds the lock."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._brain_paused = False
+        self._override = False
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {"brain_paused": self._brain_paused, "override": self._override}
+
+    def brain_held(self) -> bool:
+        """The think loop skips its cycle: paused, or overridden (an override implies a pause)."""
+        with self._lock:
+            return self._brain_paused or self._override
+
+    def overridden(self) -> bool:
+        """The reflexes are held: the follow and rest reflex ticks are skipped."""
+        with self._lock:
+            return self._override
+
+    def pause(self):
+        with self._lock:
+            self._brain_paused = True
+
+    def resume(self) -> bool:
+        """False, and no change, while an override is on."""
+        with self._lock:
+            if self._override:
+                return False
+            self._brain_paused = False
+            return True
+
+    def override(self):
+        with self._lock:
+            self._override = self._brain_paused = True
+
+    def release(self):
+        with self._lock:
+            self._override = self._brain_paused = False
+
+
+OVERRIDE_ACTIVE = "an override is on; release it before resuming or following"
+
+
+def _refusals(route):
+    """Turn a ControlError into its status and body; any other error becomes a 500, so a route always answers."""
+    def wrapped(observer, body, dry_run=False):
+        try:
+            return route(observer, body, dry_run)
+        except ControlError as e:
+            return e.status, e.body()
+        except Exception as e:  # noqa: BLE001 - the HTTP layer must always answer
+            swallowed("control.route", logging.getLogger("agent.control"))
+            return 500, {"ok": False, "outcome": "failed", "code": "internal", "error": f"{type(e).__name__}: {e}"}
+    wrapped.__name__ = route.__name__
+    return wrapped
+
+
+def _flags(observer) -> tuple[int, dict]:
+    return 200, {"ok": True, **observer.control_state.snapshot()}
+
+
+def _connected(observer):
+    session = observer.session
+    if session is None or session.unexpected_disconnect:
+        raise ControlError(409, "not_connected", "the agent is not logged in to the world")
+    return session
+
+
+@_refusals
+def pause(observer, body, dry_run=False):
+    observer.control_state.pause()
+    return _flags(observer)
+
+
+@_refusals
+def resume(observer, body, dry_run=False):
+    if not observer.control_state.resume():
+        raise ControlError(409, "override_active", OVERRIDE_ACTIVE)
+    return _flags(observer)
+
+
+@_refusals
+def override(observer, body, dry_run=False):
+    """Hold the brain and the reflexes, and stop the follow reflex (its follow_stopped event says why)."""
+    observer.control_state.override()
+    session = observer.session
+    if session is not None:
+        fl.get_follow_reflex(session).stop(session, session.world_state, reason="override")
+    return _flags(observer)
+
+
+@_refusals
+def release(observer, body, dry_run=False):
+    observer.control_state.release()
+    return _flags(observer)
+
+
+@_refusals
+def follow(observer, body, dry_run=False):
+    """POST /control/follow {"player": "<name>"}: follow a player this agent perceives, through
+    the follow action's own start (fl.begin_follow, which applies follow_target_error)."""
+    if not isinstance(body, dict) or set(body) != {"player"}:
+        raise ControlError(400, "bad_request", 'the body is {"player": "<name>"}')
+    err = ac.player_name_error(body["player"], "player")
+    if err:
+        raise ControlError(400, "bad_request", err)
+    if observer.control_state.overridden():
+        raise ControlError(409, "override_active", OVERRIDE_ACTIVE)
+    session = _connected(observer)
+    name = body["player"].strip()
+    leader = fl._find_player_by_name(session.world_state, name)
+    if leader is None:
+        raise ControlError(404, "target_not_found",
+                           f"{name} is not perceived by this agent (not within view range, offline, or "
+                           "the name has not resolved yet)")
+    error = fl.begin_follow(session, session.world_state, leader.guid, leader.name, reason="operator")
+    if error is not None:
+        raise ControlError(409, "follow_refused", error)
+    return 200, {"ok": True, "following": leader.name, "guid": leader.guid}
+
+
+@_refusals
+def stop_follow(observer, body, dry_run=False):
+    session = _connected(observer)
+    reflex = fl.get_follow_reflex(session)
+    was_following = reflex.enabled
+    reflex.stop(session, session.world_state, reason="operator")
+    return 200, {"ok": True, "was_following": was_following}
+
+
+def walk_route(observer, body, dry_run=False):
+    return walk(observer, body, dry_run=dry_run)
+
+
+# path -> (handler(observer, body, dry_run) -> (status, body), body_optional). http_api.do_POST
+# checks the token and reads the body; a route with body_optional takes an empty body as {}.
+ROUTES = {
+    "/control/walk": (walk_route, False),
+    "/control/pause": (pause, True),
+    "/control/resume": (resume, True),
+    "/control/override": (override, True),
+    "/control/release": (release, True),
+    "/control/follow": (follow, False),
+    "/control/stop_follow": (stop_follow, True),
+}

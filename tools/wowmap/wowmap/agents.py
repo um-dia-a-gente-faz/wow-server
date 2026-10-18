@@ -32,7 +32,7 @@ AGENT_PROXY_TIMEOUT_S = 3
 MAX_AGENT_RESPONSE_BYTES = 4 * 1024 * 1024
 # #264: agent API versions this page can render (agent/api_schema.json; a test pins it to the
 # schema). A response with no api_version is an older agent whose shape is version 1.
-SUPPORTED_API_VERSIONS = (1,)
+SUPPORTED_API_VERSIONS = (1, 2)  # 2: #330 control routes and /state control field (additive)
 
 
 def unsupported_api_version(body):

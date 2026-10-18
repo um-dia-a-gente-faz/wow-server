@@ -56,6 +56,8 @@ class GameState:
         self.rest_reflex = None
         # The session's one movement engine (agent.movement.Mover), made by get_mover() on first use.
         self.mover = None
+        # #312: agent.pathing.PathClient or None (AGENT_PATHFINDER_URL empty), set by agent.root per session.
+        self.path_client = None
         self.pending_invite: dict | None = None  # {"inviter_name": str} or None
         self.group = None  # agent.group.parse_group_list() dict, or None when ungrouped (GH-71)
         # #318: lower-cased character names of the other agents (config AGENT_ROSTER); empty = unknown.

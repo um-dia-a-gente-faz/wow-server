@@ -27,7 +27,7 @@ Linear (`UM-*`) is the older mirror and is no longer kept up to date.
 ## Always
 
 - `agent/` is **stdlib-only** Python 3.12 (`urllib`, `struct`, `socket` — no pip deps).
-  `tools/` may use `pymysql`/`Pillow`.
+  `tools/` may use `pymysql`/`Pillow`, and `fastapi`/`uvicorn`/`pydantic` in `tools/wowmap` (ADR 0012).
 - Tests: `scripts/check.sh test` (one suite: `scripts/check.sh test-agent`; everything CI
   runs: `scripts/check.sh all`; CI also runs `scripts/check.sh coverage`, not part of `all`). New suite = one line in `SUITES` in that script. CI also
   runs compose config, gitleaks, image build.

@@ -33,6 +33,7 @@ import time
 
 from . import packets as pk
 from . import ports
+from .pathing import PathUnavailable
 from .update_object import (
     MOVEMENTFLAG_ONTRANSPORT,
     MOVEMENTFLAG_FALLING,
@@ -314,7 +315,8 @@ class Mover:
     def move_to(self, x: float, y: float, z: float | None = None,
                 stop_distance: float = ARRIVE_STOP_DISTANCE_YD,
                 run_speed: float | None = None, tick_interval: float = TICK_INTERVAL_S) -> dict:
-        return self._run(lambda: (x, y, z), stop_distance, run_speed, tick_interval)
+        return self._run(lambda stop_event: self._move_routed(
+            stop_event, x, y, z, stop_distance, run_speed, tick_interval))
 
     def move_towards(self, guid: int, stop_distance: float = ARRIVE_STOP_DISTANCE_YD,
                       run_speed: float | None = None, tick_interval: float = TICK_INTERVAL_S) -> dict:
@@ -323,18 +325,58 @@ class Mover:
             if obj is None or obj.position is None:
                 return None
             return obj.position[1], obj.position[2], obj.position[3]
-        return self._run(get_target, stop_distance, run_speed, tick_interval)
+        return self._run(lambda stop_event: self._straight(
+            stop_event, get_target, stop_distance, run_speed, tick_interval))
 
-    def _run(self, get_target, stop_distance: float, run_speed: float | None,
-              tick_interval: float) -> dict:
+    def _straight(self, stop_event, get_target, stop_distance: float, run_speed: float | None,
+                  tick_interval: float) -> dict:
+        return _simulate(self.session, self.world, get_target, stop_distance,
+                         run_speed, tick_interval, stop_event, self._clock, self._sleep)
+
+    def _move_routed(self, stop_event, x: float, y: float, z: float | None, stop_distance: float,
+                     run_speed: float | None, tick_interval: float) -> dict:
+        """#312: walk the sidecar's waypoints when the session has a path client, else (or when the
+        sidecar is unavailable, recorded once as path_fallback) straight to the target."""
+        client = self.session.path_client
+        if client is None:
+            return self._straight(stop_event, lambda: (x, y, z), stop_distance, run_speed, tick_interval)
+        map_id, sx, sy, sz, _o = self.session.player_position
+        try:
+            points = client.path(map_id, (sx, sy, sz), (x, y, sz if z is None else z))
+        except PathUnavailable as e:
+            self.session.record_event("path_fallback", reason=e.reason)
+            return self._straight(stop_event, lambda: (x, y, z), stop_distance, run_speed, tick_interval)
+        if points is None:
+            return {"ok": False, "error": "no path", "detail": {"reason": "no_path"}}
+        if len(points) < 2:
+            return self._straight(stop_event, lambda: (x, y, z), stop_distance, run_speed, tick_interval)
+        # The first point is the start: walking to our own position is no segment.
+        if math.hypot(points[0][0] - sx, points[0][1] - sy) <= ARRIVE_STOP_DISTANCE_YD:
+            points = points[1:]
+        result: dict = {}
+        for i, waypoint in enumerate(points):
+            if stop_event.is_set():  # one stop ends the route: no segment starts after it
+                return {"ok": False, "error": "stopped", "detail": {"waypoint": i}}
+            last = i == len(points) - 1
+            # Each segment is its own _simulate call, so its start and z interpolation are its own.
+            result = self._straight(stop_event, lambda wp=waypoint: wp,
+                                    stop_distance if last else ARRIVE_STOP_DISTANCE_YD,
+                                    run_speed, tick_interval)
+            if not result["ok"]:
+                result["detail"]["waypoint"] = i
+                return result
+        result["detail"]["waypoints"] = len(points)
+        return result
+
+    def _run(self, body) -> dict:
+        """Run body(stop_event) on the move thread and wait for it."""
         self.stop()  # a fresh move_to/move_towards replaces whatever was running
         stop_event = threading.Event()
         self._stop_event = stop_event
         result: dict = {}
 
         def worker():
-            result.update(_simulate(self.session, self.world, get_target, stop_distance,
-                                     run_speed, tick_interval, stop_event, self._clock, self._sleep))
+            result.update(body(stop_event))
 
         thread = threading.Thread(target=worker, daemon=True)
         with self._lock:

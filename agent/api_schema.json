@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "title": "Agent observability API",
   "description": "Shapes of the JSON served by agent/http_api.py and read by tools/wowmap and tools/agent-runner. Subset of JSON Schema (type, properties, required, items, enum): unknown fields are always allowed. Every response carries api_version. Change a shape additively and keep api_version; a breaking change bumps api_version here, in agent/http_api.py and in the consumers' supported set (tests pin all three together).",
   "endpoints": {
@@ -18,18 +18,19 @@
     "/state": {
       "summary": "Own stats, spellbook, quest log, equipment and inventory. Also the connection lifecycle (ADR 0015), when the agent has one.",
       "responses": {
-        "not in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission"], "properties": {
+        "not in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission", "control"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
           "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]},
+          "control": {"type": "object", "required": ["brain_paused", "override"], "properties": {"brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
           "lifecycle": {"type": "object", "required": ["state", "since", "reason", "transitions"], "properties": {
             "state": {"type": "string", "enum": ["connecting", "online", "backoff", "stopping", "stopped", "failed"]},
             "since": {"type": "number"},
             "reason": {"type": "string"},
             "transitions": {"type": "array", "items": {"type": "object", "required": ["from", "to", "reason", "at"], "properties": {
               "from": {"type": "string"}, "to": {"type": "string"}, "reason": {"type": "string"}, "at": {"type": "number"}}}}}}}},
-        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission", "self", "spellbook", "quest_log", "equipment", "inventory"], "properties": {
+        "in game": {"type": "object", "required": ["api_version", "agent", "connected", "mission", "self", "spellbook", "quest_log", "equipment", "inventory", "control"], "properties": {
           "api_version": {"type": "integer"},
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
@@ -56,6 +57,7 @@
           "quest_log": {"type": "array"},
           "equipment": {"type": "object"},
           "inventory": {"type": "array"},
+          "control": {"type": "object", "required": ["brain_paused", "override"], "properties": {"brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
           "lifecycle": {"type": "object", "required": ["state", "since", "reason", "transitions"], "properties": {
             "state": {"type": "string", "enum": ["connecting", "online", "backoff", "stopping", "stopped", "failed"]},
             "since": {"type": "number"},
@@ -132,7 +134,7 @@
             "ts": {"type": "number"},
             "agent": {"type": "string"},
             "mission": {"type": "string", "enum": ["level_to_cap", "explore", "make_gold"]},
-            "kind": {"type": "string", "enum": ["unknown_action", "no_candidates", "corpse_unreachable"]},
+            "kind": {"type": "string", "enum": ["unknown_action", "no_candidates", "corpse_unreachable", "no_progress"]},
             "wanted": {"type": "object", "required": ["action", "params"], "properties": {
               "action": {"type": ["string", "null"]},
               "params": {"type": "object"}}},
@@ -164,6 +166,48 @@
           "outcome": {"type": "string"},
           "code": {"type": "string"},
           "error": {"type": "string"}}}
+      }
+    },
+    "POST /control/pause": {
+      "summary": "Operator pause: the think loop decides nothing until resume. Reflexes keep running.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "brain_paused", "override"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
+        "refused": {"type": "object", "required": ["api_version"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "outcome": {"type": "string"}, "code": {"type": "string"}, "error": {"type": "string"}}}
+      }
+    },
+    "POST /control/resume": {
+      "summary": "Operator resume. Refused with 409 override_active while an override is on.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "brain_paused", "override"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
+        "refused": {"type": "object", "required": ["api_version"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "outcome": {"type": "string"}, "code": {"type": "string"}, "error": {"type": "string"}}}
+      }
+    },
+    "POST /control/override": {
+      "summary": "Operator override: the brain is paused and the reflexes are held until release; the follow reflex is stopped.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "brain_paused", "override"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
+        "refused": {"type": "object", "required": ["api_version"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "outcome": {"type": "string"}, "code": {"type": "string"}, "error": {"type": "string"}}}
+      }
+    },
+    "POST /control/release": {
+      "summary": "Release an override and the pause: the mission resumes on the next think cycle.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "brain_paused", "override"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "brain_paused": {"type": "boolean"}, "override": {"type": "boolean"}}},
+        "refused": {"type": "object", "required": ["api_version"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "outcome": {"type": "string"}, "code": {"type": "string"}, "error": {"type": "string"}}}
+      }
+    },
+    "POST /control/follow": {
+      "summary": "Operator follow: body {\"player\": \"<name>\"} for a player this agent perceives. 404 target_not_found when it is not perceived; 409 override_active during an override; 409 follow_refused with the reason when the follow rule refuses the target.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "following", "guid"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "following": {"type": "string"}, "guid": {"type": "integer"}}},
+        "refused": {"type": "object", "required": ["api_version"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "outcome": {"type": "string"}, "code": {"type": "string"}, "error": {"type": "string"}}}
+      }
+    },
+    "POST /control/stop_follow": {
+      "summary": "Operator stop follow. 200 even when nothing was following.",
+      "responses": {
+        "ok": {"type": "object", "required": ["api_version", "ok", "was_following"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "was_following": {"type": "boolean"}}},
+        "refused": {"type": "object", "required": ["api_version"], "properties": {"api_version": {"type": "integer"}, "ok": {"type": "boolean"}, "outcome": {"type": "string"}, "code": {"type": "string"}, "error": {"type": "string"}}}
       }
     }
   },

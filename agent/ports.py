@@ -120,6 +120,8 @@ class ReflexSlots(Protocol):
     follow_reflex: Any
     rest_reflex: Any
     mover: Any
+    # #312: agent.pathing.PathClient or None; the mover reads it, agent.root sets it.
+    path_client: Any
 
 
 @runtime_checkable

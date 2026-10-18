@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from agent import __main__ as main_mod
+from agent import control
 from agent import root
 from agent.audit import AuditLogger
 from agent.auth import AuthRejected
@@ -45,7 +46,7 @@ class _OrderLog:
 
 
 def _agent(**overrides):
-    fields = dict(cfg=SimpleNamespace(think_interval=0.01), log=_Log(), chat_relay=mock.Mock(),
+    fields = dict(cfg=SimpleNamespace(think_interval=0.01, pathfinder_url=""), log=_Log(), chat_relay=mock.Mock(),
                   brain=None, audit_logger=mock.Mock(), observer=None, http_server=mock.Mock(),
                   lifecycle=Lifecycle(), duration=1.5, perception_dump=True)
     fields.update(overrides)
@@ -100,13 +101,13 @@ class AgentRunTest(unittest.TestCase):
                 agent.chat_relay.stop.assert_called_once_with()
 
     def test_sessions_are_built_and_run_through_login_and_run_loop(self):
-        agent, stop = _agent(), threading.Event()
-        with mock.patch.object(root, "connect_and_login", return_value="SESSION") as login, \
+        agent, stop, sess = _agent(), threading.Event(), SimpleNamespace()
+        with mock.patch.object(root, "connect_and_login", return_value=sess) as login, \
                 mock.patch.object(root, "run_loop", return_value=True) as run_loop:
-            self.assertEqual(agent.build_session(), "SESSION")
-            self.assertIs(agent.run_session("SESSION", stop), True)
+            self.assertIs(agent.build_session(), sess)
+            self.assertIs(agent.run_session(sess, stop), True)
         login.assert_called_once_with(agent.cfg, agent.log, agent.chat_relay)
-        run_loop.assert_called_once_with("SESSION", agent.cfg, 1.5, perception_dump=True, brain=None,
+        run_loop.assert_called_once_with(sess, agent.cfg, 1.5, perception_dump=True, brain=None,
                                          audit_logger=agent.audit_logger, observer=None, stop=stop, unmet=None)
 
     def test_run_session_hands_its_brain_and_observer_to_run_loop(self):
@@ -360,6 +361,7 @@ class OneStartStopPathTest(unittest.TestCase):
         before = set(threading.enumerate())
         observer = mock.Mock()
         observer.action_lock = threading.Lock()
+        observer.control_state = control.ControlState()  # #330: the think and reflex loops read it
         sess = make_session()
         try:
             runloop.run_loop(sess, SimpleNamespace(think_interval=0.01, persona=""), 0.05, observer=observer, **kw)

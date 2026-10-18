@@ -1,5 +1,5 @@
 <!-- Generated from agent/api_schema.json and agent/action_specs.py by `python -m agent.api_contract`; do not edit. -->
-# Agent observability API (api_version 1)
+# Agent observability API (api_version 2)
 
 Shapes of the JSON served by agent/http_api.py and read by tools/wowmap and tools/agent-runner. Subset of JSON Schema (type, properties, required, items, enum): unknown fields are always allowed. Every response carries api_version. Change a shape additively and keep api_version; a breaking change bumps api_version here, in agent/http_api.py and in the consumers' supported set (tests pin all three together).
 
@@ -30,6 +30,9 @@ Response: not in game
 | `agent` | string | yes |
 | `connected` | boolean | yes |
 | `mission` | string | yes |
+| `control` | object | yes |
+| `control.brain_paused` | boolean | yes |
+| `control.override` | boolean | yes |
 | `lifecycle` | object |  |
 | `lifecycle.state` | string | yes |
 | `lifecycle.since` | number | yes |
@@ -74,6 +77,9 @@ Response: in game
 | `quest_log` | array | yes |
 | `equipment` | object | yes |
 | `inventory` | array | yes |
+| `control` | object | yes |
+| `control.brain_paused` | boolean | yes |
+| `control.override` | boolean | yes |
 | `lifecycle` | object |  |
 | `lifecycle.state` | string | yes |
 | `lifecycle.since` | number | yes |
@@ -206,6 +212,143 @@ Response: ok
 Operator walk (only with AGENT_CONTROL_TOKEN set). Success, refusal and error bodies all carry api_version.
 
 Response: any
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean |  |
+| `outcome` | string |  |
+| `code` | string |  |
+| `error` | string |  |
+
+## `POST /control/pause`
+
+Operator pause: the think loop decides nothing until resume. Reflexes keep running.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean | yes |
+| `brain_paused` | boolean | yes |
+| `override` | boolean | yes |
+
+Response: refused
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean |  |
+| `outcome` | string |  |
+| `code` | string |  |
+| `error` | string |  |
+
+## `POST /control/resume`
+
+Operator resume. Refused with 409 override_active while an override is on.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean | yes |
+| `brain_paused` | boolean | yes |
+| `override` | boolean | yes |
+
+Response: refused
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean |  |
+| `outcome` | string |  |
+| `code` | string |  |
+| `error` | string |  |
+
+## `POST /control/override`
+
+Operator override: the brain is paused and the reflexes are held until release; the follow reflex is stopped.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean | yes |
+| `brain_paused` | boolean | yes |
+| `override` | boolean | yes |
+
+Response: refused
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean |  |
+| `outcome` | string |  |
+| `code` | string |  |
+| `error` | string |  |
+
+## `POST /control/release`
+
+Release an override and the pause: the mission resumes on the next think cycle.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean | yes |
+| `brain_paused` | boolean | yes |
+| `override` | boolean | yes |
+
+Response: refused
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean |  |
+| `outcome` | string |  |
+| `code` | string |  |
+| `error` | string |  |
+
+## `POST /control/follow`
+
+Operator follow: body {"player": "<name>"} for a player this agent perceives. 404 target_not_found when it is not perceived; 409 override_active during an override; 409 follow_refused with the reason when the follow rule refuses the target.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean | yes |
+| `following` | string | yes |
+| `guid` | integer | yes |
+
+Response: refused
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean |  |
+| `outcome` | string |  |
+| `code` | string |  |
+| `error` | string |  |
+
+## `POST /control/stop_follow`
+
+Operator stop follow. 200 even when nothing was following.
+
+Response: ok
+
+| field | type | always present |
+|---|---|---|
+| `api_version` | integer | yes |
+| `ok` | boolean | yes |
+| `was_following` | boolean | yes |
+
+Response: refused
 
 | field | type | always present |
 |---|---|---|
