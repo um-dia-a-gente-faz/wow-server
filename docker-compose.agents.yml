@@ -22,6 +22,8 @@ x-agent: &agent-defaults
   environment: &env-defaults
     WOW_HOST: 192.168.1.64
     WOW_AUTH_PORT: 3724
+    # #816: the pathfinder sidecar (tools/pathfinder) on the wow-server VM, next to wowmap. LAN only, like WOW_HOST.
+    AGENT_PATHFINDER_URL: http://192.168.1.64:8770
     WOW_PASSWORD: ${AGENT_PASSWORD:?set AGENT_PASSWORD in .env (see .env.example)}
     AGENT_THINK_INTERVAL_S: ${AGENT_THINK_INTERVAL_S:-5}
     LOG_LEVEL: INFO
