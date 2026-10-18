@@ -99,12 +99,17 @@ snapshot, over the existing map art, with the 3D character model at the centre.
 ### Size
 
 - S: add facing to the snapshot and schema (agent side, tested).
-- S/M: backend poll-and-fan-out SSE endpoint per agent (`tools/wowmap`), tested at the HTTP
+- S/M: backend poll-and-fan-out SSE endpoint per agent, in the FastAPI backend (#323), tested at the HTTP
   seam with a fake snapshot, as #328 asks.
 - M: radar renderer (typed, facing, target, phone viewport), which is #328 itself.
 - M (optional): the model at the radar centre with facing, after #510 lands.
 
-Total: about 3 to 4 PR-sized slices; the first useful one is the radar (#328).
+**Prerequisite:** #328 is blocked by the open #324 (SvelteKit shell), #326 (character panel)
+and #288. The SSE fan-out belongs in the Console v4 FastAPI backend (ADR 0012), whose shell and
+SSE stream are #323; it is not a new endpoint in the old `tools/wowmap` pages. So the real
+order is: #323, #324, #326 and #288 land first, then the three slices above. Total: about 3 to
+4 PR-sized slices on top of that prerequisite; the first useful one is the radar (#328).
+The facing change is agent-side and can go in at any time.
 
 ## Option 2: stream the owner's own game client
 
@@ -145,8 +150,10 @@ the stream would run from the owner's PC to the LAN browser, not through the VM.
 
 - It shows one character, the owner's. It does not answer "what is agent X seeing".
 - Bandwidth and PC load on the owner's machine (encoder plus the game). Not measured.
-- Latency target is "interactive" for Sunshine/Moonlight and about 100 ms for WHIP per OBS's
-  own guide, on a LAN. Not measured here [unverified in this setup].
+- Latency: the OBS WHIP guide promises "interactive latency" with "only 100ms of delay"
+  ([OBS WHIP guide](https://obsproject.com/kb/whip-streaming-guide)); Sunshine's README says
+  only "low-latency" ([Sunshine README](https://github.com/LizardByte/Sunshine)) and gives no
+  figure. Neither is measured on a LAN here. [unverified in this setup].
 - Input capture is a different matter: viewing is safe, but Sunshine also emulates gamepads on the
   host from the client's input ([Sunshine docs](https://docs.lizardbyte.dev/projects/sunshine/latest/);
   keyboard and mouse forwarding is my inference, not read in those docs [unverified]),
@@ -178,12 +185,12 @@ logged. [repo: ADR 0013]
   block (`tools/wowmap/wowmap/walk.py`, `static/walk.js`). No GM command, no teleport.
 - Needs: more Tier 1 verbs (target, attack, use, cast, say), each through the existing action
   specs (`agent/action_specs.py`), and the control log in the site's SQLite store (ADR 0012).
-- Interaction with the brain: the think loop holds `observer.action_lock`; a manual command
-  waits for the cycle and then blocks the next one (`agent/control.py`). A control mode that
-  stops the LLM while the admin drives is not built; the `docs/AGENT-DIRECTION.md` rule that
-  requests are input to the agent's decision, not commands, applies to players, not admins,
-  but the direction doc does not say what an admin takeover does to the agent's goal. Needs an
-  owner decision.
+- Interaction with the brain: decided, not open. ADR 0013 **Override** (and `GLOSSARY.md`
+  **Override**, #310 stories 31 and 32): an override pauses the agent's brain and reflexes until
+  the admin releases it, then the agent resumes its mission, and an agent under override is
+  clearly marked. Today only the lock exists: the think loop holds `observer.action_lock` and a
+  walk waits for the cycle, then blocks the next one (`agent/control.py`). The pause, the
+  resume and the mark are not built; they are the first slice of this part.
 - Risks: a half-driven agent confuses the brain's memory; teleport stays blocked by the
   missing `MSG_MOVE_TELEPORT_ACK`; a click-to-move on a radar needs a walkable-path check or
   the agent runs into walls (the walk endpoint reports `blocked`).
@@ -197,15 +204,17 @@ owner playing, not a site feature, and it carries the exposure risk above.
 
 ## Recommendation
 
-1. **Do option 1 first**, in this order: facing in the snapshot (S), snapshot SSE fan-out (S/M),
-   radar (#328, M). It uses only data and art the repo has, honors "perception, not database
+1. **Do option 1 first**, once its prerequisites land (#328 is blocked by the open #324, #326 and
+   #288; the SSE fan-out goes in the FastAPI backend, #323, per ADR 0012), in this order: facing
+   in the snapshot (S), snapshot SSE fan-out (S/M), radar (#328, M). It uses only data and art the repo has, honors "perception, not database
    truth", works on a phone, and costs no new service. Add the 3D model at the centre only
    after #510.
 2. **Option 2: do not build.** Offer the owner a short how-to (OBS/WHIP or Sunshine/Moonlight)
    if he wants to watch his own client; it shows one character and adds a media server.
 3. **Option 3a after the radar**, as Tier 1 verbs, because the radar is the natural place to
-   click. Decide the takeover semantics (pause the brain or not) before the first slice.
-   3b is not a feature.
+   click. The first slice is the
+   **override** already decided in ADR 0013 (brain and reflexes pause until release, the agent
+   then resumes its mission, and it is marked while overridden). 3b is not a feature.
 
 ## What would change the headless-agent decision
 
@@ -233,5 +242,4 @@ decision: it is an exception for one character, and the other agents stay headle
 - Real latency and CPU cost of any capture path on the owner's PC.
 - Terms of use for streaming the 3.3.5a client.
 - Whether the agent's own orientation is reliably tracked in `WorldState`.
-- How admin takeover should interact with the LLM goal (owner decision).
 - The MDN and W3C pages were fetched whole; I read only the passages cited.
