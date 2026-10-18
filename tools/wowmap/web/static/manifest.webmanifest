@@ -1,0 +1,13 @@
+{
+  "name": "wowmap",
+  "short_name": "wowmap",
+  "start_url": "/v2/",
+  "scope": "/v2/",
+  "display": "standalone",
+  "background_color": "#14161c",
+  "theme_color": "#14161c",
+  "icons": [
+    { "src": "/v2/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/v2/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

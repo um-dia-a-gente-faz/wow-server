@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -279,6 +280,41 @@ class CatchAllTests(FakeGameDb):
                 {"X-Fleet-Action": "1", "Content-Type": "application/json"})
         self.assertEqual(calls, [{"name": "Luaprata", "action": "walk", "body": body}])
         self.assertEqual((status, json.loads(out)), (200, {"ok": True}))
+
+
+class SpaTests(FakeGameDb):
+    """/v2 serves the SvelteKit build (#324), registered before the catch-all."""
+
+    def setUp(self):
+        super().setUp()
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        root = pathlib.Path(d.name)
+        (root / "index.html").write_text("<p>spa shell</p>")
+        (root / "manifest.webmanifest").write_text('{"name": "wowmap"}')
+        for attr, value in (("directory", str(root)), ("all_directories", [str(root)])):
+            p = mock.patch.object(api.web, attr, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.client = TestClient(api.app)
+
+    def test_root_is_index_html(self):
+        r = self.client.get("/v2/")
+        self.assertEqual((r.status_code, r.text), (200, "<p>spa shell</p>"))
+
+    def test_unknown_deep_link_falls_back_to_index_html(self):
+        r = self.client.get("/v2/some/deep/link")
+        self.assertEqual((r.status_code, r.text), (200, "<p>spa shell</p>"))
+
+    def test_manifest_is_served(self):
+        r = self.client.get("/v2/manifest.webmanifest")
+        self.assertEqual(r.json(), {"name": "wowmap"})
+
+    def test_missing_asset_is_a_404_not_the_shell(self):
+        self.assertEqual(self.client.get("/v2/_app/missing.js").status_code, 404)
+
+    def test_old_root_page_is_unchanged(self):
+        self.assertNotIn("spa shell", self.client.get("/").text)
 
 
 class OpenApiTests(unittest.TestCase):

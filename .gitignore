@@ -33,3 +33,6 @@ tools/wowmap/icons/
 __pycache__/
 artifs/
 node_modules/
+# wowmap SvelteKit app (tools/wowmap/web): build output
+tools/wowmap/web/.svelte-kit
+tools/wowmap/web/build
