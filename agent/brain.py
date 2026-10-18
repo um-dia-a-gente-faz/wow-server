@@ -107,12 +107,19 @@ class Decision:
     jev_status: str | None = None
     prompt_id: str | None = None        # agent.prompts ids of the LLM prompt, None if no LLM request
     history_notes: list | None = None   # candidates dropped/demoted because of history, with why
+    reason: str | None = None           # label of the candidate chosen (Jev only; None on a brain error)
 
 
 def llm_catalog() -> list[dict]:
     """The action catalog as the LLM sees it: every registered action except
     LLM_EXCLUDED_ACTIONS."""
     return [s for s in ac.catalog() if s["name"] not in LLM_EXCLUDED_ACTIONS]
+
+
+def _chosen_label(options: list[Candidate], action: str | None, params: dict) -> str | None:
+    """The label of the offered candidate that is `action` with `params` (#850), the same match
+    `_apply_confidence_policy` uses for `overridden`."""
+    return next((c.get("label") for c in options if c["action"] == action and c["params"] == params), None)
 
 
 def _jev_error_status(status) -> str:
@@ -228,6 +235,7 @@ class Brain:
                                     if getattr(self.jev, "skipped_single_candidate", False)
                                     else "success")
                     self._apply_confidence_policy(d, options)
+                    d.reason = _chosen_label(options, d.action, d.params)
                     return d
                 except JevError as e:
                     self._fill_jev(d)
