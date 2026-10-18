@@ -1,6 +1,6 @@
 # Foot below ground and wall-staring: live diagnosis (partial)
 
-> **Spike, partial.** Outcome: sidecar measured; the two symptoms are not yet diagnosed on the live realm. Issue: #313 (parent #309). Superseded by: nothing. No code fix is proposed because no evidence supports one yet.
+> **Spike, partial.** Outcome: sidecar measured; the two symptoms are not yet diagnosed on the live realm. Issue: #847 (split from #313, which stays open and parked for steps 2–3). Superseded by: nothing. No code fix is proposed because no evidence supports one yet.
 
 ## What blocked the rest
 
@@ -20,7 +20,7 @@ Queries went to `http://192.168.1.64:8770`, 3 to 4 per second at most, from the 
 
 Reading:
 
-- Latency is **not** dominated by tile loading: a warm 60 yd path still takes about 520 ms, and it grows with distance (about 1.2 to 1.4 s at 300 to 800 yd). `PathClient` times out at 2.0 s (`agent/pathing.py`). One slow query on a busy VM turns into a `path_fallback` (straight line), so the margin is under 1.5x for long routes.
+- Latency is **not** dominated by tile loading: a warm 60 yd path still takes about 520 ms, and it grows with distance (about 1.2 to 1.4 s at 300 to 800 yd). `PathClient` times out at 2.0 s (`agent/pathing.py`). One slow query on a busy VM turns into a `path_fallback` (straight line), so the margin is under 1.5x for long routes. Follow-up: #848.
 - `no_path` from the isle to Silvermoon is unexplained. Candidates: the 4096-poly `max_polys` cap in `tools/pathfinder/navmesh.py` (`find_path`) on a long route, a missing tile, or a real gap in the data. Not separated yet. This also covers #816's open human step ("path across a real tile border"): short paths succeed across the 400 to 800 yd probes, which cross at least one tile border (533 yd tiles), but only the one-direction sample is evidence, not a controlled check.
 - About 1 in 4 random points returned `null` from `/height` (water, cliffs or unbaked). A `move_to` aimed there gets `no_path`, which `Mover._move_routed` returns as `error: "no path"`.
 
@@ -49,5 +49,5 @@ Questions the logs must answer: was it `no path`, no candidate, or an action tha
 ## Next
 
 1. A session whose host trusts the VM runs steps 2 and 3 of the #313 Decision.
-2. Add the 800 yd west and Silvermoon `no_path` cases to #816 as a separate question (cap or data).
+2. #848 investigates latency and the Silvermoon and 800 yd west `no_path` cases (cap or data).
 3. Human step on #313: re-verify both symptoms with the fleet once `wow-agents` has `AGENT_PATHFINDER_URL`.
