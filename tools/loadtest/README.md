@@ -48,6 +48,9 @@ exits unless `--allow-non-loopback` is given (the mock still runs locally).
 - `recv_packets_per_s_per_agent`, `recv_packets_per_agent`, `recv_packets_total`: packets the
   recv loop read (counted by wrapping each session's `_recv_packet`) over the run duration,
   login burst and reconnects included. `stream_hz` echoes the setting.
+- `recv_stream_packets_per_agent` (#775): the same count over each agent's streaming window only
+  (from the end of its login to the end of the run), so login time does not dilute the rate. The
+  streaming test asserts on this one; the wall-clock-only figure above is kept for the report.
 - `stream_pool`: the mock's guid cycle length (`--stream-pool`, default 50; 0 = every tick is a new unit,
   so the object table grows by design, #486).
 - `threads_end` should equal `threads_before` (no leaked threads).
