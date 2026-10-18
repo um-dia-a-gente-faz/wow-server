@@ -74,6 +74,26 @@ class WatchdogTest(unittest.TestCase):
         clock.t += 1.0  # 10 s since the follow started: a full window
         self.assertEqual(wd.observe(STILL, following=True), ["stuck_follow"])
 
+    def test_stuck_follow_window_restarts_with_a_second_follow(self):
+        clock = FakeClock()
+        wd = Watchdog(window_s=10, idle_cycles=0, clock=clock)
+        fired = []
+        for _ in range(11):
+            clock.t += 1.0
+            fired += wd.observe(STILL, following=True)
+        self.assertEqual(fired, ["stuck_follow"])
+        clock.t += 1.0
+        self.assertEqual(wd.observe(moving(1), following=False), [])  # follow stopped, progress
+        for _ in range(30):  # parked, not following, for three windows
+            clock.t += 1.0
+            self.assertEqual(wd.observe(moving(1), following=False), [])
+        for _ in range(10):  # the second follow starts at the first of these: 0 to 9 s elapsed
+            clock.t += 1.0
+            fired += wd.observe(moving(1), following=True)
+        self.assertEqual(fired, ["stuck_follow"])  # still only the first one
+        clock.t += 1.0  # a full window since the restart
+        self.assertEqual(wd.observe(moving(1), following=True), ["stuck_follow"])
+
     def test_normal_movement_never_trips_either_trigger(self):
         clock = FakeClock()
         wd = Watchdog(window_s=10, idle_cycles=5, clock=clock)
