@@ -151,7 +151,8 @@ def perceive(c: Cycle) -> None:
                                   corpse_position=getattr(c.session, "corpse_position", None),
                                   pending_invite=getattr(c.session, "pending_invite", None),
                                   group=getattr(c.session, "group", None),
-                                  chat_inbox=getattr(c.session, "chat_inbox", None))
+                                  chat_inbox=getattr(c.session, "chat_inbox", None),
+                                  zone=getattr(c.session, "zone_id", None))
     _self_status(c.session, c.world, c.snapshot)
     c.fingerprint = progress_fingerprint(c.snapshot)
     if c.state is not None:
@@ -171,8 +172,17 @@ def decide(c: Cycle) -> None:
     except BrainError as e:
         c.decision, c.remember = e.decision, False
         log.warning("%s", e)
+        _record_mission_change(c)
         return c.fail(str(e))
+    _record_mission_change(c)
     c.action_name, c.params = c.decision.action, c.decision.params
+
+
+def _record_mission_change(c: Cycle) -> None:
+    """#316: one `mission_changed` event on the session per transition the brain observed this cycle."""
+    if c.decision.mission_change is not None:
+        old, new, reason = c.decision.mission_change
+        c.session.record_event("mission_changed", old=old, new=new, reason=reason)
 
 
 def validate(c: Cycle) -> None:

@@ -15,7 +15,7 @@ variable.
 import os
 from dataclasses import dataclass, field
 
-from .missions import DEFAULT_MISSION, MISSIONS
+from .missions import DEFAULT_EXPLORE_NEW_ZONES, DEFAULT_LEVEL_CAP, DEFAULT_MISSION, MISSIONS
 
 # Only used when JEV_PROVIDER=openrouter; see Config.jev_base_url.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/alpha"
@@ -69,6 +69,10 @@ SETTINGS: tuple[Setting, ...] = (
     _s("AGENT_MISSION", str, DEFAULT_MISSION, "what the agent is for: level_to_cap | explore | make_gold (#314); "
        "set per service by compose from that agent's roster entry (#762; a .env value never reaches the containers)",
        compose=False),
+    _s("AGENT_EXPLORE_NEW_ZONES", int, DEFAULT_EXPLORE_NEW_ZONES, "#316: an explore agent below AGENT_LEVEL_CAP goes "
+       "back to level_to_cap after this many newly visited zones, 1 or more", compose=False),
+    _s("AGENT_LEVEL_CAP", int, DEFAULT_LEVEL_CAP, "#316: a level_to_cap agent at this level or above switches to "
+       "explore", compose=False),
     _s("AGENT_CHANNELS", str, "General", 'chat channels to join after login, comma-separated; "none" disables'),
     _s("AGENT_BRAIN", str, "llm", "llm | jev (#161)"),
     _s("AGENT_BRAIN_FALLBACK", str, "none", "none | llm: only with AGENT_BRAIN=jev"),
@@ -176,6 +180,9 @@ class Config:
     persona: str = _f("AGENT_PERSONA")
     # #314: one of agent.missions.MISSIONS; load_config() rejects anything else.
     mission: str = field(default_factory=lambda: get("AGENT_MISSION") or default("AGENT_MISSION"))
+    # #316: the automatic mission transitions (agent/mission_state.py).
+    explore_new_zones: int = _f("AGENT_EXPLORE_NEW_ZONES")
+    level_cap: int = _f("AGENT_LEVEL_CAP")
     # UM-93: chat channels to join after login, comma-separated ("General,world");
     # "none" disables. See agent/channels.py::parse_channel_spec.
     channels: str = _f("AGENT_CHANNELS")
@@ -274,6 +281,8 @@ class Config:
             problems.append(f"AGENT_START_DELAY_S out of range 0-{MAX_START_DELAY_S:g}: {self.start_delay}")
         if self.agent_brain not in ("llm", "jev"):
             problems.append(f"AGENT_BRAIN must be llm or jev, got {self.agent_brain!r}")
+        if self.explore_new_zones < 1:
+            problems.append(f"AGENT_EXPLORE_NEW_ZONES must be 1 or more, got {self.explore_new_zones}")
         if self.agent_brain_fallback not in ("none", "llm"):
             problems.append(f"AGENT_BRAIN_FALLBACK must be none or llm, got {self.agent_brain_fallback!r}")
         return problems

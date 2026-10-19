@@ -187,7 +187,7 @@ class SessionDispatchTest(unittest.TestCase):
 
     def test_build_router_order_is_declared_and_pinned(self):
         self.assertEqual([m.__name__.rpartition('.')[2] for m in handlers.MODULES],
-                         ["death", "world", "chat", "group", "mail", "npc", "spells", "trade", "loot", "quests"])
+                         ["death", "world", "world_states", "chat", "group", "mail", "npc", "spells", "trade", "loot", "quests"])
         router = handlers.build_router()
         self.assertEqual([f.__name__ for f in router._ticks],
                          ["send_name_queries", "send_npc_text_queries", "send_item_queries", "send_quest_queries"])

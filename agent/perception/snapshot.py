@@ -8,7 +8,7 @@ from .self_state import resolved_position, self_section
 
 
 def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
-                     pending_invite, chat_inbox, group) -> Snapshot:
+                     pending_invite, chat_inbox, group, zone=None) -> Snapshot:
     """`view` is what WorldState.snapshot() copied out under its lock: `objects`
     (list), `me`, `my_guid`, `window`, `trade`, `mailbox`, `has_new_mail`,
     `channels`, `equipment`, `inventory`, `quest_log`. Returns the raw dict
@@ -16,7 +16,7 @@ def compose_snapshot(view: dict, my_position, max_range, limit, corpse_position,
     me = view["me"]
     pos = resolved_position(me, my_position)
     out: Snapshot = {
-        **self_section(me, my_position, corpse_position),
+        **self_section(me, my_position, corpse_position, zone),
         "nearby_units": [],
         "nearby_players": [],
         "nearby_objects": [],

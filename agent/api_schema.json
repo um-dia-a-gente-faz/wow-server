@@ -51,7 +51,7 @@
             "next_level_xp": {"type": "integer"},
             "money": {"type": ["integer", "null"]},
             "position": {"type": "object", "required": ["map", "x", "y", "z"], "properties": {
-              "map": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}}}},
+              "map": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "zone": {"type": ["integer", "null"]}}}}},
           "spellbook": {"type": "array", "items": {"type": "object", "required": ["id", "name"], "properties": {
             "id": {"type": "integer"}, "name": {"type": ["string", "null"]}}}},
           "quest_log": {"type": "array"},
@@ -84,7 +84,7 @@
           "agent": {"type": "string"},
           "connected": {"type": "boolean"},
           "position": {"type": ["object", "null"], "properties": {
-            "map": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}}},
+            "map": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}, "zone": {"type": ["integer", "null"]}}},
           "is_dead": {"type": "boolean"},
           "is_ghost": {"type": "boolean"},
           "corpse_position": {"type": ["object", "null"]},

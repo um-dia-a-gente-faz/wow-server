@@ -22,6 +22,7 @@ class Position(TypedDict):
     x: float
     y: float
     z: float
+    zone: NotRequired[int | None]   # #316: the zone id of the self position (self only)
 
 
 class Unit(TypedDict):
