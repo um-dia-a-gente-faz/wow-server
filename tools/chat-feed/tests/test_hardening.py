@@ -23,6 +23,10 @@ def say(sender="Rubens", text="hi", key=None):
     return {"kind": "say", "sender": sender, "text": text, "dedupe_key": key or text}
 
 
+def first_id(feed):
+    return feed.snapshot_after("")[0]["id"]
+
+
 def metric_lines(text):
     return [line for line in text.splitlines() if not line.startswith("#")]
 
@@ -165,7 +169,7 @@ class ServerTests(unittest.TestCase):
         feed.publish_relay_event(say(text="hello"))
         response, _ = self.get(port, "/api/chat/stream")
         self.assertEqual(response.status, 200)
-        self.assertEqual(response.fp.readline(), b"id: relay:1\n")
+        self.assertEqual(response.fp.readline(), f"id: {first_id(feed)}\n".encode())
 
     def test_stream_token_is_required_when_configured(self):
         feed, port = self.start(stream_token="s3cret")
@@ -186,7 +190,7 @@ class ServerTests(unittest.TestCase):
                               ("/api/chat/stream", {"Authorization": "Bearer s3cret"})):
             response, _ = self.get(port, path, headers)
             self.assertEqual(response.status, 200, (path, headers))
-            self.assertEqual(response.fp.readline(), b"id: relay:1\n")
+            self.assertEqual(response.fp.readline(), f"id: {first_id(feed)}\n".encode())
 
     def test_healthz_and_metrics_stay_open_with_a_stream_token(self):
         _, port = self.start(stream_token="s3cret")

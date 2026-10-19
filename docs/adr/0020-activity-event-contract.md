@@ -58,7 +58,7 @@ one, and no contract emitted by agents can cover it.
 | `buy` | `db` | **yes** | `db:<guid>:<t>:buy:+<item>` | Partly, the same way: `BuyItemAction`, no `SMSG_BUY_FAILED`; `SMSG_BUY_ITEM` is a broadcast of the vendor's stock, not an acknowledgement (`handle_buy_item` in `agent/handlers/npc.py`) | `db` only |
 | `trade`, "Gave", "Received" | `db` | **yes** | `db:<guid>:<t>:trade:-<item>` or `+<item>` | The agent sees its own trade steps (`handle_trade_status` in `agent/handlers/trade.py`, event `trade_status`). Which items changed hands at completion was not checked for this ADR | `db` only, and only when both traders are online and the same item and count leave one and reach the other in one poll |
 | `money` | `db` | no | `db:<guid>:<t>:money:` | Yes: the total in `session.coinage`, and the cause for looted money (`handle_loot_money_notify`, event `loot_money`, `money`) and quest money (`money_reward`) | `db` only |
-| `chat` (say, yell, channel) | `chat`, from chat-feed | no | `chat:<id>`; the id is `<inode>:<offset>` for a `Server.log` line and `relay:<n>` for an event an agent POSTed | Yes, and this path is already agent-emitted: `handle_messagechat` in `agent/handlers/chat.py` feeds `ChatRelay` (`agent/chat_relay.py`), which POSTs to chat-feed's `/api/chat/ingest` | Through the `Server.log` path if it carries chat, or through the relay if an agent is in earshot. Which of the two is live is not verified here: `docs/AGENT-DIRECTION.md` says the log is empty, `docker-compose.yml` and the chat-feed README say it was verified live |
+| `chat` (say, yell, channel) | `chat`, from chat-feed | no | `chat:<id>`; the id is `<inode>:<offset>` for a `Server.log` line and `relay:<start_ms>:<n>` for an event an agent POSTed (`start_ms` is the chat-feed process start, so ids are unique across restarts; gh-757) | Yes, and this path is already agent-emitted: `handle_messagechat` in `agent/handlers/chat.py` feeds `ChatRelay` (`agent/chat_relay.py`), which POSTs to chat-feed's `/api/chat/ingest` | Through the `Server.log` path if it carries chat, or through the relay if an agent is in earshot. Which of the two is live is not verified here: `docs/AGENT-DIRECTION.md` says the log is empty, `docker-compose.yml` and the chat-feed README say it was verified live |
 | `combat`, `loot`, `sell`, `buy`, `trade`, `chat`, `whisper`, `quest`, `item`, `item_lost`, `mail`, `move`, `group`, `action` (13 mapped kinds plus the default) | `audit`, `audit_event` | no | `audit:<agent>:<cycle>:<ts>` | These are the agent's own decisions: the action name, its arguments and `result.ok`. They record an intent and whether the action returned ok, not what happened in the game (a `loot` line does not say what dropped) | None |
 
 Kinds that no source produces today but the agent knows: `kill` (`handle_party_kill_log`,
@@ -263,10 +263,9 @@ chat-feed variant recreates the game stack. F fixes none of what #390 complains 
   for more than the DB.
 - Chat is not moved. The relay deduplicates across hearers by `dedupe_key` in chat-feed
   (`publish_relay_event`), which the audit path could not do: ten hearers would write ten lines.
-- `chat:relay:<n>` is unique only for the life of one chat-feed process: `_sequence` starts at 0
-  in `ChatFeed.__init__` (`tools/chat-feed/app.py`) and `snapshot_after` replays the whole buffer when a
-  `Last-Event-ID` is not found. After a chat-feed restart a new event can carry the uid of an old
-  one and `INSERT OR IGNORE` drops it. Not fixed here (a game-stack path); see Open questions.
+- Relay ids carry the chat-feed process start: `relay:<start_ms>:<n>` (gh-757), so a restart no longer
+  reuses an old uid `chat:relay:<start_ms>:<n>`. A `Last-Event-ID` unknown to a new process replays its
+  buffer, and the uid dedupe (`INSERT OR IGNORE`) absorbs the replayed lines.
 - A new source value, `agent`, reaches the UI. `SOURCES` in `tools/wowmap/wowmap/static/activity.js`
   falls back to the raw value, so it works unlabelled.
 - A fixture under `tools/wowmap/tests/fixtures/activity_db/` is needed only when the stored schema
@@ -429,7 +428,7 @@ Decided in the slice that adds the two kinds. Nothing here changes a wire parse.
 - ADR 0018's inventory is stale in two rows: `AuditLogger.record_lifecycle` has a caller
   (`build_lifecycle`, `agent/root.py:129`), and the audit row does not list `tools/fleet-limits`
   (`fleet_limits.py`) as a reader of the audit files. Not edited here.
-- `chat:relay:<n>` can collide after a chat-feed restart (Consequences). Tracked in its own issue.
+- `chat:relay:<n>` collision after a chat-feed restart (Consequences): fixed by gh-757 (`relay:<start_ms>:<n>`).
 
 ## Open questions for the owner
 
@@ -440,8 +439,8 @@ Decided in the slice that adds the two kinds. Nothing here changes a wire parse.
    slice 3, then a column, because the match gets slower than one query at 500 rows per character.
 4. **Chat.** Default: stays on the relay. Moving it needs a cross-hearer dedupe the audit path
    lacks.
-5. **`chat:relay:<n>` after a chat-feed restart.** Default: out of this ADR, tracked in its own issue
-   (a game-stack path, owner's go-ahead) that makes the id unique across restarts.
+5. **`chat:relay:<n>` after a chat-feed restart.** Resolved by gh-757: relay ids are
+   `relay:<start_ms>:<n>`, unique across restarts.
 6. **The text of an agent event.** Default: wowmap renders it from `kind` and `detail`, in the
    language it uses now. The alternative, carrying text in the line, makes the agent the owner of
    wording.

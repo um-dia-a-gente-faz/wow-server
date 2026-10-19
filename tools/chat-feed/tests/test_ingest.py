@@ -26,7 +26,7 @@ def relay_event(**overrides):
 def make_feed(window=5.0):
     ticks = itertools.count(0.0, 0.1)
     return ChatFeed(capacity=10, public_kinds=PUBLIC, dedupe_window_s=window,
-                    clock=lambda: next(ticks))
+                    clock=lambda: next(ticks), start_ms=1000)
 
 
 class NormalizeTests(unittest.TestCase):
@@ -66,13 +66,13 @@ class PublishTests(unittest.TestCase):
         feed = make_feed()
         self.assertEqual(feed.publish_relay_event(relay_event()), "published")
         event = feed.snapshot_after("")[0]
-        self.assertEqual(event["id"], "relay:1")
+        self.assertEqual(event["id"], "relay:1000:1")
         self.assertNotIn("dedupe_key", event)  # internal, not part of the stream
 
     def test_sender_supplied_id_is_ignored(self):
         feed = make_feed()
         feed.publish_relay_event(relay_event(id="../../spoofed"))
-        self.assertEqual(feed.snapshot_after("")[0]["id"], "relay:1")
+        self.assertEqual(feed.snapshot_after("")[0]["id"], "relay:1000:1")
 
     def test_two_agents_hearing_one_say_publish_once(self):
         feed = make_feed()
